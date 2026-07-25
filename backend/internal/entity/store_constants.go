@@ -165,12 +165,6 @@ func appendOUIDsINClause(
 	}
 	inClausePostgres := fmt.Sprintf(" AND OU_ID IN (%s)", strings.Join(pgPlaceholders, ", "))
 
-	sqlitePlaceholders := make([]string, len(ouIDs))
-	for i := range ouIDs {
-		sqlitePlaceholders[i] = "?"
-	}
-	inClauseSQLite := fmt.Sprintf(" AND OU_ID IN (%s)", strings.Join(sqlitePlaceholders, ", "))
-
 	for _, id := range ouIDs {
 		args = append(args, id)
 	}
@@ -179,7 +173,7 @@ func appendOUIDsINClause(
 		ID:            query.ID,
 		Query:         query.Query + inClausePostgres,
 		PostgresQuery: query.PostgresQuery + inClausePostgres,
-		SQLiteQuery:   query.SQLiteQuery + inClauseSQLite,
+		SQLiteQuery:   query.SQLiteQuery + inClausePostgres,
 	}, args
 }
 
@@ -206,7 +200,7 @@ func buildEntityCountQueryByOUIDs(
 		ID:            queryID,
 		Query:         baseQuery,
 		PostgresQuery: baseQuery,
-		SQLiteQuery:   strings.Replace(baseQuery, "$1", "?", 1),
+		SQLiteQuery:   baseQuery,
 	}
 
 	query, args = appendOUIDsINClause(query, args, ouIDs)
@@ -238,7 +232,7 @@ func buildEntityListQueryByOUIDs(
 			ID:            queryID,
 			Query:         baseQuery,
 			PostgresQuery: baseQuery,
-			SQLiteQuery:   strings.Replace(baseQuery, "$1", "?", 1),
+			SQLiteQuery:   baseQuery,
 		}
 		query, args = appendOUIDsINClause(query, args, ouIDs)
 		query, args = utils.AppendDeploymentIDToFilterQuery(query, args, deploymentID)
@@ -249,7 +243,7 @@ func buildEntityListQueryByOUIDs(
 		return model.DBQuery{}, nil, err
 	}
 
-	sqliteQuery, err := buildPaginatedQuery(query.SQLiteQuery, len(args), "?")
+	sqliteQuery, err := buildPaginatedQuery(query.SQLiteQuery, len(args), "$")
 	if err != nil {
 		return model.DBQuery{}, nil, err
 	}
@@ -292,7 +286,7 @@ func buildIdentifyQuery(filters map[string]interface{}, deploymentID string) (mo
 	}
 
 	pgQuery += fmt.Sprintf(" AND DEPLOYMENT_ID = $%d", len(keys)+1)
-	sqQuery += " AND DEPLOYMENT_ID = ?"
+	sqQuery += fmt.Sprintf(" AND DEPLOYMENT_ID = $%d", len(keys)+1)
 	args = append(args, deploymentID)
 
 	return model.DBQuery{
@@ -314,24 +308,19 @@ func buildEntityINClauseQuery(
 	args := make([]interface{}, len(entityIDs)+1)
 
 	postgresPlaceholders := make([]string, len(entityIDs))
-	sqlitePlaceholders := make([]string, len(entityIDs))
-
 	for i, entityID := range entityIDs {
 		postgresPlaceholders[i] = fmt.Sprintf("$%d", i+1)
-		sqlitePlaceholders[i] = "?"
 		args[i] = entityID
 	}
 	args[len(entityIDs)] = deploymentID
 
 	deploymentPlaceholder := fmt.Sprintf("$%d", len(entityIDs)+1)
 	postgresQuery := fmt.Sprintf(baseQuery, strings.Join(postgresPlaceholders, ","), deploymentPlaceholder)
-	sqliteQuery := fmt.Sprintf(baseQuery, strings.Join(sqlitePlaceholders, ","), "?")
 
 	query := model.DBQuery{
 		ID:            queryID,
 		Query:         postgresQuery,
 		PostgresQuery: postgresQuery,
-		SQLiteQuery:   sqliteQuery,
 	}
 
 	return query, args, nil
@@ -362,33 +351,26 @@ func buildBulkEntityExistsQueryInOUs(
 	args = append(args, deploymentID)
 
 	postgresOUPlaceholders := make([]string, len(ouIDs))
-	sqliteOUPlaceholders := make([]string, len(ouIDs))
 	for i, ouID := range ouIDs {
 		postgresOUPlaceholders[i] = fmt.Sprintf("$%d", i+2)
-		sqliteOUPlaceholders[i] = "?"
 		args = append(args, ouID)
 	}
 
 	idBase := 2 + len(ouIDs)
 	postgresIDPlaceholders := make([]string, len(entityIDs))
-	sqliteIDPlaceholders := make([]string, len(entityIDs))
 	for i, entityID := range entityIDs {
 		postgresIDPlaceholders[i] = fmt.Sprintf("$%d", idBase+i)
-		sqliteIDPlaceholders[i] = "?"
 		args = append(args, entityID)
 	}
 
 	baseQueryTpl := `SELECT ID FROM "ENTITY" WHERE DEPLOYMENT_ID = %s AND OU_ID IN (%s) AND ID IN (%s)`
 	postgresQuery := fmt.Sprintf(baseQueryTpl, "$1",
 		strings.Join(postgresOUPlaceholders, ","), strings.Join(postgresIDPlaceholders, ","))
-	sqliteQuery := fmt.Sprintf(baseQueryTpl, "?",
-		strings.Join(sqliteOUPlaceholders, ","), strings.Join(sqliteIDPlaceholders, ","))
 
 	query := model.DBQuery{
 		ID:            "ASQ-ENTITY_MGT-24",
 		Query:         postgresQuery,
 		PostgresQuery: postgresQuery,
-		SQLiteQuery:   sqliteQuery,
 	}
 
 	return query, args, nil
@@ -423,7 +405,7 @@ func buildEntityListQuery(
 			return model.DBQuery{}, nil, err
 		}
 
-		sqliteQuery, err := buildPaginatedQuery(fq.SQLiteQuery, len(args), "?")
+		sqliteQuery, err := buildPaginatedQuery(fq.SQLiteQuery, len(args), "$")
 		if err != nil {
 			return model.DBQuery{}, nil, err
 		}
@@ -491,7 +473,7 @@ func buildIdentifyQueryFromIdentifiers(
 
 	pgConditions = append(pgConditions, fmt.Sprintf("ia1.NAME = $%d AND ia1.VALUE = $%d",
 		paramIndex, paramIndex+1))
-	sqConditions = append(sqConditions, "ia1.NAME = ? AND ia1.VALUE = ?")
+	sqConditions = append(sqConditions, "ia1.NAME = $1 AND ia1.VALUE = $2")
 	args = append(args, keys[0], fmt.Sprintf("%v", filters[keys[0]]))
 	paramIndex += 2
 
@@ -505,7 +487,8 @@ func buildIdentifyQueryFromIdentifiers(
 		sqBase += joinClause
 		pgConditions = append(pgConditions, fmt.Sprintf("%s.NAME = $%d AND %s.VALUE = $%d",
 			alias, paramIndex, alias, paramIndex+1))
-		sqConditions = append(sqConditions, fmt.Sprintf("%s.NAME = ? AND %s.VALUE = ?", alias, alias))
+		sqConditions = append(sqConditions, fmt.Sprintf("%s.NAME = $%d AND %s.VALUE = $%d",
+			alias, paramIndex, alias, paramIndex+1))
 		args = append(args, keys[i], fmt.Sprintf("%v", filters[keys[i]]))
 		paramIndex += 2
 	}
@@ -513,7 +496,7 @@ func buildIdentifyQueryFromIdentifiers(
 	pgQueryString := pgBase + " WHERE " + strings.Join(pgConditions, " AND ") +
 		fmt.Sprintf(" AND ia1.DEPLOYMENT_ID = $%d", paramIndex)
 	sqQueryString := sqBase + " WHERE " + strings.Join(sqConditions, " AND ") +
-		" AND ia1.DEPLOYMENT_ID = ?"
+		fmt.Sprintf(" AND ia1.DEPLOYMENT_ID = $%d", paramIndex)
 	args = append(args, deploymentID)
 
 	return model.DBQuery{
@@ -592,7 +575,7 @@ func buildIdentifyQueryHybrid(
 	}
 
 	postgresQuery += fmt.Sprintf(" AND e.DEPLOYMENT_ID = $%d", paramIndex)
-	sqliteQuery += " AND e.DEPLOYMENT_ID = ?"
+	sqliteQuery += fmt.Sprintf(" AND e.DEPLOYMENT_ID = $%d", paramIndex)
 	args = append(args, deploymentID)
 
 	query := model.DBQuery{
@@ -620,8 +603,8 @@ func buildGetEntitiesByIDsQuery(entityIDs []string, deploymentID string) (model.
 func buildDualColumnConditions(tablePrefix, key string, paramIndex int) (pgCond, sqCond string) {
 	attrCol := tablePrefix + AttributesColumn
 	sysCol := tablePrefix + SystemAttributesColumn
-	sqCond = fmt.Sprintf(" AND COALESCE(json_extract(%s, '$.%s'), json_extract(%s, '$.%s')) = ?",
-		sysCol, key, attrCol, key)
+	sqCond = fmt.Sprintf(" AND COALESCE(json_extract(%s, '$.%s'), json_extract(%s, '$.%s')) = $%d",
+		sysCol, key, attrCol, key, paramIndex)
 	if strings.Contains(key, ".") {
 		parts := strings.Split(key, ".")
 		pathArray := "{" + strings.Join(parts, ",") + "}"
@@ -637,9 +620,6 @@ func buildDualColumnConditions(tablePrefix, key string, paramIndex int) (pgCond,
 // buildPaginatedQuery constructs a paginated query string with ORDER BY, LIMIT, and OFFSET clauses.
 func buildPaginatedQuery(baseQuery string, paramCount int, placeholder string) (string, error) {
 	switch placeholder {
-	case "?":
-		return fmt.Sprintf("%s ORDER BY ID LIMIT %s OFFSET %s",
-			baseQuery, placeholder, placeholder), nil
 	case "$":
 		limitPlaceholder := fmt.Sprintf("%s%d", placeholder, paramCount+1)
 		offsetPlaceholder := fmt.Sprintf("%s%d", placeholder, paramCount+2)
@@ -668,11 +648,11 @@ func buildFilterQueryWithOffset(
 	sort.Strings(keys)
 
 	postgresQuery := baseQuery
-	sqliteQuery := strings.Replace(baseQuery, "$1", "?", 1)
+	sqliteQuery := baseQuery
 
 	for i, key := range keys {
 		postgresQuery += utils.BuildPostgresJSONCondition(columnName, key, paramOffset+i+1)
-		sqliteQuery += utils.BuildSQLiteJSONCondition(columnName, key)
+		sqliteQuery += utils.BuildSQLiteJSONCondition(columnName, key, paramOffset+i+1)
 		args = append(args, filters[key])
 	}
 

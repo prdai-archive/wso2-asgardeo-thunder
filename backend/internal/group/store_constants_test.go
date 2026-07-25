@@ -56,7 +56,7 @@ func (suite *StoreConstantsTestSuite) TestBuildGetGroupsByIDsQuery_SingleID() {
 		query.PostgresQuery,
 	)
 	suite.Equal(
-		`SELECT ID, OU_ID, NAME, DESCRIPTION FROM "GROUP" WHERE ID IN (?) AND DEPLOYMENT_ID = ?`,
+		`SELECT ID, OU_ID, NAME, DESCRIPTION FROM "GROUP" WHERE ID IN ($1) AND DEPLOYMENT_ID = $2`,
 		query.SQLiteQuery,
 	)
 	suite.Len(args, 2)
@@ -76,7 +76,7 @@ func (suite *StoreConstantsTestSuite) TestBuildGetGroupsByIDsQuery_MultipleIDs()
 		query.PostgresQuery,
 	)
 	suite.Equal(
-		`SELECT ID, OU_ID, NAME, DESCRIPTION FROM "GROUP" WHERE ID IN (?,?,?) AND DEPLOYMENT_ID = ?`,
+		`SELECT ID, OU_ID, NAME, DESCRIPTION FROM "GROUP" WHERE ID IN ($1,$2,$3) AND DEPLOYMENT_ID = $4`,
 		query.SQLiteQuery,
 	)
 	suite.Len(args, 4)
@@ -107,7 +107,7 @@ func (suite *StoreConstantsTestSuite) TestBuildBulkGroupExistsQuery_SingleID() {
 		query.PostgresQuery,
 	)
 	suite.Equal(
-		`SELECT ID FROM "GROUP" WHERE ID IN (?) AND DEPLOYMENT_ID = ?`,
+		`SELECT ID FROM "GROUP" WHERE ID IN ($1) AND DEPLOYMENT_ID = $2`,
 		query.SQLiteQuery,
 	)
 	suite.Len(args, 2)
@@ -127,7 +127,7 @@ func (suite *StoreConstantsTestSuite) TestBuildBulkGroupExistsQuery_MultipleIDs(
 		query.PostgresQuery,
 	)
 	suite.Equal(
-		`SELECT ID FROM "GROUP" WHERE ID IN (?,?,?) AND DEPLOYMENT_ID = ?`,
+		`SELECT ID FROM "GROUP" WHERE ID IN ($1,$2,$3) AND DEPLOYMENT_ID = $4`,
 		query.SQLiteQuery,
 	)
 	suite.Len(args, 4)
@@ -157,14 +157,14 @@ func TestBuildGetGroupListCountByOUIDsQuery(t *testing.T) {
 			name:           "Single item",
 			ouIDs:          []string{"ou1"},
 			expectedPG:     `SELECT COUNT(*) as total FROM "GROUP" WHERE OU_ID IN ($1) AND DEPLOYMENT_ID = $2`,
-			expectedSQLite: `SELECT COUNT(*) as total FROM "GROUP" WHERE OU_ID IN (?) AND DEPLOYMENT_ID = ?`,
+			expectedSQLite: `SELECT COUNT(*) as total FROM "GROUP" WHERE OU_ID IN ($1) AND DEPLOYMENT_ID = $2`,
 			expectedArgs:   []interface{}{"ou1", deploymentID},
 		},
 		{
 			name:           "Multiple items",
 			ouIDs:          []string{"ou1", "ou2", "ou3"},
 			expectedPG:     `SELECT COUNT(*) as total FROM "GROUP" WHERE OU_ID IN ($1,$2,$3) AND DEPLOYMENT_ID = $4`,
-			expectedSQLite: `SELECT COUNT(*) as total FROM "GROUP" WHERE OU_ID IN (?,?,?) AND DEPLOYMENT_ID = ?`,
+			expectedSQLite: `SELECT COUNT(*) as total FROM "GROUP" WHERE OU_ID IN ($1,$2,$3) AND DEPLOYMENT_ID = $4`,
 			expectedArgs:   []interface{}{"ou1", "ou2", "ou3", deploymentID},
 		},
 	}
@@ -201,7 +201,7 @@ func TestBuildGetGroupListByOUIDsQuery(t *testing.T) {
 			expectedPG: `SELECT ID, OU_ID, NAME, DESCRIPTION FROM "GROUP" ` +
 				`WHERE OU_ID IN ($1) AND DEPLOYMENT_ID = $2 ORDER BY NAME LIMIT $3 OFFSET $4`,
 			expectedSQLite: `SELECT ID, OU_ID, NAME, DESCRIPTION FROM "GROUP" ` +
-				`WHERE OU_ID IN (?) AND DEPLOYMENT_ID = ? ORDER BY NAME LIMIT ? OFFSET ?`,
+				`WHERE OU_ID IN ($1) AND DEPLOYMENT_ID = $2 ORDER BY NAME LIMIT $3 OFFSET $4`,
 			expectedArgs: []interface{}{"ou1", deploymentID, limit, offset},
 		},
 		{
@@ -210,7 +210,7 @@ func TestBuildGetGroupListByOUIDsQuery(t *testing.T) {
 			expectedPG: `SELECT ID, OU_ID, NAME, DESCRIPTION FROM "GROUP" ` +
 				`WHERE OU_ID IN ($1,$2,$3) AND DEPLOYMENT_ID = $4 ORDER BY NAME LIMIT $5 OFFSET $6`,
 			expectedSQLite: `SELECT ID, OU_ID, NAME, DESCRIPTION FROM "GROUP" ` +
-				`WHERE OU_ID IN (?,?,?) AND DEPLOYMENT_ID = ? ORDER BY NAME LIMIT ? OFFSET ?`,
+				`WHERE OU_ID IN ($1,$2,$3) AND DEPLOYMENT_ID = $4 ORDER BY NAME LIMIT $5 OFFSET $6`,
 			expectedArgs: []interface{}{"ou1", "ou2", "ou3", deploymentID, limit, offset},
 		},
 	}
