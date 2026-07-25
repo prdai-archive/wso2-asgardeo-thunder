@@ -18,12 +18,11 @@
 
 import {render, screen} from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import {AuthenticatorTypes, IdentityProviderTypes, type IdentityProvider} from '@thunderid/configure-connections';
 import {describe, it, expect, beforeEach, vi} from 'vitest';
 import ConfigureSignInOptions, {type ConfigureSignInOptionsProps} from '../ConfigureSignInOptions';
 import type {BasicFlowDefinition} from '@/features/flows/models/responses';
 import findMatchingFlowForIntegrations from '@/features/flows/utils/findMatchingFlowForIntegrations';
-import {AuthenticatorTypes} from '@/features/integrations/models/authenticators';
-import {IdentityProviderTypes, type IdentityProvider} from '@/features/integrations/models/identity-provider';
 
 // Mock react-i18next
 vi.mock('react-i18next', () => ({
@@ -53,8 +52,9 @@ interface MockIdentityProviderResponse {
   error: Error | null;
 }
 const mockUseIdentityProviders = vi.fn<() => MockIdentityProviderResponse>();
-vi.mock('@/features/integrations/api/useIdentityProviders', () => ({
-  default: () => mockUseIdentityProviders(),
+vi.mock('@thunderid/configure-connections', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@thunderid/configure-connections')>()),
+  useIdentityProviders: () => mockUseIdentityProviders(),
 }));
 
 // Mock useGetFlows
@@ -70,11 +70,13 @@ vi.mock('@/features/flows/api/useGetFlows', () => ({
 
 // Mock useApplicationCreateContext - need to mock the correct path used by the component
 const mockSetSelectedAuthFlow = vi.fn();
+const mockSetIntegrations = vi.fn();
 const mockSelectedAuthFlow: BasicFlowDefinition | null = null;
 vi.mock('@/features/applications/hooks/useApplicationCreateContext', () => ({
   default: () => ({
     selectedAuthFlow: mockSelectedAuthFlow,
     setSelectedAuthFlow: mockSetSelectedAuthFlow,
+    setIntegrations: mockSetIntegrations,
   }),
 }));
 
@@ -103,7 +105,7 @@ vi.mock('../IndividualMethodsToggleView', () => ({
       <button
         type="button"
         data-testid="toggle-basic-auth"
-        onClick={() => onIntegrationToggle(AuthenticatorTypes.BASIC_AUTH)}
+        onClick={() => onIntegrationToggle(AuthenticatorTypes.CREDENTIALS_AUTH)}
       >
         Toggle Basic Auth
       </button>
@@ -142,7 +144,7 @@ describe('ConfigureSignInOptions', () => {
 
   const defaultProps: ConfigureSignInOptionsProps = {
     integrations: {
-      [AuthenticatorTypes.BASIC_AUTH]: false,
+      [AuthenticatorTypes.CREDENTIALS_AUTH]: false,
     },
     onIntegrationToggle: mockOnIntegrationToggle,
     onReadyChange: mockOnReadyChange,
@@ -249,7 +251,7 @@ describe('ConfigureSignInOptions', () => {
     it('should show warning when no options are selected', () => {
       renderComponent({
         integrations: {
-          [AuthenticatorTypes.BASIC_AUTH]: false,
+          [AuthenticatorTypes.CREDENTIALS_AUTH]: false,
         },
       });
 
@@ -259,7 +261,7 @@ describe('ConfigureSignInOptions', () => {
     it('should not show warning when at least one option is selected', () => {
       renderComponent({
         integrations: {
-          [AuthenticatorTypes.BASIC_AUTH]: true,
+          [AuthenticatorTypes.CREDENTIALS_AUTH]: true,
         },
       });
 
@@ -274,7 +276,7 @@ describe('ConfigureSignInOptions', () => {
 
       await user.click(screen.getByTestId('toggle-basic-auth'));
 
-      expect(mockOnIntegrationToggle).toHaveBeenCalledWith(AuthenticatorTypes.BASIC_AUTH);
+      expect(mockOnIntegrationToggle).toHaveBeenCalledWith(AuthenticatorTypes.CREDENTIALS_AUTH);
     });
 
     it('should select matching flow when integration toggle matches a flow', async () => {
@@ -314,7 +316,7 @@ describe('ConfigureSignInOptions', () => {
     it('should call onReadyChange with false when no options are selected', () => {
       renderComponent({
         integrations: {
-          [AuthenticatorTypes.BASIC_AUTH]: false,
+          [AuthenticatorTypes.CREDENTIALS_AUTH]: false,
         },
       });
 
@@ -324,7 +326,7 @@ describe('ConfigureSignInOptions', () => {
     it('should call onReadyChange with true when at least one option is selected', () => {
       renderComponent({
         integrations: {
-          [AuthenticatorTypes.BASIC_AUTH]: true,
+          [AuthenticatorTypes.CREDENTIALS_AUTH]: true,
         },
       });
 
@@ -335,7 +337,7 @@ describe('ConfigureSignInOptions', () => {
       expect(() => {
         render(
           <ConfigureSignInOptions
-            integrations={{[AuthenticatorTypes.BASIC_AUTH]: false}}
+            integrations={{[AuthenticatorTypes.CREDENTIALS_AUTH]: false}}
             onIntegrationToggle={mockOnIntegrationToggle}
           />,
         );

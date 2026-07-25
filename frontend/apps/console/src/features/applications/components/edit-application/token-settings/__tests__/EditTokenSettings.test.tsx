@@ -98,6 +98,15 @@ vi.mock('../TokenUserAttributesSection', () => ({
   },
 }));
 
+vi.mock('../ScopeSection', () => ({
+  default: ({scopes, disabled}: {scopes: string[]; disabled?: boolean}) => (
+    <div data-testid="scope-section">
+      Scopes: {scopes.join(', ')}
+      {disabled && <span data-testid="scope-section-disabled" />}
+    </div>
+  ),
+}));
+
 // TokenValidationSection is called with tokenType="oauth" in OAuth mode and
 // tokenType="shared" in native mode. The mock splits "oauth" into separate
 // access, id, and refresh testids to match test expectations.
@@ -192,14 +201,22 @@ describe('EditTokenSettings', () => {
       expect(screen.queryByTestId('token-user-attributes-section-id')).not.toBeInTheDocument();
       expect(screen.queryByTestId('token-validation-section-id')).not.toBeInTheDocument();
     });
+
+    it('should not render scope section in native mode', () => {
+      render(<EditTokenSettings application={mockApplication} onFieldChange={mockOnFieldChange} />);
+
+      expect(screen.queryByTestId('scope-section')).not.toBeInTheDocument();
+    });
   });
 
   describe('OAuth2/OIDC Mode', () => {
     const mockOAuth2Config: OAuth2Config = {
       token: {
         accessToken: {
-          validityPeriod: 1800,
-          userAttributes: ['sub', 'email'],
+          userConfig: {
+            validityPeriod: 1800,
+            attributes: ['sub', 'email'],
+          },
         },
         idToken: {
           validityPeriod: 3600,
@@ -259,6 +276,18 @@ describe('EditTokenSettings', () => {
       expect(screen.getByTestId('token-validation-section-id')).toBeInTheDocument();
     });
 
+    it('should render scope section in OAuth mode', () => {
+      render(
+        <EditTokenSettings
+          application={mockApplication}
+          oauth2Config={mockOAuth2Config}
+          onFieldChange={mockOnFieldChange}
+        />,
+      );
+
+      expect(screen.getByTestId('scope-section')).toBeInTheDocument();
+    });
+
     it('should not render shared token sections in OAuth mode', () => {
       render(
         <EditTokenSettings
@@ -312,7 +341,7 @@ describe('EditTokenSettings', () => {
     it('should render all sections for OAuth mode', () => {
       const mockOAuth2Config: OAuth2Config = {
         token: {
-          accessToken: {validityPeriod: 1800, userAttributes: []},
+          accessToken: {userConfig: {validityPeriod: 1800, attributes: []}},
           idToken: {validityPeriod: 3600, userAttributes: []},
           refreshToken: {validityPeriod: 86400},
         },

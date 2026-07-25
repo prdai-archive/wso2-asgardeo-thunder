@@ -23,14 +23,13 @@ import (
 	"errors"
 	"fmt"
 
-	authncm "github.com/thunder-id/thunderid/internal/authn/common"
-	"github.com/thunder-id/thunderid/internal/entityprovider"
 	"github.com/thunder-id/thunderid/internal/flow/common"
 	"github.com/thunder-id/thunderid/internal/flow/core"
 	"github.com/thunder-id/thunderid/internal/system/log"
+	"github.com/thunder-id/thunderid/pkg/thunderidengine/providers"
 )
 
-var _ core.ExecutorInterface = (*federatedAuthResolverExecutor)(nil)
+var _ providers.Executor = (*federatedAuthResolverExecutor)(nil)
 
 const (
 	federatedAuthResolverLoggerComponentName = "FederatedAuthResolverExecutor"
@@ -44,42 +43,46 @@ const (
 // to set AuthenticatedUser. It should only be used after a federated auth step (e.g., Google,
 // GitHub) has already verified the user's identity.
 type federatedAuthResolverExecutor struct {
-	core.ExecutorInterface
-	logger *log.Logger
+	providers.Executor
+	authnProvider providers.AuthnProviderManager
+	logger        *log.Logger
 }
 
 // newFederatedAuthResolverExecutor creates a new instance of FederatedAuthResolverExecutor.
 func newFederatedAuthResolverExecutor(
 	flowFactory core.FlowFactoryInterface,
+	authnProvider providers.AuthnProviderManager,
 ) *federatedAuthResolverExecutor {
 	logger := log.GetLogger().With(
 		log.String(log.LoggerKeyComponentName, federatedAuthResolverLoggerComponentName),
 		log.String(log.LoggerKeyExecutorName, ExecutorNameFederatedAuthResolver))
 
 	base := flowFactory.CreateExecutor(ExecutorNameFederatedAuthResolver,
-		common.ExecutorTypeAuthentication, nil, nil)
+		providers.ExecutorTypeAuthentication, nil, nil, &providers.ExecutorMeta{})
 
 	return &federatedAuthResolverExecutor{
-		ExecutorInterface: base,
-		logger:            logger,
+		Executor:      base,
+		authnProvider: authnProvider,
+		logger:        logger,
 	}
 }
 
 // Execute resolves the disambiguated user from stored candidates using the provided user inputs.
 // It filters candidates generically against all user inputs (e.g., ouHandle, userType, or any
 // attribute), matching the same pattern used by the IdentifyingExecutor's filterUsersByAttributes.
-func (f *federatedAuthResolverExecutor) Execute(ctx *core.NodeContext) (*common.ExecutorResponse, error) {
+func (f *federatedAuthResolverExecutor) Execute(ctx *providers.NodeContext) (*providers.ExecutorResponse, error) {
 	logger := f.logger.With(log.String(log.LoggerKeyExecutionID, ctx.ExecutionID))
-	logger.Debug("Executing federated auth resolver")
+	logger.Debug(ctx.Context, "Executing federated auth resolver")
 
-	execResp := &common.ExecutorResponse{
+	execResp := &providers.ExecutorResponse{
 		AdditionalData: make(map[string]string),
 		RuntimeData:    make(map[string]string),
+		AuthUser:       ctx.AuthUser,
 	}
 
 	if !f.HasRequiredInputs(ctx, execResp) {
-		logger.Debug("Required inputs not provided")
-		execResp.Status = common.ExecUserInputRequired
+		logger.Debug(ctx.Context, "Required inputs not provided")
+		execResp.Status = providers.ExecUserInputRequired
 		return execResp, nil
 	}
 
@@ -88,7 +91,7 @@ func (f *federatedAuthResolverExecutor) Execute(ctx *core.NodeContext) (*common.
 		return nil, errors.New("no stored candidates found in runtime data")
 	}
 
-	var candidates []*entityprovider.Entity
+	var candidates []*providers.Entity
 	if err := json.Unmarshal([]byte(storedCandidates), &candidates); err != nil {
 		return nil, fmt.Errorf("failed to deserialize candidate users: %w", err)
 	}
@@ -112,10 +115,10 @@ func (f *federatedAuthResolverExecutor) Execute(ctx *core.NodeContext) (*common.
 	matched := filterUsersByAttributes(candidates, filters)
 
 	if len(matched) == 0 {
-		logger.Debug("No user matched the provided selection")
-		execResp.Status = common.ExecUserInputRequired
+		logger.Debug(ctx.Context, "No user matched the provided selection")
+		execResp.Status = providers.ExecUserInputRequired
 		execResp.Inputs = f.GetRequiredInputs(ctx)
-		execResp.FailureReason = failureReasonUserNotFound
+		execResp.Error = &ErrUserNotFound
 		return execResp, nil
 	}
 
@@ -123,9 +126,9 @@ func (f *federatedAuthResolverExecutor) Execute(ctx *core.NodeContext) (*common.
 		// Still ambiguous — extract remaining disambiguation options and request more input
 		options := extractDisambiguationOptions(matched)
 		if len(options) == 0 {
-			logger.Debug("Candidates are indistinguishable, no further disambiguation possible")
-			execResp.Status = common.ExecFailure
-			execResp.FailureReason = failureReasonFailedToIdentifyUser
+			logger.Debug(ctx.Context, "Candidates are indistinguishable, no further disambiguation possible")
+			execResp.Status = providers.ExecFailure
+			execResp.Error = &ErrFailedToIdentifyUser
 			return execResp, nil
 		}
 
@@ -134,12 +137,12 @@ func (f *federatedAuthResolverExecutor) Execute(ctx *core.NodeContext) (*common.
 			return nil, errors.New("failed to serialize remaining candidates")
 		}
 		execResp.RuntimeData[common.RuntimeKeyCandidateUsers] = string(candidatesJSON)
-		execResp.Status = common.ExecUserInputRequired
+		execResp.Status = providers.ExecUserInputRequired
 		execResp.ForwardedData = map[string]interface{}{
 			common.ForwardedDataKeyInputs: options,
 		}
 
-		logger.Debug("Multiple users still match, requesting additional attributes",
+		logger.Debug(ctx.Context, "Multiple users still match, requesting additional attributes",
 			log.Int("candidateCount", len(matched)))
 		return execResp, nil
 	}
@@ -151,23 +154,32 @@ func (f *federatedAuthResolverExecutor) Execute(ctx *core.NodeContext) (*common.
 	// proof of federated authentication, so we must fail closed.
 	sub, hasSub := ctx.RuntimeData[userAttributeSub]
 	if !hasSub || sub == "" {
-		logger.Debug("No federated sub claim found, cannot authenticate")
-		execResp.Status = common.ExecFailure
-		execResp.FailureReason = failureReasonUserNotAuthenticated
+		logger.Debug(ctx.Context, "No federated sub claim found, cannot authenticate")
+		execResp.Status = providers.ExecFailure
+		execResp.Error = &ErrUserNotAuthenticated
 		return execResp, nil
 	}
 
-	execResp.Status = common.ExecComplete
-	execResp.RuntimeData[userAttributeSub] = sub
-	execResp.AuthenticatedUser = authncm.AuthenticatedUser{
-		IsAuthenticated: true,
-		UserID:          resolvedUser.ID,
-		OUID:            resolvedUser.OUID,
-		UserType:        resolvedUser.Type,
+	identifiers := map[string]interface{}{
+		userAttributeUserID: resolvedUser.ID,
+	}
+	credentials := map[string]interface{}{
+		userAttributeSub: sub,
+	}
+	metadata := core.BuildProviderMetadata(ctx)
+	authUser, _, err := f.authnProvider.AuthenticateUser(
+		ctx.Context, identifiers, credentials, nil, metadata, execResp.AuthUser)
+	execResp.AuthUser = authUser
+	if err != nil {
+		logger.Debug(ctx.Context, "Failed to authenticate resolved user")
+		execResp.Status = providers.ExecFailure
+		execResp.Error = &ErrUserNotAuthenticated
+		return execResp, nil
 	}
 
-	logger.Debug("Federated auth resolver completed successfully",
+	logger.Debug(ctx.Context, "Federated auth resolver completed successfully",
 		log.MaskedString("userID", resolvedUser.ID))
 
+	execResp.Status = providers.ExecComplete
 	return execResp, nil
 }

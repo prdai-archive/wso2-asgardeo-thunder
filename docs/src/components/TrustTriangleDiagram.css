@@ -1,0 +1,109 @@
+/* Trust Triangle Diagram — Issuer / Holder / Verifier VC flow */
+
+.tt-diagram {
+  margin: 1.5rem 0 2.5rem;
+}
+
+.tt-diagram__svg {
+  width: 100%;
+  height: auto;
+  max-width: 600px;
+  display: block;
+  margin: 0 auto;
+  color: color-mix(in srgb, var(--ifm-color-primary) 45%, var(--ifm-color-emphasis-400));
+}
+
+.tt-diagram__svg text {
+  fill: var(--ifm-font-color-base);
+  font-size: 12px;
+  font-family: var(--ifm-font-family-base);
+}
+
+/* ── Node cards ─────────────────────────────────────────────── */
+.tt-diagram__node rect {
+  fill: var(--ifm-background-surface-color);
+  stroke: var(--ifm-color-emphasis-200);
+  stroke-width: 1.5;
+}
+
+[data-theme='dark'] .tt-diagram__node rect {
+  fill: rgba(255, 255, 255, 0.05);
+  stroke: rgba(255, 255, 255, 0.10);
+}
+
+/* ── Trust line (Issuer ←→ Verifier) ───────────────────────── */
+.tt-diagram__trust-line {
+  stroke: color-mix(in srgb, var(--ifm-color-primary) 40%, var(--ifm-color-emphasis-300));
+  stroke-width: 1.5;
+  stroke-dasharray: 6,5;
+}
+
+.tt-diagram__trust-label {
+  font-size: 13px !important;
+  font-weight: 700;
+  fill: color-mix(in srgb, var(--ifm-color-primary) 70%, var(--ifm-font-color-base)) !important;
+}
+
+.tt-diagram__trust-sub {
+  font-size: 10px !important;
+  fill: var(--ifm-color-emphasis-600) !important;
+  font-style: italic;
+}
+
+/* ── Coloured icon backgrounds ──────────────────────────────── */
+.tt-diagram__icon-bg {
+  stroke: none;
+}
+
+.tt-diagram__icon-bg--issuer  { fill: rgba(245, 158,  11, 0.14); }
+.tt-diagram__icon-bg--holder  { fill: rgba( 59, 130, 246, 0.14); }
+.tt-diagram__icon-bg--verifier{ fill: rgba(139,  92, 246, 0.14); }
+
+[data-theme='dark'] .tt-diagram__icon-bg--issuer  { fill: rgba(245, 158,  11, 0.22); }
+[data-theme='dark'] .tt-diagram__icon-bg--holder  { fill: rgba( 59, 130, 246, 0.22); }
+[data-theme='dark'] .tt-diagram__icon-bg--verifier{ fill: rgba(139,  92, 246, 0.22); }
+
+/* ── Entity pictogram icons ─────────────────────────────────── */
+.tt-diagram__icon * {
+  fill: none;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.tt-diagram__icon--issuer  * { stroke: #d97706; }
+.tt-diagram__icon--holder  * { stroke: #2563eb; }
+.tt-diagram__icon--verifier* { stroke: #7c3aed; }
+
+[data-theme='dark'] .tt-diagram__icon--issuer  * { stroke: #fbbf24; }
+[data-theme='dark'] .tt-diagram__icon--holder  * { stroke: #60a5fa; }
+[data-theme='dark'] .tt-diagram__icon--verifier* { stroke: #a78bfa; }
+
+/* ── Edges ───────────────────────────────────────────────────── */
+.tt-diagram__edges line {
+  stroke: currentColor;
+  stroke-width: 1.4;
+}
+
+/* ── Text ────────────────────────────────────────────────────── */
+.tt-diagram__box-title {
+  font-weight: 700;
+  font-size: 14px !important;
+}
+
+.tt-diagram__box-sub {
+  font-size: 11px !important;
+  fill: var(--ifm-color-emphasis-700) !important;
+  font-style: italic;
+}
+
+.tt-diagram__edge-label {
+  font-size: 11px !important;
+  fill: var(--ifm-color-emphasis-800) !important;
+  font-weight: 600;
+}
+
+.tt-diagram__edge-num {
+  font-size: 16px !important;
+  font-weight: 700;
+}

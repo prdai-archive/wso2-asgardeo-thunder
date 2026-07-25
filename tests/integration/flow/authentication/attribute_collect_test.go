@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2025, WSO2 LLC. (https://www.wso2.com).
+ * Copyright (c) 2025-2026, WSO2 LLC. (https://www.wso2.com).
  *
  * WSO2 LLC. licenses this file to you under the Apache License,
  * Version 2.0 (the "License"); you may not use this file except
@@ -22,9 +22,9 @@ import (
 	"encoding/json"
 	"testing"
 
+	"github.com/stretchr/testify/suite"
 	"github.com/thunder-id/thunderid/tests/integration/flow/common"
 	"github.com/thunder-id/thunderid/tests/integration/testutils"
-	"github.com/stretchr/testify/suite"
 )
 
 var (
@@ -36,13 +36,13 @@ var (
 			{
 				"id":        "start",
 				"type":      "START",
-				"onSuccess": "basic_auth",
+				"onSuccess": "credentials_auth",
 			},
 			{
-				"id":   "basic_auth",
+				"id":   "credentials_auth",
 				"type": "TASK_EXECUTION",
 				"executor": map[string]interface{}{
-					"name": "BasicAuthExecutor",
+					"name": "CredentialsAuthExecutor",
 				},
 				"onSuccess": "attribute_collect",
 			},
@@ -72,7 +72,7 @@ var (
 						},
 						{
 							"ref":        "input_006",
-							"identifier": "mobileNumber",
+							"identifier": "mobile_number",
 							"type":       "TEXT_INPUT",
 							"required":   false,
 						},
@@ -134,7 +134,7 @@ var (
 			"email": map[string]interface{}{
 				"type": "string",
 			},
-			"mobileNumber": map[string]interface{}{
+			"mobile_number": map[string]interface{}{
 				"type": "string",
 			},
 		},
@@ -167,7 +167,7 @@ var (
 			"given_name": "Full",
 			"family_name": "User",
 			"email": "fulluser@example.com",
-			"mobileNumber": "+1234567890"
+			"mobile_number": "+1234567890"
 		}`),
 	}
 
@@ -252,29 +252,29 @@ func (ts *AttributeCollectFlowTestSuite) SetupSuite() {
 		{
 			name:                 "UserWithNoAttributes",
 			user:                 testUserNoAttributes,
-			expectedMissingAttrs: []string{"given_name", "family_name", "email", "mobileNumber"},
+			expectedMissingAttrs: []string{"given_name", "family_name", "email", "mobile_number"},
 			credentials: map[string]string{
 				"username": "noattrsuser",
 				"password": "testpassword",
 			},
 			providedAttrs: map[string]string{
-				"given_name":   "John",
-				"family_name":  "Doe",
-				"email":        "john.doe@example.com",
-				"mobileNumber": "+1987654321",
+				"given_name":    "John",
+				"family_name":   "Doe",
+				"email":         "john.doe@example.com",
+				"mobile_number": "+1987654321",
 			},
 		},
 		{
 			name:                 "UserWithPartialAttributes",
 			user:                 testUserPartialAttributes,
-			expectedMissingAttrs: []string{"email", "mobileNumber"},
+			expectedMissingAttrs: []string{"email", "mobile_number"},
 			credentials: map[string]string{
 				"username": "partialuser",
 				"password": "testpassword",
 			},
 			providedAttrs: map[string]string{
-				"email":        "partial@example.com",
-				"mobileNumber": "+1555666777",
+				"email":         "partial@example.com",
+				"mobile_number": "+1555666777",
 			},
 		},
 		{
@@ -412,12 +412,12 @@ func (ts *AttributeCollectFlowTestSuite) TestSingleRequestLogin_WithAllInputs() 
 
 	// Provide all required inputs in a single request
 	allInputs := map[string]string{
-		"username":     "fulluser",
-		"password":     "testpassword",
-		"given_name":   "Full",
-		"family_name":  "User",
-		"email":        "john.doe2@example.com",
-		"mobileNumber": "+1987654345",
+		"username":      "fulluser",
+		"password":      "testpassword",
+		"given_name":    "Full",
+		"family_name":   "User",
+		"email":         "john.doe2@example.com",
+		"mobile_number": "+1987654345",
 	}
 	finalStep, err := common.CompleteFlow(flowStep.ExecutionID, allInputs, "", flowStep.ChallengeToken)
 	ts.Require().NoError(err, "Failed to complete authentication with all inputs")
@@ -436,9 +436,9 @@ func (ts *AttributeCollectFlowTestSuite) TestInvalidCredentials() {
 
 	errorResp, err := common.CompleteFlow(flowStep.ExecutionID, invalidCredentials, "", flowStep.ChallengeToken)
 	ts.Require().NoError(err, "Expected error response for invalid credentials")
-	ts.Require().NotEmpty(errorResp.FailureReason, "Expected failure reason for invalid credentials")
-	ts.Require().Contains(errorResp.FailureReason, "User not found",
-		"Expected failure reason to indicate user not found")
+	ts.Require().NotNil(errorResp.Error, "Expected error for invalid credentials")
+	ts.Require().Contains(errorResp.Error.Message.DefaultValue, "User not found",
+		"Expected error message to indicate user not found")
 }
 
 func (ts *AttributeCollectFlowTestSuite) validateRequiredInputs(actualInputs []common.Inputs,
@@ -467,7 +467,7 @@ func (ts *AttributeCollectFlowTestSuite) validateRequiredInputs(actualInputs []c
 		}
 
 		// Check if required field is set correctly based on the flow definition
-		if expectedName == "mobileNumber" {
+		if expectedName == "mobile_number" {
 			ts.Require().False(input.Required, "Expected input '%s' to be optional", expectedName)
 		} else {
 			ts.Require().True(input.Required, "Expected input '%s' to be required", expectedName)

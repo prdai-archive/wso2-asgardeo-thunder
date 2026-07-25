@@ -21,13 +21,14 @@ package executor
 import (
 	"testing"
 
+	"github.com/thunder-id/thunderid/pkg/thunderidengine/providers"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/suite"
 
 	"github.com/thunder-id/thunderid/internal/entityprovider"
-	"github.com/thunder-id/thunderid/internal/flow/common"
-	"github.com/thunder-id/thunderid/internal/flow/core"
+	"github.com/thunder-id/thunderid/tests/mocks/authnprovider/managermock"
 	"github.com/thunder-id/thunderid/tests/mocks/entityprovidermock"
 	"github.com/thunder-id/thunderid/tests/mocks/flow/coremock"
 )
@@ -36,6 +37,7 @@ type CredentialSetterTestSuite struct {
 	suite.Suite
 	mockFlowFactory    *coremock.FlowFactoryInterfaceMock
 	mockEntityProvider *entityprovidermock.EntityProviderInterfaceMock
+	mockAuthnProvider  *managermock.AuthnProviderManagerMock
 	mockBaseExecutor   *coremock.ExecutorInterfaceMock
 	executor           *credentialSetter
 }
@@ -43,27 +45,28 @@ type CredentialSetterTestSuite struct {
 func (suite *CredentialSetterTestSuite) SetupTest() {
 	suite.mockFlowFactory = coremock.NewFlowFactoryInterfaceMock(suite.T())
 	suite.mockEntityProvider = entityprovidermock.NewEntityProviderInterfaceMock(suite.T())
+	suite.mockAuthnProvider = managermock.NewAuthnProviderManagerMock(suite.T())
 	suite.mockBaseExecutor = coremock.NewExecutorInterfaceMock(suite.T())
 
 	suite.mockFlowFactory.On("CreateExecutor",
 		ExecutorNameCredentialSetter,
-		common.ExecutorTypeRegistration,
+		providers.ExecutorTypeRegistration,
 		mock.Anything,
-		[]common.Input{
+		[]providers.Input{
 			{
 				Identifier: userAttributeUserID,
-				Type:       common.InputTypeText,
+				Type:       providers.InputTypeText,
 				Required:   true,
 			},
-		}).Return(suite.mockBaseExecutor)
+		}, mock.Anything).Return(suite.mockBaseExecutor)
 
-	suite.executor = newCredentialSetter(suite.mockFlowFactory, suite.mockEntityProvider)
+	suite.executor = newCredentialSetter(suite.mockFlowFactory, suite.mockEntityProvider, suite.mockAuthnProvider)
 }
 
 func (suite *CredentialSetterTestSuite) TestExecute_Success() {
 	userID := testUserID
 	password := "securePass123!"
-	ctx := &core.NodeContext{
+	ctx := &providers.NodeContext{
 		ExecutionID: "test-flow",
 		UserInputs: map[string]string{
 			userAttributePassword: password,
@@ -74,12 +77,12 @@ func (suite *CredentialSetterTestSuite) TestExecute_Success() {
 	}
 
 	suite.mockBaseExecutor.On("HasRequiredInputs", ctx, mock.Anything).Return(true)
-	suite.mockBaseExecutor.On("ValidatePrerequisites", ctx, mock.Anything).Return(true)
-	suite.mockBaseExecutor.On("GetUserIDFromContext", ctx).Return(userID)
-	suite.mockBaseExecutor.On("GetRequiredInputs", ctx).Return([]common.Input{
+	suite.mockBaseExecutor.On("ValidatePrerequisites", ctx, mock.Anything, mock.Anything).Return(true)
+	suite.mockBaseExecutor.On("GetUserIDFromContext", ctx, mock.Anything, mock.Anything).Return(userID)
+	suite.mockBaseExecutor.On("GetRequiredInputs", ctx).Return([]providers.Input{
 		{
 			Identifier: userAttributePassword,
-			Type:       common.InputTypePassword,
+			Type:       providers.InputTypePassword,
 			Required:   true,
 		},
 	})
@@ -90,11 +93,11 @@ func (suite *CredentialSetterTestSuite) TestExecute_Success() {
 	resp, err := suite.executor.Execute(ctx)
 
 	assert.NoError(suite.T(), err)
-	assert.Equal(suite.T(), common.ExecComplete, resp.Status)
+	assert.Equal(suite.T(), providers.ExecComplete, resp.Status)
 }
 
 func (suite *CredentialSetterTestSuite) TestExecute_MissingInput() {
-	ctx := &core.NodeContext{
+	ctx := &providers.NodeContext{
 		ExecutionID: "test-flow",
 		UserInputs:  make(map[string]string),
 	}
@@ -104,11 +107,11 @@ func (suite *CredentialSetterTestSuite) TestExecute_MissingInput() {
 	resp, err := suite.executor.Execute(ctx)
 
 	assert.NoError(suite.T(), err)
-	assert.Equal(suite.T(), common.ExecUserInputRequired, resp.Status)
+	assert.Equal(suite.T(), providers.ExecUserInputRequired, resp.Status)
 }
 
 func (suite *CredentialSetterTestSuite) TestExecute_MissingUserID() {
-	ctx := &core.NodeContext{
+	ctx := &providers.NodeContext{
 		ExecutionID: "test-flow",
 		UserInputs: map[string]string{
 			userAttributePassword: "password",
@@ -116,19 +119,19 @@ func (suite *CredentialSetterTestSuite) TestExecute_MissingUserID() {
 	}
 
 	suite.mockBaseExecutor.On("HasRequiredInputs", ctx, mock.Anything).Return(true)
-	suite.mockBaseExecutor.On("ValidatePrerequisites", ctx, mock.Anything).Return(true)
-	suite.mockBaseExecutor.On("GetUserIDFromContext", ctx).Return("")
+	suite.mockBaseExecutor.On("ValidatePrerequisites", ctx, mock.Anything, mock.Anything).Return(true)
+	suite.mockBaseExecutor.On("GetUserIDFromContext", ctx, mock.Anything, mock.Anything).Return("")
 
 	resp, err := suite.executor.Execute(ctx)
 
 	assert.NoError(suite.T(), err)
-	assert.Equal(suite.T(), common.ExecFailure, resp.Status)
-	assert.Equal(suite.T(), "User ID not found in flow context", resp.FailureReason)
+	assert.Equal(suite.T(), providers.ExecFailure, resp.Status)
+	assert.Equal(suite.T(), ErrUserIDMissingInContext.Code, resp.Error.Code)
 }
 
 func (suite *CredentialSetterTestSuite) TestExecute_EmptyPassword() {
 	userID := testUserID
-	ctx := &core.NodeContext{
+	ctx := &providers.NodeContext{
 		ExecutionID: "test-flow",
 		UserInputs: map[string]string{
 			userAttributePassword: "",
@@ -136,12 +139,12 @@ func (suite *CredentialSetterTestSuite) TestExecute_EmptyPassword() {
 	}
 
 	suite.mockBaseExecutor.On("HasRequiredInputs", ctx, mock.Anything).Return(true)
-	suite.mockBaseExecutor.On("ValidatePrerequisites", ctx, mock.Anything).Return(true)
-	suite.mockBaseExecutor.On("GetUserIDFromContext", ctx).Return(userID)
-	suite.mockBaseExecutor.On("GetRequiredInputs", ctx).Return([]common.Input{
+	suite.mockBaseExecutor.On("ValidatePrerequisites", ctx, mock.Anything, mock.Anything).Return(true)
+	suite.mockBaseExecutor.On("GetUserIDFromContext", ctx, mock.Anything, mock.Anything).Return(userID)
+	suite.mockBaseExecutor.On("GetRequiredInputs", ctx).Return([]providers.Input{
 		{
 			Identifier: userAttributePassword,
-			Type:       common.InputTypePassword,
+			Type:       providers.InputTypePassword,
 			Required:   true,
 		},
 	})
@@ -149,14 +152,14 @@ func (suite *CredentialSetterTestSuite) TestExecute_EmptyPassword() {
 	resp, err := suite.executor.Execute(ctx)
 
 	assert.NoError(suite.T(), err)
-	assert.Equal(suite.T(), common.ExecFailure, resp.Status)
-	assert.Equal(suite.T(), "Credential value cannot be empty", resp.FailureReason)
+	assert.Equal(suite.T(), providers.ExecFailure, resp.Status)
+	assert.Equal(suite.T(), ErrCredentialValueEmpty.Code, resp.Error.Code)
 }
 
 func (suite *CredentialSetterTestSuite) TestExecute_ServiceError() {
 	userID := testUserID
 	password := "password"
-	ctx := &core.NodeContext{
+	ctx := &providers.NodeContext{
 		ExecutionID: "test-flow",
 		UserInputs: map[string]string{
 			userAttributePassword: password,
@@ -164,12 +167,12 @@ func (suite *CredentialSetterTestSuite) TestExecute_ServiceError() {
 	}
 
 	suite.mockBaseExecutor.On("HasRequiredInputs", ctx, mock.Anything).Return(true)
-	suite.mockBaseExecutor.On("ValidatePrerequisites", ctx, mock.Anything).Return(true)
-	suite.mockBaseExecutor.On("GetUserIDFromContext", ctx).Return(userID)
-	suite.mockBaseExecutor.On("GetRequiredInputs", ctx).Return([]common.Input{
+	suite.mockBaseExecutor.On("ValidatePrerequisites", ctx, mock.Anything, mock.Anything).Return(true)
+	suite.mockBaseExecutor.On("GetUserIDFromContext", ctx, mock.Anything, mock.Anything).Return(userID)
+	suite.mockBaseExecutor.On("GetRequiredInputs", ctx).Return([]providers.Input{
 		{
 			Identifier: userAttributePassword,
-			Type:       common.InputTypePassword,
+			Type:       providers.InputTypePassword,
 			Required:   true,
 		},
 	})
@@ -180,8 +183,8 @@ func (suite *CredentialSetterTestSuite) TestExecute_ServiceError() {
 	resp, err := suite.executor.Execute(ctx)
 
 	assert.NoError(suite.T(), err)
-	assert.Equal(suite.T(), common.ExecFailure, resp.Status)
-	assert.Equal(suite.T(), "Failed to set credentials", resp.FailureReason)
+	assert.Equal(suite.T(), providers.ExecFailure, resp.Status)
+	assert.Equal(suite.T(), ErrCredentialSetFailed.Code, resp.Error.Code)
 }
 
 func (suite *CredentialSetterTestSuite) TestExecute_CustomAttribute() {
@@ -189,7 +192,7 @@ func (suite *CredentialSetterTestSuite) TestExecute_CustomAttribute() {
 	const customAttr = "pin"
 	pinValue := "1234"
 
-	ctx := &core.NodeContext{
+	ctx := &providers.NodeContext{
 		ExecutionID: "test-flow",
 		UserInputs: map[string]string{
 			customAttr: pinValue,
@@ -200,14 +203,14 @@ func (suite *CredentialSetterTestSuite) TestExecute_CustomAttribute() {
 	}
 
 	suite.mockBaseExecutor.On("HasRequiredInputs", mock.Anything, mock.Anything).Return(true)
-	suite.mockBaseExecutor.On("ValidatePrerequisites", mock.Anything, mock.Anything).Return(true)
-	suite.mockBaseExecutor.On("GetUserIDFromContext", mock.Anything).Return(userID)
+	suite.mockBaseExecutor.On("ValidatePrerequisites", mock.Anything, mock.Anything, mock.Anything).Return(true)
+	suite.mockBaseExecutor.On("GetUserIDFromContext", mock.Anything, mock.Anything, mock.Anything).Return(userID)
 
-	suite.mockBaseExecutor.On("GetRequiredInputs", mock.Anything).Return([]common.Input{
+	suite.mockBaseExecutor.On("GetRequiredInputs", mock.Anything).Return([]providers.Input{
 		{
 			Identifier: customAttr,
 			Required:   true,
-			Type:       common.InputTypeText,
+			Type:       providers.InputTypeText,
 		},
 	})
 
@@ -220,12 +223,12 @@ func (suite *CredentialSetterTestSuite) TestExecute_CustomAttribute() {
 	resp, err := suite.executor.Execute(ctx)
 
 	assert.NoError(suite.T(), err)
-	assert.Equal(suite.T(), common.ExecComplete, resp.Status)
+	assert.Equal(suite.T(), providers.ExecComplete, resp.Status)
 }
 
 func (suite *CredentialSetterTestSuite) TestExecute_NoRequiredInputs() {
 	userID := testUserID
-	ctx := &core.NodeContext{
+	ctx := &providers.NodeContext{
 		ExecutionID: "test-flow",
 		UserInputs: map[string]string{
 			userAttributePassword: "password",
@@ -236,20 +239,20 @@ func (suite *CredentialSetterTestSuite) TestExecute_NoRequiredInputs() {
 	}
 
 	suite.mockBaseExecutor.On("HasRequiredInputs", ctx, mock.Anything).Return(true)
-	suite.mockBaseExecutor.On("ValidatePrerequisites", ctx, mock.Anything).Return(true)
-	suite.mockBaseExecutor.On("GetUserIDFromContext", ctx).Return(userID)
-	suite.mockBaseExecutor.On("GetRequiredInputs", ctx).Return([]common.Input{})
+	suite.mockBaseExecutor.On("ValidatePrerequisites", ctx, mock.Anything, mock.Anything).Return(true)
+	suite.mockBaseExecutor.On("GetUserIDFromContext", ctx, mock.Anything, mock.Anything).Return(userID)
+	suite.mockBaseExecutor.On("GetRequiredInputs", ctx).Return([]providers.Input{})
 
 	resp, err := suite.executor.Execute(ctx)
 
 	assert.NoError(suite.T(), err)
-	assert.Equal(suite.T(), common.ExecFailure, resp.Status)
-	assert.Contains(suite.T(), resp.FailureReason, "No credential input configured")
+	assert.Equal(suite.T(), providers.ExecFailure, resp.Status)
+	assert.Equal(suite.T(), ErrCredentialInputMissing.Code, resp.Error.Code)
 }
 
 func (suite *CredentialSetterTestSuite) TestExecute_EmptyInputIdentifier() {
 	userID := testUserID
-	ctx := &core.NodeContext{
+	ctx := &providers.NodeContext{
 		ExecutionID: "test-flow",
 		UserInputs: map[string]string{
 			userAttributePassword: "password",
@@ -260,12 +263,12 @@ func (suite *CredentialSetterTestSuite) TestExecute_EmptyInputIdentifier() {
 	}
 
 	suite.mockBaseExecutor.On("HasRequiredInputs", ctx, mock.Anything).Return(true)
-	suite.mockBaseExecutor.On("ValidatePrerequisites", ctx, mock.Anything).Return(true)
-	suite.mockBaseExecutor.On("GetUserIDFromContext", ctx).Return(userID)
-	suite.mockBaseExecutor.On("GetRequiredInputs", ctx).Return([]common.Input{
+	suite.mockBaseExecutor.On("ValidatePrerequisites", ctx, mock.Anything, mock.Anything).Return(true)
+	suite.mockBaseExecutor.On("GetUserIDFromContext", ctx, mock.Anything, mock.Anything).Return(userID)
+	suite.mockBaseExecutor.On("GetRequiredInputs", ctx).Return([]providers.Input{
 		{
 			Identifier: "",
-			Type:       common.InputTypePassword,
+			Type:       providers.InputTypePassword,
 			Required:   true,
 		},
 	})
@@ -273,8 +276,8 @@ func (suite *CredentialSetterTestSuite) TestExecute_EmptyInputIdentifier() {
 	resp, err := suite.executor.Execute(ctx)
 
 	assert.NoError(suite.T(), err)
-	assert.Equal(suite.T(), common.ExecFailure, resp.Status)
-	assert.Contains(suite.T(), resp.FailureReason, "Invalid credential input configuration")
+	assert.Equal(suite.T(), providers.ExecFailure, resp.Status)
+	assert.Equal(suite.T(), ErrCredentialInputInvalid.Code, resp.Error.Code)
 }
 
 func TestCredentialSetterSuite(t *testing.T) {

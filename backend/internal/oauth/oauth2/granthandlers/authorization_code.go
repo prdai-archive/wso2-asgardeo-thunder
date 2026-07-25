@@ -25,7 +25,6 @@ import (
 	"time"
 
 	"github.com/thunder-id/thunderid/internal/attributecache"
-	inboundmodel "github.com/thunder-id/thunderid/internal/inboundclient/model"
 	"github.com/thunder-id/thunderid/internal/oauth/oauth2/authz"
 	"github.com/thunder-id/thunderid/internal/oauth/oauth2/constants"
 	"github.com/thunder-id/thunderid/internal/oauth/oauth2/dpop"
@@ -34,8 +33,8 @@ import (
 	"github.com/thunder-id/thunderid/internal/oauth/oauth2/resourceindicators"
 	"github.com/thunder-id/thunderid/internal/oauth/oauth2/tokenservice"
 	oauth2utils "github.com/thunder-id/thunderid/internal/oauth/oauth2/utils"
-	"github.com/thunder-id/thunderid/internal/resource"
 	"github.com/thunder-id/thunderid/internal/system/log"
+	"github.com/thunder-id/thunderid/pkg/thunderidengine/providers"
 )
 
 // authorizationCodeGrantHandler handles the authorization code grant type.
@@ -43,7 +42,7 @@ type authorizationCodeGrantHandler struct {
 	authzService    authz.AuthorizeServiceInterface
 	tokenBuilder    tokenservice.TokenBuilderInterface
 	attributeCache  attributecache.AttributeCacheServiceInterface
-	resourceService resource.ResourceServiceInterface
+	resourceService providers.ResourceServerProvider
 }
 
 // newAuthorizationCodeGrantHandler creates a new instance of AuthorizationCodeGrantHandler.
@@ -51,7 +50,7 @@ func newAuthorizationCodeGrantHandler(
 	authzService authz.AuthorizeServiceInterface,
 	tokenBuilder tokenservice.TokenBuilderInterface,
 	attributeCache attributecache.AttributeCacheServiceInterface,
-	resourceService resource.ResourceServiceInterface,
+	resourceService providers.ResourceServerProvider,
 ) GrantHandlerInterface {
 	return &authorizationCodeGrantHandler{
 		authzService:    authzService,
@@ -63,14 +62,14 @@ func newAuthorizationCodeGrantHandler(
 
 // ValidateGrant validates the authorization code grant request.
 func (h *authorizationCodeGrantHandler) ValidateGrant(ctx context.Context, tokenRequest *model.TokenRequest,
-	oauthApp *inboundmodel.OAuthClient) *model.ErrorResponse {
+	oauthApp *providers.OAuthClient) *model.ErrorResponse {
 	if tokenRequest.GrantType == "" {
 		return &model.ErrorResponse{
 			Error:            constants.ErrorInvalidRequest,
 			ErrorDescription: "Missing grant_type parameter",
 		}
 	}
-	if constants.GrantType(tokenRequest.GrantType) != constants.GrantTypeAuthorizationCode {
+	if providers.GrantType(tokenRequest.GrantType) != providers.GrantTypeAuthorizationCode {
 		return &model.ErrorResponse{
 			Error:            constants.ErrorUnsupportedGrantType,
 			ErrorDescription: "Unsupported grant type",
@@ -89,15 +88,6 @@ func (h *authorizationCodeGrantHandler) ValidateGrant(ctx context.Context, token
 		}
 	}
 
-	// TODO: Redirect uri is not mandatory when excluded in the authorize request and is valid scenario.
-	//  This should be removed when supporting other means of authorization.
-	if tokenRequest.RedirectURI == "" {
-		return &model.ErrorResponse{
-			Error:            constants.ErrorInvalidRequest,
-			ErrorDescription: "Redirect URI is required",
-		}
-	}
-
 	if errResp := resourceindicators.ValidateResourceURIs(tokenRequest.Resources); errResp != nil {
 		return errResp
 	}
@@ -107,7 +97,7 @@ func (h *authorizationCodeGrantHandler) ValidateGrant(ctx context.Context, token
 
 // HandleGrant processes the authorization code grant request and generates a token response.
 func (h *authorizationCodeGrantHandler) HandleGrant(ctx context.Context, tokenRequest *model.TokenRequest,
-	oauthApp *inboundmodel.OAuthClient) (
+	oauthApp *providers.OAuthClient) (
 	*model.TokenResponseDTO, *model.ErrorResponse) {
 	logger := log.GetLogger().With(log.String(log.LoggerKeyComponentName, "AuthorizationCodeGrantHandler"))
 
@@ -129,7 +119,8 @@ func (h *authorizationCodeGrantHandler) HandleGrant(ctx context.Context, tokenRe
 	if authCode.AttributeCacheID != "" {
 		userAttributes, err := h.attributeCache.GetAttributeCache(ctx, authCode.AttributeCacheID)
 		if err != nil {
-			logger.Error("Failed to get user attributes from attribute cache. " + err.ErrorDescription.DefaultValue)
+			logger.Error(ctx,
+				"Failed to get user attributes from attribute cache. "+err.ErrorDescription.DefaultValue)
 			return nil, &model.ErrorResponse{
 				Error:            constants.ErrorServerError,
 				ErrorDescription: "Failed to get user attributes from attribute cache",
@@ -138,70 +129,63 @@ func (h *authorizationCodeGrantHandler) HandleGrant(ctx context.Context, tokenRe
 		attrs = userAttributes.Attributes
 	}
 
-	// Always resolve the full set of resources authorized by the authz code. This is used to
-	// compute the full audiences for the refresh token (RFC 8707 §5).
-	fullRSes, errResp := resourceindicators.ResolveResourceServers(ctx, h.resourceService, authCode.Resources)
+	// Bind the token to a single target resource server. Prefer the token request's resource
+	// (validated as a subset of the code's resources); otherwise use the resource recorded on the
+	// authorization code; otherwise fall back to the configured default resource server.
+	effectiveResources := tokenRequest.Resources
+	if len(effectiveResources) == 0 {
+		effectiveResources = authCode.Resources
+	}
+
+	// Retain OIDC scopes unchanged; downscope non-OIDC scopes to permissions defined on the target RS.
+	oidcScopes, nonOidcScopes := oauth2utils.SeparateOIDCAndNonOIDCScopes(
+		strings.Join(authorizedScopes, " "), oauthApp.ScopeClaims)
+	targetRS, errResp := resourceindicators.ResolveAudienceBinding(
+		ctx, h.resourceService, effectiveResources, nonOidcScopes)
 	if errResp != nil {
 		return nil, errResp
 	}
-	fullAudiences, errResp := resourceindicators.ComposeAudiences(ctx, h.resourceService, authCode.ClientID,
-		fullRSes, authorizedScopes)
-	if errResp != nil {
-		return nil, errResp
-	}
 
-	// Default: access token carries the full audiences and all authorized scopes.
-	accessTokenAudiences := fullAudiences
-	accessTokenScopes := authorizedScopes
-
-	// Per RFC 8707 §2.1, the token request MAY narrow the resource set. When narrowing occurs,
-	// audiences and scopes are downscoped to the requested subset.
-	if len(tokenRequest.Resources) > 0 {
-		// When the auth code had explicit resources, narrow by filtering the already-resolved full set.
-		// When the auth code had no explicit resources, resolve the token-request resources directly.
-		var narrowedRSes []*resource.ResourceServer
-		if len(authCode.Resources) > 0 {
-			narrowedRSes = resourceindicators.FilterByIdentifiers(fullRSes, tokenRequest.Resources)
-		} else {
-			narrowedRSes, errResp = resourceindicators.ResolveResourceServers(
-				ctx, h.resourceService, tokenRequest.Resources)
-			if errResp != nil {
-				return nil, errResp
-			}
-		}
-		accessTokenAudiences, errResp = resourceindicators.ComposeAudiences(ctx, h.resourceService,
-			authCode.ClientID, narrowedRSes, authorizedScopes)
-		if errResp != nil {
-			return nil, errResp
-		}
-
-		// Downscope: retain OIDC scopes unchanged; filter non-OIDC scopes to only those valid on
-		// the narrowed RS set.
-		oidcScopes, nonOidcScopes := oauth2utils.SeparateOIDCAndNonOIDCScopes(
-			strings.Join(authorizedScopes, " "), oauthApp.ScopeClaims)
-		rsValidScopes, rsErr := resourceindicators.ComputeRSValidScopes(
-			ctx, h.resourceService, narrowedRSes, nonOidcScopes)
-		if rsErr != nil {
-			return nil, rsErr
-		}
-		oidcScopes = append(oidcScopes, resourceindicators.UnionScopes(rsValidScopes)...)
+	var accessTokenAudiences, accessTokenScopes []string
+	if targetRS == nil {
+		// OIDC-only (or scopeless) request with no resource: the token is not bound to a resource
+		// server, so its audience is the app's configured default audiences (falling back to the
+		// client_id) and it carries only the OIDC scopes.
+		accessTokenAudiences = []string{oauthApp.ResolveDefaultAudience(tokenRequest.ClientID)}
 		accessTokenScopes = oidcScopes
+	} else {
+		downscopedNonOidc, dErr := resourceindicators.DownscopeToResourceServer(
+			ctx, h.resourceService, targetRS.ID, nonOidcScopes)
+		if dErr != nil {
+			return nil, dErr
+		}
+		accessTokenAudiences = []string{targetRS.Identifier}
+		accessTokenScopes = make([]string, 0, len(oidcScopes)+len(downscopedNonOidc))
+		accessTokenScopes = append(accessTokenScopes, oidcScopes...)
+		accessTokenScopes = append(accessTokenScopes, downscopedNonOidc...)
 	}
 
 	// Generate access token using tokenBuilder (attributes will be filtered in BuildAccessToken)
-	accessToken, err := h.tokenBuilder.BuildAccessToken(ctx, &tokenservice.AccessTokenBuildContext{
-		Subject:          authCode.AuthorizedUserID,
-		Audiences:        accessTokenAudiences,
-		ClientID:         tokenRequest.ClientID,
-		Scopes:           accessTokenScopes,
-		UserAttributes:   attrs,
-		AttributeCacheID: authCode.AttributeCacheID,
-		GrantType:        string(constants.GrantTypeAuthorizationCode),
-		OAuthApp:         oauthApp,
-		ClaimsRequest:    authCode.ClaimsRequest,
-		ClaimsLocales:    authCode.ClaimsLocales,
-		DPoPJkt:          dpop.GetJkt(ctx),
-	})
+	userSubConfig := oauthApp.UserAccessTokenConfig()
+	accessTokenCtx := &tokenservice.AccessTokenBuildContext{
+		Subject:           authCode.AuthorizedUserID,
+		Audiences:         accessTokenAudiences,
+		ClientID:          tokenRequest.ClientID,
+		Scopes:            accessTokenScopes,
+		SubjectAttributes: tokenservice.FilterAttributesByAllowList(attrs, userSubConfig),
+		AttributeCacheID:  authCode.AttributeCacheID,
+		GrantType:         string(providers.GrantTypeAuthorizationCode),
+		OAuthApp:          oauthApp,
+		ClaimsRequest:     authCode.ClaimsRequest,
+		ClaimsLocales:     authCode.ClaimsLocales,
+		ValidityPeriod:    userSubConfig.ValidityPeriodOrZero(),
+		DPoPJkt:           dpop.GetJkt(ctx),
+		TokenFamilyID:     authCode.TokenFamilyID,
+	}
+	if oauthApp.ShouldAppendActorClaim() {
+		accessTokenCtx.ActorClaims = &tokenservice.SubjectTokenClaims{Sub: oauthApp.ID}
+	}
+	accessToken, err := h.tokenBuilder.BuildAccessToken(ctx, accessTokenCtx)
 	if err != nil {
 		return nil, &model.ErrorResponse{
 			Error:            constants.ErrorServerError,
@@ -209,9 +193,8 @@ func (h *authorizationCodeGrantHandler) HandleGrant(ctx context.Context, tokenRe
 		}
 	}
 
-	// Carry the full (un-narrowed) audiences in OriginalAudiences so the token service can
-	// pass them to IssueRefreshToken (RFC 8707 §5 — refresh token preserves original audience).
-	accessToken.OriginalAudiences = fullAudiences
+	// The refresh token preserves this single audience for continuity.
+	accessToken.OriginalAudiences = accessTokenAudiences
 
 	// Build token response
 	tokenResponse := &model.TokenResponseDTO{
@@ -232,7 +215,7 @@ func (h *authorizationCodeGrantHandler) HandleGrant(ctx context.Context, tokenRe
 			CompletedACR:   authCode.CompletedACR,
 		})
 		if err != nil {
-			logger.Error("Failed to generate ID token", log.Error(err))
+			logger.Error(ctx, "Failed to generate ID token", log.Error(err))
 			return nil, &model.ErrorResponse{
 				Error:            constants.ErrorServerError,
 				ErrorDescription: "Failed to generate token",
@@ -247,7 +230,7 @@ func (h *authorizationCodeGrantHandler) HandleGrant(ctx context.Context, tokenRe
 func (h *authorizationCodeGrantHandler) retrieveAndValidateAuthCode(
 	ctx context.Context,
 	tokenRequest *model.TokenRequest,
-	oauthApp *inboundmodel.OAuthClient,
+	oauthApp *providers.OAuthClient,
 	logger *log.Logger,
 ) (*authz.AuthorizationCode, *model.ErrorResponse) {
 	authCode, codeErr := h.authzService.GetAuthorizationCodeDetails(ctx, tokenRequest.ClientID, tokenRequest.Code)
@@ -276,7 +259,7 @@ func (h *authorizationCodeGrantHandler) retrieveAndValidateAuthCode(
 		// Validate PKCE
 		if err := pkce.ValidatePKCE(authCode.CodeChallenge, authCode.CodeChallengeMethod,
 			tokenRequest.CodeVerifier); err != nil {
-			logger.Debug("PKCE validation failed", log.Error(err))
+			logger.Debug(ctx, "PKCE validation failed", log.Error(err))
 			return nil, &model.ErrorResponse{
 				Error:            constants.ErrorInvalidGrant,
 				ErrorDescription: "Invalid code verifier",
@@ -296,8 +279,8 @@ func validateAuthorizationCode(tokenRequest *model.TokenRequest,
 		}
 	}
 
-	// redirect_uri is not mandatory in certain scenarios. Should match if provided with the authorization.
-	if code.RedirectURI != "" && tokenRequest.RedirectURI != code.RedirectURI {
+	// RFC 6749 §4.1.3: required only if included in the authorize request.
+	if code.RedirectURIProvided && tokenRequest.RedirectURI != code.RedirectURI {
 		return &model.ErrorResponse{
 			Error:            constants.ErrorInvalidGrant,
 			ErrorDescription: "Invalid redirect URI",

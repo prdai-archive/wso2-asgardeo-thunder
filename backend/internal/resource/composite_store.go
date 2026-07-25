@@ -23,6 +23,7 @@ import (
 
 	serverconst "github.com/thunder-id/thunderid/internal/system/constants"
 	declarativeresource "github.com/thunder-id/thunderid/internal/system/declarative_resource"
+	"github.com/thunder-id/thunderid/pkg/thunderidengine/providers"
 )
 
 // compositeResourceStore implements a composite store that combines file-based (immutable) and
@@ -45,20 +46,26 @@ func newCompositeResourceStore(fileStore, dbStore resourceStoreInterface) *compo
 
 // Resource Server operations
 
-func (c *compositeResourceStore) CreateResourceServer(ctx context.Context, id string, rs ResourceServer) error {
+// CreateResourceServer creates a resource server in the database store.
+func (c *compositeResourceStore) CreateResourceServer(
+	ctx context.Context,
+	id string,
+	rs providers.ResourceServer,
+) error {
 	return c.dbStore.CreateResourceServer(ctx, id, rs)
 }
 
-func (c *compositeResourceStore) GetResourceServer(ctx context.Context, id string) (ResourceServer, error) {
+// GetResourceServer retrieves a resource server from the composite store.
+func (c *compositeResourceStore) GetResourceServer(ctx context.Context, id string) (providers.ResourceServer, error) {
 	server, err := declarativeresource.CompositeGetHelper(
-		func() (ResourceServer, error) {
+		func() (providers.ResourceServer, error) {
 			s, err := c.dbStore.GetResourceServer(ctx, id)
 			if err == nil {
 				s.IsReadOnly = false
 			}
 			return s, err
 		},
-		func() (ResourceServer, error) {
+		func() (providers.ResourceServer, error) {
 			s, err := c.fileStore.GetResourceServer(ctx, id)
 			if err == nil {
 				s.IsReadOnly = true
@@ -70,8 +77,9 @@ func (c *compositeResourceStore) GetResourceServer(ctx context.Context, id strin
 	return server, err
 }
 
+// GetResourceServerList returns a paginated, deduplicated list of resource servers from both stores.
 func (c *compositeResourceStore) GetResourceServerList(
-	ctx context.Context, limit, offset int) ([]ResourceServer, error) {
+	ctx context.Context, limit, offset int) ([]providers.ResourceServer, error) {
 	dbCount, err := c.dbStore.GetResourceServerListCount(ctx)
 	if err != nil {
 		return nil, err
@@ -83,7 +91,7 @@ func (c *compositeResourceStore) GetResourceServerList(
 	}
 
 	if dbCount == 0 && fileCount == 0 {
-		return []ResourceServer{}, nil
+		return []providers.ResourceServer{}, nil
 	}
 
 	// Fetch all from both stores, then deduplicate before applying the cap.
@@ -106,7 +114,7 @@ func (c *compositeResourceStore) GetResourceServerList(
 	// Apply pagination on the deduplicated slice.
 	start := offset
 	if start > len(resourceServers) {
-		return []ResourceServer{}, nil
+		return []providers.ResourceServer{}, nil
 	}
 	end := start + limit
 	if end > len(resourceServers) {
@@ -115,6 +123,7 @@ func (c *compositeResourceStore) GetResourceServerList(
 	return resourceServers[start:end], nil
 }
 
+// GetResourceServerListCount returns the deduplicated resource server count across both stores.
 func (c *compositeResourceStore) GetResourceServerListCount(ctx context.Context) (int, error) {
 	dbCount, err := c.dbStore.GetResourceServerListCount(ctx)
 	if err != nil {
@@ -149,14 +158,21 @@ func (c *compositeResourceStore) GetResourceServerListCount(ctx context.Context)
 	return len(merged), nil
 }
 
-func (c *compositeResourceStore) UpdateResourceServer(ctx context.Context, id string, rs ResourceServer) error {
+// UpdateResourceServer updates a resource server in the database store.
+func (c *compositeResourceStore) UpdateResourceServer(
+	ctx context.Context,
+	id string,
+	rs providers.ResourceServer,
+) error {
 	return c.dbStore.UpdateResourceServer(ctx, id, rs)
 }
 
+// DeleteResourceServer deletes a resource server from the database store.
 func (c *compositeResourceStore) DeleteResourceServer(ctx context.Context, id string) error {
 	return c.dbStore.DeleteResourceServer(ctx, id)
 }
 
+// CheckResourceServerNameExists checks whether a resource server name exists in either store.
 func (c *compositeResourceStore) CheckResourceServerNameExists(ctx context.Context, name string) (bool, error) {
 	return declarativeresource.CompositeBooleanCheckHelper(
 		func() (bool, error) { return c.fileStore.CheckResourceServerNameExists(ctx, name) },
@@ -164,14 +180,7 @@ func (c *compositeResourceStore) CheckResourceServerNameExists(ctx context.Conte
 	)
 }
 
-func (c *compositeResourceStore) CheckResourceServerHandleExists(
-	ctx context.Context, handle string) (bool, error) {
-	return declarativeresource.CompositeBooleanCheckHelper(
-		func() (bool, error) { return c.fileStore.CheckResourceServerHandleExists(ctx, handle) },
-		func() (bool, error) { return c.dbStore.CheckResourceServerHandleExists(ctx, handle) },
-	)
-}
-
+// CheckResourceServerIdentifierExists checks whether a resource server identifier exists in either store.
 func (c *compositeResourceStore) CheckResourceServerIdentifierExists(
 	ctx context.Context, identifier string) (bool, error) {
 	return declarativeresource.CompositeBooleanCheckHelper(
@@ -180,17 +189,18 @@ func (c *compositeResourceStore) CheckResourceServerIdentifierExists(
 	)
 }
 
+// GetResourceServerByIdentifier retrieves a resource server by identifier from the composite store.
 func (c *compositeResourceStore) GetResourceServerByIdentifier(
-	ctx context.Context, identifier string) (ResourceServer, error) {
+	ctx context.Context, identifier string) (providers.ResourceServer, error) {
 	server, err := declarativeresource.CompositeGetHelper(
-		func() (ResourceServer, error) {
+		func() (providers.ResourceServer, error) {
 			s, err := c.dbStore.GetResourceServerByIdentifier(ctx, identifier)
 			if err == nil {
 				s.IsReadOnly = false
 			}
 			return s, err
 		},
-		func() (ResourceServer, error) {
+		func() (providers.ResourceServer, error) {
 			s, err := c.fileStore.GetResourceServerByIdentifier(ctx, identifier)
 			if err == nil {
 				s.IsReadOnly = true
@@ -202,6 +212,7 @@ func (c *compositeResourceStore) GetResourceServerByIdentifier(
 	return server, err
 }
 
+// CheckResourceServerHasDependencies checks whether a resource server has dependencies in either store.
 func (c *compositeResourceStore) CheckResourceServerHasDependencies(
 	ctx context.Context, resServerID string) (bool, error) {
 	// Check in DB store first
@@ -217,6 +228,7 @@ func (c *compositeResourceStore) CheckResourceServerHasDependencies(
 	return c.fileStore.CheckResourceServerHasDependencies(ctx, resServerID)
 }
 
+// IsResourceServerDeclarative checks whether a resource server is defined in the file store.
 func (c *compositeResourceStore) IsResourceServerDeclarative(id string) bool {
 	return declarativeresource.CompositeIsDeclarativeHelper(
 		id,
@@ -229,23 +241,26 @@ func (c *compositeResourceStore) IsResourceServerDeclarative(id string) bool {
 
 // Resource operations
 
+// CreateResource creates a resource in the database store.
 func (c *compositeResourceStore) CreateResource(
-	ctx context.Context, uuid string, resServerID string, parentID *string, res Resource) error {
+	ctx context.Context, uuid string, resServerID string, parentID *string, res providers.Resource) error {
 	return c.dbStore.CreateResource(ctx, uuid, resServerID, parentID, res)
 }
 
+// GetResource retrieves a resource from the composite store.
 func (c *compositeResourceStore) GetResource(
-	ctx context.Context, id string, resServerID string) (Resource, error) {
+	ctx context.Context, id string, resServerID string) (providers.Resource, error) {
 	resource, err := declarativeresource.CompositeGetHelper(
-		func() (Resource, error) { return c.dbStore.GetResource(ctx, id, resServerID) },
-		func() (Resource, error) { return c.fileStore.GetResource(ctx, id, resServerID) },
+		func() (providers.Resource, error) { return c.dbStore.GetResource(ctx, id, resServerID) },
+		func() (providers.Resource, error) { return c.fileStore.GetResource(ctx, id, resServerID) },
 		errResourceNotFound,
 	)
 	return resource, err
 }
 
+// GetResourceList returns a paginated, deduplicated resource list from both stores.
 func (c *compositeResourceStore) GetResourceList(
-	ctx context.Context, resServerID string, limit, offset int) ([]Resource, error) {
+	ctx context.Context, resServerID string, limit, offset int) ([]providers.Resource, error) {
 	merged, err := c.getMergedResources(ctx, resServerID)
 	if err != nil {
 		return nil, err
@@ -255,7 +270,7 @@ func (c *compositeResourceStore) GetResourceList(
 	start := offset
 	end := offset + limit
 	if start > len(merged) {
-		return []Resource{}, nil
+		return []providers.Resource{}, nil
 	}
 	if end > len(merged) {
 		end = len(merged)
@@ -264,9 +279,10 @@ func (c *compositeResourceStore) GetResourceList(
 	return merged[start:end], nil
 }
 
+// GetResourceListByParent returns a paginated, deduplicated resource list for a parent from both stores.
 func (c *compositeResourceStore) GetResourceListByParent(
 	ctx context.Context, resServerID string, parentID *string, limit, offset int,
-) ([]Resource, error) {
+) ([]providers.Resource, error) {
 	merged, err := c.getMergedResourcesByParent(ctx, resServerID, parentID)
 	if err != nil {
 		return nil, err
@@ -276,7 +292,7 @@ func (c *compositeResourceStore) GetResourceListByParent(
 	start := offset
 	end := offset + limit
 	if start > len(merged) {
-		return []Resource{}, nil
+		return []providers.Resource{}, nil
 	}
 	if end > len(merged) {
 		end = len(merged)
@@ -285,6 +301,7 @@ func (c *compositeResourceStore) GetResourceListByParent(
 	return merged[start:end], nil
 }
 
+// GetResourceListCount returns the deduplicated resource count across both stores.
 func (c *compositeResourceStore) GetResourceListCount(ctx context.Context, resServerID string) (int, error) {
 	merged, err := c.getMergedResources(ctx, resServerID)
 	if err != nil {
@@ -293,6 +310,7 @@ func (c *compositeResourceStore) GetResourceListCount(ctx context.Context, resSe
 	return len(merged), nil
 }
 
+// GetResourceListCountByParent returns the deduplicated resource count for a parent across both stores.
 func (c *compositeResourceStore) GetResourceListCountByParent(
 	ctx context.Context, resServerID string, parentID *string) (int, error) {
 	merged, err := c.getMergedResourcesByParent(ctx, resServerID, parentID)
@@ -302,21 +320,25 @@ func (c *compositeResourceStore) GetResourceListCountByParent(
 	return len(merged), nil
 }
 
+// UpdateResource updates a resource in the database store.
 func (c *compositeResourceStore) UpdateResource(
-	ctx context.Context, id string, resServerID string, res Resource) error {
+	ctx context.Context, id string, resServerID string, res providers.Resource) error {
 	return c.dbStore.UpdateResource(ctx, id, resServerID, res)
 }
 
+// UpdateResourcePermission updates a resource permission in the database store.
 func (c *compositeResourceStore) UpdateResourcePermission(
 	ctx context.Context, id string, resServerID string, permission string) error {
 	return c.dbStore.UpdateResourcePermission(ctx, id, resServerID, permission)
 }
 
+// DeleteResource deletes a resource from the database store.
 func (c *compositeResourceStore) DeleteResource(
 	ctx context.Context, id string, resServerID string) error {
 	return c.dbStore.DeleteResource(ctx, id, resServerID)
 }
 
+// CheckResourceHandleExists checks whether a resource handle exists in either store.
 func (c *compositeResourceStore) CheckResourceHandleExists(
 	ctx context.Context, resServerID string, handle string, parentID *string,
 ) (bool, error) {
@@ -330,10 +352,12 @@ func (c *compositeResourceStore) CheckResourceHandleExists(
 	)
 }
 
+// CheckResourceHasDependencies checks whether a resource has dependencies in the database store.
 func (c *compositeResourceStore) CheckResourceHasDependencies(ctx context.Context, resID string) (bool, error) {
 	return c.dbStore.CheckResourceHasDependencies(ctx, resID)
 }
 
+// CheckCircularDependency checks whether assigning a new parent would create a circular dependency.
 func (c *compositeResourceStore) CheckCircularDependency(
 	ctx context.Context, resourceID, newParentID string) (bool, error) {
 	return c.dbStore.CheckCircularDependency(ctx, resourceID, newParentID)
@@ -341,24 +365,28 @@ func (c *compositeResourceStore) CheckCircularDependency(
 
 // Action operations
 
+// CreateAction creates an action in the database store.
 func (c *compositeResourceStore) CreateAction(
-	ctx context.Context, uuid string, resServerID string, resID *string, action Action) error {
+	ctx context.Context, uuid string, resServerID string, resID *string, action providers.Action) error {
 	return c.dbStore.CreateAction(ctx, uuid, resServerID, resID, action)
 }
 
+// GetAction retrieves an action from the composite store.
 func (c *compositeResourceStore) GetAction(
-	ctx context.Context, id string, resServerID string, resID *string) (Action, error) {
+	ctx context.Context, id string, resServerID string, resID *string) (providers.Action, error) {
 	action, err := declarativeresource.CompositeGetHelper(
-		func() (Action, error) { return c.dbStore.GetAction(ctx, id, resServerID, resID) },
-		func() (Action, error) { return c.fileStore.GetAction(ctx, id, resServerID, resID) },
+		func() (providers.Action, error) { return c.dbStore.GetAction(ctx, id, resServerID, resID) },
+		func() (providers.Action, error) { return c.fileStore.GetAction(ctx, id, resServerID, resID) },
 		errActionNotFound,
 	)
 	return action, err
 }
 
+// GetActionList returns a paginated, deduplicated action list from both stores.
 func (c *compositeResourceStore) GetActionList(
-	ctx context.Context, resServerID string, resID *string, limit, offset int) ([]Action, error) {
-	merged, err := c.getMergedActions(ctx, resServerID, resID)
+	ctx context.Context, resServerID string, resID *string, kind providers.ActionKind, limit, offset int,
+) ([]providers.Action, error) {
+	merged, err := c.getMergedActions(ctx, resServerID, resID, kind)
 	if err != nil {
 		return nil, err
 	}
@@ -367,7 +395,7 @@ func (c *compositeResourceStore) GetActionList(
 	start := offset
 	end := offset + limit
 	if start > len(merged) {
-		return []Action{}, nil
+		return []providers.Action{}, nil
 	}
 	if end > len(merged) {
 		end = len(merged)
@@ -376,16 +404,21 @@ func (c *compositeResourceStore) GetActionList(
 	return merged[start:end], nil
 }
 
+// GetActionListCount returns the deduplicated action count across both stores, optionally filtered by kind.
 func (c *compositeResourceStore) GetActionListCount(
-	ctx context.Context, resServerID string, resID *string) (int, error) {
-	merged, err := c.getMergedActions(ctx, resServerID, resID)
+	ctx context.Context, resServerID string, resID *string, kind providers.ActionKind) (int, error) {
+	merged, err := c.getMergedActions(ctx, resServerID, resID, kind)
 	if err != nil {
 		return 0, err
 	}
 	return len(merged), nil
 }
 
-func (c *compositeResourceStore) getMergedResources(ctx context.Context, resServerID string) ([]Resource, error) {
+// getMergedResources returns the deduplicated resource list across both stores.
+func (c *compositeResourceStore) getMergedResources(
+	ctx context.Context,
+	resServerID string,
+) ([]providers.Resource, error) {
 	dbCount, err := c.dbStore.GetResourceListCount(ctx, resServerID)
 	if err != nil {
 		return nil, err
@@ -399,8 +432,12 @@ func (c *compositeResourceStore) getMergedResources(ctx context.Context, resServ
 	resources, limitExceeded, err := declarativeresource.CompositeMergeListHelperWithLimit(
 		func() (int, error) { return dbCount, nil },
 		func() (int, error) { return fileCount, nil },
-		func(count int) ([]Resource, error) { return c.dbStore.GetResourceList(ctx, resServerID, count, 0) },
-		func(count int) ([]Resource, error) { return c.fileStore.GetResourceList(ctx, resServerID, count, 0) },
+		func(count int) ([]providers.Resource, error) {
+			return c.dbStore.GetResourceList(ctx, resServerID, count, 0)
+		},
+		func(count int) ([]providers.Resource, error) {
+			return c.fileStore.GetResourceList(ctx, resServerID, count, 0)
+		},
 		mergeAndDeduplicateResources,
 		dbCount+fileCount,
 		0,
@@ -416,11 +453,12 @@ func (c *compositeResourceStore) getMergedResources(ctx context.Context, resServ
 	return resources, nil
 }
 
+// getMergedResourcesByParent returns the deduplicated resource list for a parent across both stores.
 func (c *compositeResourceStore) getMergedResourcesByParent(
 	ctx context.Context,
 	resServerID string,
 	parentID *string,
-) ([]Resource, error) {
+) ([]providers.Resource, error) {
 	dbCount, err := c.dbStore.GetResourceListCountByParent(ctx, resServerID, parentID)
 	if err != nil {
 		return nil, err
@@ -434,27 +472,29 @@ func (c *compositeResourceStore) getMergedResourcesByParent(
 	return mergeCompositeListWithLimit(
 		dbCount,
 		fileCount,
-		func(count int) ([]Resource, error) {
+		func(count int) ([]providers.Resource, error) {
 			return c.dbStore.GetResourceListByParent(ctx, resServerID, parentID, count, 0)
 		},
-		func(count int) ([]Resource, error) {
+		func(count int) ([]providers.Resource, error) {
 			return c.fileStore.GetResourceListByParent(ctx, resServerID, parentID, count, 0)
 		},
 		mergeAndDeduplicateResources,
 	)
 }
 
+// getMergedActions returns the deduplicated action list across both stores, optionally filtered by kind.
 func (c *compositeResourceStore) getMergedActions(
 	ctx context.Context,
 	resServerID string,
 	resID *string,
-) ([]Action, error) {
-	dbCount, err := c.dbStore.GetActionListCount(ctx, resServerID, resID)
+	kind providers.ActionKind,
+) ([]providers.Action, error) {
+	dbCount, err := c.dbStore.GetActionListCount(ctx, resServerID, resID, kind)
 	if err != nil {
 		return nil, err
 	}
 
-	fileCount, err := c.fileStore.GetActionListCount(ctx, resServerID, resID)
+	fileCount, err := c.fileStore.GetActionListCount(ctx, resServerID, resID, kind)
 	if err != nil {
 		return nil, err
 	}
@@ -462,12 +502,17 @@ func (c *compositeResourceStore) getMergedActions(
 	return mergeCompositeListWithLimit(
 		dbCount,
 		fileCount,
-		func(count int) ([]Action, error) { return c.dbStore.GetActionList(ctx, resServerID, resID, count, 0) },
-		func(count int) ([]Action, error) { return c.fileStore.GetActionList(ctx, resServerID, resID, count, 0) },
+		func(count int) ([]providers.Action, error) {
+			return c.dbStore.GetActionList(ctx, resServerID, resID, kind, count, 0)
+		},
+		func(count int) ([]providers.Action, error) {
+			return c.fileStore.GetActionList(ctx, resServerID, resID, kind, count, 0)
+		},
 		mergeAndDeduplicateActions,
 	)
 }
 
+// mergeCompositeListWithLimit merges composite store lists and returns an error when the result limit is exceeded.
 func mergeCompositeListWithLimit[T any](
 	dbCount int,
 	fileCount int,
@@ -495,21 +540,25 @@ func mergeCompositeListWithLimit[T any](
 	return merged, nil
 }
 
+// UpdateAction updates an action in the database store.
 func (c *compositeResourceStore) UpdateAction(
-	ctx context.Context, id string, resServerID string, resID *string, action Action) error {
+	ctx context.Context, id string, resServerID string, resID *string, action providers.Action) error {
 	return c.dbStore.UpdateAction(ctx, id, resServerID, resID, action)
 }
 
+// UpdateActionPermission updates an action permission in the database store.
 func (c *compositeResourceStore) UpdateActionPermission(
 	ctx context.Context, id string, resServerID string, resID *string, permission string) error {
 	return c.dbStore.UpdateActionPermission(ctx, id, resServerID, resID, permission)
 }
 
+// DeleteAction deletes an action from the database store.
 func (c *compositeResourceStore) DeleteAction(
 	ctx context.Context, id string, resServerID string, resID *string) error {
 	return c.dbStore.DeleteAction(ctx, id, resServerID, resID)
 }
 
+// IsActionExist checks whether an action exists in either store.
 func (c *compositeResourceStore) IsActionExist(
 	ctx context.Context, id string, resServerID string, resID *string) (bool, error) {
 	return declarativeresource.CompositeBooleanCheckHelper(
@@ -518,6 +567,7 @@ func (c *compositeResourceStore) IsActionExist(
 	)
 }
 
+// CheckActionHandleExists checks whether an action handle exists in either store.
 func (c *compositeResourceStore) CheckActionHandleExists(
 	ctx context.Context, resServerID string, resID *string, handle string,
 ) (bool, error) {
@@ -531,6 +581,7 @@ func (c *compositeResourceStore) CheckActionHandleExists(
 	)
 }
 
+// ValidatePermissions returns permissions that are invalid in both stores.
 func (c *compositeResourceStore) ValidatePermissions(
 	ctx context.Context, resServerID string, permissions []string) ([]string, error) {
 	// Call db store
@@ -563,29 +614,10 @@ func (c *compositeResourceStore) ValidatePermissions(
 	return result, nil
 }
 
-func (c *compositeResourceStore) FindResourceServersByPermissions(
-	ctx context.Context, permissions []string,
-) ([]ResourceServer, error) {
-	if len(permissions) == 0 {
-		return []ResourceServer{}, nil
-	}
-
-	dbServers, err := c.dbStore.FindResourceServersByPermissions(ctx, permissions)
-	if err != nil {
-		return nil, err
-	}
-
-	fileServers, err := c.fileStore.FindResourceServersByPermissions(ctx, permissions)
-	if err != nil {
-		return nil, err
-	}
-
-	return mergeAndDeduplicateResourceServers(dbServers, fileServers), nil
-}
-
-func mergeAndDeduplicateResourceServers(dbServers, fileServers []ResourceServer) []ResourceServer {
+// mergeAndDeduplicateResourceServers merges resource servers with database entries taking precedence.
+func mergeAndDeduplicateResourceServers(dbServers, fileServers []providers.ResourceServer) []providers.ResourceServer {
 	seen := make(map[string]bool)
-	result := make([]ResourceServer, 0, len(dbServers)+len(fileServers))
+	result := make([]providers.ResourceServer, 0, len(dbServers)+len(fileServers))
 
 	// Add DB servers first (they take precedence) - mark as mutable (isReadOnly=false)
 	for i := range dbServers {
@@ -608,9 +640,10 @@ func mergeAndDeduplicateResourceServers(dbServers, fileServers []ResourceServer)
 	return result
 }
 
-func mergeAndDeduplicateResources(dbResources, fileResources []Resource) []Resource {
+// mergeAndDeduplicateResources merges resources with database entries taking precedence.
+func mergeAndDeduplicateResources(dbResources, fileResources []providers.Resource) []providers.Resource {
 	seen := make(map[string]bool)
-	result := make([]Resource, 0, len(dbResources)+len(fileResources))
+	result := make([]providers.Resource, 0, len(dbResources)+len(fileResources))
 
 	// Add DB resources first
 	for i := range dbResources {
@@ -631,9 +664,10 @@ func mergeAndDeduplicateResources(dbResources, fileResources []Resource) []Resou
 	return result
 }
 
-func mergeAndDeduplicateActions(dbActions, fileActions []Action) []Action {
+// mergeAndDeduplicateActions merges actions with database entries taking precedence.
+func mergeAndDeduplicateActions(dbActions, fileActions []providers.Action) []providers.Action {
 	seen := make(map[string]bool)
-	result := make([]Action, 0, len(dbActions)+len(fileActions))
+	result := make([]providers.Action, 0, len(dbActions)+len(fileActions))
 
 	// Add DB actions first
 	for i := range dbActions {

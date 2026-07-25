@@ -24,7 +24,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/thunder-id/thunderid/internal/flow/common"
+	"github.com/thunder-id/thunderid/pkg/thunderidengine/providers"
+
 	"github.com/thunder-id/thunderid/internal/system/config"
 	"github.com/thunder-id/thunderid/internal/system/database/provider"
 	"github.com/thunder-id/thunderid/internal/system/log"
@@ -39,6 +40,7 @@ const (
 	colFlowType      = "flow_type"
 	colActiveVersion = "active_version"
 	colNodes         = "nodes"
+	colInterceptors  = "interceptors"
 	colCreatedAt     = "created_at"
 	colUpdatedAt     = "updated_at"
 	colVersion       = "version"
@@ -50,15 +52,21 @@ var getDBProvider = provider.GetDBProvider
 // flowStoreInterface defines the interface for flow store operations.
 type flowStoreInterface interface {
 	ListFlows(ctx context.Context, limit, offset int, flowType string) ([]BasicFlowDefinition, int, error)
-	CreateFlow(ctx context.Context, flowID string, flow *FlowDefinition) (*CompleteFlowDefinition, error)
-	GetFlowByID(ctx context.Context, flowID string) (*CompleteFlowDefinition, error)
-	GetFlowByHandle(ctx context.Context, handle string, flowType common.FlowType) (*CompleteFlowDefinition, error)
-	UpdateFlow(ctx context.Context, flowID string, flow *FlowDefinition) (*CompleteFlowDefinition, error)
+	ListActiveFlowsWithNodes(ctx context.Context) ([]*providers.CompleteFlowDefinition, error)
+	CreateFlow(ctx context.Context, flowID string, flow *FlowDefinition) (*providers.CompleteFlowDefinition, error)
+	GetFlowByID(ctx context.Context, flowID string) (*providers.CompleteFlowDefinition, error)
+	GetFlowByHandle(
+		ctx context.Context,
+		handle string,
+		flowType providers.FlowType,
+	) (*providers.CompleteFlowDefinition, error)
+	UpdateFlow(ctx context.Context, flowID string, flow *FlowDefinition) (*providers.CompleteFlowDefinition, error)
+	InvalidateCache(ctx context.Context, flowID, handle string, flowType providers.FlowType)
 	DeleteFlow(ctx context.Context, flowID string) error
 	ListFlowVersions(ctx context.Context, flowID string) ([]BasicFlowVersion, error)
 	GetFlowVersion(ctx context.Context, flowID string, version int) (*FlowVersion, error)
-	RestoreFlowVersion(ctx context.Context, flowID string, version int) (*CompleteFlowDefinition, error)
-	IsFlowExistsByHandle(ctx context.Context, handle string, flowType common.FlowType) (bool, error)
+	RestoreFlowVersion(ctx context.Context, flowID string, version int) (*providers.CompleteFlowDefinition, error)
+	IsFlowExistsByHandle(ctx context.Context, handle string, flowType providers.FlowType) (bool, error)
 }
 
 // flowStore is the default implementation of flowStoreInterface.
@@ -140,12 +148,47 @@ func (s *flowStore) ListFlows(ctx context.Context, limit, offset int, flowType s
 	return flows, totalCount, nil
 }
 
+// ListActiveFlowsWithNodes retrieves every flow's active version, including its node definitions, in
+// a single query. It is used by dependency lookups that must scan node definitions across all flows.
+func (s *flowStore) ListActiveFlowsWithNodes(ctx context.Context) ([]*providers.CompleteFlowDefinition, error) {
+	var flows []*providers.CompleteFlowDefinition
+
+	err := s.withDBClientContext(ctx, func(dbClient provider.DBClientInterface) error {
+		results, err := dbClient.QueryContext(ctx, queryListActiveFlowsWithNodes, s.deploymentID)
+		if err != nil {
+			return fmt.Errorf("failed to list flows with nodes: %w", err)
+		}
+
+		flows = make([]*providers.CompleteFlowDefinition, 0, len(results))
+		for _, row := range results {
+			flow, err := s.buildCompleteFlowDefinitionFromRow(row)
+			if err != nil {
+				return fmt.Errorf("failed to build flow: %w", err)
+			}
+			flows = append(flows, flow)
+		}
+
+		return nil
+	})
+
+	if err != nil {
+		return nil, err
+	}
+
+	return flows, nil
+}
+
 // CreateFlow creates a new flow definition with version 1.
 func (s *flowStore) CreateFlow(ctx context.Context, flowID string, flow *FlowDefinition) (
-	*CompleteFlowDefinition, error) {
+	*providers.CompleteFlowDefinition, error) {
 	nodesJSON, err := json.Marshal(flow.Nodes)
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal nodes: %w", err)
+	}
+
+	interceptorsJSON, err := json.Marshal(flow.Interceptors)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal interceptors: %w", err)
 	}
 
 	err = s.withDBClientContext(ctx, func(dbClient provider.DBClientInterface) error {
@@ -155,7 +198,8 @@ func (s *flowStore) CreateFlow(ctx context.Context, flowID string, flow *FlowDef
 			return fmt.Errorf("failed to create flow: %w", err)
 		}
 
-		_, err = dbClient.ExecuteContext(ctx, queryInsertFlowVersion, flowID, 1, string(nodesJSON), s.deploymentID)
+		_, err = dbClient.ExecuteContext(ctx, queryInsertFlowVersion,
+			flowID, 1, string(nodesJSON), string(interceptorsJSON), s.deploymentID)
 		if err != nil {
 			return fmt.Errorf("failed to create flow version: %w", err)
 		}
@@ -170,8 +214,8 @@ func (s *flowStore) CreateFlow(ctx context.Context, flowID string, flow *FlowDef
 }
 
 // GetFlowByID retrieves the active version of a flow definition by its ID.
-func (s *flowStore) GetFlowByID(ctx context.Context, flowID string) (*CompleteFlowDefinition, error) {
-	var flow *CompleteFlowDefinition
+func (s *flowStore) GetFlowByID(ctx context.Context, flowID string) (*providers.CompleteFlowDefinition, error) {
+	var flow *providers.CompleteFlowDefinition
 	err := s.withDBClientContext(ctx, func(dbClient provider.DBClientInterface) error {
 		results, err := dbClient.QueryContext(ctx, queryGetFlow, flowID, s.deploymentID)
 		if err != nil {
@@ -190,9 +234,9 @@ func (s *flowStore) GetFlowByID(ctx context.Context, flowID string) (*CompleteFl
 }
 
 // GetFlowByHandle retrieves a flow definition by handle and flow type.
-func (s *flowStore) GetFlowByHandle(ctx context.Context, handle string, flowType common.FlowType) (
-	*CompleteFlowDefinition, error) {
-	var flow *CompleteFlowDefinition
+func (s *flowStore) GetFlowByHandle(ctx context.Context, handle string, flowType providers.FlowType) (
+	*providers.CompleteFlowDefinition, error) {
+	var flow *providers.CompleteFlowDefinition
 	err := s.withDBClientContext(ctx, func(dbClient provider.DBClientInterface) error {
 		results, err := dbClient.QueryContext(ctx, queryGetFlowByHandle, handle, string(flowType), s.deploymentID)
 		if err != nil {
@@ -213,10 +257,15 @@ func (s *flowStore) GetFlowByHandle(ctx context.Context, handle string, flowType
 // UpdateFlow updates a flow definition by creating a new version.
 // Automatically deletes oldest versions if the count exceeds max_version_history.
 func (s *flowStore) UpdateFlow(ctx context.Context, flowID string, flow *FlowDefinition) (
-	*CompleteFlowDefinition, error) {
+	*providers.CompleteFlowDefinition, error) {
 	nodesJSON, err := json.Marshal(flow.Nodes)
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal nodes: %w", err)
+	}
+
+	interceptorsJSON, err := json.Marshal(flow.Interceptors)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal interceptors: %w", err)
 	}
 
 	err = s.withDBClientContext(ctx, func(dbClient provider.DBClientInterface) error {
@@ -236,7 +285,8 @@ func (s *flowStore) UpdateFlow(ctx context.Context, flowID string, flow *FlowDef
 		newVersion := currentFlow.ActiveVersion + 1
 
 		// Insert the new version first to ensure it succeeds before updating the flow
-		if err := s.pushToVersionStack(ctx, dbClient, flowID, newVersion, string(nodesJSON)); err != nil {
+		if err := s.pushToVersionStack(
+			ctx, dbClient, flowID, newVersion, string(nodesJSON), string(interceptorsJSON)); err != nil {
 			return err
 		}
 
@@ -254,6 +304,11 @@ func (s *flowStore) UpdateFlow(ctx context.Context, flowID string, flow *FlowDef
 	return s.GetFlowByID(ctx, flowID)
 }
 
+// InvalidateCache is a no-op for the plain SQL store; caching only lives in the cache-backed
+// decorator, which overrides this.
+func (s *flowStore) InvalidateCache(_ context.Context, _, _ string, _ providers.FlowType) {
+}
+
 // DeleteFlow deletes a flow definition and all its version history.
 func (s *flowStore) DeleteFlow(ctx context.Context, flowID string) error {
 	return s.withDBClientContext(ctx, func(dbClient provider.DBClientInterface) error {
@@ -266,7 +321,11 @@ func (s *flowStore) DeleteFlow(ctx context.Context, flowID string) error {
 }
 
 // IsFlowExistsByHandle checks if a flow exists with the given handle and flow type.
-func (s *flowStore) IsFlowExistsByHandle(ctx context.Context, handle string, flowType common.FlowType) (bool, error) {
+func (s *flowStore) IsFlowExistsByHandle(
+	ctx context.Context,
+	handle string,
+	flowType providers.FlowType,
+) (bool, error) {
 	var exists bool
 	err := s.withDBClientContext(ctx, func(dbClient provider.DBClientInterface) error {
 		results, err := dbClient.QueryContext(ctx, queryCheckFlowExistsByHandle,
@@ -331,7 +390,7 @@ func (s *flowStore) GetFlowVersion(ctx context.Context, flowID string, version i
 // This creates a new version by copying the configuration from the specified version.
 // Automatically deletes oldest versions if the count exceeds max_version_history.
 func (s *flowStore) RestoreFlowVersion(ctx context.Context, flowID string, version int) (
-	*CompleteFlowDefinition, error) {
+	*providers.CompleteFlowDefinition, error) {
 	err := s.withDBClientContext(ctx, func(dbClient provider.DBClientInterface) error {
 		flowResults, err := dbClient.QueryContext(ctx, queryGetFlow, flowID, s.deploymentID)
 		if err != nil {
@@ -359,10 +418,15 @@ func (s *flowStore) RestoreFlowVersion(ctx context.Context, flowID string, versi
 			return errVersionNotFound
 		}
 
+		interceptorsJSON, err := s.getString(versionResults[0], colInterceptors)
+		if err != nil {
+			return errVersionNotFound
+		}
+
 		newVersion := currentFlow.ActiveVersion + 1
 
 		// Insert the new version first to ensure it succeeds before updating the flow
-		if err := s.pushToVersionStack(ctx, dbClient, flowID, newVersion, nodesJSON); err != nil {
+		if err := s.pushToVersionStack(ctx, dbClient, flowID, newVersion, nodesJSON, interceptorsJSON); err != nil {
 			return err
 		}
 
@@ -383,8 +447,9 @@ func (s *flowStore) RestoreFlowVersion(ctx context.Context, flowID string, versi
 // pushToVersionStack adds a new version to the version history and removes the oldest version
 // if the count exceeds max_version_history.
 func (s *flowStore) pushToVersionStack(ctx context.Context, dbClient provider.DBClientInterface,
-	flowID string, version int, nodesJSON string) error {
-	_, err := dbClient.ExecuteContext(ctx, queryInsertFlowVersion, flowID, version, nodesJSON, s.deploymentID)
+	flowID string, version int, nodesJSON string, interceptorsJSON string) error {
+	_, err := dbClient.ExecuteContext(ctx, queryInsertFlowVersion,
+		flowID, version, nodesJSON, interceptorsJSON, s.deploymentID)
 	if err != nil {
 		return fmt.Errorf("failed to insert flow version: %w", err)
 	}
@@ -528,16 +593,16 @@ func (s *flowStore) buildBasicFlowDefinitionFromRow(row map[string]interface{}) 
 		ID:            flowID,
 		Handle:        handle,
 		Name:          name,
-		FlowType:      common.FlowType(flowTypeStr),
+		FlowType:      providers.FlowType(flowTypeStr),
 		ActiveVersion: int(activeVersion),
 		CreatedAt:     createdAt,
 		UpdatedAt:     updatedAt,
 	}, nil
 }
 
-// buildCompleteFlowDefinitionFromRow builds a CompleteFlowDefinition from a database row.
+// buildCompleteFlowDefinitionFromRow builds a providers.CompleteFlowDefinition from a database row.
 func (s *flowStore) buildCompleteFlowDefinitionFromRow(row map[string]interface{}) (
-	*CompleteFlowDefinition, error) {
+	*providers.CompleteFlowDefinition, error) {
 	flowID, err := s.getString(row, colFlowID)
 	if err != nil {
 		return nil, err
@@ -578,11 +643,11 @@ func (s *flowStore) buildCompleteFlowDefinitionFromRow(row map[string]interface{
 		return nil, err
 	}
 
-	flow := &CompleteFlowDefinition{
+	flow := &providers.CompleteFlowDefinition{
 		ID:            flowID,
 		Handle:        handle,
 		Name:          name,
-		FlowType:      common.FlowType(flowTypeStr),
+		FlowType:      providers.FlowType(flowTypeStr),
 		ActiveVersion: int(activeVersion),
 		CreatedAt:     createdAt,
 		UpdatedAt:     updatedAt,
@@ -590,6 +655,13 @@ func (s *flowStore) buildCompleteFlowDefinitionFromRow(row map[string]interface{
 
 	if err := json.Unmarshal([]byte(nodesJSON), &flow.Nodes); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal nodes: %w", err)
+	}
+
+	interceptorsJSON, _ := s.getString(row, colInterceptors)
+	if interceptorsJSON != "" {
+		if err := json.Unmarshal([]byte(interceptorsJSON), &flow.Interceptors); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal interceptors: %w", err)
+		}
 	}
 
 	return flow, nil
@@ -673,6 +745,13 @@ func (s *flowStore) buildFlowVersionFromRow(row map[string]interface{}) (*FlowVe
 
 	if err := json.Unmarshal([]byte(nodesJSON), &flowVersion.Nodes); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal nodes: %w", err)
+	}
+
+	interceptorsJSON, _ := s.getString(row, colInterceptors)
+	if interceptorsJSON != "" {
+		if err := json.Unmarshal([]byte(interceptorsJSON), &flowVersion.Interceptors); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal interceptors: %w", err)
+		}
 	}
 
 	return flowVersion, nil

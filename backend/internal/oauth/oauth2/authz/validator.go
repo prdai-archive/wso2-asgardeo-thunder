@@ -19,16 +19,19 @@
 package authz
 
 import (
-	inboundmodel "github.com/thunder-id/thunderid/internal/inboundclient/model"
+	"context"
+	"net/url"
+
 	"github.com/thunder-id/thunderid/internal/oauth/oauth2/authz/requestvalidator"
 	"github.com/thunder-id/thunderid/internal/oauth/oauth2/constants"
 	"github.com/thunder-id/thunderid/internal/oauth/oauth2/resourceindicators"
 	"github.com/thunder-id/thunderid/internal/system/log"
+	"github.com/thunder-id/thunderid/pkg/thunderidengine/providers"
 )
 
 // AuthorizationValidatorInterface defines the interface for validating OAuth2 authorization requests.
 type AuthorizationValidatorInterface interface {
-	validateInitialAuthorizationRequest(msg *OAuthMessage, oauthApp *inboundmodel.OAuthClient) (
+	validateInitialAuthorizationRequest(ctx context.Context, msg *OAuthMessage, oauthApp *providers.OAuthClient) (
 		bool, string, string)
 }
 
@@ -41,19 +44,20 @@ func newAuthorizationValidator() AuthorizationValidatorInterface {
 }
 
 // validateInitialAuthorizationRequest validates the initial authorization request parameters.
-func (av *authorizationValidator) validateInitialAuthorizationRequest(msg *OAuthMessage,
-	oauthApp *inboundmodel.OAuthClient) (bool, string, string) {
+func (av *authorizationValidator) validateInitialAuthorizationRequest(ctx context.Context, msg *OAuthMessage,
+	oauthApp *providers.OAuthClient) (bool, string, string) {
 	logger := log.GetLogger().With(log.String(log.LoggerKeyComponentName, "AuthorizationValidator"))
 
-	clientID := msg.RequestQueryParams[constants.RequestParamClientID]
-	redirectURI := msg.RequestQueryParams[constants.RequestParamRedirectURI]
+	queryParams := url.Values(msg.RequestQueryParams)
+	clientID := queryParams.Get(constants.RequestParamClientID)
+	redirectURI := queryParams.Get(constants.RequestParamRedirectURI)
 
 	if clientID == "" {
 		return false, constants.ErrorInvalidRequest, "Missing client_id parameter"
 	}
 
-	if err := oauthApp.ValidateRedirectURI(redirectURI); err != nil {
-		logger.Debug("Validation failed for redirect URI", log.Error(err))
+	if err := oauthApp.ValidateRedirectURI(ctx, redirectURI); err != nil {
+		logger.Debug(ctx, "Validation failed for redirect URI", log.Error(err))
 		return false, constants.ErrorInvalidRequest, "Invalid redirect URI"
 	}
 

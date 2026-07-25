@@ -1,5 +1,6 @@
 ---
 title: Account Recovery
+docType: use-case
 description: Reset a forgotten password through an email recovery link as John Doe.
 sidebar_position: 5
 ---
@@ -9,16 +10,16 @@ sidebar_position: 5
 In this walkthrough, John has forgotten his Wayfinder password. He selects **Forgot password?** on the sign-in screen, receives a recovery email, opens the link, and sets a new password. <ProductName /> runs the recovery flow end-to-end and returns him to Wayfinder ready to sign in with the new credentials.
 
 :::note Prerequisites
-Complete [Set Up Your Environment](../../try-it-out#set-up-your-environment) before starting this walkthrough.
+Complete [Set Up Your Environment](../setup#set-up-your-environment) before starting this walkthrough.
 :::
 
 :::info Background
-[Add Account Recovery](../../customer-identity#add-account-recovery) covers the requirements story behind this use case.
+[B2C overview](../../#building-blocks-of-the-b2c-identity-journey) covers the requirements story behind this use case.
 :::
 
 ## Set Up Account Recovery
 
-1. Recovery emails are delivered through a SMTP server. Configure a SMTP provider and apply the configuration in `repository/conf/deployment.yaml`.
+1. Recovery emails are delivered through a SMTP server. Configure a SMTP provider and apply the configuration in `deployment.yaml`.
 
     **Sample SMTP Configuration:**
 
@@ -33,7 +34,6 @@ Complete [Set Up Your Environment](../../try-it-out#set-up-your-environment) bef
         enable_start_tls: true
         enable_authentication: true
     ```
-    For the full property reference and provider-specific examples, see [Configure SMTP Server](../../../../guides/guides/smtp-server/smtp-server-configuration).
 
 2. Restart <ProductName /> for the changes to take effect.
 
@@ -56,20 +56,20 @@ In the redirect-based pattern, the consumer app sends the user to <ProductName /
 </details>
 
 <details>
-  <summary>App-native step-by-step (verbose flow)</summary>
+  <summary>App-native step-by-step</summary>
 
-Coming soon. See the [App-native pattern](../../solution-patterns#app-native) for what to expect.
+Coming soon. See the [App-native pattern](../../integration-patterns#app-native) for what to expect.
 
 </details>
 
 <details>
-  <summary>App-native managed (non-verbose flow)</summary>
+  <summary>App-native managed</summary>
 
-Coming soon. See the [App-native pattern](../../solution-patterns#app-native) for what to expect.
+Coming soon. See the [App-native pattern](../../integration-patterns#app-native) for what to expect.
 
 </details>
 
 ## Going Deeper
 
 - Want to understand the steps the recovery flow takes? See [Flows](../../identity-concepts#flows) in the Identity Concepts.
-- Prefer to build the recovery flow manually? See [Build the Account Recovery Flow](../../configure-it-yourself#build-the-account-recovery-flow) in Configure It Yourself.
+- Prefer to build the recovery flow manually? See [Build the Account Recovery Flow](../configure-it-yourself#build-the-account-recovery-flow) in Configure It Yourself.

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2025, WSO2 LLC. (https://www.wso2.com).
+ * Copyright (c) 2025-2026, WSO2 LLC. (https://www.wso2.com).
  *
  * WSO2 LLC. licenses this file to you under the Apache License,
  * Version 2.0 (the "License"); you may not use this file except
@@ -41,13 +41,13 @@ var (
 			{
 				"id":        "start",
 				"type":      "START",
-				"onSuccess": "basic_auth",
+				"onSuccess": "credentials_auth",
 			},
 			{
-				"id":   "basic_auth",
+				"id":   "credentials_auth",
 				"type": "TASK_EXECUTION",
 				"executor": map[string]interface{}{
-					"name": "BasicAuthExecutor",
+					"name": "CredentialsAuthExecutor",
 				},
 				"onSuccess": "http_request_notification",
 			},
@@ -58,10 +58,10 @@ var (
 					"url":    "http://localhost:9091/api/notifications",
 					"method": "POST",
 					"headers": "{\"Content-Type\": \"application/json\", " +
-						"\"X-Flow-Id\": \"{{ context.flowID }}\"}",
-					"body": "{\"userId\": \"{{ context.userId }}\", " +
-						"\"username\": \"{{ context.username }}\", \"event\": " +
-						"\"user_authenticated\", \"unknownField\": \"{{ context.unknownPlaceholder }}\"}",
+						"\"X-Flow-Id\": \"{{ctx(flowID)}}\"}",
+					"body": "{\"userId\": \"{{ctx(userId)}}\", " +
+						"\"username\": \"{{ctx(username)}}\", \"event\": " +
+						"\"user_authenticated\", \"unknownField\": \"{{ctx(unknownPlaceholder)}}\"}",
 					"responseMapping": "{\"notificationId\": \"id\", \"status\": \"status\"}",
 					"timeout":         "5",
 				},
@@ -93,13 +93,13 @@ var (
 			{
 				"id":        "start",
 				"type":      "START",
-				"onSuccess": "basic_auth",
+				"onSuccess": "credentials_auth",
 			},
 			{
-				"id":   "basic_auth",
+				"id":   "credentials_auth",
 				"type": "TASK_EXECUTION",
 				"executor": map[string]interface{}{
-					"name": "BasicAuthExecutor",
+					"name": "CredentialsAuthExecutor",
 				},
 				"onSuccess": "http_request_notification",
 			},
@@ -110,7 +110,7 @@ var (
 					"url":           "http://localhost:9091/api/error",
 					"method":        "POST",
 					"headers":       "{\"Content-Type\": \"application/json\"}",
-					"body":          "{\"userId\": \"{{ context.userId }}\"}",
+					"body":          "{\"userId\": \"{{ctx(userId)}}\"}",
 					"errorHandling": "{\"failOnError\": false}",
 					"timeout":       "5",
 				},
@@ -142,13 +142,13 @@ var (
 			{
 				"id":        "start",
 				"type":      "START",
-				"onSuccess": "basic_auth",
+				"onSuccess": "credentials_auth",
 			},
 			{
-				"id":   "basic_auth",
+				"id":   "credentials_auth",
 				"type": "TASK_EXECUTION",
 				"executor": map[string]interface{}{
-					"name": "BasicAuthExecutor",
+					"name": "CredentialsAuthExecutor",
 				},
 				"onSuccess": "http_request_notification",
 			},
@@ -159,7 +159,7 @@ var (
 					"url":           "http://localhost:9091/api/error",
 					"method":        "POST",
 					"headers":       "{\"Content-Type\": \"application/json\"}",
-					"body":          "{\"userId\": \"{{ context.userId }}\"}",
+					"body":          "{\"userId\": \"{{ctx(userId)}}\"}",
 					"errorHandling": "{\"failOnError\": true}",
 					"timeout":       "5",
 				},
@@ -364,7 +364,7 @@ func (ts *HTTPRequestExecutorTestSuite) TestHTTPRequestAuthFlow_Success() {
 	ts.NotNil(step1, "Flow response should not be nil")
 	ts.Equal("COMPLETE", step1.FlowStatus, "Flow status should be COMPLETE")
 	ts.Require().NotEmpty(step1.Assertion, "JWT assertion should be returned")
-	ts.Require().Empty(step1.FailureReason, "Failure reason should be empty")
+	ts.Require().Nil(step1.Error, "Error should be nil")
 
 	time.Sleep(200 * time.Millisecond)
 
@@ -391,7 +391,7 @@ func (ts *HTTPRequestExecutorTestSuite) TestHTTPRequestAuthFlow_Success() {
 	ts.NotEmpty(notificationRequest.Body["userId"], "User ID should be present in payload")
 	ts.Equal(ts.config.CreatedUserIDs[0], notificationRequest.Body["userId"],
 		"User ID should match the authenticated user")
-	ts.Equal("{{ context.unknownPlaceholder }}", notificationRequest.Body["unknownField"],
+	ts.Equal("{{ctx(unknownPlaceholder)}}", notificationRequest.Body["unknownField"],
 		"Unknown field should retain the placeholder value")
 }
 
@@ -418,7 +418,7 @@ func (ts *HTTPRequestExecutorTestSuite) TestHTTPRequestAuthFlow_WithFailOnErrorF
 	ts.NotNil(step1, "Flow response should not be nil")
 	ts.Equal("COMPLETE", step1.FlowStatus, "Flow status should be COMPLETE")
 	ts.NotEmpty(step1.Assertion, "JWT assertion should be returned")
-	ts.Empty(step1.FailureReason, "Failure reason should be empty")
+	ts.Nil(step1.Error, "Error should be nil")
 }
 
 func (ts *HTTPRequestExecutorTestSuite) TestHTTPRequestAuthFlow_WithFailOnErrorTrue() {

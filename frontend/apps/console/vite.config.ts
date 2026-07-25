@@ -19,8 +19,11 @@
 import {readFileSync, copyFileSync, existsSync, writeFileSync} from 'fs';
 import {resolve, dirname} from 'path';
 import {fileURLToPath} from 'url';
+import {codecovVitePlugin} from '@codecov/vite-plugin';
+import babel from '@rolldown/plugin-babel';
+import {linkWorkspaceSource, prismjsInjectCore} from '@thunderid/build-plugins/vite';
 import basicSsl from '@vitejs/plugin-basic-ssl';
-import react from '@vitejs/plugin-react';
+import react, {reactCompilerPreset} from '@vitejs/plugin-react';
 import {visualizer} from 'rollup-plugin-visualizer';
 import svgr from 'vite-plugin-svgr';
 import {defineConfig} from 'vitest/config';
@@ -43,33 +46,90 @@ if (existsSync(rootVersionFile)) {
 }
 
 const VERSION = readFileSync(publicVersionFile, 'utf-8').trim();
+const ANALYZER_ENABLED = process.env.ANALYZE === 'true';
+const BUNDLE_ANALYSIS_ENABLED = process.env.CODECOV_BUNDLE_UPLOAD === 'true';
+
+// Dev backend URL, from THUNDERID_DEV_SERVER_URL (default https://localhost:8090). Injected into
+// __DEV_SERVER_URL__ only for the dev server; production builds receive an empty string.
+const DEV_SERVER_URL = process.env.THUNDERID_DEV_SERVER_URL?.trim();
+
+// Dev gate app URL, from THUNDERID_DEV_GATE_URL (default https://localhost:5190). Injected into
+// __DEV_GATE_URL__ only for the dev server; production builds receive an empty string.
+const DEV_GATE_URL = process.env.THUNDERID_DEV_GATE_URL?.trim();
 
 // https://vite.dev/config/
-export default defineConfig({
+export default defineConfig(({command}) => ({
   base: BASE_URL,
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (id.includes('node_modules/@mui/x-data-grid') || id.includes('node_modules/@mui/x-virtualizer')) {
+            return 'vendor-mui-x';
+          }
+          if (
+            id.includes('node_modules/@mui/material') ||
+            id.includes('node_modules/@mui/system') ||
+            id.includes('node_modules/@mui/styled-engine')
+          ) {
+            return 'vendor-mui';
+          }
+          if (id.includes('node_modules/@emotion/')) {
+            return 'vendor-emotion';
+          }
+          if (id.includes('node_modules/@wso2/oxygen-ui')) {
+            return 'vendor-oxygen';
+          }
+          if (id.includes('node_modules/react-i18next') || id.includes('node_modules/i18next')) {
+            return 'vendor-i18n';
+          }
+          if (id.includes('node_modules/react-dom') || id.includes('node_modules/react/')) {
+            return 'vendor-react';
+          }
+        },
+      },
+    },
+  },
   define: {
     VERSION: JSON.stringify(VERSION),
+    ANALYZER_ENABLED: JSON.stringify(ANALYZER_ENABLED),
+    __DEV_SERVER_URL__: JSON.stringify(
+      command === 'serve'
+        ? DEV_SERVER_URL && DEV_SERVER_URL.length > 0
+          ? DEV_SERVER_URL
+          : 'https://localhost:8090'
+        : '',
+    ),
+    __DEV_GATE_URL__: JSON.stringify(
+      command === 'serve' ? (DEV_GATE_URL && DEV_GATE_URL.length > 0 ? DEV_GATE_URL : 'https://localhost:5190') : '',
+    ),
   },
   plugins: [
+    linkWorkspaceSource(),
+    prismjsInjectCore(),
     basicSsl(),
     svgr(),
-    react({
-      babel: {
-        plugins: [['babel-plugin-react-compiler']],
-      },
+    react(),
+    babel({
+      presets: [reactCompilerPreset()],
     }),
-    // Add visualizer plugin for bundle analysis (only when ANALYZE=true)
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-    ...(process.env.ANALYZE === 'true'
+    ...(ANALYZER_ENABLED
       ? [
           visualizer({
             filename: resolve(currentDir, 'dist', 'stats.html'),
             open: true,
             gzipSize: true,
             brotliSize: true,
-          }),
+          }) as import('vite').PluginOption,
         ]
       : []),
+    // Upload bundle stats to Codecov (no-op unless CODECOV_BUNDLE_UPLOAD=true in CI).
+    // Must be the last plugin so it analyzes the final bundle.
+    codecovVitePlugin({
+      enableBundleAnalysis: BUNDLE_ANALYSIS_ENABLED,
+      bundleName: 'console',
+      gitService: 'github',
+    }),
   ],
   optimizeDeps: {
     include: ['lodash-es'],
@@ -92,6 +152,7 @@ export default defineConfig({
       // when using linked packages
       react: resolve(__dirname, './node_modules/react'),
       'react-dom': resolve(__dirname, './node_modules/react-dom'),
+      'react-router': resolve(__dirname, './node_modules/react-router'),
     },
     conditions: ['browser', 'module', 'import', 'default'],
   },
@@ -150,4 +211,4 @@ export default defineConfig({
       ],
     },
   },
-});
+}));

@@ -8,6 +8,7 @@ import (
 	"context"
 
 	mock "github.com/stretchr/testify/mock"
+	"github.com/thunder-id/thunderid/pkg/thunderidengine/providers"
 )
 
 // newGroupStoreInterfaceMock creates a new instance of groupStoreInterfaceMock. It also registers a testing interface on the mock and a cleanup function to assert the mocks expectations.
@@ -342,6 +343,78 @@ func (_c *groupStoreInterfaceMock_DeleteGroup_Call) Return(err error) *groupStor
 }
 
 func (_c *groupStoreInterfaceMock_DeleteGroup_Call) RunAndReturn(run func(ctx context.Context, id string) error) *groupStoreInterfaceMock_DeleteGroup_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// DeleteMembershipsByMember provides a mock function for the type groupStoreInterfaceMock
+func (_mock *groupStoreInterfaceMock) DeleteMembershipsByMember(ctx context.Context, memberType string, memberID string) (int64, error) {
+	ret := _mock.Called(ctx, memberType, memberID)
+
+	if len(ret) == 0 {
+		panic("no return value specified for DeleteMembershipsByMember")
+	}
+
+	var r0 int64
+	var r1 error
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string, string) (int64, error)); ok {
+		return returnFunc(ctx, memberType, memberID)
+	}
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string, string) int64); ok {
+		r0 = returnFunc(ctx, memberType, memberID)
+	} else {
+		r0 = ret.Get(0).(int64)
+	}
+	if returnFunc, ok := ret.Get(1).(func(context.Context, string, string) error); ok {
+		r1 = returnFunc(ctx, memberType, memberID)
+	} else {
+		r1 = ret.Error(1)
+	}
+	return r0, r1
+}
+
+// groupStoreInterfaceMock_DeleteMembershipsByMember_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'DeleteMembershipsByMember'
+type groupStoreInterfaceMock_DeleteMembershipsByMember_Call struct {
+	*mock.Call
+}
+
+// DeleteMembershipsByMember is a helper method to define mock.On call
+//   - ctx context.Context
+//   - memberType string
+//   - memberID string
+func (_e *groupStoreInterfaceMock_Expecter) DeleteMembershipsByMember(ctx interface{}, memberType interface{}, memberID interface{}) *groupStoreInterfaceMock_DeleteMembershipsByMember_Call {
+	return &groupStoreInterfaceMock_DeleteMembershipsByMember_Call{Call: _e.mock.On("DeleteMembershipsByMember", ctx, memberType, memberID)}
+}
+
+func (_c *groupStoreInterfaceMock_DeleteMembershipsByMember_Call) Run(run func(ctx context.Context, memberType string, memberID string)) *groupStoreInterfaceMock_DeleteMembershipsByMember_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		var arg0 context.Context
+		if args[0] != nil {
+			arg0 = args[0].(context.Context)
+		}
+		var arg1 string
+		if args[1] != nil {
+			arg1 = args[1].(string)
+		}
+		var arg2 string
+		if args[2] != nil {
+			arg2 = args[2].(string)
+		}
+		run(
+			arg0,
+			arg1,
+			arg2,
+		)
+	})
+	return _c
+}
+
+func (_c *groupStoreInterfaceMock_DeleteMembershipsByMember_Call) Return(n int64, err error) *groupStoreInterfaceMock_DeleteMembershipsByMember_Call {
+	_c.Call.Return(n, err)
+	return _c
+}
+
+func (_c *groupStoreInterfaceMock_DeleteMembershipsByMember_Call) RunAndReturn(run func(ctx context.Context, memberType string, memberID string) (int64, error)) *groupStoreInterfaceMock_DeleteMembershipsByMember_Call {
 	_c.Call.Return(run)
 	return _c
 }
@@ -1048,6 +1121,140 @@ func (_c *groupStoreInterfaceMock_GetGroupsByOrganizationUnitCount_Call) Return(
 }
 
 func (_c *groupStoreInterfaceMock_GetGroupsByOrganizationUnitCount_Call) RunAndReturn(run func(ctx context.Context, oUID string) (int, error)) *groupStoreInterfaceMock_GetGroupsByOrganizationUnitCount_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// GetTransitiveGroupsForEntity provides a mock function for the type groupStoreInterfaceMock
+func (_mock *groupStoreInterfaceMock) GetTransitiveGroupsForEntity(ctx context.Context, entityID string) ([]providers.EntityGroup, error) {
+	ret := _mock.Called(ctx, entityID)
+
+	if len(ret) == 0 {
+		panic("no return value specified for GetTransitiveGroupsForEntity")
+	}
+
+	var r0 []providers.EntityGroup
+	var r1 error
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string) ([]providers.EntityGroup, error)); ok {
+		return returnFunc(ctx, entityID)
+	}
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string) []providers.EntityGroup); ok {
+		r0 = returnFunc(ctx, entityID)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).([]providers.EntityGroup)
+		}
+	}
+	if returnFunc, ok := ret.Get(1).(func(context.Context, string) error); ok {
+		r1 = returnFunc(ctx, entityID)
+	} else {
+		r1 = ret.Error(1)
+	}
+	return r0, r1
+}
+
+// groupStoreInterfaceMock_GetTransitiveGroupsForEntity_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'GetTransitiveGroupsForEntity'
+type groupStoreInterfaceMock_GetTransitiveGroupsForEntity_Call struct {
+	*mock.Call
+}
+
+// GetTransitiveGroupsForEntity is a helper method to define mock.On call
+//   - ctx context.Context
+//   - entityID string
+func (_e *groupStoreInterfaceMock_Expecter) GetTransitiveGroupsForEntity(ctx interface{}, entityID interface{}) *groupStoreInterfaceMock_GetTransitiveGroupsForEntity_Call {
+	return &groupStoreInterfaceMock_GetTransitiveGroupsForEntity_Call{Call: _e.mock.On("GetTransitiveGroupsForEntity", ctx, entityID)}
+}
+
+func (_c *groupStoreInterfaceMock_GetTransitiveGroupsForEntity_Call) Run(run func(ctx context.Context, entityID string)) *groupStoreInterfaceMock_GetTransitiveGroupsForEntity_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		var arg0 context.Context
+		if args[0] != nil {
+			arg0 = args[0].(context.Context)
+		}
+		var arg1 string
+		if args[1] != nil {
+			arg1 = args[1].(string)
+		}
+		run(
+			arg0,
+			arg1,
+		)
+	})
+	return _c
+}
+
+func (_c *groupStoreInterfaceMock_GetTransitiveGroupsForEntity_Call) Return(entityGroups []providers.EntityGroup, err error) *groupStoreInterfaceMock_GetTransitiveGroupsForEntity_Call {
+	_c.Call.Return(entityGroups, err)
+	return _c
+}
+
+func (_c *groupStoreInterfaceMock_GetTransitiveGroupsForEntity_Call) RunAndReturn(run func(ctx context.Context, entityID string) ([]providers.EntityGroup, error)) *groupStoreInterfaceMock_GetTransitiveGroupsForEntity_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// IsGroupDeclarative provides a mock function for the type groupStoreInterfaceMock
+func (_mock *groupStoreInterfaceMock) IsGroupDeclarative(ctx context.Context, id string) (bool, error) {
+	ret := _mock.Called(ctx, id)
+
+	if len(ret) == 0 {
+		panic("no return value specified for IsGroupDeclarative")
+	}
+
+	var r0 bool
+	var r1 error
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string) (bool, error)); ok {
+		return returnFunc(ctx, id)
+	}
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string) bool); ok {
+		r0 = returnFunc(ctx, id)
+	} else {
+		r0 = ret.Get(0).(bool)
+	}
+	if returnFunc, ok := ret.Get(1).(func(context.Context, string) error); ok {
+		r1 = returnFunc(ctx, id)
+	} else {
+		r1 = ret.Error(1)
+	}
+	return r0, r1
+}
+
+// groupStoreInterfaceMock_IsGroupDeclarative_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'IsGroupDeclarative'
+type groupStoreInterfaceMock_IsGroupDeclarative_Call struct {
+	*mock.Call
+}
+
+// IsGroupDeclarative is a helper method to define mock.On call
+//   - ctx context.Context
+//   - id string
+func (_e *groupStoreInterfaceMock_Expecter) IsGroupDeclarative(ctx interface{}, id interface{}) *groupStoreInterfaceMock_IsGroupDeclarative_Call {
+	return &groupStoreInterfaceMock_IsGroupDeclarative_Call{Call: _e.mock.On("IsGroupDeclarative", ctx, id)}
+}
+
+func (_c *groupStoreInterfaceMock_IsGroupDeclarative_Call) Run(run func(ctx context.Context, id string)) *groupStoreInterfaceMock_IsGroupDeclarative_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		var arg0 context.Context
+		if args[0] != nil {
+			arg0 = args[0].(context.Context)
+		}
+		var arg1 string
+		if args[1] != nil {
+			arg1 = args[1].(string)
+		}
+		run(
+			arg0,
+			arg1,
+		)
+	})
+	return _c
+}
+
+func (_c *groupStoreInterfaceMock_IsGroupDeclarative_Call) Return(b bool, err error) *groupStoreInterfaceMock_IsGroupDeclarative_Call {
+	_c.Call.Return(b, err)
+	return _c
+}
+
+func (_c *groupStoreInterfaceMock_IsGroupDeclarative_Call) RunAndReturn(run func(ctx context.Context, id string) (bool, error)) *groupStoreInterfaceMock_IsGroupDeclarative_Call {
 	_c.Call.Return(run)
 	return _c
 }

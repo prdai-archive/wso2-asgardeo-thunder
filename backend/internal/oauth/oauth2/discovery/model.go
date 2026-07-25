@@ -23,14 +23,15 @@ type OAuth2AuthorizationServerMetadata struct {
 	Issuer                                     string   `json:"issuer"`
 	AuthorizationEndpoint                      string   `json:"authorization_endpoint"`
 	TokenEndpoint                              string   `json:"token_endpoint"`
-	UserInfoEndpoint                           string   `json:"userinfo_endpoint,omitempty"`
 	JWKSUri                                    string   `json:"jwks_uri"`
 	RegistrationEndpoint                       string   `json:"registration_endpoint,omitempty"`
 	RevocationEndpoint                         string   `json:"revocation_endpoint,omitempty"`
 	IntrospectionEndpoint                      string   `json:"introspection_endpoint,omitempty"`
 	PushedAuthorizationRequestEndpoint         string   `json:"pushed_authorization_request_endpoint,omitempty"`
 	RequirePushedAuthorizationRequests         bool     `json:"require_pushed_authorization_requests,omitempty"`
-	ScopesSupported                            []string `json:"scopes_supported"`
+	BackchannelAuthenticationEndpoint          string   `json:"backchannel_authentication_endpoint,omitempty"`
+	BackchannelTokenDeliveryModesSupported     []string `json:"backchannel_token_delivery_modes_supported,omitempty"`
+	BackchannelUserCodeParameterSupported      bool     `json:"backchannel_user_code_parameter_supported"`
 	ResponseTypesSupported                     []string `json:"response_types_supported"`
 	GrantTypesSupported                        []string `json:"grant_types_supported"`
 	TokenEndpointAuthMethodsSupported          []string `json:"token_endpoint_auth_methods_supported"`
@@ -42,6 +43,8 @@ type OAuth2AuthorizationServerMetadata struct {
 // OIDCProviderMetadata represents OpenID Connect Provider Metadata (OIDC Discovery 1.0)
 type OIDCProviderMetadata struct {
 	OAuth2AuthorizationServerMetadata
+	UserInfoEndpoint                     string   `json:"userinfo_endpoint"`
+	ScopesSupported                      []string `json:"scopes_supported"`
 	SubjectTypesSupported                []string `json:"subject_types_supported"`
 	IDTokenSigningAlgValuesSupported     []string `json:"id_token_signing_alg_values_supported"`
 	UserInfoSigningAlgValuesSupported    []string `json:"userinfo_signing_alg_values_supported,omitempty"`

@@ -16,16 +16,15 @@
  * under the License.
  */
 
+import {AuthenticatorTypes, IdentityProviderTypes, type IdentityProvider} from '@thunderid/configure-connections';
 import {describe, expect, it} from 'vitest';
-import {AuthenticatorTypes} from '../../../integrations/models/authenticators';
 import {AUTH_FLOW_GRAPHS} from '../../models/auth-flow-graphs';
 import resolveAuthFlowId from '../resolveAuthFlowId';
-import {IdentityProviderTypes, type IdentityProvider} from '@/features/integrations/models/identity-provider';
 
 describe('resolveAuthFlowId', () => {
   describe('Constants', () => {
-    it('should export AuthenticatorTypes.BASIC_AUTH', () => {
-      expect(AuthenticatorTypes.BASIC_AUTH).toBe('basic_auth');
+    it('should export AuthenticatorTypes.CREDENTIALS_AUTH', () => {
+      expect(AuthenticatorTypes.CREDENTIALS_AUTH).toBe('credentials_auth');
     });
   });
 

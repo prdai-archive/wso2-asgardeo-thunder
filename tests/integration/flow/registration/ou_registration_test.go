@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2025, WSO2 LLC. (https://www.wso2.com).
+ * Copyright (c) 2025-2026, WSO2 LLC. (https://www.wso2.com).
  *
  * WSO2 LLC. licenses this file to you under the Apache License,
  * Version 2.0 (the "License"); you may not use this file except
@@ -23,9 +23,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/suite"
 	"github.com/thunder-id/thunderid/tests/integration/flow/common"
 	"github.com/thunder-id/thunderid/tests/integration/testutils"
-	"github.com/stretchr/testify/suite"
 )
 
 const (
@@ -49,7 +49,7 @@ var (
 				"executor": map[string]interface{}{
 					"name": "UserTypeResolver",
 				},
-				"onSuccess":    "basic_auth",
+				"onSuccess":    "credentials_auth",
 				"onIncomplete": "prompt_usertype",
 			},
 			{
@@ -105,10 +105,10 @@ var (
 				},
 			},
 			{
-				"id":   "basic_auth",
+				"id":   "credentials_auth",
 				"type": "TASK_EXECUTION",
 				"executor": map[string]interface{}{
-					"name": "BasicAuthExecutor",
+					"name": "CredentialsAuthExecutor",
 				},
 				"onSuccess": "ou_creation",
 			},
@@ -201,27 +201,44 @@ var (
 						"inputs": []map[string]interface{}{
 							{
 								"ref":        "input_001",
-								"identifier": "mobileNumber",
+								"identifier": "mobile_number",
 								"type":       "TEXT_INPUT",
 								"required":   true,
 							},
 						},
 						"action": map[string]interface{}{
 							"ref":      "action_001",
-							"nextNode": "send_sms",
+							"nextNode": "generate_otp",
 						},
 					},
 				},
 			},
 			{
-				"id":   "send_sms",
+				"id":   "generate_otp",
+				"type": "TASK_EXECUTION",
+				"executor": map[string]interface{}{
+					"name": "OTPExecutor",
+					"mode": "generate",
+					"inputs": []map[string]interface{}{
+						{
+							"ref":        "input_001",
+							"identifier": "mobile_number",
+							"type":       "PHONE_INPUT",
+							"required":   true,
+						},
+					},
+				},
+				"onSuccess": "sms_send",
+			},
+			{
+				"id":   "sms_send",
 				"type": "TASK_EXECUTION",
 				"properties": map[string]interface{}{
-					"senderId": "placeholder-sender-id",
+					"senderId":    "placeholder-sender-id",
+					"smsTemplate": "OTP",
 				},
 				"executor": map[string]interface{}{
-					"name": "SMSOTPAuthExecutor",
-					"mode": "send",
+					"name": "SMSExecutor",
 				},
 				"onSuccess": "prompt_otp",
 			},
@@ -240,16 +257,16 @@ var (
 						},
 						"action": map[string]interface{}{
 							"ref":      "action_002",
-							"nextNode": "verify_sms",
+							"nextNode": "verify_otp",
 						},
 					},
 				},
 			},
 			{
-				"id":   "verify_sms",
+				"id":   "verify_otp",
 				"type": "TASK_EXECUTION",
 				"executor": map[string]interface{}{
-					"name": "SMSOTPAuthExecutor",
+					"name": "OTPExecutor",
 					"mode": "verify",
 				},
 				"onSuccess": "ou_creation",
@@ -290,7 +307,7 @@ var (
 					"inputs": []map[string]interface{}{
 						{
 							"ref":        "input_006",
-							"identifier": "mobileNumber",
+							"identifier": "mobile_number",
 							"type":       "TEXT_INPUT",
 							"required":   true,
 						},
@@ -390,7 +407,7 @@ var (
 			"family_name": map[string]interface{}{
 				"type": "string",
 			},
-			"mobileNumber": map[string]interface{}{
+			"mobile_number": map[string]interface{}{
 				"type": "string",
 			},
 		},
@@ -483,7 +500,7 @@ func (ts *OURegistrationFlowTestSuite) SetupSuite() {
 
 	// Update SMS flow definition with created sender ID
 	smsNodes := smsRegistrationFlowWithOU.Nodes.([]map[string]interface{})
-	smsNodes[3]["properties"].(map[string]interface{})["senderId"] = senderID
+	smsNodes[4]["properties"].(map[string]interface{})["senderId"] = senderID
 	smsRegistrationFlowWithOU.Nodes = smsNodes
 
 	// Create SMS registration flow with OU
@@ -491,6 +508,13 @@ func (ts *OURegistrationFlowTestSuite) SetupSuite() {
 	ts.Require().NoError(err, "Failed to create SMS registration flow with OU")
 	ts.config.CreatedFlowIDs = append(ts.config.CreatedFlowIDs, smsFlowID)
 	smsApp.RegistrationFlowID = smsFlowID
+
+	// Create isolated auth flow to avoid cross-type reference validation with default auth flow.
+	isolatedAuthID, err := testutils.CreateIsolatedAuthFlow("ou-registration-isolated-auth")
+	ts.Require().NoError(err, "Failed to create isolated auth flow")
+	ts.config.CreatedFlowIDs = append(ts.config.CreatedFlowIDs, isolatedAuthID)
+	ouRegTestApp.AuthFlowID = isolatedAuthID
+	smsApp.AuthFlowID = isolatedAuthID
 
 	// Create test applications with allowed user types
 	ouRegTestApp.OUID = ts.basicFlowTestOUID
@@ -707,7 +731,8 @@ func (ts *OURegistrationFlowTestSuite) TestBasicRegistrationFlowWithOUCreationDu
 			ts.Require().NoError(err)
 			ts.Require().Equal("INCOMPLETE", flowStep.FlowStatus)
 			ts.Require().Empty(flowStep.Assertion)
-			ts.Require().Contains(flowStep.FailureReason, tc.expectedErrorSubstr)
+			ts.Require().NotNil(flowStep.Error)
+			ts.Require().Contains(flowStep.Error.Description.DefaultValue, tc.expectedErrorSubstr)
 		})
 	}
 }
@@ -746,7 +771,7 @@ func (ts *OURegistrationFlowTestSuite) TestSMSRegistrationFlowWithOUCreation() {
 
 			// Step 2: Submit mobile number with action to trigger SMS send
 			inputs := map[string]string{
-				"mobileNumber": mobileNumber,
+				"mobile_number": mobileNumber,
 			}
 
 			flowStep, err = common.CompleteFlow(flowStep.ExecutionID, inputs, "action_001",
@@ -784,10 +809,10 @@ func (ts *OURegistrationFlowTestSuite) TestSMSRegistrationFlowWithOUCreation() {
 
 			// Step 5: Submit user details
 			inputs = map[string]string{
-				"mobileNumber": mobileNumber,
-				"given_name":   "Test",
-				"family_name":  "User",
-				"email":        mobileNumber + "@example.com",
+				"mobile_number": mobileNumber,
+				"given_name":    "Test",
+				"family_name":   "User",
+				"email":         mobileNumber + "@example.com",
 			}
 
 			flowStep, err = common.CompleteFlow(flowStep.ExecutionID, inputs, "", flowStep.ChallengeToken)
@@ -800,7 +825,7 @@ func (ts *OURegistrationFlowTestSuite) TestSMSRegistrationFlowWithOUCreation() {
 			ts.Require().Equal(dynamicEntityType.Name, jwtClaims.UserType)
 			ts.Require().NotEmpty(jwtClaims.OUID)
 
-			user, err := testutils.FindUserByAttribute("mobileNumber", mobileNumber)
+			user, err := testutils.FindUserByAttribute("mobile_number", mobileNumber)
 			ts.Require().NoError(err)
 			ts.Require().NotNil(user)
 
@@ -876,12 +901,12 @@ func (ts *OURegistrationFlowTestSuite) TestSMSRegistrationFlowWithOUCreationDupl
 
 			// Step 2: Submit mobile number with action to trigger SMS send
 			inputs := map[string]string{
-				"mobileNumber": mobileNumber,
+				"mobile_number": mobileNumber,
 			}
 			// Wait for OTP to be sent
 			time.Sleep(1 * time.Second)
 
-			flowStep, err = 
+			flowStep, err =
 				common.CompleteFlow(flowStep.ExecutionID, inputs, "action_001", flowStep.ChallengeToken)
 			ts.Require().NoError(err)
 			ts.Require().Equal("INCOMPLETE", flowStep.FlowStatus)
@@ -915,7 +940,8 @@ func (ts *OURegistrationFlowTestSuite) TestSMSRegistrationFlowWithOUCreationDupl
 			ts.Require().NoError(err)
 			ts.Require().Equal("INCOMPLETE", flowStep.FlowStatus)
 			ts.Require().Empty(flowStep.Assertion)
-			ts.Require().Contains(flowStep.FailureReason, tc.expectedErrorSubstr)
+			ts.Require().NotNil(flowStep.Error)
+			ts.Require().Contains(flowStep.Error.Description.DefaultValue, tc.expectedErrorSubstr)
 		})
 	}
 }

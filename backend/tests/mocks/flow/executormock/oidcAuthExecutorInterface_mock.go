@@ -6,10 +6,7 @@ package executormock
 
 import (
 	mock "github.com/stretchr/testify/mock"
-	common0 "github.com/thunder-id/thunderid/internal/authn/common"
-	"github.com/thunder-id/thunderid/internal/entityprovider"
-	"github.com/thunder-id/thunderid/internal/flow/common"
-	"github.com/thunder-id/thunderid/internal/flow/core"
+	"github.com/thunder-id/thunderid/pkg/thunderidengine/providers"
 )
 
 // newOidcAuthExecutorInterfaceMock creates a new instance of oidcAuthExecutorInterfaceMock. It also registers a testing interface on the mock and a cleanup function to assert the mocks expectations.
@@ -40,20 +37,31 @@ func (_m *oidcAuthExecutorInterfaceMock) EXPECT() *oidcAuthExecutorInterfaceMock
 }
 
 // BuildAuthorizeFlow provides a mock function for the type oidcAuthExecutorInterfaceMock
-func (_mock *oidcAuthExecutorInterfaceMock) BuildAuthorizeFlow(ctx *core.NodeContext, execResp *common.ExecutorResponse) error {
+func (_mock *oidcAuthExecutorInterfaceMock) BuildAuthorizeFlow(ctx *providers.NodeContext, execResp *providers.ExecutorResponse) (map[string]string, error) {
 	ret := _mock.Called(ctx, execResp)
 
 	if len(ret) == 0 {
 		panic("no return value specified for BuildAuthorizeFlow")
 	}
 
-	var r0 error
-	if returnFunc, ok := ret.Get(0).(func(*core.NodeContext, *common.ExecutorResponse) error); ok {
+	var r0 map[string]string
+	var r1 error
+	if returnFunc, ok := ret.Get(0).(func(*providers.NodeContext, *providers.ExecutorResponse) (map[string]string, error)); ok {
+		return returnFunc(ctx, execResp)
+	}
+	if returnFunc, ok := ret.Get(0).(func(*providers.NodeContext, *providers.ExecutorResponse) map[string]string); ok {
 		r0 = returnFunc(ctx, execResp)
 	} else {
-		r0 = ret.Error(0)
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(map[string]string)
+		}
 	}
-	return r0
+	if returnFunc, ok := ret.Get(1).(func(*providers.NodeContext, *providers.ExecutorResponse) error); ok {
+		r1 = returnFunc(ctx, execResp)
+	} else {
+		r1 = ret.Error(1)
+	}
+	return r0, r1
 }
 
 // oidcAuthExecutorInterfaceMock_BuildAuthorizeFlow_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'BuildAuthorizeFlow'
@@ -62,21 +70,21 @@ type oidcAuthExecutorInterfaceMock_BuildAuthorizeFlow_Call struct {
 }
 
 // BuildAuthorizeFlow is a helper method to define mock.On call
-//   - ctx *core.NodeContext
-//   - execResp *common.ExecutorResponse
+//   - ctx *providers.NodeContext
+//   - execResp *providers.ExecutorResponse
 func (_e *oidcAuthExecutorInterfaceMock_Expecter) BuildAuthorizeFlow(ctx interface{}, execResp interface{}) *oidcAuthExecutorInterfaceMock_BuildAuthorizeFlow_Call {
 	return &oidcAuthExecutorInterfaceMock_BuildAuthorizeFlow_Call{Call: _e.mock.On("BuildAuthorizeFlow", ctx, execResp)}
 }
 
-func (_c *oidcAuthExecutorInterfaceMock_BuildAuthorizeFlow_Call) Run(run func(ctx *core.NodeContext, execResp *common.ExecutorResponse)) *oidcAuthExecutorInterfaceMock_BuildAuthorizeFlow_Call {
+func (_c *oidcAuthExecutorInterfaceMock_BuildAuthorizeFlow_Call) Run(run func(ctx *providers.NodeContext, execResp *providers.ExecutorResponse)) *oidcAuthExecutorInterfaceMock_BuildAuthorizeFlow_Call {
 	_c.Call.Run(func(args mock.Arguments) {
-		var arg0 *core.NodeContext
+		var arg0 *providers.NodeContext
 		if args[0] != nil {
-			arg0 = args[0].(*core.NodeContext)
+			arg0 = args[0].(*providers.NodeContext)
 		}
-		var arg1 *common.ExecutorResponse
+		var arg1 *providers.ExecutorResponse
 		if args[1] != nil {
-			arg1 = args[1].(*common.ExecutorResponse)
+			arg1 = args[1].(*providers.ExecutorResponse)
 		}
 		run(
 			arg0,
@@ -86,37 +94,37 @@ func (_c *oidcAuthExecutorInterfaceMock_BuildAuthorizeFlow_Call) Run(run func(ct
 	return _c
 }
 
-func (_c *oidcAuthExecutorInterfaceMock_BuildAuthorizeFlow_Call) Return(err error) *oidcAuthExecutorInterfaceMock_BuildAuthorizeFlow_Call {
-	_c.Call.Return(err)
+func (_c *oidcAuthExecutorInterfaceMock_BuildAuthorizeFlow_Call) Return(stringToString map[string]string, err error) *oidcAuthExecutorInterfaceMock_BuildAuthorizeFlow_Call {
+	_c.Call.Return(stringToString, err)
 	return _c
 }
 
-func (_c *oidcAuthExecutorInterfaceMock_BuildAuthorizeFlow_Call) RunAndReturn(run func(ctx *core.NodeContext, execResp *common.ExecutorResponse) error) *oidcAuthExecutorInterfaceMock_BuildAuthorizeFlow_Call {
+func (_c *oidcAuthExecutorInterfaceMock_BuildAuthorizeFlow_Call) RunAndReturn(run func(ctx *providers.NodeContext, execResp *providers.ExecutorResponse) (map[string]string, error)) *oidcAuthExecutorInterfaceMock_BuildAuthorizeFlow_Call {
 	_c.Call.Return(run)
 	return _c
 }
 
 // Execute provides a mock function for the type oidcAuthExecutorInterfaceMock
-func (_mock *oidcAuthExecutorInterfaceMock) Execute(ctx *core.NodeContext) (*common.ExecutorResponse, error) {
+func (_mock *oidcAuthExecutorInterfaceMock) Execute(ctx *providers.NodeContext) (*providers.ExecutorResponse, error) {
 	ret := _mock.Called(ctx)
 
 	if len(ret) == 0 {
 		panic("no return value specified for Execute")
 	}
 
-	var r0 *common.ExecutorResponse
+	var r0 *providers.ExecutorResponse
 	var r1 error
-	if returnFunc, ok := ret.Get(0).(func(*core.NodeContext) (*common.ExecutorResponse, error)); ok {
+	if returnFunc, ok := ret.Get(0).(func(*providers.NodeContext) (*providers.ExecutorResponse, error)); ok {
 		return returnFunc(ctx)
 	}
-	if returnFunc, ok := ret.Get(0).(func(*core.NodeContext) *common.ExecutorResponse); ok {
+	if returnFunc, ok := ret.Get(0).(func(*providers.NodeContext) *providers.ExecutorResponse); ok {
 		r0 = returnFunc(ctx)
 	} else {
 		if ret.Get(0) != nil {
-			r0 = ret.Get(0).(*common.ExecutorResponse)
+			r0 = ret.Get(0).(*providers.ExecutorResponse)
 		}
 	}
-	if returnFunc, ok := ret.Get(1).(func(*core.NodeContext) error); ok {
+	if returnFunc, ok := ret.Get(1).(func(*providers.NodeContext) error); ok {
 		r1 = returnFunc(ctx)
 	} else {
 		r1 = ret.Error(1)
@@ -130,16 +138,16 @@ type oidcAuthExecutorInterfaceMock_Execute_Call struct {
 }
 
 // Execute is a helper method to define mock.On call
-//   - ctx *core.NodeContext
+//   - ctx *providers.NodeContext
 func (_e *oidcAuthExecutorInterfaceMock_Expecter) Execute(ctx interface{}) *oidcAuthExecutorInterfaceMock_Execute_Call {
 	return &oidcAuthExecutorInterfaceMock_Execute_Call{Call: _e.mock.On("Execute", ctx)}
 }
 
-func (_c *oidcAuthExecutorInterfaceMock_Execute_Call) Run(run func(ctx *core.NodeContext)) *oidcAuthExecutorInterfaceMock_Execute_Call {
+func (_c *oidcAuthExecutorInterfaceMock_Execute_Call) Run(run func(ctx *providers.NodeContext)) *oidcAuthExecutorInterfaceMock_Execute_Call {
 	_c.Call.Run(func(args mock.Arguments) {
-		var arg0 *core.NodeContext
+		var arg0 *providers.NodeContext
 		if args[0] != nil {
-			arg0 = args[0].(*core.NodeContext)
+			arg0 = args[0].(*providers.NodeContext)
 		}
 		run(
 			arg0,
@@ -148,30 +156,30 @@ func (_c *oidcAuthExecutorInterfaceMock_Execute_Call) Run(run func(ctx *core.Nod
 	return _c
 }
 
-func (_c *oidcAuthExecutorInterfaceMock_Execute_Call) Return(executorResponse *common.ExecutorResponse, err error) *oidcAuthExecutorInterfaceMock_Execute_Call {
+func (_c *oidcAuthExecutorInterfaceMock_Execute_Call) Return(executorResponse *providers.ExecutorResponse, err error) *oidcAuthExecutorInterfaceMock_Execute_Call {
 	_c.Call.Return(executorResponse, err)
 	return _c
 }
 
-func (_c *oidcAuthExecutorInterfaceMock_Execute_Call) RunAndReturn(run func(ctx *core.NodeContext) (*common.ExecutorResponse, error)) *oidcAuthExecutorInterfaceMock_Execute_Call {
+func (_c *oidcAuthExecutorInterfaceMock_Execute_Call) RunAndReturn(run func(ctx *providers.NodeContext) (*providers.ExecutorResponse, error)) *oidcAuthExecutorInterfaceMock_Execute_Call {
 	_c.Call.Return(run)
 	return _c
 }
 
 // GetDefaultInputs provides a mock function for the type oidcAuthExecutorInterfaceMock
-func (_mock *oidcAuthExecutorInterfaceMock) GetDefaultInputs() []common.Input {
+func (_mock *oidcAuthExecutorInterfaceMock) GetDefaultInputs() []providers.Input {
 	ret := _mock.Called()
 
 	if len(ret) == 0 {
 		panic("no return value specified for GetDefaultInputs")
 	}
 
-	var r0 []common.Input
-	if returnFunc, ok := ret.Get(0).(func() []common.Input); ok {
+	var r0 []providers.Input
+	if returnFunc, ok := ret.Get(0).(func() []providers.Input); ok {
 		r0 = returnFunc()
 	} else {
 		if ret.Get(0) != nil {
-			r0 = ret.Get(0).([]common.Input)
+			r0 = ret.Get(0).([]providers.Input)
 		}
 	}
 	return r0
@@ -194,30 +202,30 @@ func (_c *oidcAuthExecutorInterfaceMock_GetDefaultInputs_Call) Run(run func()) *
 	return _c
 }
 
-func (_c *oidcAuthExecutorInterfaceMock_GetDefaultInputs_Call) Return(inputs []common.Input) *oidcAuthExecutorInterfaceMock_GetDefaultInputs_Call {
+func (_c *oidcAuthExecutorInterfaceMock_GetDefaultInputs_Call) Return(inputs []providers.Input) *oidcAuthExecutorInterfaceMock_GetDefaultInputs_Call {
 	_c.Call.Return(inputs)
 	return _c
 }
 
-func (_c *oidcAuthExecutorInterfaceMock_GetDefaultInputs_Call) RunAndReturn(run func() []common.Input) *oidcAuthExecutorInterfaceMock_GetDefaultInputs_Call {
+func (_c *oidcAuthExecutorInterfaceMock_GetDefaultInputs_Call) RunAndReturn(run func() []providers.Input) *oidcAuthExecutorInterfaceMock_GetDefaultInputs_Call {
 	_c.Call.Return(run)
 	return _c
 }
 
 // GetExecutionPolicy provides a mock function for the type oidcAuthExecutorInterfaceMock
-func (_mock *oidcAuthExecutorInterfaceMock) GetExecutionPolicy(mode string) *core.ExecutionPolicy {
+func (_mock *oidcAuthExecutorInterfaceMock) GetExecutionPolicy(mode string) *providers.ExecutionPolicy {
 	ret := _mock.Called(mode)
 
 	if len(ret) == 0 {
 		panic("no return value specified for GetExecutionPolicy")
 	}
 
-	var r0 *core.ExecutionPolicy
-	if returnFunc, ok := ret.Get(0).(func(string) *core.ExecutionPolicy); ok {
+	var r0 *providers.ExecutionPolicy
+	if returnFunc, ok := ret.Get(0).(func(string) *providers.ExecutionPolicy); ok {
 		r0 = returnFunc(mode)
 	} else {
 		if ret.Get(0) != nil {
-			r0 = ret.Get(0).(*core.ExecutionPolicy)
+			r0 = ret.Get(0).(*providers.ExecutionPolicy)
 		}
 	}
 	return r0
@@ -247,18 +255,18 @@ func (_c *oidcAuthExecutorInterfaceMock_GetExecutionPolicy_Call) Run(run func(mo
 	return _c
 }
 
-func (_c *oidcAuthExecutorInterfaceMock_GetExecutionPolicy_Call) Return(executionPolicy *core.ExecutionPolicy) *oidcAuthExecutorInterfaceMock_GetExecutionPolicy_Call {
+func (_c *oidcAuthExecutorInterfaceMock_GetExecutionPolicy_Call) Return(executionPolicy *providers.ExecutionPolicy) *oidcAuthExecutorInterfaceMock_GetExecutionPolicy_Call {
 	_c.Call.Return(executionPolicy)
 	return _c
 }
 
-func (_c *oidcAuthExecutorInterfaceMock_GetExecutionPolicy_Call) RunAndReturn(run func(mode string) *core.ExecutionPolicy) *oidcAuthExecutorInterfaceMock_GetExecutionPolicy_Call {
+func (_c *oidcAuthExecutorInterfaceMock_GetExecutionPolicy_Call) RunAndReturn(run func(mode string) *providers.ExecutionPolicy) *oidcAuthExecutorInterfaceMock_GetExecutionPolicy_Call {
 	_c.Call.Return(run)
 	return _c
 }
 
 // GetIdpID provides a mock function for the type oidcAuthExecutorInterfaceMock
-func (_mock *oidcAuthExecutorInterfaceMock) GetIdpID(ctx *core.NodeContext) (string, error) {
+func (_mock *oidcAuthExecutorInterfaceMock) GetIdpID(ctx *providers.NodeContext) (string, error) {
 	ret := _mock.Called(ctx)
 
 	if len(ret) == 0 {
@@ -267,15 +275,15 @@ func (_mock *oidcAuthExecutorInterfaceMock) GetIdpID(ctx *core.NodeContext) (str
 
 	var r0 string
 	var r1 error
-	if returnFunc, ok := ret.Get(0).(func(*core.NodeContext) (string, error)); ok {
+	if returnFunc, ok := ret.Get(0).(func(*providers.NodeContext) (string, error)); ok {
 		return returnFunc(ctx)
 	}
-	if returnFunc, ok := ret.Get(0).(func(*core.NodeContext) string); ok {
+	if returnFunc, ok := ret.Get(0).(func(*providers.NodeContext) string); ok {
 		r0 = returnFunc(ctx)
 	} else {
 		r0 = ret.Get(0).(string)
 	}
-	if returnFunc, ok := ret.Get(1).(func(*core.NodeContext) error); ok {
+	if returnFunc, ok := ret.Get(1).(func(*providers.NodeContext) error); ok {
 		r1 = returnFunc(ctx)
 	} else {
 		r1 = ret.Error(1)
@@ -289,16 +297,16 @@ type oidcAuthExecutorInterfaceMock_GetIdpID_Call struct {
 }
 
 // GetIdpID is a helper method to define mock.On call
-//   - ctx *core.NodeContext
+//   - ctx *providers.NodeContext
 func (_e *oidcAuthExecutorInterfaceMock_Expecter) GetIdpID(ctx interface{}) *oidcAuthExecutorInterfaceMock_GetIdpID_Call {
 	return &oidcAuthExecutorInterfaceMock_GetIdpID_Call{Call: _e.mock.On("GetIdpID", ctx)}
 }
 
-func (_c *oidcAuthExecutorInterfaceMock_GetIdpID_Call) Run(run func(ctx *core.NodeContext)) *oidcAuthExecutorInterfaceMock_GetIdpID_Call {
+func (_c *oidcAuthExecutorInterfaceMock_GetIdpID_Call) Run(run func(ctx *providers.NodeContext)) *oidcAuthExecutorInterfaceMock_GetIdpID_Call {
 	_c.Call.Run(func(args mock.Arguments) {
-		var arg0 *core.NodeContext
+		var arg0 *providers.NodeContext
 		if args[0] != nil {
-			arg0 = args[0].(*core.NodeContext)
+			arg0 = args[0].(*providers.NodeContext)
 		}
 		run(
 			arg0,
@@ -312,7 +320,53 @@ func (_c *oidcAuthExecutorInterfaceMock_GetIdpID_Call) Return(s string, err erro
 	return _c
 }
 
-func (_c *oidcAuthExecutorInterfaceMock_GetIdpID_Call) RunAndReturn(run func(ctx *core.NodeContext) (string, error)) *oidcAuthExecutorInterfaceMock_GetIdpID_Call {
+func (_c *oidcAuthExecutorInterfaceMock_GetIdpID_Call) RunAndReturn(run func(ctx *providers.NodeContext) (string, error)) *oidcAuthExecutorInterfaceMock_GetIdpID_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// GetMeta provides a mock function for the type oidcAuthExecutorInterfaceMock
+func (_mock *oidcAuthExecutorInterfaceMock) GetMeta() *providers.ExecutorMeta {
+	ret := _mock.Called()
+
+	if len(ret) == 0 {
+		panic("no return value specified for GetMeta")
+	}
+
+	var r0 *providers.ExecutorMeta
+	if returnFunc, ok := ret.Get(0).(func() *providers.ExecutorMeta); ok {
+		r0 = returnFunc()
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(*providers.ExecutorMeta)
+		}
+	}
+	return r0
+}
+
+// oidcAuthExecutorInterfaceMock_GetMeta_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'GetMeta'
+type oidcAuthExecutorInterfaceMock_GetMeta_Call struct {
+	*mock.Call
+}
+
+// GetMeta is a helper method to define mock.On call
+func (_e *oidcAuthExecutorInterfaceMock_Expecter) GetMeta() *oidcAuthExecutorInterfaceMock_GetMeta_Call {
+	return &oidcAuthExecutorInterfaceMock_GetMeta_Call{Call: _e.mock.On("GetMeta")}
+}
+
+func (_c *oidcAuthExecutorInterfaceMock_GetMeta_Call) Run(run func()) *oidcAuthExecutorInterfaceMock_GetMeta_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run()
+	})
+	return _c
+}
+
+func (_c *oidcAuthExecutorInterfaceMock_GetMeta_Call) Return(executorMeta *providers.ExecutorMeta) *oidcAuthExecutorInterfaceMock_GetMeta_Call {
+	_c.Call.Return(executorMeta)
+	return _c
+}
+
+func (_c *oidcAuthExecutorInterfaceMock_GetMeta_Call) RunAndReturn(run func() *providers.ExecutorMeta) *oidcAuthExecutorInterfaceMock_GetMeta_Call {
 	_c.Call.Return(run)
 	return _c
 }
@@ -362,19 +416,19 @@ func (_c *oidcAuthExecutorInterfaceMock_GetName_Call) RunAndReturn(run func() st
 }
 
 // GetPrerequisites provides a mock function for the type oidcAuthExecutorInterfaceMock
-func (_mock *oidcAuthExecutorInterfaceMock) GetPrerequisites() []common.Input {
+func (_mock *oidcAuthExecutorInterfaceMock) GetPrerequisites() []providers.Input {
 	ret := _mock.Called()
 
 	if len(ret) == 0 {
 		panic("no return value specified for GetPrerequisites")
 	}
 
-	var r0 []common.Input
-	if returnFunc, ok := ret.Get(0).(func() []common.Input); ok {
+	var r0 []providers.Input
+	if returnFunc, ok := ret.Get(0).(func() []providers.Input); ok {
 		r0 = returnFunc()
 	} else {
 		if ret.Get(0) != nil {
-			r0 = ret.Get(0).([]common.Input)
+			r0 = ret.Get(0).([]providers.Input)
 		}
 	}
 	return r0
@@ -397,30 +451,30 @@ func (_c *oidcAuthExecutorInterfaceMock_GetPrerequisites_Call) Run(run func()) *
 	return _c
 }
 
-func (_c *oidcAuthExecutorInterfaceMock_GetPrerequisites_Call) Return(inputs []common.Input) *oidcAuthExecutorInterfaceMock_GetPrerequisites_Call {
+func (_c *oidcAuthExecutorInterfaceMock_GetPrerequisites_Call) Return(inputs []providers.Input) *oidcAuthExecutorInterfaceMock_GetPrerequisites_Call {
 	_c.Call.Return(inputs)
 	return _c
 }
 
-func (_c *oidcAuthExecutorInterfaceMock_GetPrerequisites_Call) RunAndReturn(run func() []common.Input) *oidcAuthExecutorInterfaceMock_GetPrerequisites_Call {
+func (_c *oidcAuthExecutorInterfaceMock_GetPrerequisites_Call) RunAndReturn(run func() []providers.Input) *oidcAuthExecutorInterfaceMock_GetPrerequisites_Call {
 	_c.Call.Return(run)
 	return _c
 }
 
 // GetRequiredInputs provides a mock function for the type oidcAuthExecutorInterfaceMock
-func (_mock *oidcAuthExecutorInterfaceMock) GetRequiredInputs(ctx *core.NodeContext) []common.Input {
+func (_mock *oidcAuthExecutorInterfaceMock) GetRequiredInputs(ctx *providers.NodeContext) []providers.Input {
 	ret := _mock.Called(ctx)
 
 	if len(ret) == 0 {
 		panic("no return value specified for GetRequiredInputs")
 	}
 
-	var r0 []common.Input
-	if returnFunc, ok := ret.Get(0).(func(*core.NodeContext) []common.Input); ok {
+	var r0 []providers.Input
+	if returnFunc, ok := ret.Get(0).(func(*providers.NodeContext) []providers.Input); ok {
 		r0 = returnFunc(ctx)
 	} else {
 		if ret.Get(0) != nil {
-			r0 = ret.Get(0).([]common.Input)
+			r0 = ret.Get(0).([]providers.Input)
 		}
 	}
 	return r0
@@ -432,16 +486,16 @@ type oidcAuthExecutorInterfaceMock_GetRequiredInputs_Call struct {
 }
 
 // GetRequiredInputs is a helper method to define mock.On call
-//   - ctx *core.NodeContext
+//   - ctx *providers.NodeContext
 func (_e *oidcAuthExecutorInterfaceMock_Expecter) GetRequiredInputs(ctx interface{}) *oidcAuthExecutorInterfaceMock_GetRequiredInputs_Call {
 	return &oidcAuthExecutorInterfaceMock_GetRequiredInputs_Call{Call: _e.mock.On("GetRequiredInputs", ctx)}
 }
 
-func (_c *oidcAuthExecutorInterfaceMock_GetRequiredInputs_Call) Run(run func(ctx *core.NodeContext)) *oidcAuthExecutorInterfaceMock_GetRequiredInputs_Call {
+func (_c *oidcAuthExecutorInterfaceMock_GetRequiredInputs_Call) Run(run func(ctx *providers.NodeContext)) *oidcAuthExecutorInterfaceMock_GetRequiredInputs_Call {
 	_c.Call.Run(func(args mock.Arguments) {
-		var arg0 *core.NodeContext
+		var arg0 *providers.NodeContext
 		if args[0] != nil {
-			arg0 = args[0].(*core.NodeContext)
+			arg0 = args[0].(*providers.NodeContext)
 		}
 		run(
 			arg0,
@@ -450,29 +504,29 @@ func (_c *oidcAuthExecutorInterfaceMock_GetRequiredInputs_Call) Run(run func(ctx
 	return _c
 }
 
-func (_c *oidcAuthExecutorInterfaceMock_GetRequiredInputs_Call) Return(inputs []common.Input) *oidcAuthExecutorInterfaceMock_GetRequiredInputs_Call {
+func (_c *oidcAuthExecutorInterfaceMock_GetRequiredInputs_Call) Return(inputs []providers.Input) *oidcAuthExecutorInterfaceMock_GetRequiredInputs_Call {
 	_c.Call.Return(inputs)
 	return _c
 }
 
-func (_c *oidcAuthExecutorInterfaceMock_GetRequiredInputs_Call) RunAndReturn(run func(ctx *core.NodeContext) []common.Input) *oidcAuthExecutorInterfaceMock_GetRequiredInputs_Call {
+func (_c *oidcAuthExecutorInterfaceMock_GetRequiredInputs_Call) RunAndReturn(run func(ctx *providers.NodeContext) []providers.Input) *oidcAuthExecutorInterfaceMock_GetRequiredInputs_Call {
 	_c.Call.Return(run)
 	return _c
 }
 
 // GetType provides a mock function for the type oidcAuthExecutorInterfaceMock
-func (_mock *oidcAuthExecutorInterfaceMock) GetType() common.ExecutorType {
+func (_mock *oidcAuthExecutorInterfaceMock) GetType() providers.ExecutorType {
 	ret := _mock.Called()
 
 	if len(ret) == 0 {
 		panic("no return value specified for GetType")
 	}
 
-	var r0 common.ExecutorType
-	if returnFunc, ok := ret.Get(0).(func() common.ExecutorType); ok {
+	var r0 providers.ExecutorType
+	if returnFunc, ok := ret.Get(0).(func() providers.ExecutorType); ok {
 		r0 = returnFunc()
 	} else {
-		r0 = ret.Get(0).(common.ExecutorType)
+		r0 = ret.Get(0).(providers.ExecutorType)
 	}
 	return r0
 }
@@ -494,27 +548,27 @@ func (_c *oidcAuthExecutorInterfaceMock_GetType_Call) Run(run func()) *oidcAuthE
 	return _c
 }
 
-func (_c *oidcAuthExecutorInterfaceMock_GetType_Call) Return(executorType common.ExecutorType) *oidcAuthExecutorInterfaceMock_GetType_Call {
+func (_c *oidcAuthExecutorInterfaceMock_GetType_Call) Return(executorType providers.ExecutorType) *oidcAuthExecutorInterfaceMock_GetType_Call {
 	_c.Call.Return(executorType)
 	return _c
 }
 
-func (_c *oidcAuthExecutorInterfaceMock_GetType_Call) RunAndReturn(run func() common.ExecutorType) *oidcAuthExecutorInterfaceMock_GetType_Call {
+func (_c *oidcAuthExecutorInterfaceMock_GetType_Call) RunAndReturn(run func() providers.ExecutorType) *oidcAuthExecutorInterfaceMock_GetType_Call {
 	_c.Call.Return(run)
 	return _c
 }
 
 // GetUserIDFromContext provides a mock function for the type oidcAuthExecutorInterfaceMock
-func (_mock *oidcAuthExecutorInterfaceMock) GetUserIDFromContext(ctx *core.NodeContext) string {
-	ret := _mock.Called(ctx)
+func (_mock *oidcAuthExecutorInterfaceMock) GetUserIDFromContext(ctx *providers.NodeContext, execResp *providers.ExecutorResponse, authnProvider providers.AuthnProviderManager) string {
+	ret := _mock.Called(ctx, execResp, authnProvider)
 
 	if len(ret) == 0 {
 		panic("no return value specified for GetUserIDFromContext")
 	}
 
 	var r0 string
-	if returnFunc, ok := ret.Get(0).(func(*core.NodeContext) string); ok {
-		r0 = returnFunc(ctx)
+	if returnFunc, ok := ret.Get(0).(func(*providers.NodeContext, *providers.ExecutorResponse, providers.AuthnProviderManager) string); ok {
+		r0 = returnFunc(ctx, execResp, authnProvider)
 	} else {
 		r0 = ret.Get(0).(string)
 	}
@@ -527,19 +581,31 @@ type oidcAuthExecutorInterfaceMock_GetUserIDFromContext_Call struct {
 }
 
 // GetUserIDFromContext is a helper method to define mock.On call
-//   - ctx *core.NodeContext
-func (_e *oidcAuthExecutorInterfaceMock_Expecter) GetUserIDFromContext(ctx interface{}) *oidcAuthExecutorInterfaceMock_GetUserIDFromContext_Call {
-	return &oidcAuthExecutorInterfaceMock_GetUserIDFromContext_Call{Call: _e.mock.On("GetUserIDFromContext", ctx)}
+//   - ctx *providers.NodeContext
+//   - execResp *providers.ExecutorResponse
+//   - authnProvider providers.AuthnProviderManager
+func (_e *oidcAuthExecutorInterfaceMock_Expecter) GetUserIDFromContext(ctx interface{}, execResp interface{}, authnProvider interface{}) *oidcAuthExecutorInterfaceMock_GetUserIDFromContext_Call {
+	return &oidcAuthExecutorInterfaceMock_GetUserIDFromContext_Call{Call: _e.mock.On("GetUserIDFromContext", ctx, execResp, authnProvider)}
 }
 
-func (_c *oidcAuthExecutorInterfaceMock_GetUserIDFromContext_Call) Run(run func(ctx *core.NodeContext)) *oidcAuthExecutorInterfaceMock_GetUserIDFromContext_Call {
+func (_c *oidcAuthExecutorInterfaceMock_GetUserIDFromContext_Call) Run(run func(ctx *providers.NodeContext, execResp *providers.ExecutorResponse, authnProvider providers.AuthnProviderManager)) *oidcAuthExecutorInterfaceMock_GetUserIDFromContext_Call {
 	_c.Call.Run(func(args mock.Arguments) {
-		var arg0 *core.NodeContext
+		var arg0 *providers.NodeContext
 		if args[0] != nil {
-			arg0 = args[0].(*core.NodeContext)
+			arg0 = args[0].(*providers.NodeContext)
+		}
+		var arg1 *providers.ExecutorResponse
+		if args[1] != nil {
+			arg1 = args[1].(*providers.ExecutorResponse)
+		}
+		var arg2 providers.AuthnProviderManager
+		if args[2] != nil {
+			arg2 = args[2].(providers.AuthnProviderManager)
 		}
 		run(
 			arg0,
+			arg1,
+			arg2,
 		)
 	})
 	return _c
@@ -550,13 +616,13 @@ func (_c *oidcAuthExecutorInterfaceMock_GetUserIDFromContext_Call) Return(s stri
 	return _c
 }
 
-func (_c *oidcAuthExecutorInterfaceMock_GetUserIDFromContext_Call) RunAndReturn(run func(ctx *core.NodeContext) string) *oidcAuthExecutorInterfaceMock_GetUserIDFromContext_Call {
+func (_c *oidcAuthExecutorInterfaceMock_GetUserIDFromContext_Call) RunAndReturn(run func(ctx *providers.NodeContext, execResp *providers.ExecutorResponse, authnProvider providers.AuthnProviderManager) string) *oidcAuthExecutorInterfaceMock_GetUserIDFromContext_Call {
 	_c.Call.Return(run)
 	return _c
 }
 
 // HasRequiredInputs provides a mock function for the type oidcAuthExecutorInterfaceMock
-func (_mock *oidcAuthExecutorInterfaceMock) HasRequiredInputs(ctx *core.NodeContext, execResp *common.ExecutorResponse) bool {
+func (_mock *oidcAuthExecutorInterfaceMock) HasRequiredInputs(ctx *providers.NodeContext, execResp *providers.ExecutorResponse) bool {
 	ret := _mock.Called(ctx, execResp)
 
 	if len(ret) == 0 {
@@ -564,7 +630,7 @@ func (_mock *oidcAuthExecutorInterfaceMock) HasRequiredInputs(ctx *core.NodeCont
 	}
 
 	var r0 bool
-	if returnFunc, ok := ret.Get(0).(func(*core.NodeContext, *common.ExecutorResponse) bool); ok {
+	if returnFunc, ok := ret.Get(0).(func(*providers.NodeContext, *providers.ExecutorResponse) bool); ok {
 		r0 = returnFunc(ctx, execResp)
 	} else {
 		r0 = ret.Get(0).(bool)
@@ -578,21 +644,21 @@ type oidcAuthExecutorInterfaceMock_HasRequiredInputs_Call struct {
 }
 
 // HasRequiredInputs is a helper method to define mock.On call
-//   - ctx *core.NodeContext
-//   - execResp *common.ExecutorResponse
+//   - ctx *providers.NodeContext
+//   - execResp *providers.ExecutorResponse
 func (_e *oidcAuthExecutorInterfaceMock_Expecter) HasRequiredInputs(ctx interface{}, execResp interface{}) *oidcAuthExecutorInterfaceMock_HasRequiredInputs_Call {
 	return &oidcAuthExecutorInterfaceMock_HasRequiredInputs_Call{Call: _e.mock.On("HasRequiredInputs", ctx, execResp)}
 }
 
-func (_c *oidcAuthExecutorInterfaceMock_HasRequiredInputs_Call) Run(run func(ctx *core.NodeContext, execResp *common.ExecutorResponse)) *oidcAuthExecutorInterfaceMock_HasRequiredInputs_Call {
+func (_c *oidcAuthExecutorInterfaceMock_HasRequiredInputs_Call) Run(run func(ctx *providers.NodeContext, execResp *providers.ExecutorResponse)) *oidcAuthExecutorInterfaceMock_HasRequiredInputs_Call {
 	_c.Call.Run(func(args mock.Arguments) {
-		var arg0 *core.NodeContext
+		var arg0 *providers.NodeContext
 		if args[0] != nil {
-			arg0 = args[0].(*core.NodeContext)
+			arg0 = args[0].(*providers.NodeContext)
 		}
-		var arg1 *common.ExecutorResponse
+		var arg1 *providers.ExecutorResponse
 		if args[1] != nil {
-			arg1 = args[1].(*common.ExecutorResponse)
+			arg1 = args[1].(*providers.ExecutorResponse)
 		}
 		run(
 			arg0,
@@ -607,13 +673,13 @@ func (_c *oidcAuthExecutorInterfaceMock_HasRequiredInputs_Call) Return(b bool) *
 	return _c
 }
 
-func (_c *oidcAuthExecutorInterfaceMock_HasRequiredInputs_Call) RunAndReturn(run func(ctx *core.NodeContext, execResp *common.ExecutorResponse) bool) *oidcAuthExecutorInterfaceMock_HasRequiredInputs_Call {
+func (_c *oidcAuthExecutorInterfaceMock_HasRequiredInputs_Call) RunAndReturn(run func(ctx *providers.NodeContext, execResp *providers.ExecutorResponse) bool) *oidcAuthExecutorInterfaceMock_HasRequiredInputs_Call {
 	_c.Call.Return(run)
 	return _c
 }
 
 // ProcessAuthFlowResponse provides a mock function for the type oidcAuthExecutorInterfaceMock
-func (_mock *oidcAuthExecutorInterfaceMock) ProcessAuthFlowResponse(ctx *core.NodeContext, execResp *common.ExecutorResponse) error {
+func (_mock *oidcAuthExecutorInterfaceMock) ProcessAuthFlowResponse(ctx *providers.NodeContext, execResp *providers.ExecutorResponse) error {
 	ret := _mock.Called(ctx, execResp)
 
 	if len(ret) == 0 {
@@ -621,7 +687,7 @@ func (_mock *oidcAuthExecutorInterfaceMock) ProcessAuthFlowResponse(ctx *core.No
 	}
 
 	var r0 error
-	if returnFunc, ok := ret.Get(0).(func(*core.NodeContext, *common.ExecutorResponse) error); ok {
+	if returnFunc, ok := ret.Get(0).(func(*providers.NodeContext, *providers.ExecutorResponse) error); ok {
 		r0 = returnFunc(ctx, execResp)
 	} else {
 		r0 = ret.Error(0)
@@ -635,21 +701,21 @@ type oidcAuthExecutorInterfaceMock_ProcessAuthFlowResponse_Call struct {
 }
 
 // ProcessAuthFlowResponse is a helper method to define mock.On call
-//   - ctx *core.NodeContext
-//   - execResp *common.ExecutorResponse
+//   - ctx *providers.NodeContext
+//   - execResp *providers.ExecutorResponse
 func (_e *oidcAuthExecutorInterfaceMock_Expecter) ProcessAuthFlowResponse(ctx interface{}, execResp interface{}) *oidcAuthExecutorInterfaceMock_ProcessAuthFlowResponse_Call {
 	return &oidcAuthExecutorInterfaceMock_ProcessAuthFlowResponse_Call{Call: _e.mock.On("ProcessAuthFlowResponse", ctx, execResp)}
 }
 
-func (_c *oidcAuthExecutorInterfaceMock_ProcessAuthFlowResponse_Call) Run(run func(ctx *core.NodeContext, execResp *common.ExecutorResponse)) *oidcAuthExecutorInterfaceMock_ProcessAuthFlowResponse_Call {
+func (_c *oidcAuthExecutorInterfaceMock_ProcessAuthFlowResponse_Call) Run(run func(ctx *providers.NodeContext, execResp *providers.ExecutorResponse)) *oidcAuthExecutorInterfaceMock_ProcessAuthFlowResponse_Call {
 	_c.Call.Run(func(args mock.Arguments) {
-		var arg0 *core.NodeContext
+		var arg0 *providers.NodeContext
 		if args[0] != nil {
-			arg0 = args[0].(*core.NodeContext)
+			arg0 = args[0].(*providers.NodeContext)
 		}
-		var arg1 *common.ExecutorResponse
+		var arg1 *providers.ExecutorResponse
 		if args[1] != nil {
-			arg1 = args[1].(*common.ExecutorResponse)
+			arg1 = args[1].(*providers.ExecutorResponse)
 		}
 		run(
 			arg0,
@@ -664,108 +730,22 @@ func (_c *oidcAuthExecutorInterfaceMock_ProcessAuthFlowResponse_Call) Return(err
 	return _c
 }
 
-func (_c *oidcAuthExecutorInterfaceMock_ProcessAuthFlowResponse_Call) RunAndReturn(run func(ctx *core.NodeContext, execResp *common.ExecutorResponse) error) *oidcAuthExecutorInterfaceMock_ProcessAuthFlowResponse_Call {
-	_c.Call.Return(run)
-	return _c
-}
-
-// ResolveContextUser provides a mock function for the type oidcAuthExecutorInterfaceMock
-func (_mock *oidcAuthExecutorInterfaceMock) ResolveContextUser(ctx *core.NodeContext, execResp *common.ExecutorResponse, sub string, internalUser *entityprovider.Entity, isAmbiguous bool) (*common0.AuthenticatedUser, error) {
-	ret := _mock.Called(ctx, execResp, sub, internalUser, isAmbiguous)
-
-	if len(ret) == 0 {
-		panic("no return value specified for ResolveContextUser")
-	}
-
-	var r0 *common0.AuthenticatedUser
-	var r1 error
-	if returnFunc, ok := ret.Get(0).(func(*core.NodeContext, *common.ExecutorResponse, string, *entityprovider.Entity, bool) (*common0.AuthenticatedUser, error)); ok {
-		return returnFunc(ctx, execResp, sub, internalUser, isAmbiguous)
-	}
-	if returnFunc, ok := ret.Get(0).(func(*core.NodeContext, *common.ExecutorResponse, string, *entityprovider.Entity, bool) *common0.AuthenticatedUser); ok {
-		r0 = returnFunc(ctx, execResp, sub, internalUser, isAmbiguous)
-	} else {
-		if ret.Get(0) != nil {
-			r0 = ret.Get(0).(*common0.AuthenticatedUser)
-		}
-	}
-	if returnFunc, ok := ret.Get(1).(func(*core.NodeContext, *common.ExecutorResponse, string, *entityprovider.Entity, bool) error); ok {
-		r1 = returnFunc(ctx, execResp, sub, internalUser, isAmbiguous)
-	} else {
-		r1 = ret.Error(1)
-	}
-	return r0, r1
-}
-
-// oidcAuthExecutorInterfaceMock_ResolveContextUser_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'ResolveContextUser'
-type oidcAuthExecutorInterfaceMock_ResolveContextUser_Call struct {
-	*mock.Call
-}
-
-// ResolveContextUser is a helper method to define mock.On call
-//   - ctx *core.NodeContext
-//   - execResp *common.ExecutorResponse
-//   - sub string
-//   - internalUser *entityprovider.Entity
-//   - isAmbiguous bool
-func (_e *oidcAuthExecutorInterfaceMock_Expecter) ResolveContextUser(ctx interface{}, execResp interface{}, sub interface{}, internalUser interface{}, isAmbiguous interface{}) *oidcAuthExecutorInterfaceMock_ResolveContextUser_Call {
-	return &oidcAuthExecutorInterfaceMock_ResolveContextUser_Call{Call: _e.mock.On("ResolveContextUser", ctx, execResp, sub, internalUser, isAmbiguous)}
-}
-
-func (_c *oidcAuthExecutorInterfaceMock_ResolveContextUser_Call) Run(run func(ctx *core.NodeContext, execResp *common.ExecutorResponse, sub string, internalUser *entityprovider.Entity, isAmbiguous bool)) *oidcAuthExecutorInterfaceMock_ResolveContextUser_Call {
-	_c.Call.Run(func(args mock.Arguments) {
-		var arg0 *core.NodeContext
-		if args[0] != nil {
-			arg0 = args[0].(*core.NodeContext)
-		}
-		var arg1 *common.ExecutorResponse
-		if args[1] != nil {
-			arg1 = args[1].(*common.ExecutorResponse)
-		}
-		var arg2 string
-		if args[2] != nil {
-			arg2 = args[2].(string)
-		}
-		var arg3 *entityprovider.Entity
-		if args[3] != nil {
-			arg3 = args[3].(*entityprovider.Entity)
-		}
-		var arg4 bool
-		if args[4] != nil {
-			arg4 = args[4].(bool)
-		}
-		run(
-			arg0,
-			arg1,
-			arg2,
-			arg3,
-			arg4,
-		)
-	})
-	return _c
-}
-
-func (_c *oidcAuthExecutorInterfaceMock_ResolveContextUser_Call) Return(authenticatedUser *common0.AuthenticatedUser, err error) *oidcAuthExecutorInterfaceMock_ResolveContextUser_Call {
-	_c.Call.Return(authenticatedUser, err)
-	return _c
-}
-
-func (_c *oidcAuthExecutorInterfaceMock_ResolveContextUser_Call) RunAndReturn(run func(ctx *core.NodeContext, execResp *common.ExecutorResponse, sub string, internalUser *entityprovider.Entity, isAmbiguous bool) (*common0.AuthenticatedUser, error)) *oidcAuthExecutorInterfaceMock_ResolveContextUser_Call {
+func (_c *oidcAuthExecutorInterfaceMock_ProcessAuthFlowResponse_Call) RunAndReturn(run func(ctx *providers.NodeContext, execResp *providers.ExecutorResponse) error) *oidcAuthExecutorInterfaceMock_ProcessAuthFlowResponse_Call {
 	_c.Call.Return(run)
 	return _c
 }
 
 // ValidatePrerequisites provides a mock function for the type oidcAuthExecutorInterfaceMock
-func (_mock *oidcAuthExecutorInterfaceMock) ValidatePrerequisites(ctx *core.NodeContext, execResp *common.ExecutorResponse) bool {
-	ret := _mock.Called(ctx, execResp)
+func (_mock *oidcAuthExecutorInterfaceMock) ValidatePrerequisites(ctx *providers.NodeContext, execResp *providers.ExecutorResponse, authnProvider providers.AuthnProviderManager) bool {
+	ret := _mock.Called(ctx, execResp, authnProvider)
 
 	if len(ret) == 0 {
 		panic("no return value specified for ValidatePrerequisites")
 	}
 
 	var r0 bool
-	if returnFunc, ok := ret.Get(0).(func(*core.NodeContext, *common.ExecutorResponse) bool); ok {
-		r0 = returnFunc(ctx, execResp)
+	if returnFunc, ok := ret.Get(0).(func(*providers.NodeContext, *providers.ExecutorResponse, providers.AuthnProviderManager) bool); ok {
+		r0 = returnFunc(ctx, execResp, authnProvider)
 	} else {
 		r0 = ret.Get(0).(bool)
 	}
@@ -778,25 +758,31 @@ type oidcAuthExecutorInterfaceMock_ValidatePrerequisites_Call struct {
 }
 
 // ValidatePrerequisites is a helper method to define mock.On call
-//   - ctx *core.NodeContext
-//   - execResp *common.ExecutorResponse
-func (_e *oidcAuthExecutorInterfaceMock_Expecter) ValidatePrerequisites(ctx interface{}, execResp interface{}) *oidcAuthExecutorInterfaceMock_ValidatePrerequisites_Call {
-	return &oidcAuthExecutorInterfaceMock_ValidatePrerequisites_Call{Call: _e.mock.On("ValidatePrerequisites", ctx, execResp)}
+//   - ctx *providers.NodeContext
+//   - execResp *providers.ExecutorResponse
+//   - authnProvider providers.AuthnProviderManager
+func (_e *oidcAuthExecutorInterfaceMock_Expecter) ValidatePrerequisites(ctx interface{}, execResp interface{}, authnProvider interface{}) *oidcAuthExecutorInterfaceMock_ValidatePrerequisites_Call {
+	return &oidcAuthExecutorInterfaceMock_ValidatePrerequisites_Call{Call: _e.mock.On("ValidatePrerequisites", ctx, execResp, authnProvider)}
 }
 
-func (_c *oidcAuthExecutorInterfaceMock_ValidatePrerequisites_Call) Run(run func(ctx *core.NodeContext, execResp *common.ExecutorResponse)) *oidcAuthExecutorInterfaceMock_ValidatePrerequisites_Call {
+func (_c *oidcAuthExecutorInterfaceMock_ValidatePrerequisites_Call) Run(run func(ctx *providers.NodeContext, execResp *providers.ExecutorResponse, authnProvider providers.AuthnProviderManager)) *oidcAuthExecutorInterfaceMock_ValidatePrerequisites_Call {
 	_c.Call.Run(func(args mock.Arguments) {
-		var arg0 *core.NodeContext
+		var arg0 *providers.NodeContext
 		if args[0] != nil {
-			arg0 = args[0].(*core.NodeContext)
+			arg0 = args[0].(*providers.NodeContext)
 		}
-		var arg1 *common.ExecutorResponse
+		var arg1 *providers.ExecutorResponse
 		if args[1] != nil {
-			arg1 = args[1].(*common.ExecutorResponse)
+			arg1 = args[1].(*providers.ExecutorResponse)
+		}
+		var arg2 providers.AuthnProviderManager
+		if args[2] != nil {
+			arg2 = args[2].(providers.AuthnProviderManager)
 		}
 		run(
 			arg0,
 			arg1,
+			arg2,
 		)
 	})
 	return _c
@@ -807,7 +793,7 @@ func (_c *oidcAuthExecutorInterfaceMock_ValidatePrerequisites_Call) Return(b boo
 	return _c
 }
 
-func (_c *oidcAuthExecutorInterfaceMock_ValidatePrerequisites_Call) RunAndReturn(run func(ctx *core.NodeContext, execResp *common.ExecutorResponse) bool) *oidcAuthExecutorInterfaceMock_ValidatePrerequisites_Call {
+func (_c *oidcAuthExecutorInterfaceMock_ValidatePrerequisites_Call) RunAndReturn(run func(ctx *providers.NodeContext, execResp *providers.ExecutorResponse, authnProvider providers.AuthnProviderManager) bool) *oidcAuthExecutorInterfaceMock_ValidatePrerequisites_Call {
 	_c.Call.Return(run)
 	return _c
 }

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2025, WSO2 LLC. (https://www.wso2.com).
+ * Copyright (c) 2025-2026, WSO2 LLC. (https://www.wso2.com).
  *
  * WSO2 LLC. licenses this file to you under the Apache License,
  * Version 2.0 (the "License"); you may not use this file except
@@ -23,9 +23,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/suite"
 	"github.com/thunder-id/thunderid/tests/integration/flow/common"
 	"github.com/thunder-id/thunderid/tests/integration/testutils"
-	"github.com/stretchr/testify/suite"
 )
 
 const (
@@ -51,27 +51,44 @@ var (
 						"inputs": []map[string]interface{}{
 							{
 								"ref":        "input_001",
-								"identifier": "mobileNumber",
-								"type":       "string",
+								"identifier": "mobile_number",
+								"type":       "PHONE_INPUT",
 								"required":   true,
 							},
 						},
 						"action": map[string]interface{}{
 							"ref":      "action_001",
-							"nextNode": "sms_otp_send",
+							"nextNode": "generate_otp",
 						},
 					},
 				},
 			},
 			{
-				"id":   "sms_otp_send",
+				"id":   "generate_otp",
+				"type": "TASK_EXECUTION",
+				"executor": map[string]interface{}{
+					"name": "OTPExecutor",
+					"mode": "generate",
+					"inputs": []map[string]interface{}{
+						{
+							"ref":        "input_mobile",
+							"identifier": "mobile_number",
+							"type":       "PHONE_INPUT",
+							"required":   true,
+						},
+					},
+				},
+				"onSuccess": "sms_send",
+			},
+			{
+				"id":   "sms_send",
 				"type": "TASK_EXECUTION",
 				"properties": map[string]interface{}{
-					"senderId": "placeholder-sender-id",
+					"senderId":    "placeholder-sender-id",
+					"smsTemplate": "OTP",
 				},
 				"executor": map[string]interface{}{
-					"name": "SMSOTPAuthExecutor",
-					"mode": "send",
+					"name": "SMSExecutor",
 				},
 				"onSuccess": "prompt_otp",
 			},
@@ -84,25 +101,22 @@ var (
 							{
 								"ref":        "input_002",
 								"identifier": "otp",
-								"type":       "string",
+								"type":       "OTP_INPUT",
 								"required":   true,
 							},
 						},
 						"action": map[string]interface{}{
 							"ref":      "action_002",
-							"nextNode": "sms_otp_verify",
+							"nextNode": "verify_otp",
 						},
 					},
 				},
 			},
 			{
-				"id":   "sms_otp_verify",
+				"id":   "verify_otp",
 				"type": "TASK_EXECUTION",
-				"properties": map[string]interface{}{
-					"senderId": "placeholder-sender-id",
-				},
 				"executor": map[string]interface{}{
-					"name": "SMSOTPAuthExecutor",
+					"name": "OTPExecutor",
 					"mode": "verify",
 				},
 				"onSuccess": "auth_assert",
@@ -141,26 +155,43 @@ var (
 							{
 								"ref":        "input_001",
 								"identifier": "username",
-								"type":       "string",
+								"type":       "TEXT_INPUT",
 								"required":   true,
 							},
 						},
 						"action": map[string]interface{}{
 							"ref":      "action_001",
-							"nextNode": "sms_otp_send",
+							"nextNode": "generate_otp",
 						},
 					},
 				},
 			},
 			{
-				"id":   "sms_otp_send",
+				"id":   "generate_otp",
+				"type": "TASK_EXECUTION",
+				"executor": map[string]interface{}{
+					"name": "OTPExecutor",
+					"mode": "generate",
+					"inputs": []map[string]interface{}{
+						{
+							"ref":        "input_username",
+							"identifier": "username",
+							"type":       "TEXT_INPUT",
+							"required":   true,
+						},
+					},
+				},
+				"onSuccess": "sms_send",
+			},
+			{
+				"id":   "sms_send",
 				"type": "TASK_EXECUTION",
 				"properties": map[string]interface{}{
-					"senderId": "placeholder-sender-id",
+					"senderId":    "placeholder-sender-id",
+					"smsTemplate": "OTP",
 				},
 				"executor": map[string]interface{}{
-					"name": "SMSOTPAuthExecutor",
-					"mode": "send",
+					"name": "SMSExecutor",
 				},
 				"onSuccess": "prompt_otp",
 			},
@@ -173,25 +204,22 @@ var (
 							{
 								"ref":        "input_002",
 								"identifier": "otp",
-								"type":       "string",
+								"type":       "OTP_INPUT",
 								"required":   true,
 							},
 						},
 						"action": map[string]interface{}{
 							"ref":      "action_002",
-							"nextNode": "sms_otp_verify",
+							"nextNode": "verify_otp",
 						},
 					},
 				},
 			},
 			{
-				"id":   "sms_otp_verify",
+				"id":   "verify_otp",
 				"type": "TASK_EXECUTION",
-				"properties": map[string]interface{}{
-					"senderId": "placeholder-sender-id",
-				},
 				"executor": map[string]interface{}{
-					"name": "SMSOTPAuthExecutor",
+					"name": "OTPExecutor",
 					"mode": "verify",
 				},
 				"onSuccess": "auth_assert",
@@ -245,7 +273,7 @@ var (
 			"family_name": map[string]interface{}{
 				"type": "string",
 			},
-			"mobileNumber": map[string]interface{}{
+			"mobile_number": map[string]interface{}{
 				"type": "string",
 			},
 		},
@@ -259,7 +287,7 @@ var (
 			"email": "smsuser@example.com",
 			"given_name": "SMS",
 			"family_name": "User",
-			"mobileNumber": "+1234567890"
+			"mobile_number": "+1234567890"
 		}`),
 	}
 )
@@ -356,13 +384,11 @@ func (ts *SMSAuthFlowTestSuite) SetupSuite() {
 
 	// Update flow definitions with created sender ID
 	nodesSendSMS := smsAuthFlowWithMobile.Nodes.([]map[string]interface{})
-	nodesSendSMS[2]["properties"].(map[string]interface{})["senderId"] = senderID // sms_otp_send node
-	nodesSendSMS[4]["properties"].(map[string]interface{})["senderId"] = senderID // sms_otp_verify node
+	nodesSendSMS[3]["properties"].(map[string]interface{})["senderId"] = senderID // sms_send node
 	smsAuthFlowWithMobile.Nodes = nodesSendSMS
 
 	nodesUNSendSMS := smsAuthFlowWithUsername.Nodes.([]map[string]interface{})
-	nodesUNSendSMS[2]["properties"].(map[string]interface{})["senderId"] = senderID // sms_otp_send node
-	nodesUNSendSMS[4]["properties"].(map[string]interface{})["senderId"] = senderID // sms_otp_verify node
+	nodesUNSendSMS[3]["properties"].(map[string]interface{})["senderId"] = senderID // sms_send node
 	smsAuthFlowWithUsername.Nodes = nodesUNSendSMS
 
 	// Create flows
@@ -452,7 +478,7 @@ func (ts *SMSAuthFlowTestSuite) TestSMSAuthFlowWithMobileNumber() {
 	ts.Require().NotEmpty(flowStep.Data, "Flow data should not be empty")
 	ts.Require().NotEmpty(flowStep.Data.Inputs, "Flow should require inputs")
 
-	ts.Require().True(common.HasInput(flowStep.Data.Inputs, "mobileNumber"),
+	ts.Require().True(common.HasInput(flowStep.Data.Inputs, "mobile_number"),
 		"Mobile number input should be required")
 
 	// Clear any previous messages
@@ -463,7 +489,7 @@ func (ts *SMSAuthFlowTestSuite) TestSMSAuthFlowWithMobileNumber() {
 	ts.Require().NoError(err, "Failed to get user attributes")
 
 	inputs := map[string]string{
-		"mobileNumber": userAttrs["mobileNumber"].(string),
+		"mobile_number": userAttrs["mobile_number"].(string),
 	}
 
 	otpFlowStep, err := common.CompleteFlow(flowStep.ExecutionID, inputs, "action_001",
@@ -504,7 +530,7 @@ func (ts *SMSAuthFlowTestSuite) TestSMSAuthFlowWithMobileNumber() {
 	ts.Require().Equal("COMPLETE", completeFlowStep.FlowStatus, "Expected flow status to be COMPLETE")
 	ts.Require().NotEmpty(completeFlowStep.Assertion,
 		"JWT assertion should be returned after successful authentication")
-	ts.Require().Empty(completeFlowStep.FailureReason, "Failure reason should be empty for successful authentication")
+	ts.Require().Nil(completeFlowStep.Error, "Error should be nil for successful authentication")
 
 	// Validate JWT assertion fields using common utility
 	jwtClaims, err := testutils.ValidateJWTAssertionFields(
@@ -607,7 +633,7 @@ func (ts *SMSAuthFlowTestSuite) TestSMSAuthFlowWithUsername() {
 	ts.Require().Equal("COMPLETE", completeFlowStep.FlowStatus, "Expected flow status to be COMPLETE")
 	ts.Require().NotEmpty(completeFlowStep.Assertion,
 		"JWT assertion should be returned after successful authentication")
-	ts.Require().Empty(completeFlowStep.FailureReason, "Failure reason should be empty for successful authentication")
+	ts.Require().Nil(completeFlowStep.Error, "Error should be nil for successful authentication")
 
 	// Validate JWT assertion fields using common utility
 	jwtClaims, err := testutils.ValidateJWTAssertionFields(
@@ -629,7 +655,7 @@ func (ts *SMSAuthFlowTestSuite) TestSMSAuthFlowInvalidOTP() {
 	ts.Require().NoError(err, "Failed to unmarshal user attributes")
 
 	inputs := map[string]string{
-		"mobileNumber": userAttrs["mobileNumber"].(string),
+		"mobile_number": userAttrs["mobile_number"].(string),
 	}
 
 	flowStep, err := common.InitiateAuthenticationFlow(smsAuthTestAppID, false, nil, "")
@@ -668,7 +694,7 @@ func (ts *SMSAuthFlowTestSuite) TestSMSAuthFlowInvalidOTP() {
 		"Expected flow status to be INCOMPLETE for invalid OTP")
 	ts.Require().Equal("VIEW", completeFlowStep.Type, "Expected type to be VIEW for prompt re-display")
 	ts.Require().Empty(completeFlowStep.Assertion, "No JWT assertion should be returned for failed authentication")
-	ts.Require().NotEmpty(completeFlowStep.FailureReason, "Failure reason should be provided for invalid OTP")
+	ts.Require().NotNil(completeFlowStep.Error, "Error should be provided for invalid OTP")
 
 	// Verify OTP input is re-prompted
 	ts.Require().NotEmpty(completeFlowStep.Data, "Flow data should not be empty after re-prompt")
@@ -683,7 +709,7 @@ func (ts *SMSAuthFlowTestSuite) TestSMSAuthFlowRetryAfterInvalidOTP() {
 	ts.Require().NoError(err, "Failed to unmarshal user attributes")
 
 	inputs := map[string]string{
-		"mobileNumber": userAttrs["mobileNumber"].(string),
+		"mobile_number": userAttrs["mobile_number"].(string),
 	}
 
 	flowStep, err := common.InitiateAuthenticationFlow(smsAuthTestAppID, false, nil, "")
@@ -727,7 +753,7 @@ func (ts *SMSAuthFlowTestSuite) TestSMSAuthFlowRetryAfterInvalidOTP() {
 
 	// Verify we get INCOMPLETE (retryable) not ERROR
 	ts.Require().Equal("INCOMPLETE", retryFlowStep.FlowStatus, "Expected INCOMPLETE after invalid OTP")
-	ts.Require().NotEmpty(retryFlowStep.FailureReason, "Failure reason should be present for invalid OTP")
+	ts.Require().NotNil(retryFlowStep.Error, "Error should be present for invalid OTP")
 
 	// Verify OTP input is re-prompted
 	ts.Require().NotEmpty(retryFlowStep.Data, "Flow data should not be empty after re-prompt")
@@ -749,7 +775,7 @@ func (ts *SMSAuthFlowTestSuite) TestSMSAuthFlowRetryAfterInvalidOTP() {
 	ts.Require().Equal("COMPLETE", successFlowStep.FlowStatus,
 		"Expected COMPLETE after retry with valid OTP")
 	ts.Require().NotEmpty(successFlowStep.Assertion, "JWT assertion should be returned on successful retry")
-	ts.Require().Empty(successFlowStep.FailureReason, "No failure reason on success")
+	ts.Require().Nil(successFlowStep.Error, "No error on success")
 }
 
 func (ts *SMSAuthFlowTestSuite) TestSMSAuthFlowSingleRequestWithMobileNumber() {
@@ -763,7 +789,7 @@ func (ts *SMSAuthFlowTestSuite) TestSMSAuthFlowSingleRequestWithMobileNumber() {
 
 	// Step 1: Initialize the flow with mobile number - single action should auto-select
 	inputs := map[string]string{
-		"mobileNumber": userAttrs["mobileNumber"].(string),
+		"mobile_number": userAttrs["mobile_number"].(string),
 	}
 
 	flowStep, err := common.InitiateAuthenticationFlow(smsAuthTestAppID, false, inputs, "")
@@ -798,7 +824,7 @@ func (ts *SMSAuthFlowTestSuite) TestSMSAuthFlowSingleRequestWithMobileNumber() {
 	ts.Require().Equal("COMPLETE", completeFlowStep.FlowStatus, "Expected flow status to be COMPLETE")
 	ts.Require().NotEmpty(completeFlowStep.Assertion,
 		"JWT assertion should be returned after successful authentication")
-	ts.Require().Empty(completeFlowStep.FailureReason, "Failure reason should be empty for successful authentication")
+	ts.Require().Nil(completeFlowStep.Error, "Error should be nil for successful authentication")
 
 	// Validate JWT assertion fields using common utility
 	jwtClaims, err := testutils.ValidateJWTAssertionFields(

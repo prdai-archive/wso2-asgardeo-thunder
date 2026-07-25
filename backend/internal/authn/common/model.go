@@ -23,10 +23,8 @@ import (
 	"context"
 	"time"
 
-	authnprovidercm "github.com/thunder-id/thunderid/internal/authnprovider/common"
-	"github.com/thunder-id/thunderid/internal/entityprovider"
-	"github.com/thunder-id/thunderid/internal/idp"
-	"github.com/thunder-id/thunderid/internal/system/error/serviceerror"
+	tidcommon "github.com/thunder-id/thunderid/pkg/thunderidengine/common"
+	"github.com/thunder-id/thunderid/pkg/thunderidengine/providers"
 )
 
 // AuthenticatedUser represents the user information of an authenticated user.
@@ -36,7 +34,7 @@ type AuthenticatedUser struct {
 	OUID                string
 	UserType            string
 	Attributes          map[string]interface{}
-	AvailableAttributes *authnprovidercm.AttributesResponse
+	AvailableAttributes *providers.AttributesResponse
 	Token               string
 }
 
@@ -51,10 +49,10 @@ type AuthenticationContext struct {
 
 // AuthenticationResponse represents the response after successful authentication.
 type AuthenticationResponse struct {
-	ID        string
-	Type      string
-	OUID      string
-	Assertion string
+	ID        string `json:"id"`
+	Type      string `json:"type"`
+	OUID      string `json:"ouId"`
+	Assertion string `json:"assertion,omitempty"`
 }
 
 // AuthenticatorMeta represents an authenticator's metadata including authentication factors.
@@ -64,7 +62,7 @@ type AuthenticatorMeta struct {
 	// Factors represents the authentication factors this authenticator validates
 	Factors []AuthenticationFactor
 	// AssociatedIDP is the optional identity provider type this authenticator is associated with.
-	AssociatedIDP idp.IDPType
+	AssociatedIDP providers.IDPType
 }
 
 // AuthenticatorReference represents an engaged authenticator in the authentication flow.
@@ -77,11 +75,25 @@ type AuthenticatorReference struct {
 	Timestamp int64 `json:"timestamp"`
 }
 
+// AuthorizationData holds authorization flow parameters exchanged during federated authentication.
+type AuthorizationData struct {
+	// Code is the authorization code received from the identity provider
+	Code string
+	// Nonce is the nonce parameter received from the identity provider (if applicable)
+	Nonce string
+}
+
 // FederatedAuthCredential carries the credential data for federated authentication.
 type FederatedAuthCredential struct {
-	IDPID   string
-	IDPType idp.IDPType
-	Code    string
+	IDPID             string
+	IDPType           providers.IDPType
+	AuthorizationData AuthorizationData
+}
+
+// OpenID4VPCredential carries the verified presentation result to the authn provider.
+type OpenID4VPCredential struct {
+	Subject string
+	Claims  map[string]interface{}
 }
 
 // FederatedAuthResult is the result of a federated authentication attempt.
@@ -89,7 +101,7 @@ type FederatedAuthCredential struct {
 type FederatedAuthResult struct {
 	Sub             string
 	Claims          map[string]interface{}
-	InternalEntity  *entityprovider.Entity
+	InternalEntity  *providers.Entity
 	IsAmbiguousUser bool
 }
 
@@ -97,5 +109,12 @@ type FederatedAuthResult struct {
 // Authenticate performs the full flow (code exchange, claims extraction, internal user lookup).
 // It returns an error only for actual failures; a missing internal user is NOT an error.
 type FederatedAuthenticator interface {
-	Authenticate(ctx context.Context, idpID, code string) (*FederatedAuthResult, *serviceerror.ServiceError)
+	Authenticate(ctx context.Context, idpID string, authzData AuthorizationData) (*AuthnResult, *tidcommon.ServiceError)
+}
+
+// AuthnResult represents the result of an authentication attempt,
+// including the issued token and any authenticated claims.
+type AuthnResult struct {
+	Token               map[string]interface{} `json:"token"`
+	AuthenticatedClaims map[string]interface{} `json:"authenticatedClaims,omitempty"`
 }

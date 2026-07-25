@@ -18,27 +18,7 @@
 
 package idp
 
-// IDPType represents the type of an identity provider.
-type IDPType string
-
-const (
-	// IDPTypeOAuth represents an OAuth2 identity provider.
-	IDPTypeOAuth IDPType = "OAUTH"
-	// IDPTypeOIDC represents an OIDC identity provider.
-	IDPTypeOIDC IDPType = "OIDC"
-	// IDPTypeGoogle represents a Google identity provider.
-	IDPTypeGoogle IDPType = "GOOGLE"
-	// IDPTypeGitHub represents a GitHub identity provider.
-	IDPTypeGitHub IDPType = "GITHUB"
-)
-
-// supportedIDPTypes lists all the supported identity provider types.
-var supportedIDPTypes = []IDPType{
-	IDPTypeOAuth,
-	IDPTypeOIDC,
-	IDPTypeGoogle,
-	IDPTypeGitHub,
-}
+import "github.com/thunder-id/thunderid/pkg/thunderidengine/providers"
 
 // IDP property names.
 const (
@@ -55,6 +35,8 @@ const (
 	PropPrompt                = "prompt"
 	PropIssuer                = "issuer"
 	PropTokenExchangeEnabled  = "token_exchange_enabled"
+	PropTrustedTokenAudience  = "trusted_token_audience"
+	PropIDJagEnabled          = "id_jag_enabled"
 )
 
 // Known endpoints for Google OAuth2/OIDC.
@@ -82,8 +64,8 @@ type idpPropertyConfig struct {
 }
 
 // idpPropertyConfigs maps each IDP type to its property configuration.
-var idpPropertyConfigs = map[IDPType]idpPropertyConfig{
-	IDPTypeOAuth: {
+var idpPropertyConfigs = map[providers.IDPType]idpPropertyConfig{
+	providers.IDPTypeOAuth: {
 		Required: []string{
 			PropClientID,
 			PropClientSecret,
@@ -99,7 +81,7 @@ var idpPropertyConfigs = map[IDPType]idpPropertyConfig{
 		},
 		Defaults: map[string]string{},
 	},
-	IDPTypeOIDC: {
+	providers.IDPTypeOIDC: {
 		Required: []string{
 			PropClientID,
 			PropClientSecret,
@@ -115,10 +97,12 @@ var idpPropertyConfigs = map[IDPType]idpPropertyConfig{
 			PropPrompt,
 			PropIssuer,
 			PropTokenExchangeEnabled,
+			PropTrustedTokenAudience,
+			PropIDJagEnabled,
 		},
 		Defaults: map[string]string{},
 	},
-	IDPTypeGoogle: {
+	providers.IDPTypeGoogle: {
 		Required: []string{
 			PropClientID,
 			PropClientSecret,
@@ -142,7 +126,7 @@ var idpPropertyConfigs = map[IDPType]idpPropertyConfig{
 			PropJwksEndpoint:          googleJwksEndpoint,
 		},
 	},
-	IDPTypeGitHub: {
+	providers.IDPTypeGitHub: {
 		Required: []string{
 			PropClientID,
 			PropClientSecret,
@@ -167,12 +151,12 @@ var idpPropertyConfigs = map[IDPType]idpPropertyConfig{
 }
 
 // tokenExchangeRequiredProps defines the required properties per IDP type when token exchange is enabled.
-var tokenExchangeRequiredProps = map[IDPType][]string{
-	IDPTypeOIDC: {
+var tokenExchangeRequiredProps = map[providers.IDPType][]string{
+	providers.IDPTypeOIDC: {
 		PropIssuer,
 		PropJwksEndpoint,
 	},
-	IDPTypeGoogle: {
+	providers.IDPTypeGoogle: {
 		PropIssuer,
 		PropJwksEndpoint,
 	},

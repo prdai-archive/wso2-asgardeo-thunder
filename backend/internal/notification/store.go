@@ -41,6 +41,8 @@ var (
 type notificationStoreInterface interface {
 	createSender(ctx context.Context, sender common.NotificationSenderDTO) error
 	listSenders(ctx context.Context) ([]common.NotificationSenderDTO, error)
+	listSendersByType(ctx context.Context,
+		senderType common.NotificationSenderType) ([]common.NotificationSenderDTO, error)
 	getSenderByID(ctx context.Context, id string) (*common.NotificationSenderDTO, error)
 	getSenderByName(ctx context.Context, name string) (*common.NotificationSenderDTO, error)
 	updateSender(ctx context.Context, id string, sender common.NotificationSenderDTO) error
@@ -96,14 +98,31 @@ func (s *notificationStore) createSender(ctx context.Context, sender common.Noti
 	return nil
 }
 
-// listSenders retrieves all notification senders
+// listSenders retrieves all notification senders.
 func (s *notificationStore) listSenders(ctx context.Context) ([]common.NotificationSenderDTO, error) {
+	return s.listSendersWithQuery(ctx, queryGetAllNotificationSenders, s.deploymentID)
+}
+
+// listSendersByType retrieves all notification senders of the given type (e.g. only
+// message/SMS senders, excluding email senders), filtering at the database layer rather
+// than fetching every sender and discarding the ones that don't match.
+func (s *notificationStore) listSendersByType(
+	ctx context.Context, senderType common.NotificationSenderType,
+) ([]common.NotificationSenderDTO, error) {
+	return s.listSendersWithQuery(ctx, queryGetNotificationSendersByType, string(senderType), s.deploymentID)
+}
+
+// listSendersWithQuery runs the given query and builds the resulting notification senders,
+// shared by listSenders and listSendersByType.
+func (s *notificationStore) listSendersWithQuery(
+	ctx context.Context, query dbmodel.DBQuery, args ...interface{},
+) ([]common.NotificationSenderDTO, error) {
 	dbClient, err := s.dbProvider.GetConfigDBClient()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get database client: %w", err)
 	}
 
-	results, err := dbClient.QueryContext(ctx, queryGetAllNotificationSenders, s.deploymentID)
+	results, err := dbClient.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to execute query: %w", err)
 	}
@@ -163,7 +182,7 @@ func (s *notificationStore) getSender(ctx context.Context, query dbmodel.DBQuery
 		return nil, fmt.Errorf("failed to execute query: %w", err)
 	}
 	if len(results) == 0 {
-		logger.Debug("Notification sender not found", log.String("identifier", identifier))
+		logger.Debug(ctx, "Notification sender not found", log.String("identifier", identifier))
 		return nil, nil
 	}
 	if len(results) > 1 {
@@ -234,7 +253,7 @@ func (s *notificationStore) deleteSender(ctx context.Context, id string) error {
 		return fmt.Errorf("failed to execute delete query: %w", err)
 	}
 	if rowsAffected == 0 {
-		logger.Debug("No sender found to delete", log.String("id", id))
+		logger.Debug(ctx, "No sender found to delete", log.String("id", id))
 	}
 
 	return nil

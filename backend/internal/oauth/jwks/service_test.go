@@ -28,12 +28,13 @@ import (
 	"errors"
 	"testing"
 
+	tidcommon "github.com/thunder-id/thunderid/pkg/thunderidengine/common"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/suite"
 
 	"github.com/thunder-id/thunderid/internal/system/cryptolib"
-	"github.com/thunder-id/thunderid/internal/system/error/serviceerror"
 	kmprovider "github.com/thunder-id/thunderid/internal/system/kmprovider/common"
 	"github.com/thunder-id/thunderid/tests/mocks/crypto/cryptomock"
 )
@@ -132,6 +133,41 @@ func (suite *JWKSServiceTestSuite) TestGetJWKS_EdDSA_Success() {
 	assert.NotEmpty(suite.T(), k.X5tS256)
 }
 
+func (suite *JWKSServiceTestSuite) TestGetJWKS_MLDSA_Success() {
+	signer, err := cryptolib.GenerateMLDSAKey(cryptolib.AlgorithmMLDSA65)
+	assert.NoError(suite.T(), err)
+	info := kmprovider.PublicKeyInfo{
+		KeyID:          "kid-1",
+		Algorithm:      cryptolib.AlgorithmMLDSA65,
+		PublicKey:      signer.Public(),
+		Thumbprint:     "kid-1",
+		CertificateDER: []byte("mldsa-cert-raw"),
+	}
+	suite.cryptoMock.EXPECT().GetPublicKeys(mock.Anything, kmprovider.PublicKeyFilter{}).
+		Return([]kmprovider.PublicKeyInfo{info}, nil)
+
+	resp, svcErr := suite.jwksService.GetJWKS(context.Background())
+	assert.Nil(suite.T(), svcErr)
+	assert.NotNil(suite.T(), resp)
+	assert.Len(suite.T(), resp.Keys, 1)
+	k := resp.Keys[0]
+	assert.Equal(suite.T(), "AKP", k.Kty)
+	assert.Equal(suite.T(), "ML-DSA-65", k.Alg)
+	assert.Equal(suite.T(), "sig", k.Use)
+	assert.NotEmpty(suite.T(), k.Pub)
+	assert.Empty(suite.T(), k.Crv)
+	assert.Empty(suite.T(), k.X)
+	assert.NotEmpty(suite.T(), k.X5c)
+	assert.NotEmpty(suite.T(), k.X5t)
+	assert.NotEmpty(suite.T(), k.X5tS256)
+}
+
+func (suite *JWKSServiceTestSuite) TestGetMLDSAPublicKeyJWKS_NonMLDSAKey() {
+	ecdsaKey, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	_, ok := getMLDSAPublicKeyJWKS(&ecdsaKey.PublicKey, "kid-1", nil, "", "")
+	assert.False(suite.T(), ok)
+}
+
 func (suite *JWKSServiceTestSuite) TestGetJWKS_GetPublicKeysError() {
 	suite.cryptoMock.EXPECT().GetPublicKeys(mock.Anything, kmprovider.PublicKeyFilter{}).
 		Return(nil, errors.New("provider error"))
@@ -139,7 +175,7 @@ func (suite *JWKSServiceTestSuite) TestGetJWKS_GetPublicKeysError() {
 	resp, svcErr := suite.jwksService.GetJWKS(context.Background())
 	assert.Nil(suite.T(), resp)
 	assert.NotNil(suite.T(), svcErr)
-	assert.Equal(suite.T(), serviceerror.InternalServerError.Code, svcErr.Code)
+	assert.Equal(suite.T(), tidcommon.InternalServerError.Code, svcErr.Code)
 }
 
 func (suite *JWKSServiceTestSuite) TestGetJWKS_NoCertificatesFound() {
@@ -149,7 +185,7 @@ func (suite *JWKSServiceTestSuite) TestGetJWKS_NoCertificatesFound() {
 	resp, svcErr := suite.jwksService.GetJWKS(context.Background())
 	assert.Nil(suite.T(), resp)
 	assert.NotNil(suite.T(), svcErr)
-	assert.Equal(suite.T(), serviceerror.InternalServerError.Code, svcErr.Code)
+	assert.Equal(suite.T(), tidcommon.InternalServerError.Code, svcErr.Code)
 }
 
 func (suite *JWKSServiceTestSuite) TestGetJWKS_UnsupportedPublicKeyType() {
@@ -187,7 +223,7 @@ func (suite *JWKSServiceTestSuite) TestGetJWKS_OnlyUnsupportedKeys() {
 	resp, svcErr := suite.jwksService.GetJWKS(context.Background())
 	assert.Nil(suite.T(), resp)
 	assert.NotNil(suite.T(), svcErr)
-	assert.Equal(suite.T(), serviceerror.InternalServerError.Code, svcErr.Code)
+	assert.Equal(suite.T(), tidcommon.InternalServerError.Code, svcErr.Code)
 }
 
 func (suite *JWKSServiceTestSuite) TestGetJWKS_MultipleCertificates() {

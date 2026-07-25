@@ -1,5 +1,6 @@
 ---
 title: View Profile
+docType: use-case
 description: View profile attributes, update them, and change the password as John Doe.
 sidebar_position: 4
 ---
@@ -9,11 +10,11 @@ sidebar_position: 4
 In this walkthrough, John opens his Wayfinder profile and exercises the two parts of the use case. He **views** what Wayfinder stores about him: name, email, and the other attributes on his `Customer` record. He then **updates** the values he wants to change: his last name and his password.
 
 :::note Prerequisites
-Complete [Set Up Your Environment](../../try-it-out#set-up-your-environment) before starting this walkthrough.
+Complete [Set Up Your Environment](../setup#set-up-your-environment) before starting this walkthrough.
 :::
 
 :::info Background
-[Add Self-Service Profile Management](../../customer-identity#add-self-service-profile-management) covers the requirements story behind this use case.
+[B2C overview](../../#building-blocks-of-the-b2c-identity-journey) covers the requirements story behind this use case.
 :::
 
 ## Pick Your Pattern
@@ -32,32 +33,32 @@ In the redirect-based pattern, the consumer app renders the profile screen itsel
 
 **Try a Variant**
 
-- Add a new attribute to the `Customer` schema (for example, `seatPreference`) and verify it appears on John's profile page after a refresh. See [User Types](/docs/next/guides/guides/users/user-types).
+- Add a new attribute to the `Customer` schema (for example, `seatPreference`) and verify it appears on John's profile page after a refresh. See [User Types](../../../../guides/users/user-types).
 
 </details>
 
 <details>
-  <summary>App-native step-by-step (verbose flow)</summary>
+  <summary>App-native step-by-step</summary>
 
-Coming soon. See the [App-native pattern](../../solution-patterns#app-native) for what to expect.
+Coming soon. See the [App-native pattern](../../integration-patterns#app-native) for what to expect.
 
 </details>
 
 <details>
-  <summary>App-native managed (non-verbose flow)</summary>
+  <summary>App-native managed</summary>
 
-Coming soon. See the [App-native pattern](../../solution-patterns#app-native) for what to expect.
+Coming soon. See the [App-native pattern](../../integration-patterns#app-native) for what to expect.
 
 </details>
 
 <details>
   <summary>Direct API</summary>
 
-Coming soon. See the [Direct API pattern](../../solution-patterns#direct-api) for what to expect.
+Coming soon. See the [Direct API pattern](../../integration-patterns#direct-api) for what to expect.
 
 </details>
 
 ## Going Deeper
 
 - Want to understand which attributes Wayfinder stores about John? See [User Types](../../identity-concepts#user-types) in the Identity Concepts.
-- Prefer to define the `Customer` schema manually? See [Set Up the Foundation](../../configure-it-yourself#set-up-the-foundation) in Configure It Yourself.
+- Prefer to define the `Customer` schema manually? See [Set Up the Foundation](../configure-it-yourself#set-up-the-foundation) in Configure It Yourself.

@@ -26,7 +26,7 @@ const __dirname = dirname(__filename);
 
 export default [
   {
-    ignores: ['dist/**', 'build/**', 'node_modules/**', 'coverage/**', '.docusaurus/**'],
+    ignores: ['dist/**', 'build/**', 'node_modules/**', 'coverage/**', '.docusaurus/**', 'plugins/**/*.js'],
   },
   ...thunderIdPlugin.configs.react,
   {
@@ -50,7 +50,7 @@ export default [
     files: ['**/*.mjs'],
     languageOptions: {
       parserOptions: {
-        project: null,
+        project: false,
       },
     },
   },

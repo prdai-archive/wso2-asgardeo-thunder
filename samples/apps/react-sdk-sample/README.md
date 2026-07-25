@@ -45,7 +45,8 @@ Open `dist/runtime.json` and set the `clientId` to the value you used in `thunde
 ```json
 {
   "clientId": "{your-client-id}",
-  "baseUrl": "https://localhost:8090"
+  "baseUrl": "https://localhost:8090",
+  "scopes": ["openid", "profile"]
 }
 ```
 
@@ -53,17 +54,14 @@ Open `dist/runtime.json` and set the `clientId` to the value you used in `thunde
 |----------|-------------|
 | `clientId` | The OAuth client ID configured in `thunderid.env` |
 | `baseUrl` | The base URL of your server |
+| `scopes` | Optional OAuth scopes as a string array or a space/comma-delimited string |
 
 ### 3. Start the Application
 
 ```bash
-./start.sh
+npm install
+npm start
 ```
-
-The start script will:
-- Serve the application on port 3000
-- Use HTTPS if SSL certificates are present in the `dist` folder
-- Fall back to HTTP if certificates are not found
 
 ### 4. Access the Application
 
@@ -85,8 +83,8 @@ For HTTPS support during development, copy the SSL certificates from your distri
 
 ```bash
 # From distribution
-cp /path/to/thunder/repository/resources/security/server.key .
-cp /path/to/thunder/repository/resources/security/server.cert .
+cp /path/to/thunder/config/certs/server.key .
+cp /path/to/thunder/config/certs/server.cert .
 
 # Or from build output (if building from source)
 cp ../../target/out/.cert/server.key .
@@ -117,9 +115,18 @@ The application will be available at [https://localhost:3000](https://localhost:
 ```json
 {
   "clientId": "string (required) - OAuth client ID",
-  "baseUrl": "string (required) - Server base URL"
+  "baseUrl": "string (required) - Server base URL",
+  "scopes": "string | string[] (optional) - Requested OAuth scopes"
 }
 ```
+
+### Environment Variable Fallbacks
+
+If a value is missing from `runtime.json`, the app falls back to Vite environment variables:
+
+- `VITE_REACT_APP_CLIENT_ID`
+- `VITE_THUNDERID_BASE_URL`
+- `VITE_REACT_APP_SCOPES` (optional, space/comma-delimited list, e.g. `openid profile`)
 
 ### Application Setup
 
@@ -143,12 +150,18 @@ Before running the app, ensure your application is configured with:
 - Ensure the application exists in and is enabled
 
 **Issue**: CORS errors
-- Add your application URL to "Allowed Origins" in  `deployment.yaml`:
-  ```yaml
-  cors:
-    allowed_origins:
-      - "https://localhost:3000"
-  ```
+- Add your application URL to the server-config `cors` section:
+  - Create or update `config/resources/server_configs/cors.yaml`:
+    ```yaml
+    name: cors
+    value:
+      allowedOrigins:
+        - "https://localhost:3000"
+    ```
+  - Or update it at runtime with `PUT /server-config/cors`:
+    ```json
+    { "allowedOrigins": ["https://localhost:3000"] }
+    ```
 
 ## How It Works
 
@@ -185,4 +198,3 @@ Licensed under the Apache License, Version 2.0. You may not use this file except
 
 ---------------------------------------------------------------------------
 (c) Copyright 2025 WSO2 LLC.
-

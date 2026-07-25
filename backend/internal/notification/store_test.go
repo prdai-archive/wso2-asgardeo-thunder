@@ -23,6 +23,8 @@ import (
 	"errors"
 	"testing"
 
+	engineconfig "github.com/thunder-id/thunderid/pkg/thunderidengine/config"
+
 	"github.com/stretchr/testify/suite"
 
 	"github.com/thunder-id/thunderid/internal/notification/common"
@@ -55,7 +57,7 @@ func TestStoreTestSuite(t *testing.T) {
 func (suite *StoreTestSuite) SetupSuite() {
 	testConfig := &config.Config{
 		Crypto: config.CryptoConfig{
-			Encryption: config.EncryptionConfig{
+			Encryption: engineconfig.EncryptionConfig{
 				Key: "0579f866ac7c9273580d0ff163fa01a7b2401a7ff3ddc3e3b14ae3136fa6025e",
 			},
 		},
@@ -202,6 +204,36 @@ func (suite *StoreTestSuite) TestListSenders_WithPropertiesStringAndBytes() {
 	suite.Len(senders, 2)
 	suite.Len(senders[0].Properties, 1)
 	suite.Len(senders[1].Properties, 1)
+}
+
+func (suite *StoreTestSuite) TestListSendersByType_FiltersAtQueryLevel() {
+	row := map[string]interface{}{
+		"id":          "s1",
+		"name":        "n1",
+		"description": "d1",
+		"type":        "MESSAGE",
+		"provider":    "twilio",
+		"properties":  "",
+	}
+
+	suite.mockDBProvider.EXPECT().GetConfigDBClient().Return(suite.mockDBClient, nil).Once()
+	suite.mockDBClient.EXPECT().QueryContext(context.Background(), queryGetNotificationSendersByType,
+		string(common.NotificationSenderTypeMessage), testDeploymentID).
+		Return([]map[string]interface{}{row}, nil).Once()
+
+	senders, err := suite.store.listSendersByType(context.Background(), common.NotificationSenderTypeMessage)
+	suite.NoError(err)
+	suite.Require().Len(senders, 1)
+	suite.Equal("s1", senders[0].ID)
+	suite.Equal(common.NotificationSenderTypeMessage, senders[0].Type)
+}
+
+func (suite *StoreTestSuite) TestListSendersByType_GetConfigDBClientError() {
+	suite.mockDBProvider.EXPECT().GetConfigDBClient().Return(nil, errors.New("db err")).Once()
+	res, err := suite.store.listSendersByType(context.Background(), common.NotificationSenderTypeMessage)
+	suite.Error(err)
+	suite.Nil(res)
+	suite.Contains(err.Error(), "failed to get database client")
 }
 
 func (suite *StoreTestSuite) TestListSenders_GetConfigDBClientError() {

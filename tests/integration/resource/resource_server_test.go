@@ -25,13 +25,15 @@ import (
 	"io"
 	"net/http"
 	"testing"
+	"time"
 
-	"github.com/thunder-id/thunderid/tests/integration/testutils"
 	"github.com/stretchr/testify/suite"
+	"github.com/thunder-id/thunderid/tests/integration/testutils"
 )
 
 const (
-	testServerURL = "https://localhost:8095"
+	testServerURL                  = "https://localhost:8095"
+	systemResourceServerIdentifier = "https://localhost:8090/mcp"
 )
 
 var (
@@ -70,10 +72,9 @@ func (suite *ResourceServerAPITestSuite) TearDownSuite() {
 
 func (suite *ResourceServerAPITestSuite) TestCreateResourceServer() {
 	reqBody := CreateResourceServerRequest{
-		Name:               "Booking System",
-		Description:        "Handles all booking operations",
-		Handle:            "booking-system",
-		OUID: testOUID,
+		Name:        "Booking System",
+		Description: "Handles all booking operations",
+		OUID:        testOUID,
 	}
 
 	rsID, err := createResourceServer(reqBody)
@@ -86,16 +87,15 @@ func (suite *ResourceServerAPITestSuite) TestCreateResourceServer() {
 	suite.Require().NoError(err)
 	suite.Equal(reqBody.Name, rs.Name)
 	suite.Equal(reqBody.Description, rs.Description)
-	suite.Equal(reqBody.Handle, rs.Handle)
 	suite.Equal(reqBody.OUID, rs.OUID)
+	suite.NotEmpty(rs.Identifier)
 	suite.NotEmpty(rs.Delimiter, "Delimiter should be set to default value")
 	suite.Equal(":", rs.Delimiter, "Default delimiter should be ':' based on default configuration")
 }
 
 func (suite *ResourceServerAPITestSuite) TestCreateResourceServerWithoutOptionalFields() {
 	reqBody := CreateResourceServerRequest{
-		Name:               "Minimal Resource Server",
-		Handle:            "minimal-rs",
+		Name: "Minimal Resource Server",
 		OUID: testOUID,
 	}
 
@@ -109,14 +109,12 @@ func (suite *ResourceServerAPITestSuite) TestCreateResourceServerWithoutOptional
 	suite.Require().NoError(err)
 	suite.Equal(reqBody.Name, rs.Name)
 	suite.Empty(rs.Description)
-	suite.Equal(reqBody.Handle, rs.Handle)
-	suite.Empty(rs.Identifier)
+	suite.NotEmpty(rs.Identifier)
 }
 
 func (suite *ResourceServerAPITestSuite) TestCreateResourceServerDuplicateName() {
 	reqBody := CreateResourceServerRequest{
-		Name:               "Duplicate Resource Server",
-		Handle:            "dup-name-1",
+		Name: "Duplicate Resource Server",
 		OUID: testOUID,
 	}
 
@@ -126,8 +124,7 @@ func (suite *ResourceServerAPITestSuite) TestCreateResourceServerDuplicateName()
 
 	// Try with same name - should fail
 	reqBody2 := CreateResourceServerRequest{
-		Name:               "Duplicate Resource Server",
-		Handle:            "dup-name-2",
+		Name: "Duplicate Resource Server",
 		OUID: testOUID,
 	}
 	_, err = createResourceServer(reqBody2)
@@ -135,34 +132,11 @@ func (suite *ResourceServerAPITestSuite) TestCreateResourceServerDuplicateName()
 	suite.Contains(err.Error(), "409")
 }
 
-func (suite *ResourceServerAPITestSuite) TestCreateResourceServerDuplicateHandle() {
-	reqBody1 := CreateResourceServerRequest{
-		Name:               "Resource Server 1",
-		Handle:            "same-handler",
-		OUID: testOUID,
-	}
-
-	rsID1, err := createResourceServer(reqBody1)
-	suite.Require().NoError(err)
-	defer deleteResourceServer(rsID1)
-
-	reqBody2 := CreateResourceServerRequest{
-		Name:               "Resource Server 2",
-		Handle:            "same-handler",
-		OUID: testOUID,
-	}
-
-	_, err = createResourceServer(reqBody2)
-	suite.Error(err, "Should fail with duplicate handle")
-	suite.Contains(err.Error(), "409")
-}
-
 func (suite *ResourceServerAPITestSuite) TestCreateResourceServerDuplicateIdentifier() {
 	reqBody1 := CreateResourceServerRequest{
-		Name:               "Resource Server With Identifier 1",
-		Handle:            "dup-id-1",
-		Identifier:         "https://api.example.com/booking/",
-		OUID: testOUID,
+		Name:       "Resource Server With Identifier 1",
+		Identifier: "https://api.example.com/booking/",
+		OUID:       testOUID,
 	}
 
 	rsID1, err := createResourceServer(reqBody1)
@@ -170,10 +144,9 @@ func (suite *ResourceServerAPITestSuite) TestCreateResourceServerDuplicateIdenti
 	defer deleteResourceServer(rsID1)
 
 	reqBody2 := CreateResourceServerRequest{
-		Name:               "Resource Server With Identifier 2",
-		Handle:            "dup-id-2",
-		Identifier:         "https://api.example.com/booking/",
-		OUID: testOUID,
+		Name:       "Resource Server With Identifier 2",
+		Identifier: "https://api.example.com/booking/",
+		OUID:       testOUID,
 	}
 
 	_, err = createResourceServer(reqBody2)
@@ -183,9 +156,9 @@ func (suite *ResourceServerAPITestSuite) TestCreateResourceServerDuplicateIdenti
 
 func (suite *ResourceServerAPITestSuite) TestCreateResourceServerInvalidOU() {
 	reqBody := CreateResourceServerRequest{
-		Name:               "Invalid OU Resource Server",
-		Handle:            "invalid-ou-rs",
-		OUID: "00000000-0000-0000-0000-000000000000",
+		Name:       "Invalid OU Resource Server",
+		Identifier: "https://api.example.com/invalid-ou-rs",
+		OUID:       "00000000-0000-0000-0000-000000000000",
 	}
 
 	_, err := createResourceServer(reqBody)
@@ -195,10 +168,9 @@ func (suite *ResourceServerAPITestSuite) TestCreateResourceServerInvalidOU() {
 
 func (suite *ResourceServerAPITestSuite) TestGetResourceServer() {
 	reqBody := CreateResourceServerRequest{
-		Name:               "Get Test Resource Server",
-		Description:        "Resource server for get test",
-		Handle:            "get-test-rs",
-		OUID: testOUID,
+		Name:        "Get Test Resource Server",
+		Description: "Resource server for get test",
+		OUID:        testOUID,
 	}
 
 	rsID, err := createResourceServer(reqBody)
@@ -221,17 +193,15 @@ func (suite *ResourceServerAPITestSuite) TestGetResourceServerNotFound() {
 func (suite *ResourceServerAPITestSuite) TestListResourceServers() {
 	delimiter := "-"
 	rs1 := CreateResourceServerRequest{
-		Name:               "List Resource Server 1",
-		Description:        "First resource server",
-		Handle:            "listrs1",
-		OUID: testOUID,
-		Delimiter:          &delimiter,
+		Name:        "List Resource Server 1",
+		Description: "First resource server",
+		OUID:        testOUID,
+		Delimiter:   &delimiter,
 	}
 	rs2 := CreateResourceServerRequest{
-		Name:               "List Resource Server 2",
-		Description:        "Second resource server",
-		Handle:            "list-rs-2",
-		OUID: testOUID,
+		Name:        "List Resource Server 2",
+		Description: "Second resource server",
+		OUID:        testOUID,
 	}
 
 	rsID1, err := createResourceServer(rs1)
@@ -280,7 +250,6 @@ func (suite *ResourceServerAPITestSuite) TestUpdateResourceServer() {
 	reqBody := CreateResourceServerRequest{
 		Name:        "Update Test Resource Server",
 		Description: "Original description",
-		Handle:      "original-handler",
 		Identifier:  "https://api.example.com/original/",
 		OUID:        testOUID,
 		Delimiter:   &delimiter,
@@ -304,16 +273,15 @@ func (suite *ResourceServerAPITestSuite) TestUpdateResourceServer() {
 	suite.Require().NoError(err)
 	suite.Equal(updateReq.Name, rs.Name)
 	suite.Equal(updateReq.Description, rs.Description)
-	suite.Equal("original-handler", rs.Handle, "Handle should remain unchanged after update")
 	suite.Equal(updateReq.Identifier, rs.Identifier, "Identifier should be updated")
 	suite.Equal("/", rs.Delimiter, "Delimiter should remain unchanged after update")
 }
 
-func (suite *ResourceServerAPITestSuite) TestUpdateResourceServerPreservesHandleWhenOmitted() {
+func (suite *ResourceServerAPITestSuite) TestUpdateResourceServerPreservesIdentifierWhenOmitted() {
 	reqBody := CreateResourceServerRequest{
-		Name:   "Preserve Handle RS",
-		Handle: "preserve-me",
-		OUID:   testOUID,
+		Name:       "Preserve Identifier RS",
+		Identifier: "https://api.example.com/preserve-identifier",
+		OUID:       testOUID,
 	}
 
 	rsID, err := createResourceServer(reqBody)
@@ -321,7 +289,7 @@ func (suite *ResourceServerAPITestSuite) TestUpdateResourceServerPreservesHandle
 	defer deleteResourceServer(rsID)
 
 	updateReq := UpdateResourceServerRequest{
-		Name: "Preserve Handle RS Updated",
+		Name: "Preserve Identifier RS Updated",
 		OUID: testOUID,
 	}
 
@@ -330,14 +298,12 @@ func (suite *ResourceServerAPITestSuite) TestUpdateResourceServerPreservesHandle
 
 	rs, err := getResourceServer(rsID)
 	suite.Require().NoError(err)
-	suite.Equal("preserve-me", rs.Handle, "Handle should be preserved when not provided in update")
+	suite.Equal(reqBody.Identifier, rs.Identifier, "Identifier should be preserved when not provided in update")
 }
-
-
 
 func (suite *ResourceServerAPITestSuite) TestUpdateResourceServerNotFound() {
 	updateReq := UpdateResourceServerRequest{
-		Name:               "non-existent",
+		Name: "non-existent",
 		OUID: testOUID,
 	}
 
@@ -348,13 +314,11 @@ func (suite *ResourceServerAPITestSuite) TestUpdateResourceServerNotFound() {
 
 func (suite *ResourceServerAPITestSuite) TestUpdateResourceServerNameConflict() {
 	rs1 := CreateResourceServerRequest{
-		Name:               "Conflict Resource Server 1",
-		Handle:            "conflict-rs-1",
+		Name: "Conflict Resource Server 1",
 		OUID: testOUID,
 	}
 	rs2 := CreateResourceServerRequest{
-		Name:               "Conflict Resource Server 2",
-		Handle:            "conflict-rs-2",
+		Name: "Conflict Resource Server 2",
 		OUID: testOUID,
 	}
 
@@ -368,7 +332,7 @@ func (suite *ResourceServerAPITestSuite) TestUpdateResourceServerNameConflict() 
 
 	// Try to update second server to have the same name as first
 	updateReq := UpdateResourceServerRequest{
-		Name:               "Conflict Resource Server 1",
+		Name: "Conflict Resource Server 1",
 		OUID: testOUID,
 	}
 
@@ -377,22 +341,9 @@ func (suite *ResourceServerAPITestSuite) TestUpdateResourceServerNameConflict() 
 	suite.Contains(err.Error(), "409")
 }
 
-func (suite *ResourceServerAPITestSuite) TestCreateResourceServerDelimiterInHandle() {
-	reqBody := CreateResourceServerRequest{
-		Name:    "Delimiter In Handle RS",
-		Handle: "foo:bar",
-		OUID:    testOUID,
-	}
-
-	_, err := createResourceServer(reqBody)
-	suite.Error(err, "Should fail when handle contains the default delimiter")
-	suite.Contains(err.Error(), "400")
-}
-
 func (suite *ResourceServerAPITestSuite) TestDeleteResourceServer() {
 	reqBody := CreateResourceServerRequest{
-		Name:               "Delete Test Resource Server",
-		Handle:            "delete-test-rs",
+		Name: "Delete Test Resource Server",
 		OUID: testOUID,
 	}
 
@@ -417,13 +368,12 @@ func (suite *ResourceServerAPITestSuite) TestCreateResourceServerWithVariousDeli
 	// Valid delimiters: a-zA-Z0-9._:-/
 	validDelimiters := []string{":", ".", "-", "_", "/"}
 
-	for i, delim := range validDelimiters {
+	for _, delim := range validDelimiters {
 		delimiter := delim
 		reqBody := CreateResourceServerRequest{
-			Name:               "Server With " + delim + " Delimiter",
-			Handle:            fmt.Sprintf("delimtest%d", i),
-			OUID: testOUID,
-			Delimiter:          &delimiter,
+			Name:      "Server With " + delim + " Delimiter",
+			OUID:      testOUID,
+			Delimiter: &delimiter,
 		}
 
 		rsID, err := createResourceServer(reqBody)
@@ -454,10 +404,9 @@ func (suite *ResourceServerAPITestSuite) TestCreateResourceServerWithVariousDeli
 	for _, tc := range invalidDelimiters {
 		delimiter := tc.value
 		reqBody := CreateResourceServerRequest{
-			Name:               "Server With " + tc.description + " Delimiter",
-			Handle:            "invalid" + tc.description,
-			OUID: testOUID,
-			Delimiter:          &delimiter,
+			Name:      "Server With " + tc.description + " Delimiter",
+			OUID:      testOUID,
+			Delimiter: &delimiter,
 		}
 
 		_, err := createResourceServer(reqBody)
@@ -466,10 +415,30 @@ func (suite *ResourceServerAPITestSuite) TestCreateResourceServerWithVariousDeli
 	}
 }
 
+func (suite *ResourceServerAPITestSuite) TestDefaultSystemResourceServerHasMCPIdentifier() {
+	list, err := listResourceServers(0, 100)
+	suite.Require().NoError(err)
+
+	var systemRS *ResourceServerResponse
+	for i := range list.ResourceServers {
+		if list.ResourceServers[i].Name == "System" {
+			systemRS = &list.ResourceServers[i]
+			break
+		}
+	}
+
+	suite.Require().NotNil(systemRS, "Default 'System' resource server should exist")
+	suite.Equal(systemResourceServerIdentifier, systemRS.Identifier)
+}
+
 // Helper functions
 
 func createResourceServer(req CreateResourceServerRequest) (string, error) {
 	client := testutils.GetHTTPClient()
+
+	if req.Identifier == "" {
+		req.Identifier = fmt.Sprintf("https://api.example.com/integration/%d", time.Now().UnixNano())
+	}
 
 	body, _ := json.Marshal(req)
 	httpReq, err := http.NewRequest("POST", testServerURL+"/resource-servers", bytes.NewBuffer(body))

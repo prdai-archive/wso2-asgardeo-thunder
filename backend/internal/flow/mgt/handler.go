@@ -19,12 +19,15 @@
 package flowmgt
 
 import (
+	"context"
 	"net/http"
 	"strconv"
 
-	"github.com/thunder-id/thunderid/internal/flow/common"
+	"github.com/thunder-id/thunderid/pkg/thunderidengine/providers"
+
+	tidcommon "github.com/thunder-id/thunderid/pkg/thunderidengine/common"
+
 	"github.com/thunder-id/thunderid/internal/system/error/apierror"
-	"github.com/thunder-id/thunderid/internal/system/error/serviceerror"
 	"github.com/thunder-id/thunderid/internal/system/log"
 	"github.com/thunder-id/thunderid/internal/system/utils"
 )
@@ -68,21 +71,21 @@ func (h *flowMgtHandler) listFlows(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	limit, offset, svcErr := parsePaginationParams(r)
 	if svcErr != nil {
-		handleError(w, svcErr)
+		handleError(ctx, w, svcErr)
 		return
 	}
 
 	flowTypeStr := r.URL.Query().Get(queryParamFlowType)
-	flowType := common.FlowType(flowTypeStr)
+	flowType := providers.FlowType(flowTypeStr)
 
 	flowList, svcErr := h.service.ListFlows(ctx, limit, offset, flowType)
 	if svcErr != nil {
-		handleError(w, svcErr)
+		handleError(ctx, w, svcErr)
 		return
 	}
 
-	utils.WriteSuccessResponse(w, http.StatusOK, flowList)
-	h.logger.Debug("Flows listed successfully", log.Int(logKeyCount, flowList.Count))
+	utils.WriteSuccessResponse(ctx, w, http.StatusOK, flowList)
+	h.logger.Debug(ctx, "Flows listed successfully", log.Int(logKeyCount, flowList.Count))
 }
 
 // createFlow handles POST requests to create a new flow definition.
@@ -90,19 +93,19 @@ func (h *flowMgtHandler) createFlow(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	flowDefRequest, err := utils.DecodeJSONBody[FlowDefinitionRequest](r)
 	if err != nil {
-		handleInvalidRequestError(w)
+		handleInvalidRequestError(ctx, w)
 		return
 	}
 
 	sanitized := sanitizeFlowDefinitionRequest(flowDefRequest)
 	createdFlow, svcErr := h.service.CreateFlow(ctx, sanitized)
 	if svcErr != nil {
-		handleError(w, svcErr)
+		handleError(ctx, w, svcErr)
 		return
 	}
 
-	utils.WriteSuccessResponse(w, http.StatusCreated, createdFlow)
-	h.logger.Debug("Flow created successfully", log.String(logKeyFlowID, createdFlow.ID))
+	utils.WriteSuccessResponse(ctx, w, http.StatusCreated, createdFlow)
+	h.logger.Debug(ctx, "Flow created successfully", log.String(logKeyFlowID, createdFlow.ID))
 }
 
 // getFlow handles GET requests to retrieve a flow definition by its ID.
@@ -110,18 +113,37 @@ func (h *flowMgtHandler) getFlow(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	flowID := r.PathValue(pathParamFlowID)
 	if flowID == "" {
-		handleError(w, &ErrorMissingFlowID)
+		handleError(ctx, w, &ErrorMissingFlowID)
 		return
 	}
 
 	flow, svcErr := h.service.GetFlow(ctx, flowID)
 	if svcErr != nil {
-		handleError(w, svcErr)
+		handleError(ctx, w, svcErr)
 		return
 	}
 
-	utils.WriteSuccessResponse(w, http.StatusOK, flow)
-	h.logger.Debug("Flow retrieved successfully", log.String(logKeyFlowID, flowID))
+	utils.WriteSuccessResponse(ctx, w, http.StatusOK, flow)
+	h.logger.Debug(ctx, "Flow retrieved successfully", log.String(logKeyFlowID, flowID))
+}
+
+// getFlowUsages handles GET requests to retrieve the resources that reference a flow.
+func (h *flowMgtHandler) getFlowUsages(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	flowID := r.PathValue(pathParamFlowID)
+	if flowID == "" {
+		handleError(ctx, w, &ErrorMissingFlowID)
+		return
+	}
+
+	result, svcErr := h.service.GetFlowUsages(ctx, flowID)
+	if svcErr != nil {
+		handleError(ctx, w, svcErr)
+		return
+	}
+
+	utils.WriteSuccessResponse(ctx, w, http.StatusOK, result)
+	h.logger.Debug(ctx, "Flow usages retrieved successfully", log.String(logKeyFlowID, flowID))
 }
 
 // updateFlow handles PUT requests to update an existing flow definition.
@@ -129,25 +151,25 @@ func (h *flowMgtHandler) updateFlow(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	flowID := r.PathValue(pathParamFlowID)
 	if flowID == "" {
-		handleError(w, &ErrorMissingFlowID)
+		handleError(ctx, w, &ErrorMissingFlowID)
 		return
 	}
 
 	flowDefRequest, err := utils.DecodeJSONBody[FlowDefinitionRequest](r)
 	if err != nil {
-		handleInvalidRequestError(w)
+		handleInvalidRequestError(ctx, w)
 		return
 	}
 
 	sanitized := sanitizeFlowDefinitionRequest(flowDefRequest)
 	updatedFlow, svcErr := h.service.UpdateFlow(ctx, flowID, sanitized)
 	if svcErr != nil {
-		handleError(w, svcErr)
+		handleError(ctx, w, svcErr)
 		return
 	}
 
-	utils.WriteSuccessResponse(w, http.StatusOK, updatedFlow)
-	h.logger.Debug("Flow updated successfully", log.String(logKeyFlowID, flowID))
+	utils.WriteSuccessResponse(ctx, w, http.StatusOK, updatedFlow)
+	h.logger.Debug(ctx, "Flow updated successfully", log.String(logKeyFlowID, flowID))
 }
 
 // deleteFlow handles DELETE requests to remove a flow definition by its ID.
@@ -155,18 +177,18 @@ func (h *flowMgtHandler) deleteFlow(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	flowID := r.PathValue(pathParamFlowID)
 	if flowID == "" {
-		handleError(w, &ErrorMissingFlowID)
+		handleError(ctx, w, &ErrorMissingFlowID)
 		return
 	}
 
 	svcErr := h.service.DeleteFlow(ctx, flowID)
 	if svcErr != nil {
-		handleError(w, svcErr)
+		handleError(ctx, w, svcErr)
 		return
 	}
 
 	w.WriteHeader(http.StatusNoContent)
-	h.logger.Debug("Flow deleted successfully", log.String(logKeyFlowID, flowID))
+	h.logger.Debug(ctx, "Flow deleted successfully", log.String(logKeyFlowID, flowID))
 }
 
 // Flow version management HTTP handler methods
@@ -176,18 +198,18 @@ func (h *flowMgtHandler) listFlowVersions(w http.ResponseWriter, r *http.Request
 	ctx := r.Context()
 	flowID := r.PathValue(pathParamFlowID)
 	if flowID == "" {
-		handleError(w, &ErrorMissingFlowID)
+		handleError(ctx, w, &ErrorMissingFlowID)
 		return
 	}
 
 	versionList, svcErr := h.service.ListFlowVersions(ctx, flowID)
 	if svcErr != nil {
-		handleError(w, svcErr)
+		handleError(ctx, w, svcErr)
 		return
 	}
 
-	utils.WriteSuccessResponse(w, http.StatusOK, versionList)
-	h.logger.Debug("Flow versions listed successfully", log.String(logKeyFlowID, flowID))
+	utils.WriteSuccessResponse(ctx, w, http.StatusOK, versionList)
+	h.logger.Debug(ctx, "Flow versions listed successfully", log.String(logKeyFlowID, flowID))
 }
 
 // getFlowVersion handles GET requests to retrieve a specific version of a flow definition.
@@ -197,24 +219,24 @@ func (h *flowMgtHandler) getFlowVersion(w http.ResponseWriter, r *http.Request) 
 	versionStr := r.PathValue(pathParamVersion)
 
 	if flowID == "" || versionStr == "" {
-		handleError(w, &ErrorMissingFlowID)
+		handleError(ctx, w, &ErrorMissingFlowID)
 		return
 	}
 
 	version, err := strconv.Atoi(versionStr)
 	if err != nil || version <= 0 {
-		handleError(w, &ErrorInvalidVersion)
+		handleError(ctx, w, &ErrorInvalidVersion)
 		return
 	}
 
 	flowVersion, svcErr := h.service.GetFlowVersion(ctx, flowID, version)
 	if svcErr != nil {
-		handleError(w, svcErr)
+		handleError(ctx, w, svcErr)
 		return
 	}
 
-	utils.WriteSuccessResponse(w, http.StatusOK, flowVersion)
-	h.logger.Debug("Flow version retrieved successfully",
+	utils.WriteSuccessResponse(ctx, w, http.StatusOK, flowVersion)
+	h.logger.Debug(ctx, "Flow version retrieved successfully",
 		log.String(logKeyFlowID, flowID), log.Int(logKeyVersion, version))
 }
 
@@ -223,29 +245,29 @@ func (h *flowMgtHandler) restoreFlowVersion(w http.ResponseWriter, r *http.Reque
 	ctx := r.Context()
 	flowID := r.PathValue(pathParamFlowID)
 	if flowID == "" {
-		handleError(w, &ErrorMissingFlowID)
+		handleError(ctx, w, &ErrorMissingFlowID)
 		return
 	}
 
 	request, err := utils.DecodeJSONBody[RestoreVersionRequest](r)
 	if err != nil {
-		handleInvalidRequestError(w)
+		handleInvalidRequestError(ctx, w)
 		return
 	}
 
 	flow, svcErr := h.service.RestoreFlowVersion(ctx, flowID, request.Version)
 	if svcErr != nil {
-		handleError(w, svcErr)
+		handleError(ctx, w, svcErr)
 		return
 	}
 
-	utils.WriteSuccessResponse(w, http.StatusOK, flow)
-	h.logger.Debug("Flow version restored successfully",
+	utils.WriteSuccessResponse(ctx, w, http.StatusOK, flow)
+	h.logger.Debug(ctx, "Flow version restored successfully",
 		log.String(logKeyFlowID, flowID), log.Int(logKeyVersion, request.Version))
 }
 
 // parsePaginationParams extracts and validates pagination parameters from the request.
-func parsePaginationParams(r *http.Request) (int, int, *serviceerror.ServiceError) {
+func parsePaginationParams(r *http.Request) (int, int, *tidcommon.ServiceError) {
 	limitStr := r.URL.Query().Get(queryParamLimit)
 	offsetStr := r.URL.Query().Get(queryParamOffset)
 
@@ -274,28 +296,38 @@ func parsePaginationParams(r *http.Request) (int, int, *serviceerror.ServiceErro
 // TODO: Currently we're storing node representation as it is. In the future, we should sanitize and
 // validate it properly.
 func sanitizeFlowDefinitionRequest(req *FlowDefinitionRequest) *FlowDefinition {
+	var interceptors []providers.InterceptorDefinition
+	if len(req.Interceptors) > 0 {
+		interceptors = make([]providers.InterceptorDefinition, len(req.Interceptors))
+		for i, ic := range req.Interceptors {
+			interceptors[i] = ic
+			interceptors[i].Name = utils.SanitizeString(ic.Name)
+		}
+	}
+
 	sanitized := &FlowDefinition{
-		Handle:   utils.SanitizeString(req.Handle),
-		Name:     utils.SanitizeString(req.Name),
-		FlowType: req.FlowType,
-		Nodes:    req.Nodes,
+		Handle:       utils.SanitizeString(req.Handle),
+		Name:         utils.SanitizeString(req.Name),
+		FlowType:     req.FlowType,
+		Interceptors: interceptors,
+		Nodes:        req.Nodes,
 	}
 
 	return sanitized
 }
 
 // handleInvalidRequestError writes a standardized error response for invalid requests.
-func handleInvalidRequestError(w http.ResponseWriter) {
+func handleInvalidRequestError(ctx context.Context, w http.ResponseWriter) {
 	errResp := apierror.ErrorResponse{
 		Code:        ErrorInvalidRequestFormat.Code,
 		Message:     ErrorInvalidRequestFormat.Error,
 		Description: ErrorInvalidRequestFormat.ErrorDescription,
 	}
-	utils.WriteErrorResponse(w, http.StatusBadRequest, errResp)
+	utils.WriteErrorResponse(ctx, w, http.StatusBadRequest, errResp)
 }
 
 // handleError writes an error response based on the provided ServiceError.
-func handleError(w http.ResponseWriter, svcErr *serviceerror.ServiceError) {
+func handleError(ctx context.Context, w http.ResponseWriter, svcErr *tidcommon.ServiceError) {
 	errResp := apierror.ErrorResponse{
 		Code:        svcErr.Code,
 		Message:     svcErr.Error,
@@ -308,13 +340,13 @@ func handleError(w http.ResponseWriter, svcErr *serviceerror.ServiceError) {
 		statusCode = http.StatusNotFound
 	case ErrorDuplicateFlowID.Code:
 		statusCode = http.StatusConflict
-	case serviceerror.InternalServerError.Code:
+	case tidcommon.InternalServerError.Code:
 		statusCode = http.StatusInternalServerError
-		log.GetLogger().Error("Internal server error in flow handler",
+		log.GetLogger().Error(ctx, "Internal server error in flow handler",
 			log.String("code", svcErr.Code),
 			log.String("error", svcErr.Error.DefaultValue),
 			log.String("description", svcErr.ErrorDescription.DefaultValue))
 	}
 
-	utils.WriteErrorResponse(w, statusCode, errResp)
+	utils.WriteErrorResponse(ctx, w, statusCode, errResp)
 }

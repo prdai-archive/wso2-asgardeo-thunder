@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2025, WSO2 LLC. (https://www.wso2.com).
+ * Copyright (c) 2025-2026, WSO2 LLC. (https://www.wso2.com).
  *
  * WSO2 LLC. licenses this file to you under the Apache License,
  * Version 2.0 (the "License"); you may not use this file except
@@ -21,49 +21,46 @@ package flowexec
 import (
 	"net/http"
 
-	"github.com/thunder-id/thunderid/internal/entityprovider"
+	flowconfig "github.com/thunder-id/thunderid/internal/flow/config"
 	"github.com/thunder-id/thunderid/internal/flow/executor"
-	flowmgt "github.com/thunder-id/thunderid/internal/flow/mgt"
-	"github.com/thunder-id/thunderid/internal/inboundclient"
-	"github.com/thunder-id/thunderid/internal/system/config"
-	dbprovider "github.com/thunder-id/thunderid/internal/system/database/provider"
+	"github.com/thunder-id/thunderid/internal/flow/graphbuilder"
+	"github.com/thunder-id/thunderid/internal/flow/interceptor"
+	"github.com/thunder-id/thunderid/internal/flow/session"
 	kmprovider "github.com/thunder-id/thunderid/internal/system/kmprovider/common"
 	"github.com/thunder-id/thunderid/internal/system/middleware"
-	"github.com/thunder-id/thunderid/internal/system/observability"
 	"github.com/thunder-id/thunderid/internal/system/transaction"
+	"github.com/thunder-id/thunderid/pkg/thunderidengine/providers"
 )
 
 // Initialize creates and configures the flow execution service components.
-// The observabilitySvc parameter is optional (can be nil) - if nil, observability events won't be published.
 func Initialize(
 	mux *http.ServeMux,
-	flowMgtService flowmgt.FlowMgtServiceInterface,
-	inboundClientService inboundclient.InboundClientServiceInterface,
-	entityProvider entityprovider.EntityProviderInterface,
+	flowProvider providers.FlowProvider,
+	actorProvider providers.ActorProvider,
 	executorRegistry executor.ExecutorRegistryInterface,
-	observabilitySvc observability.ObservabilityServiceInterface,
+	interceptorRegistry interceptor.InterceptorRegistryInterface,
+	observabilitySvc providers.ObservabilityProvider,
 	cryptoSvc kmprovider.RuntimeCryptoProvider,
+	attestationVerifier providers.AttestationProvider,
+	graphBuilder graphbuilder.GraphBuilderInterface,
+	storeProvider providers.RuntimeStoreProvider,
+	transactioner transaction.Transactioner,
+	cfg flowconfig.Config,
 ) (FlowExecServiceInterface, error) {
-	var flowStore flowStoreInterface
-	var transactioner transaction.Transactioner
+	flowStore := newFlowStore(storeProvider)
+	interceptorRunner := newInterceptorRunner(interceptorRegistry)
+	flowEngine := newFlowEngine(executorRegistry, interceptorRunner, observabilitySvc,
+		flowProvider, graphBuilder)
+	flowExecService := newFlowExecService(flowProvider, flowStore, flowEngine,
+		actorProvider, observabilitySvc, transactioner, cryptoSvc, attestationVerifier,
+		graphBuilder, cfg)
 
-	if config.GetServerRuntime().Config.Database.Runtime.Type == dbprovider.DataSourceTypeRedis {
-		flowStore = newRedisFlowStore(dbprovider.GetRedisProvider())
-		transactioner = transaction.NewNoOpTransactioner()
-	} else {
-		dbProvider := dbprovider.GetDBProvider()
-		var err error
-		transactioner, err = dbProvider.GetRuntimeDBTransactioner()
-		if err != nil {
-			return nil, err
-		}
-		flowStore = newFlowStore(dbProvider)
-	}
-	flowEngine := newFlowEngine(executorRegistry, observabilitySvc)
-	flowExecService := newFlowExecService(flowMgtService, flowStore, flowEngine,
-		inboundClientService, entityProvider, observabilitySvc, transactioner, cryptoSvc)
-
-	handler := newFlowExecutionHandler(flowExecService)
+	// Mark the SSO cookie Secure unless the deployment is configured to serve over plain HTTP, and
+	// bound its lifetime to the session's configured absolute timeout (same fallback as the session
+	// executor's timeouts).
+	ssoTransport := session.NewCookieTransport(cfg.SecureCookies)
+	sessionTimeouts := session.NewTimeouts(cfg.Session.IdleTimeoutSeconds, cfg.Session.AbsoluteTimeoutSeconds)
+	handler := newFlowExecutionHandler(flowExecService, ssoTransport, sessionTimeouts.Absolute)
 	registerRoutes(mux, handler)
 
 	return flowExecService, nil

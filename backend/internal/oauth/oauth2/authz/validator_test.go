@@ -19,12 +19,15 @@
 package authz
 
 import (
+	"context"
+	"net/url"
 	"testing"
+
+	engineconfig "github.com/thunder-id/thunderid/pkg/thunderidengine/config"
+	"github.com/thunder-id/thunderid/pkg/thunderidengine/providers"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/suite"
-
-	inboundmodel "github.com/thunder-id/thunderid/internal/inboundclient/model"
 
 	"github.com/thunder-id/thunderid/internal/oauth/oauth2/constants"
 	sysconfig "github.com/thunder-id/thunderid/internal/system/config"
@@ -33,7 +36,7 @@ import (
 type AuthorizationValidatorTestSuite struct {
 	suite.Suite
 	validator AuthorizationValidatorInterface
-	oauthApp  *inboundmodel.OAuthClient
+	oauthApp  *providers.OAuthClient
 }
 
 func TestAuthorizationValidatorTestSuite(t *testing.T) {
@@ -43,18 +46,18 @@ func TestAuthorizationValidatorTestSuite(t *testing.T) {
 func (suite *AuthorizationValidatorTestSuite) SetupTest() {
 	sysconfig.ResetServerRuntime()
 	err := sysconfig.InitializeServerRuntime("/tmp/test", &sysconfig.Config{
-		OAuth: sysconfig.OAuthConfig{AllowWildcardRedirectURI: true},
+		OAuth: engineconfig.OAuthConfig{AllowWildcardRedirectURI: true},
 	})
 	suite.Require().NoError(err)
 
 	suite.validator = newAuthorizationValidator()
 
-	suite.oauthApp = &inboundmodel.OAuthClient{
+	suite.oauthApp = &providers.OAuthClient{
 		ClientID:                "test-client-id",
 		RedirectURIs:            []string{"https://client.example.com/callback"},
-		GrantTypes:              []constants.GrantType{constants.GrantTypeAuthorizationCode},
-		ResponseTypes:           []constants.ResponseType{constants.ResponseTypeCode},
-		TokenEndpointAuthMethod: constants.TokenEndpointAuthMethodClientSecretPost,
+		GrantTypes:              []providers.GrantType{providers.GrantTypeAuthorizationCode},
+		ResponseTypes:           []providers.ResponseType{providers.ResponseTypeCode},
+		TokenEndpointAuthMethod: providers.TokenEndpointAuthMethodClientSecretPost,
 	}
 }
 
@@ -70,14 +73,14 @@ func (suite *AuthorizationValidatorTestSuite) TestnewAuthorizationValidator() {
 
 func (suite *AuthorizationValidatorTestSuite) TestValidateInitialAuthorizationRequest_Success() {
 	msg := &OAuthMessage{
-		RequestQueryParams: map[string]string{
-			constants.RequestParamClientID:     "test-client-id",
-			constants.RequestParamRedirectURI:  "https://client.example.com/callback",
-			constants.RequestParamResponseType: string(constants.ResponseTypeCode),
+		RequestQueryParams: url.Values{
+			constants.RequestParamClientID:     {"test-client-id"},
+			constants.RequestParamRedirectURI:  {"https://client.example.com/callback"},
+			constants.RequestParamResponseType: {string(providers.ResponseTypeCode)},
 		},
 	}
 
-	sendErrorToApp, errorCode, errorMessage := suite.validator.validateInitialAuthorizationRequest(
+	sendErrorToApp, errorCode, errorMessage := suite.validator.validateInitialAuthorizationRequest(context.Background(),
 		msg, suite.oauthApp)
 
 	assert.False(suite.T(), sendErrorToApp)
@@ -87,13 +90,13 @@ func (suite *AuthorizationValidatorTestSuite) TestValidateInitialAuthorizationRe
 
 func (suite *AuthorizationValidatorTestSuite) TestValidateInitialAuthorizationRequest_MissingClientID() {
 	msg := &OAuthMessage{
-		RequestQueryParams: map[string]string{
-			constants.RequestParamRedirectURI:  "https://client.example.com/callback",
-			constants.RequestParamResponseType: string(constants.ResponseTypeCode),
+		RequestQueryParams: url.Values{
+			constants.RequestParamRedirectURI:  {"https://client.example.com/callback"},
+			constants.RequestParamResponseType: {string(providers.ResponseTypeCode)},
 		},
 	}
 
-	sendErrorToApp, errorCode, errorMessage := suite.validator.validateInitialAuthorizationRequest(
+	sendErrorToApp, errorCode, errorMessage := suite.validator.validateInitialAuthorizationRequest(context.Background(),
 		msg, suite.oauthApp)
 
 	assert.False(suite.T(), sendErrorToApp)
@@ -103,14 +106,14 @@ func (suite *AuthorizationValidatorTestSuite) TestValidateInitialAuthorizationRe
 
 func (suite *AuthorizationValidatorTestSuite) TestValidateInitialAuthorizationRequest_InvalidRedirectURI() {
 	msg := &OAuthMessage{
-		RequestQueryParams: map[string]string{
-			constants.RequestParamClientID:     "test-client-id",
-			constants.RequestParamRedirectURI:  "https://malicious.example.com/callback", // not in allowed list
-			constants.RequestParamResponseType: string(constants.ResponseTypeCode),
+		RequestQueryParams: url.Values{
+			constants.RequestParamClientID:     {"test-client-id"},
+			constants.RequestParamRedirectURI:  {"https://malicious.example.com/callback"}, // not in allowed list
+			constants.RequestParamResponseType: {string(providers.ResponseTypeCode)},
 		},
 	}
 
-	sendErrorToApp, errorCode, errorMessage := suite.validator.validateInitialAuthorizationRequest(
+	sendErrorToApp, errorCode, errorMessage := suite.validator.validateInitialAuthorizationRequest(context.Background(),
 		msg, suite.oauthApp)
 
 	assert.False(suite.T(), sendErrorToApp)
@@ -120,24 +123,24 @@ func (suite *AuthorizationValidatorTestSuite) TestValidateInitialAuthorizationRe
 
 func (suite *AuthorizationValidatorTestSuite) TestValidateAuthzRequest_CodeGrantNotAllowed() {
 	// Create an app that doesn't allow authorization code grant type
-	restrictedApp := &inboundmodel.OAuthClient{
+	restrictedApp := &providers.OAuthClient{
 		ClientID: "test-client-id",
 
 		RedirectURIs:            []string{"https://client.example.com/callback"},
-		GrantTypes:              []constants.GrantType{constants.GrantTypeClientCredentials}, // no auth code
-		ResponseTypes:           []constants.ResponseType{constants.ResponseTypeCode},
-		TokenEndpointAuthMethod: constants.TokenEndpointAuthMethodClientSecretPost,
+		GrantTypes:              []providers.GrantType{providers.GrantTypeClientCredentials}, // no auth code
+		ResponseTypes:           []providers.ResponseType{providers.ResponseTypeCode},
+		TokenEndpointAuthMethod: providers.TokenEndpointAuthMethodClientSecretPost,
 	}
 
 	msg := &OAuthMessage{
-		RequestQueryParams: map[string]string{
-			constants.RequestParamClientID:     "test-client-id",
-			constants.RequestParamRedirectURI:  "https://client.example.com/callback",
-			constants.RequestParamResponseType: string(constants.ResponseTypeCode),
+		RequestQueryParams: url.Values{
+			constants.RequestParamClientID:     {"test-client-id"},
+			constants.RequestParamRedirectURI:  {"https://client.example.com/callback"},
+			constants.RequestParamResponseType: {string(providers.ResponseTypeCode)},
 		},
 	}
 
-	sendErrorToApp, errorCode, errorMessage := suite.validator.validateInitialAuthorizationRequest(
+	sendErrorToApp, errorCode, errorMessage := suite.validator.validateInitialAuthorizationRequest(context.Background(),
 		msg, restrictedApp)
 
 	assert.True(suite.T(), sendErrorToApp)
@@ -147,13 +150,13 @@ func (suite *AuthorizationValidatorTestSuite) TestValidateAuthzRequest_CodeGrant
 
 func (suite *AuthorizationValidatorTestSuite) TestValidateInitialAuthorizationRequest_MissingResponseType() {
 	msg := &OAuthMessage{
-		RequestQueryParams: map[string]string{
-			constants.RequestParamClientID:    "test-client-id",
-			constants.RequestParamRedirectURI: "https://client.example.com/callback",
+		RequestQueryParams: url.Values{
+			constants.RequestParamClientID:    {"test-client-id"},
+			constants.RequestParamRedirectURI: {"https://client.example.com/callback"},
 		},
 	}
 
-	sendErrorToApp, errorCode, errorMessage := suite.validator.validateInitialAuthorizationRequest(
+	sendErrorToApp, errorCode, errorMessage := suite.validator.validateInitialAuthorizationRequest(context.Background(),
 		msg, suite.oauthApp)
 
 	assert.True(suite.T(), sendErrorToApp)
@@ -163,24 +166,24 @@ func (suite *AuthorizationValidatorTestSuite) TestValidateInitialAuthorizationRe
 
 func (suite *AuthorizationValidatorTestSuite) TestValidateInitialAuthorizationRequest_UnsupportedResponseType() {
 	// Create an app that doesn't support "code" response type
-	restrictedApp := &inboundmodel.OAuthClient{
+	restrictedApp := &providers.OAuthClient{
 		ClientID: "test-client-id",
 
 		RedirectURIs:            []string{"https://client.example.com/callback"},
-		GrantTypes:              []constants.GrantType{constants.GrantTypeAuthorizationCode},
-		ResponseTypes:           []constants.ResponseType{}, // no response types allowed
-		TokenEndpointAuthMethod: constants.TokenEndpointAuthMethodClientSecretPost,
+		GrantTypes:              []providers.GrantType{providers.GrantTypeAuthorizationCode},
+		ResponseTypes:           []providers.ResponseType{}, // no response types allowed
+		TokenEndpointAuthMethod: providers.TokenEndpointAuthMethodClientSecretPost,
 	}
 
 	msg := &OAuthMessage{
-		RequestQueryParams: map[string]string{
-			constants.RequestParamClientID:     "test-client-id",
-			constants.RequestParamRedirectURI:  "https://client.example.com/callback",
-			constants.RequestParamResponseType: string(constants.ResponseTypeCode),
+		RequestQueryParams: url.Values{
+			constants.RequestParamClientID:     {"test-client-id"},
+			constants.RequestParamRedirectURI:  {"https://client.example.com/callback"},
+			constants.RequestParamResponseType: {string(providers.ResponseTypeCode)},
 		},
 	}
 
-	sendErrorToApp, errorCode, errorMessage := suite.validator.validateInitialAuthorizationRequest(
+	sendErrorToApp, errorCode, errorMessage := suite.validator.validateInitialAuthorizationRequest(context.Background(),
 		msg, restrictedApp)
 
 	assert.True(suite.T(), sendErrorToApp)
@@ -190,14 +193,14 @@ func (suite *AuthorizationValidatorTestSuite) TestValidateInitialAuthorizationRe
 
 func (suite *AuthorizationValidatorTestSuite) TestValidateInitialAuthorizationRequest_EmptyRedirectURI() {
 	msg := &OAuthMessage{
-		RequestQueryParams: map[string]string{
-			constants.RequestParamClientID:     "test-client-id",
-			constants.RequestParamRedirectURI:  "", // empty redirect URI should be OK if app has only one registered
-			constants.RequestParamResponseType: string(constants.ResponseTypeCode),
+		RequestQueryParams: url.Values{
+			constants.RequestParamClientID:     {"test-client-id"},
+			constants.RequestParamRedirectURI:  {""}, // empty redirect URI should be OK if app has only one registered
+			constants.RequestParamResponseType: {string(providers.ResponseTypeCode)},
 		},
 	}
 
-	sendErrorToApp, errorCode, errorMessage := suite.validator.validateInitialAuthorizationRequest(
+	sendErrorToApp, errorCode, errorMessage := suite.validator.validateInitialAuthorizationRequest(context.Background(),
 		msg, suite.oauthApp)
 
 	assert.False(suite.T(), sendErrorToApp)
@@ -209,16 +212,16 @@ func (suite *AuthorizationValidatorTestSuite) TestValidateInitialAuthorizationRe
 
 func (suite *AuthorizationValidatorTestSuite) TestValidateInitialAuthorizationRequest_ValidResource() {
 	msg := &OAuthMessage{
-		RequestQueryParams: map[string]string{
-			constants.RequestParamClientID:     "test-client-id",
-			constants.RequestParamRedirectURI:  "https://client.example.com/callback",
-			constants.RequestParamResponseType: string(constants.ResponseTypeCode),
-			constants.RequestParamResource:     "https://api.example.com/resource",
+		RequestQueryParams: url.Values{
+			constants.RequestParamClientID:     {"test-client-id"},
+			constants.RequestParamRedirectURI:  {"https://client.example.com/callback"},
+			constants.RequestParamResponseType: {string(providers.ResponseTypeCode)},
+			constants.RequestParamResource:     {"https://api.example.com/resource"},
 		},
 		Resources: []string{"https://api.example.com/resource"},
 	}
 
-	sendErrorToApp, errorCode, errorMessage := suite.validator.validateInitialAuthorizationRequest(
+	sendErrorToApp, errorCode, errorMessage := suite.validator.validateInitialAuthorizationRequest(context.Background(),
 		msg, suite.oauthApp)
 
 	assert.False(suite.T(), sendErrorToApp)
@@ -228,16 +231,16 @@ func (suite *AuthorizationValidatorTestSuite) TestValidateInitialAuthorizationRe
 
 func (suite *AuthorizationValidatorTestSuite) TestValidateInitialAuthorizationRequest_ValidMCPServerResource() {
 	msg := &OAuthMessage{
-		RequestQueryParams: map[string]string{
-			constants.RequestParamClientID:     "test-client-id",
-			constants.RequestParamRedirectURI:  "https://client.example.com/callback",
-			constants.RequestParamResponseType: string(constants.ResponseTypeCode),
-			constants.RequestParamResource:     "https://mcp.example.com/mcp",
+		RequestQueryParams: url.Values{
+			constants.RequestParamClientID:     {"test-client-id"},
+			constants.RequestParamRedirectURI:  {"https://client.example.com/callback"},
+			constants.RequestParamResponseType: {string(providers.ResponseTypeCode)},
+			constants.RequestParamResource:     {"https://mcp.example.com/mcp"},
 		},
 		Resources: []string{"https://mcp.example.com/mcp"},
 	}
 
-	sendErrorToApp, errorCode, errorMessage := suite.validator.validateInitialAuthorizationRequest(
+	sendErrorToApp, errorCode, errorMessage := suite.validator.validateInitialAuthorizationRequest(context.Background(),
 		msg, suite.oauthApp)
 
 	assert.False(suite.T(), sendErrorToApp)
@@ -247,16 +250,16 @@ func (suite *AuthorizationValidatorTestSuite) TestValidateInitialAuthorizationRe
 
 func (suite *AuthorizationValidatorTestSuite) TestValidateInitialAuthorizationRequest_ValidResourceWithPort() {
 	msg := &OAuthMessage{
-		RequestQueryParams: map[string]string{
-			constants.RequestParamClientID:     "test-client-id",
-			constants.RequestParamRedirectURI:  "https://client.example.com/callback",
-			constants.RequestParamResponseType: string(constants.ResponseTypeCode),
-			constants.RequestParamResource:     "https://mcp.example.com:8443",
+		RequestQueryParams: url.Values{
+			constants.RequestParamClientID:     {"test-client-id"},
+			constants.RequestParamRedirectURI:  {"https://client.example.com/callback"},
+			constants.RequestParamResponseType: {string(providers.ResponseTypeCode)},
+			constants.RequestParamResource:     {"https://mcp.example.com:8443"},
 		},
 		Resources: []string{"https://mcp.example.com:8443"},
 	}
 
-	sendErrorToApp, errorCode, errorMessage := suite.validator.validateInitialAuthorizationRequest(
+	sendErrorToApp, errorCode, errorMessage := suite.validator.validateInitialAuthorizationRequest(context.Background(),
 		msg, suite.oauthApp)
 
 	assert.False(suite.T(), sendErrorToApp)
@@ -266,15 +269,15 @@ func (suite *AuthorizationValidatorTestSuite) TestValidateInitialAuthorizationRe
 
 func (suite *AuthorizationValidatorTestSuite) TestValidateInitialAuthorizationRequest_EmptyResource() {
 	msg := &OAuthMessage{
-		RequestQueryParams: map[string]string{
-			constants.RequestParamClientID:     "test-client-id",
-			constants.RequestParamRedirectURI:  "https://client.example.com/callback",
-			constants.RequestParamResponseType: string(constants.ResponseTypeCode),
-			constants.RequestParamResource:     "",
+		RequestQueryParams: url.Values{
+			constants.RequestParamClientID:     {"test-client-id"},
+			constants.RequestParamRedirectURI:  {"https://client.example.com/callback"},
+			constants.RequestParamResponseType: {string(providers.ResponseTypeCode)},
+			constants.RequestParamResource:     {""},
 		},
 	}
 
-	sendErrorToApp, errorCode, errorMessage := suite.validator.validateInitialAuthorizationRequest(
+	sendErrorToApp, errorCode, errorMessage := suite.validator.validateInitialAuthorizationRequest(context.Background(),
 		msg, suite.oauthApp)
 
 	assert.False(suite.T(), sendErrorToApp)
@@ -284,16 +287,16 @@ func (suite *AuthorizationValidatorTestSuite) TestValidateInitialAuthorizationRe
 
 func (suite *AuthorizationValidatorTestSuite) TestValidateInitialAuthorizationRequest_ResourceMissingScheme() {
 	msg := &OAuthMessage{
-		RequestQueryParams: map[string]string{
-			constants.RequestParamClientID:     "test-client-id",
-			constants.RequestParamRedirectURI:  "https://client.example.com/callback",
-			constants.RequestParamResponseType: string(constants.ResponseTypeCode),
-			constants.RequestParamResource:     "api.example.com/resource",
+		RequestQueryParams: url.Values{
+			constants.RequestParamClientID:     {"test-client-id"},
+			constants.RequestParamRedirectURI:  {"https://client.example.com/callback"},
+			constants.RequestParamResponseType: {string(providers.ResponseTypeCode)},
+			constants.RequestParamResource:     {"api.example.com/resource"},
 		},
 		Resources: []string{"api.example.com/resource"},
 	}
 
-	sendErrorToApp, errorCode, errorMessage := suite.validator.validateInitialAuthorizationRequest(
+	sendErrorToApp, errorCode, errorMessage := suite.validator.validateInitialAuthorizationRequest(context.Background(),
 		msg, suite.oauthApp)
 
 	assert.True(suite.T(), sendErrorToApp)
@@ -303,16 +306,16 @@ func (suite *AuthorizationValidatorTestSuite) TestValidateInitialAuthorizationRe
 
 func (suite *AuthorizationValidatorTestSuite) TestValidateInitialAuthorizationRequest_ResourceWithFragment() {
 	msg := &OAuthMessage{
-		RequestQueryParams: map[string]string{
-			constants.RequestParamClientID:     "test-client-id",
-			constants.RequestParamRedirectURI:  "https://client.example.com/callback",
-			constants.RequestParamResponseType: string(constants.ResponseTypeCode),
-			constants.RequestParamResource:     "https://api.example.com/resource#fragment",
+		RequestQueryParams: url.Values{
+			constants.RequestParamClientID:     {"test-client-id"},
+			constants.RequestParamRedirectURI:  {"https://client.example.com/callback"},
+			constants.RequestParamResponseType: {string(providers.ResponseTypeCode)},
+			constants.RequestParamResource:     {"https://api.example.com/resource#fragment"},
 		},
 		Resources: []string{"https://api.example.com/resource#fragment"},
 	}
 
-	sendErrorToApp, errorCode, errorMessage := suite.validator.validateInitialAuthorizationRequest(
+	sendErrorToApp, errorCode, errorMessage := suite.validator.validateInitialAuthorizationRequest(context.Background(),
 		msg, suite.oauthApp)
 
 	assert.True(suite.T(), sendErrorToApp)
@@ -322,16 +325,16 @@ func (suite *AuthorizationValidatorTestSuite) TestValidateInitialAuthorizationRe
 
 func (suite *AuthorizationValidatorTestSuite) TestValidateInitialAuthorizationRequest_ResourceRelativeURI() {
 	msg := &OAuthMessage{
-		RequestQueryParams: map[string]string{
-			constants.RequestParamClientID:     "test-client-id",
-			constants.RequestParamRedirectURI:  "https://client.example.com/callback",
-			constants.RequestParamResponseType: string(constants.ResponseTypeCode),
-			constants.RequestParamResource:     "/api/resource",
+		RequestQueryParams: url.Values{
+			constants.RequestParamClientID:     {"test-client-id"},
+			constants.RequestParamRedirectURI:  {"https://client.example.com/callback"},
+			constants.RequestParamResponseType: {string(providers.ResponseTypeCode)},
+			constants.RequestParamResource:     {"/api/resource"},
 		},
 		Resources: []string{"/api/resource"},
 	}
 
-	sendErrorToApp, errorCode, errorMessage := suite.validator.validateInitialAuthorizationRequest(
+	sendErrorToApp, errorCode, errorMessage := suite.validator.validateInitialAuthorizationRequest(context.Background(),
 		msg, suite.oauthApp)
 
 	assert.True(suite.T(), sendErrorToApp)
@@ -341,16 +344,16 @@ func (suite *AuthorizationValidatorTestSuite) TestValidateInitialAuthorizationRe
 
 func (suite *AuthorizationValidatorTestSuite) TestValidateInitialAuthorizationRequest_ResourceInvalidURI() {
 	msg := &OAuthMessage{
-		RequestQueryParams: map[string]string{
-			constants.RequestParamClientID:     "test-client-id",
-			constants.RequestParamRedirectURI:  "https://client.example.com/callback",
-			constants.RequestParamResponseType: string(constants.ResponseTypeCode),
-			constants.RequestParamResource:     "not a valid uri format",
+		RequestQueryParams: url.Values{
+			constants.RequestParamClientID:     {"test-client-id"},
+			constants.RequestParamRedirectURI:  {"https://client.example.com/callback"},
+			constants.RequestParamResponseType: {string(providers.ResponseTypeCode)},
+			constants.RequestParamResource:     {"not a valid uri format"},
 		},
 		Resources: []string{"not a valid uri format"},
 	}
 
-	sendErrorToApp, errorCode, errorMessage := suite.validator.validateInitialAuthorizationRequest(
+	sendErrorToApp, errorCode, errorMessage := suite.validator.validateInitialAuthorizationRequest(context.Background(),
 		msg, suite.oauthApp)
 
 	assert.True(suite.T(), sendErrorToApp)
@@ -361,16 +364,16 @@ func (suite *AuthorizationValidatorTestSuite) TestValidateInitialAuthorizationRe
 func (suite *AuthorizationValidatorTestSuite) TestValidateInitialAuthorizationRequest_ResourceParameterWithQuery() {
 	// Test resource parameter with query component (should be valid per RFC 8707)
 	msg := &OAuthMessage{
-		RequestQueryParams: map[string]string{
-			constants.RequestParamClientID:     "test-client-id",
-			constants.RequestParamRedirectURI:  "https://client.example.com/callback",
-			constants.RequestParamResponseType: string(constants.ResponseTypeCode),
-			constants.RequestParamResource:     "https://api.example.com/resource?param=value",
+		RequestQueryParams: url.Values{
+			constants.RequestParamClientID:     {"test-client-id"},
+			constants.RequestParamRedirectURI:  {"https://client.example.com/callback"},
+			constants.RequestParamResponseType: {string(providers.ResponseTypeCode)},
+			constants.RequestParamResource:     {"https://api.example.com/resource?param=value"},
 		},
 		Resources: []string{"https://api.example.com/resource?param=value"},
 	}
 
-	sendErrorToApp, errorCode, errorMessage := suite.validator.validateInitialAuthorizationRequest(
+	sendErrorToApp, errorCode, errorMessage := suite.validator.validateInitialAuthorizationRequest(context.Background(),
 		msg, suite.oauthApp)
 
 	assert.False(suite.T(), sendErrorToApp)
@@ -380,26 +383,26 @@ func (suite *AuthorizationValidatorTestSuite) TestValidateInitialAuthorizationRe
 
 func (suite *AuthorizationValidatorTestSuite) TestValidateAuthzReq_PKCERequired_MissingCodeChallenge() {
 	// Create an app that requires PKCE
-	pkceApp := &inboundmodel.OAuthClient{
+	pkceApp := &providers.OAuthClient{
 		ClientID: "test-client-id",
 
 		RedirectURIs:            []string{"https://client.example.com/callback"},
-		GrantTypes:              []constants.GrantType{constants.GrantTypeAuthorizationCode},
-		ResponseTypes:           []constants.ResponseType{constants.ResponseTypeCode},
-		TokenEndpointAuthMethod: constants.TokenEndpointAuthMethodClientSecretPost,
+		GrantTypes:              []providers.GrantType{providers.GrantTypeAuthorizationCode},
+		ResponseTypes:           []providers.ResponseType{providers.ResponseTypeCode},
+		TokenEndpointAuthMethod: providers.TokenEndpointAuthMethodClientSecretPost,
 		PKCERequired:            true,
 	}
 
 	msg := &OAuthMessage{
-		RequestQueryParams: map[string]string{
-			constants.RequestParamClientID:     "test-client-id",
-			constants.RequestParamRedirectURI:  "https://client.example.com/callback",
-			constants.RequestParamResponseType: string(constants.ResponseTypeCode),
+		RequestQueryParams: url.Values{
+			constants.RequestParamClientID:     {"test-client-id"},
+			constants.RequestParamRedirectURI:  {"https://client.example.com/callback"},
+			constants.RequestParamResponseType: {string(providers.ResponseTypeCode)},
 			// Missing code_challenge
 		},
 	}
 
-	sendErrorToApp, errorCode, errorMessage := suite.validator.validateInitialAuthorizationRequest(
+	sendErrorToApp, errorCode, errorMessage := suite.validator.validateInitialAuthorizationRequest(context.Background(),
 		msg, pkceApp)
 
 	assert.True(suite.T(), sendErrorToApp)
@@ -409,27 +412,27 @@ func (suite *AuthorizationValidatorTestSuite) TestValidateAuthzReq_PKCERequired_
 
 func (suite *AuthorizationValidatorTestSuite) TestValidateAuthzReq_PKCERequired_InvalidCodeChallenge() {
 	// Create an app that requires PKCE
-	pkceApp := &inboundmodel.OAuthClient{
+	pkceApp := &providers.OAuthClient{
 		ClientID: "test-client-id",
 
 		RedirectURIs:            []string{"https://client.example.com/callback"},
-		GrantTypes:              []constants.GrantType{constants.GrantTypeAuthorizationCode},
-		ResponseTypes:           []constants.ResponseType{constants.ResponseTypeCode},
-		TokenEndpointAuthMethod: constants.TokenEndpointAuthMethodClientSecretPost,
+		GrantTypes:              []providers.GrantType{providers.GrantTypeAuthorizationCode},
+		ResponseTypes:           []providers.ResponseType{providers.ResponseTypeCode},
+		TokenEndpointAuthMethod: providers.TokenEndpointAuthMethodClientSecretPost,
 		PKCERequired:            true,
 	}
 
 	msg := &OAuthMessage{
-		RequestQueryParams: map[string]string{
-			constants.RequestParamClientID:            "test-client-id",
-			constants.RequestParamRedirectURI:         "https://client.example.com/callback",
-			constants.RequestParamResponseType:        string(constants.ResponseTypeCode),
-			constants.RequestParamCodeChallenge:       "invalid-challenge",
-			constants.RequestParamCodeChallengeMethod: "plain", // Not supported per OAuth 2.0 Security BCP
+		RequestQueryParams: url.Values{
+			constants.RequestParamClientID:            {"test-client-id"},
+			constants.RequestParamRedirectURI:         {"https://client.example.com/callback"},
+			constants.RequestParamResponseType:        {string(providers.ResponseTypeCode)},
+			constants.RequestParamCodeChallenge:       {"invalid-challenge"},
+			constants.RequestParamCodeChallengeMethod: {"plain"}, // Not supported per OAuth 2.0 Security BCP
 		},
 	}
 
-	sendErrorToApp, errorCode, errorMessage := suite.validator.validateInitialAuthorizationRequest(
+	sendErrorToApp, errorCode, errorMessage := suite.validator.validateInitialAuthorizationRequest(context.Background(),
 		msg, pkceApp)
 
 	assert.True(suite.T(), sendErrorToApp)
@@ -439,29 +442,29 @@ func (suite *AuthorizationValidatorTestSuite) TestValidateAuthzReq_PKCERequired_
 
 func (suite *AuthorizationValidatorTestSuite) TestValidateInitialAuthorizationRequest_PKCERequired_ValidPKCE() {
 	// Create an app that requires PKCE
-	pkceApp := &inboundmodel.OAuthClient{
+	pkceApp := &providers.OAuthClient{
 		ClientID: "test-client-id",
 
 		RedirectURIs:            []string{"https://client.example.com/callback"},
-		GrantTypes:              []constants.GrantType{constants.GrantTypeAuthorizationCode},
-		ResponseTypes:           []constants.ResponseType{constants.ResponseTypeCode},
-		TokenEndpointAuthMethod: constants.TokenEndpointAuthMethodClientSecretPost,
+		GrantTypes:              []providers.GrantType{providers.GrantTypeAuthorizationCode},
+		ResponseTypes:           []providers.ResponseType{providers.ResponseTypeCode},
+		TokenEndpointAuthMethod: providers.TokenEndpointAuthMethodClientSecretPost,
 		PKCERequired:            true,
 	}
 
 	// Use a valid S256 code challenge (base64url encoded SHA256 hash)
 	// This is a valid format for testing
 	msg := &OAuthMessage{
-		RequestQueryParams: map[string]string{
-			constants.RequestParamClientID:            "test-client-id",
-			constants.RequestParamRedirectURI:         "https://client.example.com/callback",
-			constants.RequestParamResponseType:        string(constants.ResponseTypeCode),
-			constants.RequestParamCodeChallenge:       "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM",
-			constants.RequestParamCodeChallengeMethod: "S256",
+		RequestQueryParams: url.Values{
+			constants.RequestParamClientID:            {"test-client-id"},
+			constants.RequestParamRedirectURI:         {"https://client.example.com/callback"},
+			constants.RequestParamResponseType:        {string(providers.ResponseTypeCode)},
+			constants.RequestParamCodeChallenge:       {"E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM"},
+			constants.RequestParamCodeChallengeMethod: {"S256"},
 		},
 	}
 
-	sendErrorToApp, errorCode, errorMessage := suite.validator.validateInitialAuthorizationRequest(
+	sendErrorToApp, errorCode, errorMessage := suite.validator.validateInitialAuthorizationRequest(context.Background(),
 		msg, pkceApp)
 
 	assert.False(suite.T(), sendErrorToApp)
@@ -471,27 +474,27 @@ func (suite *AuthorizationValidatorTestSuite) TestValidateInitialAuthorizationRe
 
 func (suite *AuthorizationValidatorTestSuite) TestValidateAuthzReq_PKCERequired_MissingCodeChallengeMethod() {
 	// Create an app that requires PKCE
-	pkceApp := &inboundmodel.OAuthClient{
+	pkceApp := &providers.OAuthClient{
 		ClientID: "test-client-id",
 
 		RedirectURIs:            []string{"https://client.example.com/callback"},
-		GrantTypes:              []constants.GrantType{constants.GrantTypeAuthorizationCode},
-		ResponseTypes:           []constants.ResponseType{constants.ResponseTypeCode},
-		TokenEndpointAuthMethod: constants.TokenEndpointAuthMethodClientSecretPost,
+		GrantTypes:              []providers.GrantType{providers.GrantTypeAuthorizationCode},
+		ResponseTypes:           []providers.ResponseType{providers.ResponseTypeCode},
+		TokenEndpointAuthMethod: providers.TokenEndpointAuthMethodClientSecretPost,
 		PKCERequired:            true,
 	}
 
 	msg := &OAuthMessage{
-		RequestQueryParams: map[string]string{
-			constants.RequestParamClientID:      "test-client-id",
-			constants.RequestParamRedirectURI:   "https://client.example.com/callback",
-			constants.RequestParamResponseType:  string(constants.ResponseTypeCode),
-			constants.RequestParamCodeChallenge: "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM",
+		RequestQueryParams: url.Values{
+			constants.RequestParamClientID:      {"test-client-id"},
+			constants.RequestParamRedirectURI:   {"https://client.example.com/callback"},
+			constants.RequestParamResponseType:  {string(providers.ResponseTypeCode)},
+			constants.RequestParamCodeChallenge: {"E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM"},
 			// Missing code_challenge_method - should fail instead of defaulting to S256
 		},
 	}
 
-	sendErrorToApp, errorCode, errorMessage := suite.validator.validateInitialAuthorizationRequest(
+	sendErrorToApp, errorCode, errorMessage := suite.validator.validateInitialAuthorizationRequest(context.Background(),
 		msg, pkceApp)
 
 	assert.True(suite.T(), sendErrorToApp)
@@ -501,26 +504,26 @@ func (suite *AuthorizationValidatorTestSuite) TestValidateAuthzReq_PKCERequired_
 
 func (suite *AuthorizationValidatorTestSuite) TestValidateInitialAuthorizationRequest_PKCENotRequired() {
 	// Create an app that doesn't require PKCE
-	nonPKCEApp := &inboundmodel.OAuthClient{
+	nonPKCEApp := &providers.OAuthClient{
 		ClientID: "test-client-id",
 
 		RedirectURIs:            []string{"https://client.example.com/callback"},
-		GrantTypes:              []constants.GrantType{constants.GrantTypeAuthorizationCode},
-		ResponseTypes:           []constants.ResponseType{constants.ResponseTypeCode},
-		TokenEndpointAuthMethod: constants.TokenEndpointAuthMethodClientSecretPost,
+		GrantTypes:              []providers.GrantType{providers.GrantTypeAuthorizationCode},
+		ResponseTypes:           []providers.ResponseType{providers.ResponseTypeCode},
+		TokenEndpointAuthMethod: providers.TokenEndpointAuthMethodClientSecretPost,
 		PKCERequired:            false,
 	}
 
 	msg := &OAuthMessage{
-		RequestQueryParams: map[string]string{
-			constants.RequestParamClientID:     "test-client-id",
-			constants.RequestParamRedirectURI:  "https://client.example.com/callback",
-			constants.RequestParamResponseType: string(constants.ResponseTypeCode),
+		RequestQueryParams: url.Values{
+			constants.RequestParamClientID:     {"test-client-id"},
+			constants.RequestParamRedirectURI:  {"https://client.example.com/callback"},
+			constants.RequestParamResponseType: {string(providers.ResponseTypeCode)},
 			// No PKCE parameters - should be OK since PKCE is not required
 		},
 	}
 
-	sendErrorToApp, errorCode, errorMessage := suite.validator.validateInitialAuthorizationRequest(
+	sendErrorToApp, errorCode, errorMessage := suite.validator.validateInitialAuthorizationRequest(context.Background(),
 		msg, nonPKCEApp)
 
 	assert.False(suite.T(), sendErrorToApp)
@@ -530,27 +533,27 @@ func (suite *AuthorizationValidatorTestSuite) TestValidateInitialAuthorizationRe
 
 func (suite *AuthorizationValidatorTestSuite) TestValidateAuthzReq_PKCENotRequired_InvalidPKCEParams() {
 	// Create an app that doesn't require PKCE
-	nonPKCEApp := &inboundmodel.OAuthClient{
+	nonPKCEApp := &providers.OAuthClient{
 		ClientID: "test-client-id",
 
 		RedirectURIs:            []string{"https://client.example.com/callback"},
-		GrantTypes:              []constants.GrantType{constants.GrantTypeAuthorizationCode},
-		ResponseTypes:           []constants.ResponseType{constants.ResponseTypeCode},
-		TokenEndpointAuthMethod: constants.TokenEndpointAuthMethodClientSecretPost,
+		GrantTypes:              []providers.GrantType{providers.GrantTypeAuthorizationCode},
+		ResponseTypes:           []providers.ResponseType{providers.ResponseTypeCode},
+		TokenEndpointAuthMethod: providers.TokenEndpointAuthMethodClientSecretPost,
 		PKCERequired:            false,
 	}
 
 	msg := &OAuthMessage{
-		RequestQueryParams: map[string]string{
-			constants.RequestParamClientID:      "test-client-id",
-			constants.RequestParamRedirectURI:   "https://client.example.com/callback",
-			constants.RequestParamResponseType:  string(constants.ResponseTypeCode),
-			constants.RequestParamCodeChallenge: "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM",
+		RequestQueryParams: url.Values{
+			constants.RequestParamClientID:      {"test-client-id"},
+			constants.RequestParamRedirectURI:   {"https://client.example.com/callback"},
+			constants.RequestParamResponseType:  {string(providers.ResponseTypeCode)},
+			constants.RequestParamCodeChallenge: {"E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM"},
 			// Missing code_challenge_method - should fail even when PKCE is not required
 		},
 	}
 
-	sendErrorToApp, errorCode, errorMessage := suite.validator.validateInitialAuthorizationRequest(
+	sendErrorToApp, errorCode, errorMessage := suite.validator.validateInitialAuthorizationRequest(context.Background(),
 		msg, nonPKCEApp)
 
 	assert.True(suite.T(), sendErrorToApp)
@@ -562,15 +565,15 @@ func (suite *AuthorizationValidatorTestSuite) TestValidateAuthzReq_PKCENotRequir
 
 func (suite *AuthorizationValidatorTestSuite) TestValidateInitialAuthzRequest_PromptNone_LoginRequired() {
 	msg := &OAuthMessage{
-		RequestQueryParams: map[string]string{
-			constants.RequestParamClientID:     "test-client-id",
-			constants.RequestParamRedirectURI:  "https://client.example.com/callback",
-			constants.RequestParamResponseType: string(constants.ResponseTypeCode),
-			constants.RequestParamPrompt:       "none",
+		RequestQueryParams: url.Values{
+			constants.RequestParamClientID:     {"test-client-id"},
+			constants.RequestParamRedirectURI:  {"https://client.example.com/callback"},
+			constants.RequestParamResponseType: {string(providers.ResponseTypeCode)},
+			constants.RequestParamPrompt:       {"none"},
 		},
 	}
 
-	sendErrorToApp, errorCode, errorMessage := suite.validator.validateInitialAuthorizationRequest(
+	sendErrorToApp, errorCode, errorMessage := suite.validator.validateInitialAuthorizationRequest(context.Background(),
 		msg, suite.oauthApp)
 
 	assert.True(suite.T(), sendErrorToApp)
@@ -580,15 +583,15 @@ func (suite *AuthorizationValidatorTestSuite) TestValidateInitialAuthzRequest_Pr
 
 func (suite *AuthorizationValidatorTestSuite) TestValidateInitialAuthorizationRequest_PromptLogin_Success() {
 	msg := &OAuthMessage{
-		RequestQueryParams: map[string]string{
-			constants.RequestParamClientID:     "test-client-id",
-			constants.RequestParamRedirectURI:  "https://client.example.com/callback",
-			constants.RequestParamResponseType: string(constants.ResponseTypeCode),
-			constants.RequestParamPrompt:       "login",
+		RequestQueryParams: url.Values{
+			constants.RequestParamClientID:     {"test-client-id"},
+			constants.RequestParamRedirectURI:  {"https://client.example.com/callback"},
+			constants.RequestParamResponseType: {string(providers.ResponseTypeCode)},
+			constants.RequestParamPrompt:       {"login"},
 		},
 	}
 
-	sendErrorToApp, errorCode, errorMessage := suite.validator.validateInitialAuthorizationRequest(
+	sendErrorToApp, errorCode, errorMessage := suite.validator.validateInitialAuthorizationRequest(context.Background(),
 		msg, suite.oauthApp)
 
 	assert.False(suite.T(), sendErrorToApp)
@@ -596,35 +599,35 @@ func (suite *AuthorizationValidatorTestSuite) TestValidateInitialAuthorizationRe
 	assert.Empty(suite.T(), errorMessage)
 }
 
-func (suite *AuthorizationValidatorTestSuite) TestValidateInitialAuthzRequest_PromptConsent_ConsentRequired() {
+func (suite *AuthorizationValidatorTestSuite) TestValidateInitialAuthzRequest_PromptConsent_Success() {
 	msg := &OAuthMessage{
-		RequestQueryParams: map[string]string{
-			constants.RequestParamClientID:     "test-client-id",
-			constants.RequestParamRedirectURI:  "https://client.example.com/callback",
-			constants.RequestParamResponseType: string(constants.ResponseTypeCode),
-			constants.RequestParamPrompt:       "consent",
+		RequestQueryParams: url.Values{
+			constants.RequestParamClientID:     {"test-client-id"},
+			constants.RequestParamRedirectURI:  {"https://client.example.com/callback"},
+			constants.RequestParamResponseType: {string(providers.ResponseTypeCode)},
+			constants.RequestParamPrompt:       {"consent"},
 		},
 	}
 
-	sendErrorToApp, errorCode, errorMessage := suite.validator.validateInitialAuthorizationRequest(
+	sendErrorToApp, errorCode, errorMessage := suite.validator.validateInitialAuthorizationRequest(context.Background(),
 		msg, suite.oauthApp)
 
-	assert.True(suite.T(), sendErrorToApp)
-	assert.Equal(suite.T(), constants.ErrorConsentRequired, errorCode)
-	assert.Equal(suite.T(), "Consent is not supported", errorMessage)
+	assert.False(suite.T(), sendErrorToApp)
+	assert.Empty(suite.T(), errorCode)
+	assert.Empty(suite.T(), errorMessage)
 }
 
 func (suite *AuthorizationValidatorTestSuite) TestValidateInitialAuthzRequest_PromptNoneCombined_InvalidRequest() {
 	msg := &OAuthMessage{
-		RequestQueryParams: map[string]string{
-			constants.RequestParamClientID:     "test-client-id",
-			constants.RequestParamRedirectURI:  "https://client.example.com/callback",
-			constants.RequestParamResponseType: string(constants.ResponseTypeCode),
-			constants.RequestParamPrompt:       "none login",
+		RequestQueryParams: url.Values{
+			constants.RequestParamClientID:     {"test-client-id"},
+			constants.RequestParamRedirectURI:  {"https://client.example.com/callback"},
+			constants.RequestParamResponseType: {string(providers.ResponseTypeCode)},
+			constants.RequestParamPrompt:       {"none login"},
 		},
 	}
 
-	sendErrorToApp, errorCode, errorMessage := suite.validator.validateInitialAuthorizationRequest(
+	sendErrorToApp, errorCode, errorMessage := suite.validator.validateInitialAuthorizationRequest(context.Background(),
 		msg, suite.oauthApp)
 
 	assert.True(suite.T(), sendErrorToApp)
@@ -634,15 +637,15 @@ func (suite *AuthorizationValidatorTestSuite) TestValidateInitialAuthzRequest_Pr
 
 func (suite *AuthorizationValidatorTestSuite) TestValidateInitialAuthzRequest_PromptInvalidValue_InvalidRequest() {
 	msg := &OAuthMessage{
-		RequestQueryParams: map[string]string{
-			constants.RequestParamClientID:     "test-client-id",
-			constants.RequestParamRedirectURI:  "https://client.example.com/callback",
-			constants.RequestParamResponseType: string(constants.ResponseTypeCode),
-			constants.RequestParamPrompt:       "invalid_value",
+		RequestQueryParams: url.Values{
+			constants.RequestParamClientID:     {"test-client-id"},
+			constants.RequestParamRedirectURI:  {"https://client.example.com/callback"},
+			constants.RequestParamResponseType: {string(providers.ResponseTypeCode)},
+			constants.RequestParamPrompt:       {"invalid_value"},
 		},
 	}
 
-	sendErrorToApp, errorCode, errorMessage := suite.validator.validateInitialAuthorizationRequest(
+	sendErrorToApp, errorCode, errorMessage := suite.validator.validateInitialAuthorizationRequest(context.Background(),
 		msg, suite.oauthApp)
 
 	assert.True(suite.T(), sendErrorToApp)
@@ -652,15 +655,15 @@ func (suite *AuthorizationValidatorTestSuite) TestValidateInitialAuthzRequest_Pr
 
 func (suite *AuthorizationValidatorTestSuite) TestValidateInitialAuthzRequest_PromptSelectAccount() {
 	msg := &OAuthMessage{
-		RequestQueryParams: map[string]string{
-			constants.RequestParamClientID:     "test-client-id",
-			constants.RequestParamRedirectURI:  "https://client.example.com/callback",
-			constants.RequestParamResponseType: string(constants.ResponseTypeCode),
-			constants.RequestParamPrompt:       "select_account",
+		RequestQueryParams: url.Values{
+			constants.RequestParamClientID:     {"test-client-id"},
+			constants.RequestParamRedirectURI:  {"https://client.example.com/callback"},
+			constants.RequestParamResponseType: {string(providers.ResponseTypeCode)},
+			constants.RequestParamPrompt:       {"select_account"},
 		},
 	}
 
-	sendErrorToApp, errorCode, errorMessage := suite.validator.validateInitialAuthorizationRequest(
+	sendErrorToApp, errorCode, errorMessage := suite.validator.validateInitialAuthorizationRequest(context.Background(),
 		msg, suite.oauthApp)
 
 	assert.True(suite.T(), sendErrorToApp)
@@ -668,35 +671,35 @@ func (suite *AuthorizationValidatorTestSuite) TestValidateInitialAuthzRequest_Pr
 	assert.Equal(suite.T(), "Account selection is not supported", errorMessage)
 }
 
-func (suite *AuthorizationValidatorTestSuite) TestValidateInitialAuthzRequest_PromptLoginConsent_ConsentRequired() {
+func (suite *AuthorizationValidatorTestSuite) TestValidateInitialAuthzRequest_PromptLoginConsent_Success() {
 	msg := &OAuthMessage{
-		RequestQueryParams: map[string]string{
-			constants.RequestParamClientID:     "test-client-id",
-			constants.RequestParamRedirectURI:  "https://client.example.com/callback",
-			constants.RequestParamResponseType: string(constants.ResponseTypeCode),
-			constants.RequestParamPrompt:       "login consent",
+		RequestQueryParams: url.Values{
+			constants.RequestParamClientID:     {"test-client-id"},
+			constants.RequestParamRedirectURI:  {"https://client.example.com/callback"},
+			constants.RequestParamResponseType: {string(providers.ResponseTypeCode)},
+			constants.RequestParamPrompt:       {"login consent"},
 		},
 	}
 
-	sendErrorToApp, errorCode, errorMessage := suite.validator.validateInitialAuthorizationRequest(
+	sendErrorToApp, errorCode, errorMessage := suite.validator.validateInitialAuthorizationRequest(context.Background(),
 		msg, suite.oauthApp)
 
-	assert.True(suite.T(), sendErrorToApp)
-	assert.Equal(suite.T(), constants.ErrorConsentRequired, errorCode)
-	assert.Equal(suite.T(), "Consent is not supported", errorMessage)
+	assert.False(suite.T(), sendErrorToApp)
+	assert.Empty(suite.T(), errorCode)
+	assert.Empty(suite.T(), errorMessage)
 }
 
 func (suite *AuthorizationValidatorTestSuite) TestValidateInitialAuthzRequest_PromptEmpty_InvalidRequest() {
 	msg := &OAuthMessage{
-		RequestQueryParams: map[string]string{
-			constants.RequestParamClientID:     "test-client-id",
-			constants.RequestParamRedirectURI:  "https://client.example.com/callback",
-			constants.RequestParamResponseType: string(constants.ResponseTypeCode),
-			constants.RequestParamPrompt:       "",
+		RequestQueryParams: url.Values{
+			constants.RequestParamClientID:     {"test-client-id"},
+			constants.RequestParamRedirectURI:  {"https://client.example.com/callback"},
+			constants.RequestParamResponseType: {string(providers.ResponseTypeCode)},
+			constants.RequestParamPrompt:       {""},
 		},
 	}
 
-	sendErrorToApp, errorCode, errorMessage := suite.validator.validateInitialAuthorizationRequest(
+	sendErrorToApp, errorCode, errorMessage := suite.validator.validateInitialAuthorizationRequest(context.Background(),
 		msg, suite.oauthApp)
 
 	assert.True(suite.T(), sendErrorToApp)
@@ -794,22 +797,25 @@ func (suite *AuthorizationValidatorTestSuite) TestValidateInitialAuthorizationRe
 
 	for _, tt := range tests {
 		suite.Run(tt.name, func() {
-			app := &inboundmodel.OAuthClient{
+			app := &providers.OAuthClient{
 				ClientID:                "test-client-id",
 				RedirectURIs:            tt.registeredURIs,
-				GrantTypes:              []constants.GrantType{constants.GrantTypeAuthorizationCode},
-				ResponseTypes:           []constants.ResponseType{constants.ResponseTypeCode},
-				TokenEndpointAuthMethod: constants.TokenEndpointAuthMethodClientSecretPost,
+				GrantTypes:              []providers.GrantType{providers.GrantTypeAuthorizationCode},
+				ResponseTypes:           []providers.ResponseType{providers.ResponseTypeCode},
+				TokenEndpointAuthMethod: providers.TokenEndpointAuthMethodClientSecretPost,
 			}
 			msg := &OAuthMessage{
-				RequestQueryParams: map[string]string{
-					constants.RequestParamClientID:     "test-client-id",
-					constants.RequestParamRedirectURI:  tt.incomingURI,
-					constants.RequestParamResponseType: string(constants.ResponseTypeCode),
+				RequestQueryParams: url.Values{
+					constants.RequestParamClientID:     {"test-client-id"},
+					constants.RequestParamRedirectURI:  {tt.incomingURI},
+					constants.RequestParamResponseType: {string(providers.ResponseTypeCode)},
 				},
 			}
 
-			sendErrorToApp, errorCode, errorMessage := suite.validator.validateInitialAuthorizationRequest(msg, app)
+			sendErrorToApp, errorCode, errorMessage := suite.validator.validateInitialAuthorizationRequest(
+				context.Background(),
+				msg,
+				app)
 
 			if tt.wantError {
 				assert.False(suite.T(), sendErrorToApp)

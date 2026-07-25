@@ -20,6 +20,7 @@ package idp
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 
 	"github.com/thunder-id/thunderid/internal/system/cmodels"
@@ -28,19 +29,20 @@ import (
 	"github.com/thunder-id/thunderid/internal/system/database/provider"
 	"github.com/thunder-id/thunderid/internal/system/log"
 	"github.com/thunder-id/thunderid/internal/system/transaction"
+	"github.com/thunder-id/thunderid/pkg/thunderidengine/providers"
 )
 
 var getDBProvider = provider.GetDBProvider
 
 // idpStoreInterface defines the interface for identity provider store operations.
 type idpStoreInterface interface {
-	CreateIdentityProvider(ctx context.Context, idp IDPDTO) error
+	CreateIdentityProvider(ctx context.Context, idp providers.IDPDTO) error
 	GetIdentityProviderList(ctx context.Context) ([]BasicIDPDTO, error)
 	GetIdentityProviderListCount(ctx context.Context) (int, error)
-	GetIdentityProvider(ctx context.Context, idpID string) (*IDPDTO, error)
-	GetIdentityProviderByName(ctx context.Context, idpName string) (*IDPDTO, error)
-	GetIdentityProvidersByProperty(ctx context.Context, propertyKey, propertyValue string) ([]IDPDTO, error)
-	UpdateIdentityProvider(ctx context.Context, idp *IDPDTO) error
+	GetIdentityProvider(ctx context.Context, idpID string) (*providers.IDPDTO, error)
+	GetIdentityProviderByName(ctx context.Context, idpName string) (*providers.IDPDTO, error)
+	GetIdentityProvidersByProperty(ctx context.Context, propertyKey, propertyValue string) ([]providers.IDPDTO, error)
+	UpdateIdentityProvider(ctx context.Context, idp *providers.IDPDTO) error
 	DeleteIdentityProvider(ctx context.Context, idpID string) error
 }
 
@@ -68,7 +70,7 @@ func newIDPStore() (idpStoreInterface, transaction.Transactioner, error) {
 }
 
 // CreateIdentityProvider handles the IdP creation in the database.
-func (s *idpStore) CreateIdentityProvider(ctx context.Context, idp IDPDTO) error {
+func (s *idpStore) CreateIdentityProvider(ctx context.Context, idp providers.IDPDTO) error {
 	dbClient, err := s.dbProvider.GetConfigDBClient()
 	if err != nil {
 		return fmt.Errorf("failed to get database client: %w", err)
@@ -82,8 +84,14 @@ func (s *idpStore) CreateIdentityProvider(ctx context.Context, idp IDPDTO) error
 		}
 	}
 
+	attributeConfigurationJSON, err := serializeAttributeConfiguration(idp.AttributeConfiguration)
+	if err != nil {
+		return err
+	}
+
 	_, err = dbClient.ExecuteContext(ctx,
-		queryCreateIdentityProvider, idp.ID, idp.Name, idp.Description, idp.Type, propertiesJSON, s.deploymentID,
+		queryCreateIdentityProvider, idp.ID, idp.Name, idp.Description, idp.Type, propertiesJSON,
+		attributeConfigurationJSON, s.deploymentID,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to execute query: %w", err)
@@ -104,12 +112,15 @@ func (s *idpStore) GetIdentityProviderList(ctx context.Context) ([]BasicIDPDTO, 
 		return nil, fmt.Errorf("failed to execute query: %w", err)
 	}
 
+	logger := log.GetLogger().With(log.String(log.LoggerKeyComponentName, "IdPStore"))
+
 	idpList := make([]BasicIDPDTO, 0)
 	for _, row := range results {
 		idp, err := buildIDPFromResultRow(row)
 		if err != nil {
 			return nil, fmt.Errorf("failed to build idp from result row: %w", err)
 		}
+		idp.IDJagEnabled = idJagEnabledFromRow(ctx, logger, idp.ID, row)
 		idpList = append(idpList, *idp)
 	}
 
@@ -150,18 +161,18 @@ func (s *idpStore) GetIdentityProviderListCount(ctx context.Context) (int, error
 }
 
 // GetIdentityProvider retrieves a specific idp by its ID from the database.
-func (s *idpStore) GetIdentityProvider(ctx context.Context, id string) (*IDPDTO, error) {
+func (s *idpStore) GetIdentityProvider(ctx context.Context, id string) (*providers.IDPDTO, error) {
 	return s.getIDP(ctx, queryGetIdentityProviderByID, id)
 }
 
 // GetIdentityProviderByName retrieves a specific idp by its name from the database.
-func (s *idpStore) GetIdentityProviderByName(ctx context.Context, name string) (*IDPDTO, error) {
+func (s *idpStore) GetIdentityProviderByName(ctx context.Context, name string) (*providers.IDPDTO, error) {
 	return s.getIDP(ctx, queryGetIdentityProviderByName, name)
 }
 
 // GetIdentityProvidersByProperty retrieves IDPs matching a given property key and value.
 func (s *idpStore) GetIdentityProvidersByProperty(ctx context.Context,
-	propertyKey, propertyValue string) ([]IDPDTO, error) {
+	propertyKey, propertyValue string) ([]providers.IDPDTO, error) {
 	dbClient, err := s.dbProvider.GetConfigDBClient()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get database client: %w", err)
@@ -176,7 +187,7 @@ func (s *idpStore) GetIdentityProvidersByProperty(ctx context.Context,
 		return nil, ErrIDPNotFound
 	}
 
-	idps := make([]IDPDTO, 0, len(results))
+	idps := make([]providers.IDPDTO, 0, len(results))
 	for _, row := range results {
 		basicIDP, err := buildIDPFromResultRow(row)
 		if err != nil {
@@ -198,19 +209,25 @@ func (s *idpStore) GetIdentityProvidersByProperty(ctx context.Context,
 			}
 		}
 
-		idps = append(idps, IDPDTO{
-			ID:          basicIDP.ID,
-			Name:        basicIDP.Name,
-			Description: basicIDP.Description,
-			Type:        basicIDP.Type,
-			Properties:  properties,
+		attributeConfiguration, err := parseAttributeConfigurationFromRow(row)
+		if err != nil {
+			return nil, err
+		}
+
+		idps = append(idps, providers.IDPDTO{
+			ID:                     basicIDP.ID,
+			Name:                   basicIDP.Name,
+			Description:            basicIDP.Description,
+			Type:                   basicIDP.Type,
+			Properties:             properties,
+			AttributeConfiguration: attributeConfiguration,
 		})
 	}
 	return idps, nil
 }
 
 // getIDP retrieves an IDP based on the provided query and identifier.
-func (s *idpStore) getIDP(ctx context.Context, query dbmodel.DBQuery, identifier string) (*IDPDTO, error) {
+func (s *idpStore) getIDP(ctx context.Context, query dbmodel.DBQuery, identifier string) (*providers.IDPDTO, error) {
 	dbClient, err := s.dbProvider.GetConfigDBClient()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get database client: %w", err)
@@ -253,19 +270,25 @@ func (s *idpStore) getIDP(ctx context.Context, query dbmodel.DBQuery, identifier
 		}
 	}
 
-	idp := &IDPDTO{
-		ID:          basicIDP.ID,
-		Name:        basicIDP.Name,
-		Description: basicIDP.Description,
-		Type:        basicIDP.Type,
-		Properties:  properties,
+	attributeConfiguration, err := parseAttributeConfigurationFromRow(row)
+	if err != nil {
+		return nil, err
+	}
+
+	idp := &providers.IDPDTO{
+		ID:                     basicIDP.ID,
+		Name:                   basicIDP.Name,
+		Description:            basicIDP.Description,
+		Type:                   basicIDP.Type,
+		Properties:             properties,
+		AttributeConfiguration: attributeConfiguration,
 	}
 
 	return idp, nil
 }
 
 // UpdateIdentityProvider updates the idp in the database.
-func (s *idpStore) UpdateIdentityProvider(ctx context.Context, idp *IDPDTO) error {
+func (s *idpStore) UpdateIdentityProvider(ctx context.Context, idp *providers.IDPDTO) error {
 	dbClient, err := s.dbProvider.GetConfigDBClient()
 	if err != nil {
 		return fmt.Errorf("failed to get database client: %w", err)
@@ -279,9 +302,14 @@ func (s *idpStore) UpdateIdentityProvider(ctx context.Context, idp *IDPDTO) erro
 		}
 	}
 
+	attributeConfigurationJSON, err := serializeAttributeConfiguration(idp.AttributeConfiguration)
+	if err != nil {
+		return err
+	}
+
 	// Update the IDP in the database
 	_, err = dbClient.ExecuteContext(ctx, queryUpdateIdentityProviderByID, idp.ID, idp.Name,
-		idp.Description, idp.Type, propertiesJSON, s.deploymentID)
+		idp.Description, idp.Type, propertiesJSON, attributeConfigurationJSON, s.deploymentID)
 	if err != nil {
 		return fmt.Errorf("failed to execute query: %w", err)
 	}
@@ -303,7 +331,7 @@ func (s *idpStore) DeleteIdentityProvider(ctx context.Context, id string) error 
 		return fmt.Errorf("failed to execute query: %w", err)
 	}
 	if rowsAffected == 0 {
-		logger.Debug("idp not found with id: " + id)
+		logger.Debug(ctx, "idp not found with id: "+id)
 	}
 
 	return nil
@@ -334,8 +362,67 @@ func buildIDPFromResultRow(row map[string]interface{}) (*BasicIDPDTO, error) {
 		ID:          idpID,
 		Name:        idpName,
 		Description: idpDescription,
-		Type:        IDPType(idpType),
+		Type:        providers.IDPType(idpType),
 	}
 
 	return &idp, nil
+}
+
+// idJagEnabledFromRow extracts and parses the id_jag_enabled property from a query result row's
+// PROPERTIES column, used only by the basic listing. A malformed PROPERTIES value only drops this
+// display flag for the affected row (logged and left nil) rather than failing the whole listing.
+func idJagEnabledFromRow(ctx context.Context, logger *log.Logger, idpID string, row map[string]interface{}) *bool {
+	var propertiesJSON string
+	switch v := row["properties"].(type) {
+	case string:
+		propertiesJSON = v
+	case []byte:
+		propertiesJSON = string(v)
+	}
+	if propertiesJSON == "" {
+		return nil
+	}
+
+	properties, err := cmodels.DeserializePropertiesFromJSONObject(propertiesJSON)
+	if err != nil {
+		logger.Warn(ctx, "Failed to deserialize IDP properties; omitting idJagEnabled flag",
+			log.String("idpID", idpID), log.Error(err))
+		return nil
+	}
+	return idJagEnabledFromProperties(properties)
+}
+
+// serializeAttributeConfiguration marshals the attribute mapping to a JSON string. Returns nil when
+// no mapping is configured so the database column receives SQL NULL instead of an empty string
+// (required for PostgreSQL JSONB columns).
+func serializeAttributeConfiguration(am *providers.AttributeConfiguration) (interface{}, error) {
+	if am == nil {
+		return nil, nil
+	}
+	bytes, err := json.Marshal(am)
+	if err != nil {
+		return nil, fmt.Errorf("failed to serialize attribute mapping to JSON: %w", err)
+	}
+	return string(bytes), nil
+}
+
+// parseAttributeConfigurationFromRow deserializes the ATTRIBUTE_CONFIGURATION column (string or []byte) into
+// an providers.AttributeConfiguration, returning nil when the column is empty.
+func parseAttributeConfigurationFromRow(row map[string]interface{}) (*providers.AttributeConfiguration, error) {
+	var raw string
+	switch v := row["attribute_configuration"].(type) {
+	case string:
+		raw = v
+	case []byte:
+		raw = string(v)
+	}
+	if raw == "" {
+		return nil, nil
+	}
+
+	var am providers.AttributeConfiguration
+	if err := json.Unmarshal([]byte(raw), &am); err != nil {
+		return nil, fmt.Errorf("failed to deserialize attribute mapping from JSON: %w", err)
+	}
+	return &am, nil
 }

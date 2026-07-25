@@ -152,6 +152,42 @@ func SeparateOIDCAndNonOIDCScopes(scopes string, scopeClaimsMapping map[string][
 	return oidcScopes, nonOidcScopes
 }
 
+// FilterOIDCScopesByAllowedScopes filters requested OIDC scopes against the application's active scopes.
+func FilterOIDCScopesByAllowedScopes(oidcScopes []string, allowedScopes []string) []string {
+	if allowedScopes == nil {
+		return oidcScopes
+	}
+
+	allowedScopeSet := make(map[string]struct{}, len(allowedScopes))
+	for _, scope := range allowedScopes {
+		allowedScopeSet[scope] = struct{}{}
+	}
+
+	filteredScopes := make([]string, 0, len(oidcScopes))
+	for _, scope := range oidcScopes {
+		if _, ok := allowedScopeSet[scope]; ok {
+			filteredScopes = append(filteredScopes, scope)
+		}
+	}
+	return filteredScopes
+}
+
+// ResolveEffectiveScopeClaims returns the scope-to-claims mapping as it is applied at runtime: the
+// standard OIDC defaults from StandardOIDCScopes, with any per-scope overrides from the stored mapping
+// applied on top and any custom scopes carried through.
+func ResolveEffectiveScopeClaims(stored map[string][]string) map[string][]string {
+	effective := make(map[string][]string, len(constants.StandardOIDCScopes)+len(stored))
+	for scope, def := range constants.StandardOIDCScopes {
+		claims := make([]string, len(def.Claims))
+		copy(claims, def.Claims)
+		effective[scope] = claims
+	}
+	for scope, claims := range stored {
+		effective[scope] = claims
+	}
+	return effective
+}
+
 // ParseClaimsRequest parses the claims parameter JSON string into a ClaimsRequest struct.
 // Returns nil if the input is empty.
 // Returns an error if the JSON is malformed or violates OIDC spec constraints.
@@ -173,13 +209,15 @@ func ParseClaimsRequest(claimsParam string) (*model.ClaimsRequest, error) {
 	return &claimsRequest, nil
 }
 
-// validateClaimsRequest validates a ClaimsRequest against OIDC spec constraints.
+// validateClaimsRequest validates a ClaimsRequest against OIDC spec constraints. Normal claims
+// and verified_claims are already normalized and structurally validated by
+// ClaimsRequest.UnmarshalJSON; here only the normal-claim constraint grammar is enforced.
 func validateClaimsRequest(cr *model.ClaimsRequest) error {
 	if cr == nil {
 		return nil
 	}
 
-	// Validate userinfo claims
+	// Validate normal userinfo claims
 	for claimName, claimReq := range cr.UserInfo {
 		if err := validateIndividualClaimRequest("userinfo", claimName, claimReq); err != nil {
 			return err
@@ -198,26 +236,9 @@ func validateClaimsRequest(cr *model.ClaimsRequest) error {
 
 // validateIndividualClaimRequest validates constraints for an individual claim request.
 func validateIndividualClaimRequest(location, claimName string, icr *model.IndividualClaimRequest) error {
-	if icr == nil {
-		return nil
+	if err := icr.Validate(); err != nil {
+		return fmt.Errorf("invalid claims parameter: claim '%s' in %s %w", claimName, location, err)
 	}
-
-	// value and values are mutually exclusive
-	if icr.Value != nil && len(icr.Values) > 0 {
-		return fmt.Errorf(
-			"invalid claims parameter: claim '%s' in %s has both 'value' and 'values' specified "+
-				"(mutually exclusive per OIDC spec)",
-			claimName, location)
-	}
-
-	// values array must contain at least one value
-	if icr.Values != nil && len(icr.Values) == 0 {
-		return fmt.Errorf(
-			"invalid claims parameter: claim '%s' in %s has empty 'values' array "+
-				"(must contain at least one value)",
-			claimName, location)
-	}
-
 	return nil
 }
 

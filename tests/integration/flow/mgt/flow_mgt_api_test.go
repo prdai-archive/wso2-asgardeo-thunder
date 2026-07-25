@@ -44,17 +44,25 @@ var (
 		FlowType: "AUTHENTICATION",
 		Nodes: []NodeDefinition{
 			{
-				ID:   "START",
-				Type: "START",
+				ID:        "START",
+				Type:      "START",
+				OnSuccess: "credentials_auth",
 			},
 			{
-				ID:   "basic_auth",
+				ID:   "credentials_auth",
 				Type: "TASK_EXECUTION",
 				Executor: &ExecutorDefinition{
-					Name: "BasicAuthExecutor",
+					Name: "CredentialsAuthExecutor",
+				},
+				OnSuccess: "auth_assert",
+			},
+			{
+				ID:   "auth_assert",
+				Type: "TASK_EXECUTION",
+				Executor: &ExecutorDefinition{
+					Name: "AuthAssertExecutor",
 				},
 				OnSuccess: "END",
-				OnFailure: "END",
 			},
 			{
 				ID:   "END",
@@ -69,17 +77,17 @@ var (
 		FlowType: "AUTHENTICATION",
 		Nodes: []NodeDefinition{
 			{
-				ID:   "START",
-				Type: "START",
+				ID:        "START",
+				Type:      "START",
+				OnSuccess: "credentials_auth",
 			},
 			{
-				ID:   "basic_auth",
+				ID:   "credentials_auth",
 				Type: "TASK_EXECUTION",
 				Executor: &ExecutorDefinition{
-					Name: "BasicAuthExecutor",
+					Name: "CredentialsAuthExecutor",
 				},
 				OnSuccess: "ou_node",
-				OnFailure: "END",
 			},
 			{
 				ID:   "ou_node",
@@ -88,12 +96,19 @@ var (
 					Name: "OUExecutor",
 				},
 				Condition: &ConditionDefinition{
-					Key:    "{{ context.userEligibleForProvisioning }}",
+					Key:    "{{ctx(userEligibleForProvisioning)}}",
 					Value:  "true",
-					OnSkip: "END",
+					OnSkip: "auth_assert",
+				},
+				OnSuccess: "auth_assert",
+			},
+			{
+				ID:   "auth_assert",
+				Type: "TASK_EXECUTION",
+				Executor: &ExecutorDefinition{
+					Name: "AuthAssertExecutor",
 				},
 				OnSuccess: "END",
-				OnFailure: "END",
 			},
 			{
 				ID:   "END",
@@ -108,8 +123,9 @@ var (
 		FlowType: "REGISTRATION",
 		Nodes: []NodeDefinition{
 			{
-				ID:   "START",
-				Type: "START",
+				ID:        "START",
+				Type:      "START",
+				OnSuccess: "user_type_resolver",
 			},
 			{
 				ID:   "user_type_resolver",
@@ -118,7 +134,6 @@ var (
 					Name: "UserTypeResolver",
 				},
 				OnSuccess: "provisioning",
-				OnFailure: "END",
 			},
 			{
 				ID:   "provisioning",
@@ -127,7 +142,6 @@ var (
 					Name: "ProvisioningExecutor",
 				},
 				OnSuccess: "END",
-				OnFailure: "END",
 			},
 			{
 				ID:   "END",
@@ -206,7 +220,7 @@ func (suite *FlowMgtAPITestSuite) TestCreateFlow_Success() {
 				suite.NotEmpty(response.Handle)
 				suite.Equal(conditionalAuthFlow.FlowType, response.FlowType)
 				suite.Equal(1, response.ActiveVersion)
-				suite.Len(response.Nodes, 4)
+				suite.Len(response.Nodes, 5)
 				suite.trackFlow(response.ID)
 			},
 		},
@@ -241,8 +255,9 @@ func (suite *FlowMgtAPITestSuite) TestCreateFlow_WithLayout() {
 		FlowType: "AUTHENTICATION",
 		Nodes: []NodeDefinition{
 			{
-				ID:   "START",
-				Type: "START",
+				ID:        "START",
+				Type:      "START",
+				OnSuccess: "credentials_auth",
 				Layout: &NodeLayout{
 					Size: &NodeSize{
 						Width:  180,
@@ -255,7 +270,7 @@ func (suite *FlowMgtAPITestSuite) TestCreateFlow_WithLayout() {
 				},
 			},
 			{
-				ID:   "basic_auth",
+				ID:   "credentials_auth",
 				Type: "TASK_EXECUTION",
 				Layout: &NodeLayout{
 					Size: &NodeSize{
@@ -268,10 +283,27 @@ func (suite *FlowMgtAPITestSuite) TestCreateFlow_WithLayout() {
 					},
 				},
 				Executor: &ExecutorDefinition{
-					Name: "BasicAuthExecutor",
+					Name: "CredentialsAuthExecutor",
+				},
+				OnSuccess: "auth_assert",
+			},
+			{
+				ID:   "auth_assert",
+				Type: "TASK_EXECUTION",
+				Layout: &NodeLayout{
+					Size: &NodeSize{
+						Width:  200,
+						Height: 120,
+					},
+					Position: &NodePosition{
+						X: 550,
+						Y: 50,
+					},
+				},
+				Executor: &ExecutorDefinition{
+					Name: "AuthAssertExecutor",
 				},
 				OnSuccess: "END",
-				OnFailure: "END",
 			},
 			{
 				ID:   "END",
@@ -282,7 +314,7 @@ func (suite *FlowMgtAPITestSuite) TestCreateFlow_WithLayout() {
 						Height: 80,
 					},
 					Position: &NodePosition{
-						X: 550,
+						X: 800,
 						Y: 50,
 					},
 				},
@@ -297,7 +329,7 @@ func (suite *FlowMgtAPITestSuite) TestCreateFlow_WithLayout() {
 	// Verify layout is preserved in the response
 	suite.NotEmpty(response.ID)
 	suite.Equal(flowWithLayout.Name, response.Name)
-	suite.Len(response.Nodes, 3)
+	suite.Len(response.Nodes, 4)
 
 	// Verify START node layout
 	startNode := response.Nodes[0]
@@ -310,9 +342,9 @@ func (suite *FlowMgtAPITestSuite) TestCreateFlow_WithLayout() {
 	suite.Equal(50.0, startNode.Layout.Position.X)
 	suite.Equal(50.0, startNode.Layout.Position.Y)
 
-	// Verify basic_auth node layout
+	// Verify credentials_auth node layout
 	authNode := response.Nodes[1]
-	suite.Equal("basic_auth", authNode.ID)
+	suite.Equal("credentials_auth", authNode.ID)
 	suite.NotNil(authNode.Layout)
 	suite.NotNil(authNode.Layout.Size)
 	suite.Equal(200.0, authNode.Layout.Size.Width)
@@ -322,19 +354,19 @@ func (suite *FlowMgtAPITestSuite) TestCreateFlow_WithLayout() {
 	suite.Equal(50.0, authNode.Layout.Position.Y)
 
 	// Verify END node layout
-	endNode := response.Nodes[2]
+	endNode := response.Nodes[3]
 	suite.Equal("END", endNode.ID)
 	suite.NotNil(endNode.Layout)
 	suite.NotNil(endNode.Layout.Size)
 	suite.Equal(180.0, endNode.Layout.Size.Width)
 	suite.Equal(80.0, endNode.Layout.Size.Height)
 	suite.NotNil(endNode.Layout.Position)
-	suite.Equal(550.0, endNode.Layout.Position.X)
+	suite.Equal(800.0, endNode.Layout.Position.X)
 	suite.Equal(50.0, endNode.Layout.Position.Y)
 
 	// Retrieve the flow by ID and verify layout is persisted
 	retrievedFlow := suite.getFlow(response.ID)
-	suite.Len(retrievedFlow.Nodes, 3)
+	suite.Len(retrievedFlow.Nodes, 4)
 
 	// Verify layout is preserved after retrieval
 	suite.NotNil(retrievedFlow.Nodes[0].Layout)
@@ -490,8 +522,8 @@ func (suite *FlowMgtAPITestSuite) TestCreateFlow_ValidationErrors() {
 					},
 				},
 			},
-			expectedStatus: http.StatusCreated,
-			expectedCode:   "",
+			expectedStatus: http.StatusBadRequest,
+			expectedCode:   "FLM-1020",
 		},
 		{
 			name: "Invalid node reference",
@@ -515,8 +547,8 @@ func (suite *FlowMgtAPITestSuite) TestCreateFlow_ValidationErrors() {
 					},
 				},
 			},
-			expectedStatus: http.StatusCreated,
-			expectedCode:   "",
+			expectedStatus: http.StatusBadRequest,
+			expectedCode:   "FLM-1022",
 		},
 	}
 
@@ -626,10 +658,17 @@ func (suite *FlowMgtAPITestSuite) TestUpdateFlow_Success() {
 				ID:   "updated_executor",
 				Type: "TASK_EXECUTION",
 				Executor: &ExecutorDefinition{
-					Name: "BasicAuthExecutor",
+					Name: "CredentialsAuthExecutor",
+				},
+				OnSuccess: "auth_assert",
+			},
+			{
+				ID:   "auth_assert",
+				Type: "TASK_EXECUTION",
+				Executor: &ExecutorDefinition{
+					Name: "AuthAssertExecutor",
 				},
 				OnSuccess: "END",
-				OnFailure: "END",
 			},
 			{
 				ID:   "END",
@@ -655,7 +694,7 @@ func (suite *FlowMgtAPITestSuite) TestUpdateFlow_ChangeFlowType() {
 		Name:     "Updated Flow",
 		Handle:   createdFlow.Handle,
 		FlowType: "REGISTRATION",
-		Nodes:    testAuthFlow.Nodes,
+		Nodes:    testRegistrationFlow.Nodes,
 	}
 
 	suite.updateFlowExpectError(createdFlow.ID, updatedFlow, http.StatusBadRequest, "FLM-1012")

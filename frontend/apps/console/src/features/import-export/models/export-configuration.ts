@@ -27,13 +27,9 @@ export interface ExportRequest {
    */
   applications?: string[];
   /**
-   * List of identity provider IDs to export. Use `["*"]` to export all.
+   * List of connection (identity provider and notification sender) IDs to export. Use `["*"]` to export all.
    */
-  identityProviders?: string[];
-  /**
-   * List of notification sender IDs to export. Use `["*"]` to export all.
-   */
-  notificationSenders?: string[];
+  connections?: string[];
   /**
    * List of user type IDs to export. Use `["*"]` to export all.
    */
@@ -78,6 +74,10 @@ export interface ExportRequest {
    * List of agent IDs to export. Use `["*"]` to export all.
    */
   agents?: string[];
+  /**
+   * List of server config names to export. Use `["*"]` to export all.
+   */
+  serverConfigs?: string[];
   /**
    * Optional configuration for export behavior
    */
@@ -183,7 +183,7 @@ export interface ExportFile {
    */
   folderPath: string;
   /**
-   * Type of resource (application, identity_provider, etc.)
+   * Type of resource (application, connection, etc.)
    */
   resourceType: string;
   /**

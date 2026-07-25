@@ -36,6 +36,7 @@ export const TechnologyApplicationTemplate = {
   NUXT: 'NUXT',
   NODEJS: 'NODEJS',
   OTHER: 'OTHER',
+  MCP_CLIENT: 'MCP_CLIENT',
 } as const;
 
 /**
@@ -49,6 +50,8 @@ export const PlatformApplicationTemplate = {
   BROWSER: 'BROWSER',
   MOBILE: 'MOBILE',
   FULL_STACK: 'FULL_STACK',
+  WALLET: 'WALLET',
+  CUSTOM: 'CUSTOM',
 } as const;
 
 /**
@@ -200,10 +203,27 @@ export interface ApplicationTemplate {
     };
   };
   /**
+   * Optional per-template capability flags that gate optional configuration surfaces in the edit UI.
+   */
+  capabilities?: {
+    /**
+     * Whether this template supports platform attestation (e.g. Google Play Integrity). When true,
+     * the attestation configuration section is shown in the application's advanced settings.
+     */
+    attestation?: boolean;
+  };
+  /**
    * Optional integration guides for this template
    */
   integrationGuides?: IntegrationGuides;
 }
+
+/**
+ * Template category used for filtering in the unified template gallery.
+ *
+ * @public
+ */
+export type TemplateCategory = 'web' | 'backend' | 'mobile' | 'ai';
 
 export interface ApplicationTemplateMetadata<T = TechnologyApplicationTemplate | PlatformApplicationTemplate> {
   value: T;
@@ -211,6 +231,7 @@ export interface ApplicationTemplateMetadata<T = TechnologyApplicationTemplate |
   titleKey: string;
   descriptionKey: string;
   template: ApplicationTemplate;
+  categories: TemplateCategory[];
   disabled?: boolean;
 }
 

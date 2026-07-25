@@ -22,7 +22,9 @@ package jws
 import (
 	"crypto"
 	"crypto/ecdh"
+	"crypto/ecdsa"
 	"crypto/ed25519"
+	"crypto/elliptic"
 	"crypto/rsa"
 	"crypto/sha256"
 	"encoding/base64"
@@ -60,24 +62,11 @@ func DecodeHeader(token string) (map[string]interface{}, error) {
 
 // MapAlgorithmToSignAlg maps JWS alg header values to internal SignAlgorithm.
 func MapAlgorithmToSignAlg(jwsAlg Algorithm) (cryptolib.SignAlgorithm, error) {
-	switch jwsAlg {
-	case RS256:
-		return cryptolib.RSASHA256, nil
-	case RS512:
-		return cryptolib.RSASHA512, nil
-	case PS256:
-		return cryptolib.RSAPSSSHA256, nil
-	case ES256:
-		return cryptolib.ECDSASHA256, nil
-	case ES384:
-		return cryptolib.ECDSASHA384, nil
-	case ES512:
-		return cryptolib.ECDSASHA512, nil
-	case EdDSA:
-		return cryptolib.ED25519, nil
-	default:
+	signAlg, err := cryptolib.SignAlgorithmFor(cryptolib.Algorithm(jwsAlg))
+	if err != nil {
 		return "", fmt.Errorf("unsupported JWS alg: %s", jwsAlg)
 	}
+	return signAlg, nil
 }
 
 // JWKToPublicKey converts a JWK map to a crypto.PublicKey supporting RSA, EC, and Ed25519.
@@ -91,12 +80,34 @@ func JWKToPublicKey(jwk map[string]interface{}) (crypto.PublicKey, error) {
 	case "RSA":
 		return jwkToRSAPublicKey(jwk)
 	case "EC":
-		return JWKToECPublicKey(jwk)
+		return jwkToECDSAPublicKey(jwk)
 	case "OKP":
 		return jwkToOKPPublicKey(jwk)
+	case "AKP":
+		return jwkToAKPPublicKey(jwk)
 	default:
 		return nil, fmt.Errorf("unsupported JWK kty: %s", kty)
 	}
+}
+
+// jwkToAKPPublicKey converts an AKP (Algorithm Key Pair) JWK to an ML-DSA public
+// key, per RFC 9964. The alg member identifies the ML-DSA parameter set and pub
+// carries the base64url-encoded raw public key.
+func jwkToAKPPublicKey(jwk map[string]interface{}) (crypto.PublicKey, error) {
+	alg, algOK := jwk["alg"].(string)
+	pubStr, pubOK := jwk["pub"].(string)
+	if !algOK || !pubOK {
+		return nil, errors.New("JWK missing AKP alg or pub")
+	}
+	pubBytes, err := base64.RawURLEncoding.DecodeString(pubStr)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decode AKP pub: %w", err)
+	}
+	pub, err := cryptolib.MLDSAPublicKeyFromBytes(cryptolib.Algorithm(alg), pubBytes)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse AKP public key: %w", err)
+	}
+	return pub, nil
 }
 
 // jwkToRSAPublicKey converts a JWK to an RSA public key.
@@ -125,8 +136,8 @@ func jwkToRSAPublicKey(jwk map[string]interface{}) (*rsa.PublicKey, error) {
 	return &rsa.PublicKey{N: n, E: int(e)}, nil
 }
 
-// JWKToECPublicKey converts a JWK to an EC public key.
-func JWKToECPublicKey(jwk map[string]interface{}) (*ecdh.PublicKey, error) {
+// jwkToECDSAPublicKey converts a JWK to an ECDSA public key for JWS signature verification.
+func jwkToECDSAPublicKey(jwk map[string]interface{}) (*ecdsa.PublicKey, error) {
 	crv, crvOK := jwk["crv"].(string)
 	xStr, xOK := jwk["x"].(string)
 	yStr, yOK := jwk["y"].(string)
@@ -134,9 +145,18 @@ func JWKToECPublicKey(jwk map[string]interface{}) (*ecdh.PublicKey, error) {
 		return nil, errors.New("JWK missing EC parameters")
 	}
 
-	curve, expectedKeySize, err := getECCurveInfo(crv)
-	if err != nil {
-		return nil, err
+	var curve elliptic.Curve
+	var ecdhCurve ecdh.Curve
+	var expectedKeySize int
+	switch crv {
+	case P256:
+		curve, ecdhCurve, expectedKeySize = elliptic.P256(), ecdh.P256(), 32
+	case P384:
+		curve, ecdhCurve, expectedKeySize = elliptic.P384(), ecdh.P384(), 48
+	case P521:
+		curve, ecdhCurve, expectedKeySize = elliptic.P521(), ecdh.P521(), 66
+	default:
+		return nil, fmt.Errorf("unsupported EC curve: %s", crv)
 	}
 
 	xBytes, err := base64.RawURLEncoding.DecodeString(xStr)
@@ -152,28 +172,20 @@ func JWKToECPublicKey(jwk map[string]interface{}) (*ecdh.PublicKey, error) {
 		return nil, errors.New("invalid EC coordinate length")
 	}
 
-	// Construct the uncompressed point encoding: 0x04 || x || y
-	uncompressed := make([]byte, 1+len(xBytes)+len(yBytes))
-	uncompressed[0] = 0x04 // uncompressed point marker
+	// Use crypto/ecdh to validate the point is on the curve.
+	uncompressed := make([]byte, 1+2*expectedKeySize)
+	uncompressed[0] = 0x04
 	copy(uncompressed[1:], xBytes)
-	copy(uncompressed[1+len(xBytes):], yBytes)
-
-	// NewPublicKey performs on-curve validation automatically
-	return curve.NewPublicKey(uncompressed)
-}
-
-// getECCurveInfo returns the elliptic curve and expected key size for a given curve name.
-func getECCurveInfo(crv string) (ecdh.Curve, int, error) {
-	switch crv {
-	case P256:
-		return ecdh.P256(), 32, nil
-	case P384:
-		return ecdh.P384(), 48, nil
-	case P521:
-		return ecdh.P521(), 66, nil
-	default:
-		return nil, 0, fmt.Errorf("unsupported EC curve: %s", crv)
+	copy(uncompressed[1+expectedKeySize:], yBytes)
+	if _, err := ecdhCurve.NewPublicKey(uncompressed); err != nil {
+		return nil, errors.New("point not on curve")
 	}
+
+	return &ecdsa.PublicKey{
+		Curve: curve,
+		X:     new(big.Int).SetBytes(xBytes),
+		Y:     new(big.Int).SetBytes(yBytes),
+	}, nil
 }
 
 // jwkToOKPPublicKey converts a JWK to an OKP public key.
@@ -267,6 +279,13 @@ func canonicalJWK(jwk map[string]interface{}) ([]byte, error) {
 			return nil, errors.New("OKP JWK missing required members crv/x")
 		}
 		ordered = []struct{ k, v string }{{"crv", crv}, {"kty", "OKP"}, {"x", x}}
+	case "AKP":
+		alg, _ := jwk["alg"].(string)
+		pub, _ := jwk["pub"].(string)
+		if alg == "" || pub == "" {
+			return nil, errors.New("AKP JWK missing required members alg/pub")
+		}
+		ordered = []struct{ k, v string }{{"alg", alg}, {"kty", "AKP"}, {"pub", pub}}
 	default:
 		return nil, fmt.Errorf("unsupported JWK kty for thumbprint: %s", kty)
 	}

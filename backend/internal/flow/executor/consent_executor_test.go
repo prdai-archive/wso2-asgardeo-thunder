@@ -25,23 +25,18 @@ import (
 	"testing"
 	"time"
 
+	tidcommon "github.com/thunder-id/thunderid/pkg/thunderidengine/common"
+	"github.com/thunder-id/thunderid/pkg/thunderidengine/providers"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/suite"
 
-	appmodel "github.com/thunder-id/thunderid/internal/application/model"
-	authncm "github.com/thunder-id/thunderid/internal/authn/common"
 	consentauthn "github.com/thunder-id/thunderid/internal/authn/consent"
-	authnprovidercm "github.com/thunder-id/thunderid/internal/authnprovider/common"
-	authnprovidermgr "github.com/thunder-id/thunderid/internal/authnprovider/manager"
-	"github.com/thunder-id/thunderid/internal/consent"
 	"github.com/thunder-id/thunderid/internal/flow/common"
-	"github.com/thunder-id/thunderid/internal/flow/core"
 	inboundmodel "github.com/thunder-id/thunderid/internal/inboundclient/model"
-	"github.com/thunder-id/thunderid/internal/system/error/serviceerror"
-	i18ncore "github.com/thunder-id/thunderid/internal/system/i18n/core"
-	"github.com/thunder-id/thunderid/tests/mocks/authn/consentenforcermock"
 	"github.com/thunder-id/thunderid/tests/mocks/authnprovider/managermock"
+	"github.com/thunder-id/thunderid/tests/mocks/consentprovidermock"
 	"github.com/thunder-id/thunderid/tests/mocks/flow/coremock"
 )
 
@@ -51,8 +46,8 @@ const (
 
 type ConsentExecutorTestSuite struct {
 	suite.Suite
-	mockConsentEnforcer *consentenforcermock.ConsentEnforcerServiceInterfaceMock
-	mockAuthnProvider   *managermock.AuthnProviderManagerInterfaceMock
+	mockConsentEnforcer *consentprovidermock.ConsentProviderMock
+	mockAuthnProvider   *managermock.AuthnProviderManagerMock
 	mockFlowFactory     *coremock.FlowFactoryInterfaceMock
 	executor            *consentExecutor
 }
@@ -62,13 +57,14 @@ func TestConsentExecutorTestSuite(t *testing.T) {
 }
 
 func (suite *ConsentExecutorTestSuite) SetupTest() {
-	suite.mockConsentEnforcer = consentenforcermock.NewConsentEnforcerServiceInterfaceMock(suite.T())
-	suite.mockAuthnProvider = managermock.NewAuthnProviderManagerInterfaceMock(suite.T())
+	suite.mockConsentEnforcer = consentprovidermock.NewConsentProviderMock(suite.T())
+	suite.mockAuthnProvider = managermock.NewAuthnProviderManagerMock(suite.T())
 	suite.mockFlowFactory = coremock.NewFlowFactoryInterfaceMock(suite.T())
 
 	mockExec := createMockExecutorWithInputs(suite.T())
-	suite.mockFlowFactory.On("CreateExecutor", ExecutorNameConsent, common.ExecutorTypeUtility,
-		mock.AnythingOfType("[]common.Input"), mock.AnythingOfType("[]common.Input")).Return(mockExec)
+	suite.mockFlowFactory.On("CreateExecutor", ExecutorNameConsent, providers.ExecutorTypeUtility,
+		mock.AnythingOfType("[]providers.Input"), mock.AnythingOfType("[]providers.Input"),
+		mock.Anything).Return(mockExec)
 
 	suite.executor = newConsentExecutor(suite.mockFlowFactory, suite.mockConsentEnforcer, suite.mockAuthnProvider)
 }
@@ -78,45 +74,68 @@ func (suite *ConsentExecutorTestSuite) SetupTest() {
 func createMockExecutorWithInputs(t *testing.T) *coremock.ExecutorInterfaceMock {
 	mockExec := coremock.NewExecutorInterfaceMock(t)
 	mockExec.On("GetName").Return(ExecutorNameConsent).Maybe()
-	mockExec.On("GetType").Return(common.ExecutorTypeUtility).Maybe()
-	mockExec.On("GetDefaultInputs").Return([]common.Input{
-		{Identifier: userInputConsentDecisions, Type: common.InputTypeConsent, Required: true},
+	mockExec.On("GetType").Return(providers.ExecutorTypeUtility).Maybe()
+	mockExec.On("GetDefaultInputs").Return([]providers.Input{
+		{Identifier: userInputConsentDecisions, Type: providers.InputTypeConsent, Required: true},
 	}).Maybe()
-	mockExec.On("GetPrerequisites").Return([]common.Input{
-		{Identifier: userAttributeUserID, Type: common.InputTypeText, Required: true},
+	mockExec.On("GetPrerequisites").Return([]providers.Input{
+		{Identifier: userAttributeUserID, Type: providers.InputTypeText, Required: true},
 	}).Maybe()
 	return mockExec
 }
 
 // --- Helper to build a basic NodeContext ---
 
-func buildConsentNodeContext() *core.NodeContext {
-	return &core.NodeContext{
-		Context:     context.Background(),
-		ExecutionID: "flow-123",
-		EntityID:    "app-123",
-		AuthenticatedUser: authncm.AuthenticatedUser{
-			IsAuthenticated: true,
-			UserID:          testUserID,
-			AvailableAttributes: &authnprovidercm.AttributesResponse{
-				Attributes: map[string]*authnprovidercm.AttributeResponse{
-					"email": nil,
-					"phone": nil,
-					"name":  nil,
-				},
-			},
+func buildConsentAuthUser() providers.AuthUser {
+	var authUser providers.AuthUser
+	_ = authUser.UnmarshalJSON([]byte(`{"default":{"entityReferenceToken":"tok","attributeToken":"tok"}}`))
+	return authUser
+}
+
+func buildConsentEntityRef() *providers.EntityReference {
+	return &providers.EntityReference{
+		EntityID:   testUserID,
+		EntityType: "",
+		OUID:       "",
+	}
+}
+
+func buildConsentAvailableAttrs() *providers.AttributesResponse {
+	return &providers.AttributesResponse{
+		Attributes: map[string]*providers.AttributeResponse{
+			"email": nil,
+			"phone": nil,
+			"name":  nil,
 		},
+	}
+}
+
+func buildConsentNodeContext() *providers.NodeContext {
+	return &providers.NodeContext{
+		Context:        context.Background(),
+		ExecutionID:    "flow-123",
+		EntityID:       "app-123",
+		AuthUser:       buildConsentAuthUser(),
 		UserInputs:     map[string]string{},
 		RuntimeData:    map[string]string{},
 		NodeProperties: map[string]interface{}{},
-		Application: appmodel.Application{
-			InboundAuthProfile: inboundmodel.InboundAuthProfile{
+		Application: providers.Application{
+			InboundAuthProfile: providers.InboundAuthProfile{
 				Assertion: &inboundmodel.AssertionConfig{
 					UserAttributes: []string{"email", "phone"},
 				},
 			},
 		},
 	}
+}
+
+// setupDefaultAuthnProviderMocks sets up GetEntityReference and GetUserAvailableAttributes
+// mock expectations using the default test entity reference and available attributes.
+func (suite *ConsentExecutorTestSuite) setupDefaultAuthnProviderMocks() {
+	suite.mockAuthnProvider.On("GetEntityReference", mock.Anything, mock.Anything).
+		Return(buildConsentAuthUser(), buildConsentEntityRef(), (*tidcommon.ServiceError)(nil)).Maybe()
+	suite.mockAuthnProvider.On("GetUserAvailableAttributes", mock.Anything, mock.Anything).
+		Return(buildConsentAvailableAttrs(), (*tidcommon.ServiceError)(nil)).Maybe()
 }
 
 // ----- Constructor Tests -----
@@ -126,14 +145,14 @@ func (suite *ConsentExecutorTestSuite) TestNewConsentExecutor() {
 	assert.NotNil(suite.T(), suite.executor.consentEnforcer)
 	assert.NotNil(suite.T(), suite.executor.logger)
 	assert.Equal(suite.T(), ExecutorNameConsent, suite.executor.GetName())
-	assert.Equal(suite.T(), common.ExecutorTypeUtility, suite.executor.GetType())
+	assert.Equal(suite.T(), providers.ExecutorTypeUtility, suite.executor.GetType())
 }
 
 func (suite *ConsentExecutorTestSuite) TestNewConsentExecutor_DefaultInputs() {
 	inputs := suite.executor.GetDefaultInputs()
 	assert.Len(suite.T(), inputs, 1)
 	assert.Equal(suite.T(), userInputConsentDecisions, inputs[0].Identifier)
-	assert.Equal(suite.T(), common.InputTypeConsent, inputs[0].Type)
+	assert.Equal(suite.T(), providers.InputTypeConsent, inputs[0].Type)
 	assert.True(suite.T(), inputs[0].Required)
 }
 
@@ -141,7 +160,7 @@ func (suite *ConsentExecutorTestSuite) TestNewConsentExecutor_Prerequisites() {
 	prereqs := suite.executor.GetPrerequisites()
 	assert.Len(suite.T(), prereqs, 1)
 	assert.Equal(suite.T(), userAttributeUserID, prereqs[0].Identifier)
-	assert.Equal(suite.T(), common.InputTypeText, prereqs[0].Type)
+	assert.Equal(suite.T(), providers.InputTypeText, prereqs[0].Type)
 	assert.True(suite.T(), prereqs[0].Required)
 }
 
@@ -151,97 +170,143 @@ func (suite *ConsentExecutorTestSuite) TestExecute_PrerequisitesFailure() {
 	ctx := buildConsentNodeContext()
 
 	// Mock ValidatePrerequisites to return false
-	suite.executor.ExecutorInterface.(*coremock.ExecutorInterfaceMock).
-		On("ValidatePrerequisites", ctx, mock.AnythingOfType("*common.ExecutorResponse")).Return(false)
+	suite.executor.Executor.(*coremock.ExecutorInterfaceMock).
+		On("ValidatePrerequisites", ctx, mock.AnythingOfType("*providers.ExecutorResponse"),
+			mock.Anything).Return(false)
 
 	resp, err := suite.executor.Execute(ctx)
 
 	assert.NoError(suite.T(), err)
 	assert.NotNil(suite.T(), resp)
-	assert.Equal(suite.T(), common.ExecFailure, resp.Status)
-	assert.Contains(suite.T(), resp.FailureReason, "Prerequisites validation failed")
+	assert.Equal(suite.T(), providers.ExecFailure, resp.Status)
+	assert.Equal(suite.T(), ErrConsentPrereqFailed.Code, resp.Error.Code)
 }
 
 // ----- Execute: checkConsent (no inputs provided) -----
 
 func (suite *ConsentExecutorTestSuite) TestExecute_NoInputs_AllConsentsActive() {
 	ctx := buildConsentNodeContext()
+	suite.setupDefaultAuthnProviderMocks()
 
-	suite.executor.ExecutorInterface.(*coremock.ExecutorInterfaceMock).
-		On("ValidatePrerequisites", ctx, mock.AnythingOfType("*common.ExecutorResponse")).Return(true)
-	suite.executor.ExecutorInterface.(*coremock.ExecutorInterfaceMock).
-		On("HasRequiredInputs", ctx, mock.AnythingOfType("*common.ExecutorResponse")).Return(false)
+	suite.executor.Executor.(*coremock.ExecutorInterfaceMock).
+		On("ValidatePrerequisites", ctx, mock.AnythingOfType("*providers.ExecutorResponse"), mock.Anything).Return(true)
+	suite.executor.Executor.(*coremock.ExecutorInterfaceMock).
+		On("HasRequiredInputs", ctx, mock.AnythingOfType("*providers.ExecutorResponse")).Return(false)
 
 	// ResolveConsent returns nil = all consents active
 	suite.mockConsentEnforcer.On("ResolveConsent", mock.Anything, "default", "app-123", "", "user-123",
-		[]string{}, []string{"email", "phone"}, mock.Anything, mock.Anything).
+		[]string{}, []string{"email", "phone"}, mock.Anything, mock.Anything, mock.Anything, mock.Anything).
 		Return(nil, nil)
 
 	resp, err := suite.executor.Execute(ctx)
 
 	assert.NoError(suite.T(), err)
 	assert.NotNil(suite.T(), resp)
-	assert.Equal(suite.T(), common.ExecComplete, resp.Status)
+	assert.Equal(suite.T(), providers.ExecComplete, resp.Status)
 }
 
-func (suite *ConsentExecutorTestSuite) TestExecute_NoInputs_RequiredAttributesFromRuntimeData() {
+func (suite *ConsentExecutorTestSuite) TestExecute_NoInputs_ForceRepromptFromRuntimeData() {
 	ctx := buildConsentNodeContext()
-	ctx.RuntimeData[common.RuntimeKeyRequiredOptionalAttributes] = "email name"
+	ctx.RuntimeData[common.RuntimeKeyForceConsentReprompt] = "true"
+	suite.setupDefaultAuthnProviderMocks()
 
-	suite.executor.ExecutorInterface.(*coremock.ExecutorInterfaceMock).
-		On("ValidatePrerequisites", ctx, mock.AnythingOfType("*common.ExecutorResponse")).Return(true)
-	suite.executor.ExecutorInterface.(*coremock.ExecutorInterfaceMock).
-		On("HasRequiredInputs", ctx, mock.AnythingOfType("*common.ExecutorResponse")).Return(false)
+	suite.executor.Executor.(*coremock.ExecutorInterfaceMock).
+		On("ValidatePrerequisites", ctx, mock.AnythingOfType("*providers.ExecutorResponse"), mock.Anything).Return(true)
+	suite.executor.Executor.(*coremock.ExecutorInterfaceMock).
+		On("HasRequiredInputs", ctx, mock.AnythingOfType("*providers.ExecutorResponse")).Return(false)
 
-	// ResolveConsent should receive attributes from RuntimeData, not from Application config
+	// forceReprompt must be true when the force-consent-reprompt runtime key is set
 	suite.mockConsentEnforcer.On("ResolveConsent", mock.Anything, "default", "app-123", "", "user-123",
-		[]string{}, []string{"email", "name"}, mock.Anything, mock.Anything).
+		mock.Anything, mock.Anything, mock.Anything, mock.Anything, true, mock.Anything).
 		Return(nil, nil)
 
 	resp, err := suite.executor.Execute(ctx)
 
 	assert.NoError(suite.T(), err)
-	assert.Equal(suite.T(), common.ExecComplete, resp.Status)
+	assert.Equal(suite.T(), providers.ExecComplete, resp.Status)
+}
+
+func (suite *ConsentExecutorTestSuite) TestExecute_NoInputs_ForceRepromptDefaultsFalse() {
+	ctx := buildConsentNodeContext()
+	suite.setupDefaultAuthnProviderMocks()
+
+	suite.executor.Executor.(*coremock.ExecutorInterfaceMock).
+		On("ValidatePrerequisites", ctx, mock.AnythingOfType("*providers.ExecutorResponse"), mock.Anything).Return(true)
+	suite.executor.Executor.(*coremock.ExecutorInterfaceMock).
+		On("HasRequiredInputs", ctx, mock.AnythingOfType("*providers.ExecutorResponse")).Return(false)
+
+	// forceReprompt must be false when the runtime key is absent
+	suite.mockConsentEnforcer.On("ResolveConsent", mock.Anything, "default", "app-123", "", "user-123",
+		mock.Anything, mock.Anything, mock.Anything, mock.Anything, false, mock.Anything).
+		Return(nil, nil)
+
+	resp, err := suite.executor.Execute(ctx)
+
+	assert.NoError(suite.T(), err)
+	assert.Equal(suite.T(), providers.ExecComplete, resp.Status)
+}
+
+func (suite *ConsentExecutorTestSuite) TestExecute_NoInputs_RequiredAttributesFromRuntimeData() {
+	ctx := buildConsentNodeContext()
+	ctx.RuntimeData[common.RuntimeKeyRequiredOptionalAttributes] = "email name"
+	suite.setupDefaultAuthnProviderMocks()
+
+	suite.executor.Executor.(*coremock.ExecutorInterfaceMock).
+		On("ValidatePrerequisites", ctx, mock.AnythingOfType("*providers.ExecutorResponse"), mock.Anything).Return(true)
+	suite.executor.Executor.(*coremock.ExecutorInterfaceMock).
+		On("HasRequiredInputs", ctx, mock.AnythingOfType("*providers.ExecutorResponse")).Return(false)
+
+	// ResolveConsent should receive attributes from RuntimeData, not from Application config
+	suite.mockConsentEnforcer.On("ResolveConsent", mock.Anything, "default", "app-123", "", "user-123",
+		[]string{}, []string{"email", "name"}, mock.Anything, mock.Anything, mock.Anything, mock.Anything).
+		Return(nil, nil)
+
+	resp, err := suite.executor.Execute(ctx)
+
+	assert.NoError(suite.T(), err)
+	assert.Equal(suite.T(), providers.ExecComplete, resp.Status)
 }
 
 func (suite *ConsentExecutorTestSuite) TestExecute_NoInputs_RequiredEssentialAndOptionalAttributesFromRuntimeData() {
 	ctx := buildConsentNodeContext()
 	ctx.RuntimeData[common.RuntimeKeyRequiredEssentialAttributes] = "email"
 	ctx.RuntimeData[common.RuntimeKeyRequiredOptionalAttributes] = "name"
+	suite.setupDefaultAuthnProviderMocks()
 
-	suite.executor.ExecutorInterface.(*coremock.ExecutorInterfaceMock).
-		On("ValidatePrerequisites", ctx, mock.AnythingOfType("*common.ExecutorResponse")).Return(true)
-	suite.executor.ExecutorInterface.(*coremock.ExecutorInterfaceMock).
-		On("HasRequiredInputs", ctx, mock.AnythingOfType("*common.ExecutorResponse")).Return(false)
+	suite.executor.Executor.(*coremock.ExecutorInterfaceMock).
+		On("ValidatePrerequisites", ctx, mock.AnythingOfType("*providers.ExecutorResponse"), mock.Anything).Return(true)
+	suite.executor.Executor.(*coremock.ExecutorInterfaceMock).
+		On("HasRequiredInputs", ctx, mock.AnythingOfType("*providers.ExecutorResponse")).Return(false)
 
 	suite.mockConsentEnforcer.On("ResolveConsent", mock.Anything, "default", "app-123", "", "user-123",
-		[]string{"email"}, []string{"name"}, mock.Anything, mock.Anything).
+		[]string{"email"}, []string{"name"}, mock.Anything, mock.Anything, mock.Anything, mock.Anything).
 		Return(nil, nil)
 
 	resp, err := suite.executor.Execute(ctx)
 
 	assert.NoError(suite.T(), err)
-	assert.Equal(suite.T(), common.ExecComplete, resp.Status)
+	assert.Equal(suite.T(), providers.ExecComplete, resp.Status)
 }
 
 func (suite *ConsentExecutorTestSuite) TestExecute_NoInputs_NilAssertionConfig() {
 	ctx := buildConsentNodeContext()
 	ctx.Application.Assertion = nil
+	suite.setupDefaultAuthnProviderMocks()
 
-	suite.executor.ExecutorInterface.(*coremock.ExecutorInterfaceMock).
-		On("ValidatePrerequisites", ctx, mock.AnythingOfType("*common.ExecutorResponse")).Return(true)
-	suite.executor.ExecutorInterface.(*coremock.ExecutorInterfaceMock).
-		On("HasRequiredInputs", ctx, mock.AnythingOfType("*common.ExecutorResponse")).Return(false)
+	suite.executor.Executor.(*coremock.ExecutorInterfaceMock).
+		On("ValidatePrerequisites", ctx, mock.AnythingOfType("*providers.ExecutorResponse"), mock.Anything).Return(true)
+	suite.executor.Executor.(*coremock.ExecutorInterfaceMock).
+		On("HasRequiredInputs", ctx, mock.AnythingOfType("*providers.ExecutorResponse")).Return(false)
 
 	// Attributes should be nil when no RuntimeData and no Assertion config
 	suite.mockConsentEnforcer.On("ResolveConsent", mock.Anything, "default", "app-123", "", "user-123",
-		[]string{}, []string{}, mock.Anything, mock.Anything).
+		[]string{}, []string{}, mock.Anything, mock.Anything, mock.Anything, mock.Anything).
 		Return(nil, nil)
 
 	resp, err := suite.executor.Execute(ctx)
 
 	assert.NoError(suite.T(), err)
-	assert.Equal(suite.T(), common.ExecComplete, resp.Status)
+	assert.Equal(suite.T(), providers.ExecComplete, resp.Status)
 }
 
 func (suite *ConsentExecutorTestSuite) TestExecute_NoInputs_ExplicitEmptyRuntimeKeysSkipAssertionFallback() {
@@ -250,36 +315,38 @@ func (suite *ConsentExecutorTestSuite) TestExecute_NoInputs_ExplicitEmptyRuntime
 	// The fallback to Application.Assertion.UserAttributes must NOT trigger.
 	ctx.RuntimeData[common.RuntimeKeyRequiredEssentialAttributes] = ""
 	ctx.RuntimeData[common.RuntimeKeyRequiredOptionalAttributes] = ""
+	suite.setupDefaultAuthnProviderMocks()
 
-	suite.executor.ExecutorInterface.(*coremock.ExecutorInterfaceMock).
-		On("ValidatePrerequisites", ctx, mock.AnythingOfType("*common.ExecutorResponse")).Return(true)
-	suite.executor.ExecutorInterface.(*coremock.ExecutorInterfaceMock).
-		On("HasRequiredInputs", ctx, mock.AnythingOfType("*common.ExecutorResponse")).Return(false)
+	suite.executor.Executor.(*coremock.ExecutorInterfaceMock).
+		On("ValidatePrerequisites", ctx, mock.AnythingOfType("*providers.ExecutorResponse"), mock.Anything).Return(true)
+	suite.executor.Executor.(*coremock.ExecutorInterfaceMock).
+		On("HasRequiredInputs", ctx, mock.AnythingOfType("*providers.ExecutorResponse")).Return(false)
 
 	// Expect empty slices — NOT the Application.Assertion.UserAttributes (["email","phone"])
 	suite.mockConsentEnforcer.On("ResolveConsent", mock.Anything, "default", "app-123", "", "user-123",
-		[]string{}, []string{}, mock.Anything, mock.Anything).
+		[]string{}, []string{}, mock.Anything, mock.Anything, mock.Anything, mock.Anything).
 		Return(nil, nil)
 
 	resp, err := suite.executor.Execute(ctx)
 
 	assert.NoError(suite.T(), err)
-	assert.Equal(suite.T(), common.ExecComplete, resp.Status)
+	assert.Equal(suite.T(), providers.ExecComplete, resp.Status)
 }
 
 func (suite *ConsentExecutorTestSuite) TestExecute_NoInputs_ResolveConsent_ClientError() {
 	ctx := buildConsentNodeContext()
+	suite.setupDefaultAuthnProviderMocks()
 
-	suite.executor.ExecutorInterface.(*coremock.ExecutorInterfaceMock).
-		On("ValidatePrerequisites", ctx, mock.AnythingOfType("*common.ExecutorResponse")).Return(true)
-	suite.executor.ExecutorInterface.(*coremock.ExecutorInterfaceMock).
-		On("HasRequiredInputs", ctx, mock.AnythingOfType("*common.ExecutorResponse")).Return(false)
+	suite.executor.Executor.(*coremock.ExecutorInterfaceMock).
+		On("ValidatePrerequisites", ctx, mock.AnythingOfType("*providers.ExecutorResponse"), mock.Anything).Return(true)
+	suite.executor.Executor.(*coremock.ExecutorInterfaceMock).
+		On("HasRequiredInputs", ctx, mock.AnythingOfType("*providers.ExecutorResponse")).Return(false)
 
 	suite.mockConsentEnforcer.On("ResolveConsent", mock.Anything, "default", "app-123", "", "user-123",
-		mock.Anything, mock.Anything, mock.Anything, mock.Anything).
-		Return(nil, &serviceerror.ServiceError{
-			Type: serviceerror.ClientErrorType,
-			ErrorDescription: i18ncore.I18nMessage{
+		mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).
+		Return(nil, &tidcommon.ServiceError{
+			Type: tidcommon.ClientErrorType,
+			ErrorDescription: tidcommon.I18nMessage{
 				DefaultValue: "consent config not found",
 			},
 		})
@@ -288,22 +355,23 @@ func (suite *ConsentExecutorTestSuite) TestExecute_NoInputs_ResolveConsent_Clien
 
 	assert.NoError(suite.T(), err)
 	assert.NotNil(suite.T(), resp)
-	assert.Equal(suite.T(), common.ExecFailure, resp.Status)
-	assert.Contains(suite.T(), resp.FailureReason, "consent config not found")
+	assert.Equal(suite.T(), providers.ExecFailure, resp.Status)
+	assert.Equal(suite.T(), ErrConsentResolutionFailed.Code, resp.Error.Code)
 }
 
 func (suite *ConsentExecutorTestSuite) TestExecute_NoInputs_ResolveConsent_ServerError() {
 	ctx := buildConsentNodeContext()
+	suite.setupDefaultAuthnProviderMocks()
 
-	suite.executor.ExecutorInterface.(*coremock.ExecutorInterfaceMock).
-		On("ValidatePrerequisites", ctx, mock.AnythingOfType("*common.ExecutorResponse")).Return(true)
-	suite.executor.ExecutorInterface.(*coremock.ExecutorInterfaceMock).
-		On("HasRequiredInputs", ctx, mock.AnythingOfType("*common.ExecutorResponse")).Return(false)
+	suite.executor.Executor.(*coremock.ExecutorInterfaceMock).
+		On("ValidatePrerequisites", ctx, mock.AnythingOfType("*providers.ExecutorResponse"), mock.Anything).Return(true)
+	suite.executor.Executor.(*coremock.ExecutorInterfaceMock).
+		On("HasRequiredInputs", ctx, mock.AnythingOfType("*providers.ExecutorResponse")).Return(false)
 
 	suite.mockConsentEnforcer.On("ResolveConsent", mock.Anything, "default", "app-123", "", "user-123",
-		mock.Anything, mock.Anything, mock.Anything, mock.Anything).
-		Return(nil, &serviceerror.ServiceError{
-			Type: serviceerror.ServerErrorType,
+		mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).
+		Return(nil, &tidcommon.ServiceError{
+			Type: tidcommon.ServerErrorType,
 		})
 
 	resp, err := suite.executor.Execute(ctx)
@@ -315,32 +383,33 @@ func (suite *ConsentExecutorTestSuite) TestExecute_NoInputs_ResolveConsent_Serve
 
 func (suite *ConsentExecutorTestSuite) TestExecute_NoInputs_PromptRequired_NoTimeout() {
 	ctx := buildConsentNodeContext()
+	suite.setupDefaultAuthnProviderMocks()
 
-	suite.executor.ExecutorInterface.(*coremock.ExecutorInterfaceMock).
-		On("ValidatePrerequisites", ctx, mock.AnythingOfType("*common.ExecutorResponse")).Return(true)
-	suite.executor.ExecutorInterface.(*coremock.ExecutorInterfaceMock).
-		On("HasRequiredInputs", ctx, mock.AnythingOfType("*common.ExecutorResponse")).Return(false)
+	suite.executor.Executor.(*coremock.ExecutorInterfaceMock).
+		On("ValidatePrerequisites", ctx, mock.AnythingOfType("*providers.ExecutorResponse"), mock.Anything).Return(true)
+	suite.executor.Executor.(*coremock.ExecutorInterfaceMock).
+		On("HasRequiredInputs", ctx, mock.AnythingOfType("*providers.ExecutorResponse")).Return(false)
 
-	promptData := &consentauthn.ConsentPromptData{
-		Purposes: []consentauthn.ConsentPurposePrompt{
+	promptData := &providers.ConsentPromptData{
+		Purposes: []providers.ConsentPurposePrompt{
 			{
 				PurposeName: "app:app-123:attrs",
 				PurposeID:   "purpose-1",
-				Essential:   []consentauthn.PromptElement{{Name: "email"}},
-				Optional:    []consentauthn.PromptElement{{Name: "phone"}},
+				Essential:   []providers.PromptElement{{Name: "email"}},
+				Optional:    []providers.PromptElement{{Name: "phone"}},
 			},
 		},
 	}
 
 	suite.mockConsentEnforcer.On("ResolveConsent", mock.Anything, "default", "app-123", "", "user-123",
-		mock.Anything, mock.Anything, mock.Anything, mock.Anything).
+		mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).
 		Return(promptData, nil)
 
 	resp, err := suite.executor.Execute(ctx)
 
 	assert.NoError(suite.T(), err)
 	assert.NotNil(suite.T(), resp)
-	assert.Equal(suite.T(), common.ExecUserInputRequired, resp.Status)
+	assert.Equal(suite.T(), providers.ExecUserInputRequired, resp.Status)
 	assert.NotEmpty(suite.T(), resp.AdditionalData[common.DataConsentPrompt])
 	assert.Empty(suite.T(), resp.AdditionalData[common.DataStepTimeout],
 		"Should not set timeout without timeout config")
@@ -349,7 +418,7 @@ func (suite *ConsentExecutorTestSuite) TestExecute_NoInputs_PromptRequired_NoTim
 	assert.NotNil(suite.T(), resp.ForwardedData[common.ForwardedDataKeyConsentPrompt])
 
 	// Verify the JSON serialization
-	var parsedPrompt []consentauthn.ConsentPurposePrompt
+	var parsedPrompt []providers.ConsentPurposePrompt
 	parseErr := json.Unmarshal([]byte(resp.AdditionalData[common.DataConsentPrompt]), &parsedPrompt)
 	assert.NoError(suite.T(), parseErr)
 	assert.Len(suite.T(), parsedPrompt, 1)
@@ -358,48 +427,50 @@ func (suite *ConsentExecutorTestSuite) TestExecute_NoInputs_PromptRequired_NoTim
 
 func (suite *ConsentExecutorTestSuite) TestExecute_NoInputs_PromptRequired_StoresSessionToken() {
 	ctx := buildConsentNodeContext()
+	suite.setupDefaultAuthnProviderMocks()
 
-	suite.executor.ExecutorInterface.(*coremock.ExecutorInterfaceMock).
-		On("ValidatePrerequisites", ctx, mock.AnythingOfType("*common.ExecutorResponse")).Return(true)
-	suite.executor.ExecutorInterface.(*coremock.ExecutorInterfaceMock).
-		On("HasRequiredInputs", ctx, mock.AnythingOfType("*common.ExecutorResponse")).Return(false)
+	suite.executor.Executor.(*coremock.ExecutorInterfaceMock).
+		On("ValidatePrerequisites", ctx, mock.AnythingOfType("*providers.ExecutorResponse"), mock.Anything).Return(true)
+	suite.executor.Executor.(*coremock.ExecutorInterfaceMock).
+		On("HasRequiredInputs", ctx, mock.AnythingOfType("*providers.ExecutorResponse")).Return(false)
 
-	promptData := &consentauthn.ConsentPromptData{
-		Purposes: []consentauthn.ConsentPurposePrompt{{
+	promptData := &providers.ConsentPromptData{
+		Purposes: []providers.ConsentPurposePrompt{{
 			PurposeName: "attributes:test-app",
-			Optional:    []consentauthn.PromptElement{{Name: "email"}},
+			Optional:    []providers.PromptElement{{Name: "email"}},
 		}},
 		SessionToken: "consent-session-token",
 	}
 
 	suite.mockConsentEnforcer.On("ResolveConsent", mock.Anything, "default", "app-123", "", "user-123",
-		mock.Anything, mock.Anything, mock.Anything, mock.Anything).
+		mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).
 		Return(promptData, nil)
 
 	resp, err := suite.executor.Execute(ctx)
 
 	assert.NoError(suite.T(), err)
-	assert.Equal(suite.T(), common.ExecUserInputRequired, resp.Status)
+	assert.Equal(suite.T(), providers.ExecUserInputRequired, resp.Status)
 	assert.Equal(suite.T(), "consent-session-token", resp.RuntimeData[common.RuntimeKeyConsentSessionToken])
 }
 
 func (suite *ConsentExecutorTestSuite) TestExecute_NoInputs_PromptRequired_WithTimeout() {
 	ctx := buildConsentNodeContext()
 	ctx.NodeProperties["timeout"] = "300" // 5 minutes
+	suite.setupDefaultAuthnProviderMocks()
 
-	suite.executor.ExecutorInterface.(*coremock.ExecutorInterfaceMock).
-		On("ValidatePrerequisites", ctx, mock.AnythingOfType("*common.ExecutorResponse")).Return(true)
-	suite.executor.ExecutorInterface.(*coremock.ExecutorInterfaceMock).
-		On("HasRequiredInputs", ctx, mock.AnythingOfType("*common.ExecutorResponse")).Return(false)
+	suite.executor.Executor.(*coremock.ExecutorInterfaceMock).
+		On("ValidatePrerequisites", ctx, mock.AnythingOfType("*providers.ExecutorResponse"), mock.Anything).Return(true)
+	suite.executor.Executor.(*coremock.ExecutorInterfaceMock).
+		On("HasRequiredInputs", ctx, mock.AnythingOfType("*providers.ExecutorResponse")).Return(false)
 
-	promptData := &consentauthn.ConsentPromptData{
-		Purposes: []consentauthn.ConsentPurposePrompt{
-			{PurposeName: "attributes:test-app", Essential: []consentauthn.PromptElement{{Name: "email"}}},
+	promptData := &providers.ConsentPromptData{
+		Purposes: []providers.ConsentPurposePrompt{
+			{PurposeName: "attributes:test-app", Essential: []providers.PromptElement{{Name: "email"}}},
 		},
 	}
 
 	suite.mockConsentEnforcer.On("ResolveConsent", mock.Anything, mock.Anything, mock.Anything, mock.Anything,
-		mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).
+		mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).
 		Return(promptData, nil)
 
 	beforeExec := time.Now().UnixMilli()
@@ -407,7 +478,7 @@ func (suite *ConsentExecutorTestSuite) TestExecute_NoInputs_PromptRequired_WithT
 	afterExec := time.Now().UnixMilli()
 
 	assert.NoError(suite.T(), err)
-	assert.Equal(suite.T(), common.ExecUserInputRequired, resp.Status)
+	assert.Equal(suite.T(), providers.ExecUserInputRequired, resp.Status)
 
 	// Verify timeout is set
 	expiresAtStr := resp.AdditionalData[common.DataStepTimeout]
@@ -429,38 +500,39 @@ func (suite *ConsentExecutorTestSuite) TestExecute_NoInputs_PromptRequired_WithT
 func (suite *ConsentExecutorTestSuite) TestExecute_NoInputs_EmptyTimeout() {
 	ctx := buildConsentNodeContext()
 	ctx.NodeProperties["timeout"] = ""
+	suite.setupDefaultAuthnProviderMocks()
 
-	suite.executor.ExecutorInterface.(*coremock.ExecutorInterfaceMock).
-		On("ValidatePrerequisites", ctx, mock.AnythingOfType("*common.ExecutorResponse")).Return(true)
-	suite.executor.ExecutorInterface.(*coremock.ExecutorInterfaceMock).
-		On("HasRequiredInputs", ctx, mock.AnythingOfType("*common.ExecutorResponse")).Return(false)
+	suite.executor.Executor.(*coremock.ExecutorInterfaceMock).
+		On("ValidatePrerequisites", ctx, mock.AnythingOfType("*providers.ExecutorResponse"), mock.Anything).Return(true)
+	suite.executor.Executor.(*coremock.ExecutorInterfaceMock).
+		On("HasRequiredInputs", ctx, mock.AnythingOfType("*providers.ExecutorResponse")).Return(false)
 
-	promptData := &consentauthn.ConsentPromptData{
-		Purposes: []consentauthn.ConsentPurposePrompt{
-			{PurposeName: "attributes:test-app", Essential: []consentauthn.PromptElement{{Name: "email"}}},
+	promptData := &providers.ConsentPromptData{
+		Purposes: []providers.ConsentPurposePrompt{
+			{PurposeName: "attributes:test-app", Essential: []providers.PromptElement{{Name: "email"}}},
 		},
 	}
 
 	suite.mockConsentEnforcer.On("ResolveConsent", mock.Anything, mock.Anything, mock.Anything, mock.Anything,
-		mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).
+		mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).
 		Return(promptData, nil)
 
 	resp, err := suite.executor.Execute(ctx)
 
 	assert.NoError(suite.T(), err)
-	assert.Equal(suite.T(), common.ExecUserInputRequired, resp.Status)
+	assert.Equal(suite.T(), providers.ExecUserInputRequired, resp.Status)
 	assert.Empty(suite.T(), resp.AdditionalData[common.DataStepTimeout])
 }
 
 // ----- Execute: handleConsentDecisions (inputs provided) -----
 
 func (suite *ConsentExecutorTestSuite) TestExecute_HasInputs_AllApproved_Success() {
-	decisions := consentauthn.ConsentDecisions{
-		Purposes: []consentauthn.PurposeDecision{
+	decisions := providers.ConsentDecisions{
+		Purposes: []providers.PurposeDecision{
 			{
 				PurposeName: "app:app-123:attrs",
 				Approved:    true,
-				Elements: []consentauthn.ElementDecision{
+				Elements: []providers.ElementDecision{
 					{Name: "email", Approved: true},
 					{Name: "phone", Approved: true},
 				},
@@ -474,19 +546,20 @@ func (suite *ConsentExecutorTestSuite) TestExecute_HasInputs_AllApproved_Success
 	ctx.Application.LoginConsent = &inboundmodel.LoginConsentConfig{
 		ValidityPeriod: 86400,
 	}
+	suite.setupDefaultAuthnProviderMocks()
 
-	suite.executor.ExecutorInterface.(*coremock.ExecutorInterfaceMock).
-		On("ValidatePrerequisites", ctx, mock.AnythingOfType("*common.ExecutorResponse")).Return(true)
-	suite.executor.ExecutorInterface.(*coremock.ExecutorInterfaceMock).
-		On("HasRequiredInputs", ctx, mock.AnythingOfType("*common.ExecutorResponse")).Return(true)
+	suite.executor.Executor.(*coremock.ExecutorInterfaceMock).
+		On("ValidatePrerequisites", ctx, mock.AnythingOfType("*providers.ExecutorResponse"), mock.Anything).Return(true)
+	suite.executor.Executor.(*coremock.ExecutorInterfaceMock).
+		On("HasRequiredInputs", ctx, mock.AnythingOfType("*providers.ExecutorResponse")).Return(true)
 
-	consentResult := &consent.Consent{
+	consentResult := &providers.Consent{
 		ID:     "consent-001",
-		Status: consent.ConsentStatusActive,
-		Purposes: []consent.ConsentPurposeItem{
+		Status: providers.ConsentStatusActive,
+		Purposes: []providers.ConsentPurposeItem{
 			{
 				Name: "attributes:app-123",
-				Elements: []consent.ConsentElementApproval{
+				Elements: []providers.ConsentElementApproval{
 					{Name: "email", IsUserApproved: true},
 					{Name: "phone", IsUserApproved: true},
 				},
@@ -495,14 +568,14 @@ func (suite *ConsentExecutorTestSuite) TestExecute_HasInputs_AllApproved_Success
 	}
 
 	suite.mockConsentEnforcer.On("RecordConsent", mock.Anything, "default", "app-123", "user-123",
-		mock.AnythingOfType("*consent.ConsentDecisions"), mock.Anything, int64(86400)).
+		mock.AnythingOfType("*providers.ConsentDecisions"), mock.Anything, int64(86400), mock.Anything).
 		Return(consentResult, nil)
 
 	resp, err := suite.executor.Execute(ctx)
 
 	assert.NoError(suite.T(), err)
 	assert.NotNil(suite.T(), resp)
-	assert.Equal(suite.T(), common.ExecComplete, resp.Status)
+	assert.Equal(suite.T(), providers.ExecComplete, resp.Status)
 	assert.Equal(suite.T(), "consent-001", resp.RuntimeData[common.RuntimeKeyConsentID])
 	assert.Contains(suite.T(), resp.RuntimeData[common.RuntimeKeyConsentedAttributes], "email")
 	assert.Contains(suite.T(), resp.RuntimeData[common.RuntimeKeyConsentedAttributes], "phone")
@@ -510,8 +583,8 @@ func (suite *ConsentExecutorTestSuite) TestExecute_HasInputs_AllApproved_Success
 
 func (suite *ConsentExecutorTestSuite) TestExecute_HasInputs_HTMLEscapedJSON() {
 	// Simulate the HTML-escaped JSON that SanitizeStringMap would produce
-	decisions := consentauthn.ConsentDecisions{
-		Purposes: []consentauthn.PurposeDecision{
+	decisions := providers.ConsentDecisions{
+		Purposes: []providers.PurposeDecision{
 			{PurposeName: "attributes:test-app", Approved: true},
 		},
 	}
@@ -524,80 +597,84 @@ func (suite *ConsentExecutorTestSuite) TestExecute_HasInputs_HTMLEscapedJSON() {
 
 	ctx := buildConsentNodeContext()
 	ctx.UserInputs[userInputConsentDecisions] = htmlEscaped
+	suite.setupDefaultAuthnProviderMocks()
 
-	suite.executor.ExecutorInterface.(*coremock.ExecutorInterfaceMock).
-		On("ValidatePrerequisites", ctx, mock.AnythingOfType("*common.ExecutorResponse")).Return(true)
-	suite.executor.ExecutorInterface.(*coremock.ExecutorInterfaceMock).
-		On("HasRequiredInputs", ctx, mock.AnythingOfType("*common.ExecutorResponse")).Return(true)
+	suite.executor.Executor.(*coremock.ExecutorInterfaceMock).
+		On("ValidatePrerequisites", ctx, mock.AnythingOfType("*providers.ExecutorResponse"), mock.Anything).Return(true)
+	suite.executor.Executor.(*coremock.ExecutorInterfaceMock).
+		On("HasRequiredInputs", ctx, mock.AnythingOfType("*providers.ExecutorResponse")).Return(true)
 
-	consentResult := &consent.Consent{
+	consentResult := &providers.Consent{
 		ID:       "consent-002",
-		Purposes: []consent.ConsentPurposeItem{},
+		Purposes: []providers.ConsentPurposeItem{},
 	}
 
 	suite.mockConsentEnforcer.On("RecordConsent", mock.Anything, mock.Anything, mock.Anything,
-		mock.Anything, mock.Anything, mock.Anything, mock.Anything).
+		mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).
 		Return(consentResult, nil)
 
 	resp, err := suite.executor.Execute(ctx)
 
 	assert.NoError(suite.T(), err)
-	assert.Equal(suite.T(), common.ExecComplete, resp.Status)
+	assert.Equal(suite.T(), providers.ExecComplete, resp.Status)
 }
 
 func (suite *ConsentExecutorTestSuite) TestExecute_HasInputs_EmptyDecisions() {
 	ctx := buildConsentNodeContext()
 	ctx.UserInputs[userInputConsentDecisions] = ""
+	suite.setupDefaultAuthnProviderMocks()
 
-	suite.executor.ExecutorInterface.(*coremock.ExecutorInterfaceMock).
-		On("ValidatePrerequisites", ctx, mock.AnythingOfType("*common.ExecutorResponse")).Return(true)
-	suite.executor.ExecutorInterface.(*coremock.ExecutorInterfaceMock).
-		On("HasRequiredInputs", ctx, mock.AnythingOfType("*common.ExecutorResponse")).Return(true)
+	suite.executor.Executor.(*coremock.ExecutorInterfaceMock).
+		On("ValidatePrerequisites", ctx, mock.AnythingOfType("*providers.ExecutorResponse"), mock.Anything).Return(true)
+	suite.executor.Executor.(*coremock.ExecutorInterfaceMock).
+		On("HasRequiredInputs", ctx, mock.AnythingOfType("*providers.ExecutorResponse")).Return(true)
 
 	resp, err := suite.executor.Execute(ctx)
 
 	assert.NoError(suite.T(), err)
 	assert.NotNil(suite.T(), resp)
-	assert.Equal(suite.T(), common.ExecFailure, resp.Status)
-	assert.Contains(suite.T(), resp.FailureReason, "missing or empty")
+	assert.Equal(suite.T(), providers.ExecFailure, resp.Status)
+	assert.Equal(suite.T(), ErrConsentDecisionsMissing.Code, resp.Error.Code)
 }
 
 func (suite *ConsentExecutorTestSuite) TestExecute_HasInputs_MissingDecisionsKey() {
 	ctx := buildConsentNodeContext()
 	// Don't set userInputConsentDecisions at all
+	suite.setupDefaultAuthnProviderMocks()
 
-	suite.executor.ExecutorInterface.(*coremock.ExecutorInterfaceMock).
-		On("ValidatePrerequisites", ctx, mock.AnythingOfType("*common.ExecutorResponse")).Return(true)
-	suite.executor.ExecutorInterface.(*coremock.ExecutorInterfaceMock).
-		On("HasRequiredInputs", ctx, mock.AnythingOfType("*common.ExecutorResponse")).Return(true)
+	suite.executor.Executor.(*coremock.ExecutorInterfaceMock).
+		On("ValidatePrerequisites", ctx, mock.AnythingOfType("*providers.ExecutorResponse"), mock.Anything).Return(true)
+	suite.executor.Executor.(*coremock.ExecutorInterfaceMock).
+		On("HasRequiredInputs", ctx, mock.AnythingOfType("*providers.ExecutorResponse")).Return(true)
 
 	resp, err := suite.executor.Execute(ctx)
 
 	assert.NoError(suite.T(), err)
-	assert.Equal(suite.T(), common.ExecFailure, resp.Status)
-	assert.Contains(suite.T(), resp.FailureReason, "missing or empty")
+	assert.Equal(suite.T(), providers.ExecFailure, resp.Status)
+	assert.Equal(suite.T(), ErrConsentDecisionsMissing.Code, resp.Error.Code)
 }
 
 func (suite *ConsentExecutorTestSuite) TestExecute_HasInputs_InvalidJSON() {
 	ctx := buildConsentNodeContext()
 	ctx.UserInputs[userInputConsentDecisions] = "{invalid-json}"
+	suite.setupDefaultAuthnProviderMocks()
 
-	suite.executor.ExecutorInterface.(*coremock.ExecutorInterfaceMock).
-		On("ValidatePrerequisites", ctx, mock.AnythingOfType("*common.ExecutorResponse")).Return(true)
-	suite.executor.ExecutorInterface.(*coremock.ExecutorInterfaceMock).
-		On("HasRequiredInputs", ctx, mock.AnythingOfType("*common.ExecutorResponse")).Return(true)
+	suite.executor.Executor.(*coremock.ExecutorInterfaceMock).
+		On("ValidatePrerequisites", ctx, mock.AnythingOfType("*providers.ExecutorResponse"), mock.Anything).Return(true)
+	suite.executor.Executor.(*coremock.ExecutorInterfaceMock).
+		On("HasRequiredInputs", ctx, mock.AnythingOfType("*providers.ExecutorResponse")).Return(true)
 
 	resp, err := suite.executor.Execute(ctx)
 
 	assert.NoError(suite.T(), err)
 	assert.NotNil(suite.T(), resp)
-	assert.Equal(suite.T(), common.ExecFailure, resp.Status)
-	assert.Contains(suite.T(), resp.FailureReason, "Failed to parse consent decisions")
+	assert.Equal(suite.T(), providers.ExecFailure, resp.Status)
+	assert.Equal(suite.T(), ErrConsentDecisionsParseFail.Code, resp.Error.Code)
 }
 
 func (suite *ConsentExecutorTestSuite) TestExecute_HasInputs_ConsentTimeout_Expired() {
-	decisions := consentauthn.ConsentDecisions{
-		Purposes: []consentauthn.PurposeDecision{
+	decisions := providers.ConsentDecisions{
+		Purposes: []providers.PurposeDecision{
 			{PurposeName: "attributes:test-app", Approved: true},
 		},
 	}
@@ -609,23 +686,24 @@ func (suite *ConsentExecutorTestSuite) TestExecute_HasInputs_ConsentTimeout_Expi
 	// Set an expiry timestamp in the past
 	pastExpiry := strconv.FormatInt(time.Now().Add(-1*time.Minute).UnixMilli(), 10)
 	ctx.RuntimeData[common.RuntimeKeyStepTimeout] = pastExpiry
+	suite.setupDefaultAuthnProviderMocks()
 
-	suite.executor.ExecutorInterface.(*coremock.ExecutorInterfaceMock).
-		On("ValidatePrerequisites", ctx, mock.AnythingOfType("*common.ExecutorResponse")).Return(true)
-	suite.executor.ExecutorInterface.(*coremock.ExecutorInterfaceMock).
-		On("HasRequiredInputs", ctx, mock.AnythingOfType("*common.ExecutorResponse")).Return(true)
+	suite.executor.Executor.(*coremock.ExecutorInterfaceMock).
+		On("ValidatePrerequisites", ctx, mock.AnythingOfType("*providers.ExecutorResponse"), mock.Anything).Return(true)
+	suite.executor.Executor.(*coremock.ExecutorInterfaceMock).
+		On("HasRequiredInputs", ctx, mock.AnythingOfType("*providers.ExecutorResponse")).Return(true)
 
 	resp, err := suite.executor.Execute(ctx)
 
 	assert.NoError(suite.T(), err)
 	assert.NotNil(suite.T(), resp)
-	assert.Equal(suite.T(), common.ExecFailure, resp.Status)
-	assert.Contains(suite.T(), resp.FailureReason, "timed out")
+	assert.Equal(suite.T(), providers.ExecFailure, resp.Status)
+	assert.Equal(suite.T(), ErrConsentPromptTimedOut.Code, resp.Error.Code)
 }
 
 func (suite *ConsentExecutorTestSuite) TestExecute_HasInputs_ConsentTimeout_NotExpired() {
-	decisions := consentauthn.ConsentDecisions{
-		Purposes: []consentauthn.PurposeDecision{
+	decisions := providers.ConsentDecisions{
+		Purposes: []providers.PurposeDecision{
 			{PurposeName: "attributes:test-app", Approved: true},
 		},
 	}
@@ -637,34 +715,35 @@ func (suite *ConsentExecutorTestSuite) TestExecute_HasInputs_ConsentTimeout_NotE
 	// Set an expiry timestamp in the future
 	futureExpiry := strconv.FormatInt(time.Now().Add(5*time.Minute).UnixMilli(), 10)
 	ctx.RuntimeData[common.RuntimeKeyStepTimeout] = futureExpiry
+	suite.setupDefaultAuthnProviderMocks()
 
-	suite.executor.ExecutorInterface.(*coremock.ExecutorInterfaceMock).
-		On("ValidatePrerequisites", ctx, mock.AnythingOfType("*common.ExecutorResponse")).Return(true)
-	suite.executor.ExecutorInterface.(*coremock.ExecutorInterfaceMock).
-		On("HasRequiredInputs", ctx, mock.AnythingOfType("*common.ExecutorResponse")).Return(true)
+	suite.executor.Executor.(*coremock.ExecutorInterfaceMock).
+		On("ValidatePrerequisites", ctx, mock.AnythingOfType("*providers.ExecutorResponse"), mock.Anything).Return(true)
+	suite.executor.Executor.(*coremock.ExecutorInterfaceMock).
+		On("HasRequiredInputs", ctx, mock.AnythingOfType("*providers.ExecutorResponse")).Return(true)
 
-	consentResult := &consent.Consent{
+	consentResult := &providers.Consent{
 		ID:       "consent-003",
-		Purposes: []consent.ConsentPurposeItem{},
+		Purposes: []providers.ConsentPurposeItem{},
 	}
 
 	suite.mockConsentEnforcer.On("RecordConsent", mock.Anything, mock.Anything, mock.Anything,
-		mock.Anything, mock.Anything, mock.Anything, mock.Anything).
+		mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).
 		Return(consentResult, nil)
 
 	resp, err := suite.executor.Execute(ctx)
 
 	assert.NoError(suite.T(), err)
-	assert.Equal(suite.T(), common.ExecComplete, resp.Status)
+	assert.Equal(suite.T(), providers.ExecComplete, resp.Status)
 }
 
 func (suite *ConsentExecutorTestSuite) TestExecute_HasInputs_EssentialDenied() {
-	decisions := consentauthn.ConsentDecisions{
-		Purposes: []consentauthn.PurposeDecision{
+	decisions := providers.ConsentDecisions{
+		Purposes: []providers.PurposeDecision{
 			{
 				PurposeName: "attributes:test-app",
 				Approved:    true,
-				Elements: []consentauthn.ElementDecision{
+				Elements: []providers.ElementDecision{
 					{Name: "email", Approved: false}, // User denied essential
 				},
 			},
@@ -674,28 +753,29 @@ func (suite *ConsentExecutorTestSuite) TestExecute_HasInputs_EssentialDenied() {
 
 	ctx := buildConsentNodeContext()
 	ctx.UserInputs[userInputConsentDecisions] = string(decisionsJSON)
+	suite.setupDefaultAuthnProviderMocks()
 
-	suite.executor.ExecutorInterface.(*coremock.ExecutorInterfaceMock).
-		On("ValidatePrerequisites", ctx, mock.AnythingOfType("*common.ExecutorResponse")).Return(true)
-	suite.executor.ExecutorInterface.(*coremock.ExecutorInterfaceMock).
-		On("HasRequiredInputs", ctx, mock.AnythingOfType("*common.ExecutorResponse")).Return(true)
+	suite.executor.Executor.(*coremock.ExecutorInterfaceMock).
+		On("ValidatePrerequisites", ctx, mock.AnythingOfType("*providers.ExecutorResponse"), mock.Anything).Return(true)
+	suite.executor.Executor.(*coremock.ExecutorInterfaceMock).
+		On("HasRequiredInputs", ctx, mock.AnythingOfType("*providers.ExecutorResponse")).Return(true)
 
 	// RecordConsent persists the denial and returns an essential-denied error
 	suite.mockConsentEnforcer.On("RecordConsent", mock.Anything, mock.Anything, mock.Anything,
-		mock.Anything, mock.Anything, mock.Anything, mock.Anything).
-		Return((*consent.Consent)(nil), &consentauthn.ErrorEssentialConsentDenied)
+		mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).
+		Return((*providers.Consent)(nil), &consentauthn.ErrorEssentialConsentDenied)
 
 	resp, err := suite.executor.Execute(ctx)
 
 	assert.NoError(suite.T(), err)
 	assert.NotNil(suite.T(), resp)
-	assert.Equal(suite.T(), common.ExecFailure, resp.Status)
-	assert.Equal(suite.T(), failureReasonConsentDenied, resp.FailureReason)
+	assert.Equal(suite.T(), providers.ExecFailure, resp.Status)
+	assert.Equal(suite.T(), ErrConsentDenied.Code, resp.Error.Code)
 }
 
 func (suite *ConsentExecutorTestSuite) TestExecute_HasInputs_RecordConsent_ClientError() {
-	decisions := consentauthn.ConsentDecisions{
-		Purposes: []consentauthn.PurposeDecision{
+	decisions := providers.ConsentDecisions{
+		Purposes: []providers.PurposeDecision{
 			{PurposeName: "attributes:test-app", Approved: true},
 		},
 	}
@@ -703,17 +783,18 @@ func (suite *ConsentExecutorTestSuite) TestExecute_HasInputs_RecordConsent_Clien
 
 	ctx := buildConsentNodeContext()
 	ctx.UserInputs[userInputConsentDecisions] = string(decisionsJSON)
+	suite.setupDefaultAuthnProviderMocks()
 
-	suite.executor.ExecutorInterface.(*coremock.ExecutorInterfaceMock).
-		On("ValidatePrerequisites", ctx, mock.AnythingOfType("*common.ExecutorResponse")).Return(true)
-	suite.executor.ExecutorInterface.(*coremock.ExecutorInterfaceMock).
-		On("HasRequiredInputs", ctx, mock.AnythingOfType("*common.ExecutorResponse")).Return(true)
+	suite.executor.Executor.(*coremock.ExecutorInterfaceMock).
+		On("ValidatePrerequisites", ctx, mock.AnythingOfType("*providers.ExecutorResponse"), mock.Anything).Return(true)
+	suite.executor.Executor.(*coremock.ExecutorInterfaceMock).
+		On("HasRequiredInputs", ctx, mock.AnythingOfType("*providers.ExecutorResponse")).Return(true)
 
 	suite.mockConsentEnforcer.On("RecordConsent", mock.Anything, mock.Anything, mock.Anything,
-		mock.Anything, mock.Anything, mock.Anything, mock.Anything).
-		Return(nil, &serviceerror.ServiceError{
-			Type: serviceerror.ClientErrorType,
-			ErrorDescription: i18ncore.I18nMessage{
+		mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).
+		Return(nil, &tidcommon.ServiceError{
+			Type: tidcommon.ClientErrorType,
+			ErrorDescription: tidcommon.I18nMessage{
 				DefaultValue: "invalid consent data",
 			},
 		})
@@ -722,13 +803,13 @@ func (suite *ConsentExecutorTestSuite) TestExecute_HasInputs_RecordConsent_Clien
 
 	assert.NoError(suite.T(), err)
 	assert.NotNil(suite.T(), resp)
-	assert.Equal(suite.T(), common.ExecFailure, resp.Status)
-	assert.Contains(suite.T(), resp.FailureReason, "invalid consent data")
+	assert.Equal(suite.T(), providers.ExecFailure, resp.Status)
+	assert.Equal(suite.T(), ErrConsentRecordFailed.Code, resp.Error.Code)
 }
 
 func (suite *ConsentExecutorTestSuite) TestExecute_HasInputs_RecordConsent_ServerError() {
-	decisions := consentauthn.ConsentDecisions{
-		Purposes: []consentauthn.PurposeDecision{
+	decisions := providers.ConsentDecisions{
+		Purposes: []providers.PurposeDecision{
 			{PurposeName: "attributes:test-app", Approved: true},
 		},
 	}
@@ -736,16 +817,17 @@ func (suite *ConsentExecutorTestSuite) TestExecute_HasInputs_RecordConsent_Serve
 
 	ctx := buildConsentNodeContext()
 	ctx.UserInputs[userInputConsentDecisions] = string(decisionsJSON)
+	suite.setupDefaultAuthnProviderMocks()
 
-	suite.executor.ExecutorInterface.(*coremock.ExecutorInterfaceMock).
-		On("ValidatePrerequisites", ctx, mock.AnythingOfType("*common.ExecutorResponse")).Return(true)
-	suite.executor.ExecutorInterface.(*coremock.ExecutorInterfaceMock).
-		On("HasRequiredInputs", ctx, mock.AnythingOfType("*common.ExecutorResponse")).Return(true)
+	suite.executor.Executor.(*coremock.ExecutorInterfaceMock).
+		On("ValidatePrerequisites", ctx, mock.AnythingOfType("*providers.ExecutorResponse"), mock.Anything).Return(true)
+	suite.executor.Executor.(*coremock.ExecutorInterfaceMock).
+		On("HasRequiredInputs", ctx, mock.AnythingOfType("*providers.ExecutorResponse")).Return(true)
 
 	suite.mockConsentEnforcer.On("RecordConsent", mock.Anything, mock.Anything, mock.Anything,
-		mock.Anything, mock.Anything, mock.Anything, mock.Anything).
-		Return(nil, &serviceerror.ServiceError{
-			Type: serviceerror.ServerErrorType,
+		mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).
+		Return(nil, &tidcommon.ServiceError{
+			Type: tidcommon.ServerErrorType,
 		})
 
 	resp, err := suite.executor.Execute(ctx)
@@ -756,8 +838,8 @@ func (suite *ConsentExecutorTestSuite) TestExecute_HasInputs_RecordConsent_Serve
 }
 
 func (suite *ConsentExecutorTestSuite) TestExecute_HasInputs_NilLoginConsentConfig() {
-	decisions := consentauthn.ConsentDecisions{
-		Purposes: []consentauthn.PurposeDecision{
+	decisions := providers.ConsentDecisions{
+		Purposes: []providers.PurposeDecision{
 			{PurposeName: "attributes:test-app", Approved: true},
 		},
 	}
@@ -766,36 +848,37 @@ func (suite *ConsentExecutorTestSuite) TestExecute_HasInputs_NilLoginConsentConf
 	ctx := buildConsentNodeContext()
 	ctx.UserInputs[userInputConsentDecisions] = string(decisionsJSON)
 	ctx.Application.LoginConsent = nil // No login consent config
+	suite.setupDefaultAuthnProviderMocks()
 
-	suite.executor.ExecutorInterface.(*coremock.ExecutorInterfaceMock).
-		On("ValidatePrerequisites", ctx, mock.AnythingOfType("*common.ExecutorResponse")).Return(true)
-	suite.executor.ExecutorInterface.(*coremock.ExecutorInterfaceMock).
-		On("HasRequiredInputs", ctx, mock.AnythingOfType("*common.ExecutorResponse")).Return(true)
+	suite.executor.Executor.(*coremock.ExecutorInterfaceMock).
+		On("ValidatePrerequisites", ctx, mock.AnythingOfType("*providers.ExecutorResponse"), mock.Anything).Return(true)
+	suite.executor.Executor.(*coremock.ExecutorInterfaceMock).
+		On("HasRequiredInputs", ctx, mock.AnythingOfType("*providers.ExecutorResponse")).Return(true)
 
-	consentResult := &consent.Consent{
+	consentResult := &providers.Consent{
 		ID:       "consent-004",
-		Purposes: []consent.ConsentPurposeItem{},
+		Purposes: []providers.ConsentPurposeItem{},
 	}
 
 	// ValidityPeriod should be 0 when LoginConsent is nil
 	suite.mockConsentEnforcer.On("RecordConsent", mock.Anything, "default", "app-123", "user-123",
-		mock.AnythingOfType("*consent.ConsentDecisions"), mock.Anything, int64(0)).
+		mock.AnythingOfType("*providers.ConsentDecisions"), mock.Anything, int64(0), mock.Anything).
 		Return(consentResult, nil)
 
 	resp, err := suite.executor.Execute(ctx)
 
 	assert.NoError(suite.T(), err)
-	assert.Equal(suite.T(), common.ExecComplete, resp.Status)
+	assert.Equal(suite.T(), providers.ExecComplete, resp.Status)
 }
 
 func (suite *ConsentExecutorTestSuite) TestExecute_HasInputs_PartialElementApproval() {
 	// Test where a purpose is approved but some elements are not approved
-	decisions := consentauthn.ConsentDecisions{
-		Purposes: []consentauthn.PurposeDecision{
+	decisions := providers.ConsentDecisions{
+		Purposes: []providers.PurposeDecision{
 			{
-				PurposeName: "attributes:test-app",
+				PurposeName: "attributes:app-123",
 				Approved:    true,
-				Elements: []consentauthn.ElementDecision{
+				Elements: []providers.ElementDecision{
 					{Name: "email", Approved: true},
 					{Name: "phone", Approved: false}, // Not approved but purpose overall is approved
 				},
@@ -806,18 +889,19 @@ func (suite *ConsentExecutorTestSuite) TestExecute_HasInputs_PartialElementAppro
 
 	ctx := buildConsentNodeContext()
 	ctx.UserInputs[userInputConsentDecisions] = string(decisionsJSON)
+	suite.setupDefaultAuthnProviderMocks()
 
-	suite.executor.ExecutorInterface.(*coremock.ExecutorInterfaceMock).
-		On("ValidatePrerequisites", ctx, mock.AnythingOfType("*common.ExecutorResponse")).Return(true)
-	suite.executor.ExecutorInterface.(*coremock.ExecutorInterfaceMock).
-		On("HasRequiredInputs", ctx, mock.AnythingOfType("*common.ExecutorResponse")).Return(true)
+	suite.executor.Executor.(*coremock.ExecutorInterfaceMock).
+		On("ValidatePrerequisites", ctx, mock.AnythingOfType("*providers.ExecutorResponse"), mock.Anything).Return(true)
+	suite.executor.Executor.(*coremock.ExecutorInterfaceMock).
+		On("HasRequiredInputs", ctx, mock.AnythingOfType("*providers.ExecutorResponse")).Return(true)
 
-	consentResult := &consent.Consent{
+	consentResult := &providers.Consent{
 		ID: "consent-005",
-		Purposes: []consent.ConsentPurposeItem{
+		Purposes: []providers.ConsentPurposeItem{
 			{
-				Name: "attributes:test-app",
-				Elements: []consent.ConsentElementApproval{
+				Name: "attributes:app-123",
+				Elements: []providers.ConsentElementApproval{
 					{Name: "email", IsUserApproved: true},
 					{Name: "phone", IsUserApproved: false},
 				},
@@ -826,13 +910,13 @@ func (suite *ConsentExecutorTestSuite) TestExecute_HasInputs_PartialElementAppro
 	}
 
 	suite.mockConsentEnforcer.On("RecordConsent", mock.Anything, mock.Anything, mock.Anything,
-		mock.Anything, mock.Anything, mock.Anything, mock.Anything).
+		mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).
 		Return(consentResult, nil)
 
 	resp, err := suite.executor.Execute(ctx)
 
 	assert.NoError(suite.T(), err)
-	assert.Equal(suite.T(), common.ExecComplete, resp.Status)
+	assert.Equal(suite.T(), providers.ExecComplete, resp.Status)
 
 	// Only email should be in consented attributes (phone was not approved)
 	consentedAttrs := resp.RuntimeData[common.RuntimeKeyConsentedAttributes]
@@ -840,60 +924,65 @@ func (suite *ConsentExecutorTestSuite) TestExecute_HasInputs_PartialElementAppro
 	assert.NotContains(suite.T(), consentedAttrs, "phone")
 }
 
-func (suite *ConsentExecutorTestSuite) TestExecute_HasInputs_MultiplePurposes_AllApproved() {
-	decisions := consentauthn.ConsentDecisions{
-		Purposes: []consentauthn.PurposeDecision{
-			{PurposeName: "attributes:test-app", Approved: true},
-			{PurposeName: "attributes:test-app-2", Approved: true},
+func (suite *ConsentExecutorTestSuite) TestExecute_HasInputs_AttributeAndPermissionPurposes_AllApproved() {
+	decisions := providers.ConsentDecisions{
+		Purposes: []providers.PurposeDecision{
+			{PurposeName: "attributes:app-123", Approved: true},
+			{PurposeName: "permissions:app-123", Approved: true},
 		},
 	}
 	decisionsJSON, _ := json.Marshal(decisions)
 
 	ctx := buildConsentNodeContext()
 	ctx.UserInputs[userInputConsentDecisions] = string(decisionsJSON)
+	suite.setupDefaultAuthnProviderMocks()
 
-	suite.executor.ExecutorInterface.(*coremock.ExecutorInterfaceMock).
-		On("ValidatePrerequisites", ctx, mock.AnythingOfType("*common.ExecutorResponse")).Return(true)
-	suite.executor.ExecutorInterface.(*coremock.ExecutorInterfaceMock).
-		On("HasRequiredInputs", ctx, mock.AnythingOfType("*common.ExecutorResponse")).Return(true)
+	suite.executor.Executor.(*coremock.ExecutorInterfaceMock).
+		On("ValidatePrerequisites", ctx, mock.AnythingOfType("*providers.ExecutorResponse"), mock.Anything).Return(true)
+	suite.executor.Executor.(*coremock.ExecutorInterfaceMock).
+		On("HasRequiredInputs", ctx, mock.AnythingOfType("*providers.ExecutorResponse")).Return(true)
 
-	consentResult := &consent.Consent{
+	consentResult := &providers.Consent{
 		ID: "consent-006",
-		Purposes: []consent.ConsentPurposeItem{
+		Purposes: []providers.ConsentPurposeItem{
 			{
-				Name: "attributes:test-app",
-				Elements: []consent.ConsentElementApproval{
+				Name: "attributes:app-123",
+				Elements: []providers.ConsentElementApproval{
 					{Name: "email", IsUserApproved: true},
+					{Name: "name", IsUserApproved: true},
 				},
 			},
 			{
-				Name: "attributes:test-app-2",
-				Elements: []consent.ConsentElementApproval{
-					{Name: "name", IsUserApproved: true},
-					{Name: "phone", IsUserApproved: true},
+				Name: "permissions:app-123",
+				Elements: []providers.ConsentElementApproval{
+					{Name: "read", IsUserApproved: true},
+					{Name: "write", IsUserApproved: true},
 				},
 			},
 		},
 	}
 
 	suite.mockConsentEnforcer.On("RecordConsent", mock.Anything, mock.Anything, mock.Anything,
-		mock.Anything, mock.Anything, mock.Anything, mock.Anything).
+		mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).
 		Return(consentResult, nil)
 
 	resp, err := suite.executor.Execute(ctx)
 
 	assert.NoError(suite.T(), err)
-	assert.Equal(suite.T(), common.ExecComplete, resp.Status)
+	assert.Equal(suite.T(), providers.ExecComplete, resp.Status)
 
 	consentedAttrs := resp.RuntimeData[common.RuntimeKeyConsentedAttributes]
 	assert.Contains(suite.T(), consentedAttrs, "email")
 	assert.Contains(suite.T(), consentedAttrs, "name")
-	assert.Contains(suite.T(), consentedAttrs, "phone")
+
+	consentedPerms := resp.RuntimeData[common.RuntimeKeyConsentedPermissions]
+	assert.Contains(suite.T(), consentedPerms, "read")
+	assert.Contains(suite.T(), consentedPerms, "write")
 }
 
 func (suite *ConsentExecutorTestSuite) TestExecute_HasInputs_NoConsentedElements() {
-	decisions := consentauthn.ConsentDecisions{
-		Purposes: []consentauthn.PurposeDecision{
+	decisions := providers.ConsentDecisions{
+		Purposes: []providers.PurposeDecision{
 			{PurposeName: "attributes:test-app", Approved: true},
 		},
 	}
@@ -901,19 +990,20 @@ func (suite *ConsentExecutorTestSuite) TestExecute_HasInputs_NoConsentedElements
 
 	ctx := buildConsentNodeContext()
 	ctx.UserInputs[userInputConsentDecisions] = string(decisionsJSON)
+	suite.setupDefaultAuthnProviderMocks()
 
-	suite.executor.ExecutorInterface.(*coremock.ExecutorInterfaceMock).
-		On("ValidatePrerequisites", ctx, mock.AnythingOfType("*common.ExecutorResponse")).Return(true)
-	suite.executor.ExecutorInterface.(*coremock.ExecutorInterfaceMock).
-		On("HasRequiredInputs", ctx, mock.AnythingOfType("*common.ExecutorResponse")).Return(true)
+	suite.executor.Executor.(*coremock.ExecutorInterfaceMock).
+		On("ValidatePrerequisites", ctx, mock.AnythingOfType("*providers.ExecutorResponse"), mock.Anything).Return(true)
+	suite.executor.Executor.(*coremock.ExecutorInterfaceMock).
+		On("HasRequiredInputs", ctx, mock.AnythingOfType("*providers.ExecutorResponse")).Return(true)
 
 	// Consent record with no approved elements
-	consentResult := &consent.Consent{
+	consentResult := &providers.Consent{
 		ID: "consent-007",
-		Purposes: []consent.ConsentPurposeItem{
+		Purposes: []providers.ConsentPurposeItem{
 			{
-				Name: "attributes:test-app",
-				Elements: []consent.ConsentElementApproval{
+				Name: "attributes:app-123",
+				Elements: []providers.ConsentElementApproval{
 					{Name: "email", IsUserApproved: false},
 					{Name: "phone", IsUserApproved: false},
 				},
@@ -922,13 +1012,13 @@ func (suite *ConsentExecutorTestSuite) TestExecute_HasInputs_NoConsentedElements
 	}
 
 	suite.mockConsentEnforcer.On("RecordConsent", mock.Anything, mock.Anything, mock.Anything,
-		mock.Anything, mock.Anything, mock.Anything, mock.Anything).
+		mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).
 		Return(consentResult, nil)
 
 	resp, err := suite.executor.Execute(ctx)
 
 	assert.NoError(suite.T(), err)
-	assert.Equal(suite.T(), common.ExecComplete, resp.Status)
+	assert.Equal(suite.T(), providers.ExecComplete, resp.Status)
 
 	// RuntimeKeyConsentedAttributes is always set (even empty) so auth assert knows consent ran
 	consentedAttrs, hasConsentedAttrs := resp.RuntimeData[common.RuntimeKeyConsentedAttributes]
@@ -944,45 +1034,51 @@ func (suite *ConsentExecutorTestSuite) TestExecute_NoInputs_AugmentedAttributes_
 	ctx := buildConsentNodeContext()
 	// UserID is set (from buildConsentNodeContext: testUserID="user-123"), so "groups" must be injected
 	// into the available attributes passed to ResolveConsent
+	suite.setupDefaultAuthnProviderMocks()
 
-	suite.executor.ExecutorInterface.(*coremock.ExecutorInterfaceMock).
-		On("ValidatePrerequisites", ctx, mock.AnythingOfType("*common.ExecutorResponse")).Return(true)
-	suite.executor.ExecutorInterface.(*coremock.ExecutorInterfaceMock).
-		On("HasRequiredInputs", ctx, mock.AnythingOfType("*common.ExecutorResponse")).Return(false)
+	suite.executor.Executor.(*coremock.ExecutorInterfaceMock).
+		On("ValidatePrerequisites", ctx, mock.AnythingOfType("*providers.ExecutorResponse"), mock.Anything).Return(true)
+	suite.executor.Executor.(*coremock.ExecutorInterfaceMock).
+		On("HasRequiredInputs", ctx, mock.AnythingOfType("*providers.ExecutorResponse")).Return(false)
 
 	suite.mockConsentEnforcer.On("ResolveConsent",
 		mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything,
 		mock.Anything, mock.Anything,
 		mock.Anything,
-		mock.MatchedBy(func(aa *authnprovidercm.AttributesResponse) bool {
+		mock.MatchedBy(func(aa *providers.AttributesResponse) bool {
 			if aa == nil || len(aa.Attributes) == 0 {
 				return false
 			}
 			groupsMeta, hasGroups := aa.Attributes["groups"]
 			return hasGroups && groupsMeta != nil
-		})).
+		}), mock.Anything, mock.Anything).
 		Return(nil, nil)
 
 	resp, err := suite.executor.Execute(ctx)
 
 	assert.NoError(suite.T(), err)
-	assert.Equal(suite.T(), common.ExecComplete, resp.Status)
+	assert.Equal(suite.T(), providers.ExecComplete, resp.Status)
 }
 
 func (suite *ConsentExecutorTestSuite) TestExecute_NoInputs_AugmentedAttributes_OUClaimsInjected() {
 	ctx := buildConsentNodeContext()
-	ctx.AuthenticatedUser.OUID = "ou-999"
+	entityRef := buildConsentEntityRef()
+	entityRef.OUID = "ou-999"
+	suite.mockAuthnProvider.On("GetEntityReference", mock.Anything, mock.Anything).
+		Return(buildConsentAuthUser(), entityRef, (*tidcommon.ServiceError)(nil)).Maybe()
+	suite.mockAuthnProvider.On("GetUserAvailableAttributes", mock.Anything, mock.Anything).
+		Return(buildConsentAvailableAttrs(), (*tidcommon.ServiceError)(nil)).Maybe()
 
-	suite.executor.ExecutorInterface.(*coremock.ExecutorInterfaceMock).
-		On("ValidatePrerequisites", ctx, mock.AnythingOfType("*common.ExecutorResponse")).Return(true)
-	suite.executor.ExecutorInterface.(*coremock.ExecutorInterfaceMock).
-		On("HasRequiredInputs", ctx, mock.AnythingOfType("*common.ExecutorResponse")).Return(false)
+	suite.executor.Executor.(*coremock.ExecutorInterfaceMock).
+		On("ValidatePrerequisites", ctx, mock.AnythingOfType("*providers.ExecutorResponse"), mock.Anything).Return(true)
+	suite.executor.Executor.(*coremock.ExecutorInterfaceMock).
+		On("HasRequiredInputs", ctx, mock.AnythingOfType("*providers.ExecutorResponse")).Return(false)
 
 	suite.mockConsentEnforcer.On("ResolveConsent",
 		mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything,
 		mock.Anything, mock.Anything,
 		mock.Anything,
-		mock.MatchedBy(func(aa *authnprovidercm.AttributesResponse) bool {
+		mock.MatchedBy(func(aa *providers.AttributesResponse) bool {
 			if aa == nil {
 				return false
 			}
@@ -990,74 +1086,83 @@ func (suite *ConsentExecutorTestSuite) TestExecute_NoInputs_AugmentedAttributes_
 			_, hasOUName := aa.Attributes["ouName"]
 			_, hasOUHandle := aa.Attributes["ouHandle"]
 			return hasOUID && hasOUName && hasOUHandle
-		})).
+		}), mock.Anything, mock.Anything).
 		Return(nil, nil)
 
 	resp, err := suite.executor.Execute(ctx)
 
 	assert.NoError(suite.T(), err)
-	assert.Equal(suite.T(), common.ExecComplete, resp.Status)
+	assert.Equal(suite.T(), providers.ExecComplete, resp.Status)
 }
 
 func (suite *ConsentExecutorTestSuite) TestExecute_NoInputs_AugmentedAttributes_UserTypeInjected() {
 	ctx := buildConsentNodeContext()
-	ctx.AuthenticatedUser.UserType = "customer"
+	entityRef := buildConsentEntityRef()
+	entityRef.EntityType = "customer"
+	suite.mockAuthnProvider.On("GetEntityReference", mock.Anything, mock.Anything).
+		Return(buildConsentAuthUser(), entityRef, (*tidcommon.ServiceError)(nil)).Maybe()
+	suite.mockAuthnProvider.On("GetUserAvailableAttributes", mock.Anything, mock.Anything).
+		Return(buildConsentAvailableAttrs(), (*tidcommon.ServiceError)(nil)).Maybe()
 
-	suite.executor.ExecutorInterface.(*coremock.ExecutorInterfaceMock).
-		On("ValidatePrerequisites", ctx, mock.AnythingOfType("*common.ExecutorResponse")).Return(true)
-	suite.executor.ExecutorInterface.(*coremock.ExecutorInterfaceMock).
-		On("HasRequiredInputs", ctx, mock.AnythingOfType("*common.ExecutorResponse")).Return(false)
+	suite.executor.Executor.(*coremock.ExecutorInterfaceMock).
+		On("ValidatePrerequisites", ctx, mock.AnythingOfType("*providers.ExecutorResponse"), mock.Anything).Return(true)
+	suite.executor.Executor.(*coremock.ExecutorInterfaceMock).
+		On("HasRequiredInputs", ctx, mock.AnythingOfType("*providers.ExecutorResponse")).Return(false)
 
 	suite.mockConsentEnforcer.On("ResolveConsent",
 		mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything,
 		mock.Anything, mock.Anything,
 		mock.Anything,
-		mock.MatchedBy(func(aa *authnprovidercm.AttributesResponse) bool {
+		mock.MatchedBy(func(aa *providers.AttributesResponse) bool {
 			return aa != nil && func() bool { _, ok := aa.Attributes["userType"]; return ok }()
-		})).
+		}), mock.Anything, mock.Anything).
 		Return(nil, nil)
 
 	resp, err := suite.executor.Execute(ctx)
 
 	assert.NoError(suite.T(), err)
-	assert.Equal(suite.T(), common.ExecComplete, resp.Status)
+	assert.Equal(suite.T(), providers.ExecComplete, resp.Status)
 }
 
 func (suite *ConsentExecutorTestSuite) TestExecute_NoInputs_AugmentedAttributes_NilBaseWithSpecialClaims() {
 	// With a nil AvailableAttributes base (local/credential-based auth), nil must be forwarded
 	// to ResolveConsent so profile-presence filtering is skipped entirely.
 	ctx := buildConsentNodeContext()
-	ctx.AuthenticatedUser.AvailableAttributes = nil
-	ctx.AuthenticatedUser.UserType = testUserTypeInternal
+	entityRef := buildConsentEntityRef()
+	entityRef.EntityType = testUserTypeInternal
+	suite.mockAuthnProvider.On("GetEntityReference", mock.Anything, mock.Anything).
+		Return(buildConsentAuthUser(), entityRef, (*tidcommon.ServiceError)(nil)).Maybe()
+	suite.mockAuthnProvider.On("GetUserAvailableAttributes", mock.Anything, mock.Anything).
+		Return((*providers.AttributesResponse)(nil), (*tidcommon.ServiceError)(nil)).Maybe()
 
-	suite.executor.ExecutorInterface.(*coremock.ExecutorInterfaceMock).
-		On("ValidatePrerequisites", ctx, mock.AnythingOfType("*common.ExecutorResponse")).Return(true)
-	suite.executor.ExecutorInterface.(*coremock.ExecutorInterfaceMock).
-		On("HasRequiredInputs", ctx, mock.AnythingOfType("*common.ExecutorResponse")).Return(false)
+	suite.executor.Executor.(*coremock.ExecutorInterfaceMock).
+		On("ValidatePrerequisites", ctx, mock.AnythingOfType("*providers.ExecutorResponse"), mock.Anything).Return(true)
+	suite.executor.Executor.(*coremock.ExecutorInterfaceMock).
+		On("HasRequiredInputs", ctx, mock.AnythingOfType("*providers.ExecutorResponse")).Return(false)
 
 	suite.mockConsentEnforcer.On("ResolveConsent",
 		mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything,
 		mock.Anything, mock.Anything,
 		mock.Anything,
-		mock.MatchedBy(func(aa *authnprovidercm.AttributesResponse) bool {
+		mock.MatchedBy(func(aa *providers.AttributesResponse) bool {
 			return aa == nil
-		})).
+		}), mock.Anything, mock.Anything).
 		Return(nil, nil)
 
 	resp, err := suite.executor.Execute(ctx)
 
 	assert.NoError(suite.T(), err)
-	assert.Equal(suite.T(), common.ExecComplete, resp.Status)
+	assert.Equal(suite.T(), providers.ExecComplete, resp.Status)
 }
 
-// ----- collectConsentedAttributes Tests -----
+// ----- collectApprovedElementsByPurposeName Tests -----
 
-func (suite *ConsentExecutorTestSuite) TestCollectConsentedAttributes_MixedApprovals() {
-	c := &consent.Consent{
-		Purposes: []consent.ConsentPurposeItem{
+func (suite *ConsentExecutorTestSuite) TestCollectApprovedElementsByPurposeName_MixedApprovals() {
+	c := &providers.Consent{
+		Purposes: []providers.ConsentPurposeItem{
 			{
-				Name: "attributes:test-app",
-				Elements: []consent.ConsentElementApproval{
+				Name: buildAttributePurposeName("test-app"),
+				Elements: []providers.ConsentElementApproval{
 					{Name: "email", IsUserApproved: true},
 					{Name: "phone", IsUserApproved: false},
 					{Name: "name", IsUserApproved: true},
@@ -1066,7 +1171,7 @@ func (suite *ConsentExecutorTestSuite) TestCollectConsentedAttributes_MixedAppro
 		},
 	}
 
-	attrs := collectConsentedAttributes(c)
+	attrs := collectApprovedElementsByPurposeName(c, buildAttributePurposeName("test-app"))
 
 	assert.Len(suite.T(), attrs, 2)
 	assert.Contains(suite.T(), attrs, "email")
@@ -1074,105 +1179,42 @@ func (suite *ConsentExecutorTestSuite) TestCollectConsentedAttributes_MixedAppro
 	assert.NotContains(suite.T(), attrs, "phone")
 }
 
-func (suite *ConsentExecutorTestSuite) TestCollectConsentedAttributes_NoDuplicates() {
-	// Same attribute name across multiple purposes should not duplicate
-	c := &consent.Consent{
-		Purposes: []consent.ConsentPurposeItem{
+func (suite *ConsentExecutorTestSuite) TestCollectApprovedElementsByPurposeName_DedupsWithinPurpose() {
+	// The same element name repeated within the matched purpose is returned only once.
+	c := &providers.Consent{
+		Purposes: []providers.ConsentPurposeItem{
 			{
-				Name: "attributes:test-app",
-				Elements: []consent.ConsentElementApproval{
+				Name: buildAttributePurposeName("test-app"),
+				Elements: []providers.ConsentElementApproval{
 					{Name: "email", IsUserApproved: true},
-				},
-			},
-			{
-				Name: "attributes:test-app-2",
-				Elements: []consent.ConsentElementApproval{
-					{Name: "email", IsUserApproved: true}, // Duplicate
+					{Name: "email", IsUserApproved: true},
 					{Name: "phone", IsUserApproved: true},
 				},
 			},
 		},
 	}
 
-	attrs := collectConsentedAttributes(c)
+	attrs := collectApprovedElementsByPurposeName(c, buildAttributePurposeName("test-app"))
 
 	assert.Len(suite.T(), attrs, 2)
 	assert.Contains(suite.T(), attrs, "email")
 	assert.Contains(suite.T(), attrs, "phone")
 }
 
-func (suite *ConsentExecutorTestSuite) TestCollectConsentedAttributes_EmptyPurposes() {
-	c := &consent.Consent{
-		Purposes: []consent.ConsentPurposeItem{},
-	}
-
-	attrs := collectConsentedAttributes(c)
-
-	assert.Empty(suite.T(), attrs)
-}
-
-func (suite *ConsentExecutorTestSuite) TestCollectConsentedAttributes_NilPurposes() {
-	c := &consent.Consent{}
-
-	attrs := collectConsentedAttributes(c)
-
-	assert.Empty(suite.T(), attrs)
-}
-
-func (suite *ConsentExecutorTestSuite) TestCollectConsentedAttributes_AllRejected() {
-	c := &consent.Consent{
-		Purposes: []consent.ConsentPurposeItem{
+func (suite *ConsentExecutorTestSuite) TestCollectApprovedElementsByPurposeName_SelectsMatchingPurposeOnly() {
+	// A record carrying both the attribute and permission purposes for an app: each lookup returns
+	// only its own purpose's elements.
+	c := &providers.Consent{
+		Purposes: []providers.ConsentPurposeItem{
 			{
-				Name: "attributes:test-app",
-				Elements: []consent.ConsentElementApproval{
-					{Name: "email", IsUserApproved: false},
-					{Name: "phone", IsUserApproved: false},
-				},
-			},
-		},
-	}
-
-	attrs := collectConsentedAttributes(c)
-
-	assert.Empty(suite.T(), attrs)
-}
-
-func (suite *ConsentExecutorTestSuite) TestCollectConsentedAttributes_AllApproved() {
-	c := &consent.Consent{
-		Purposes: []consent.ConsentPurposeItem{
-			{
-				Name: "attributes:test-app",
-				Elements: []consent.ConsentElementApproval{
-					{Name: "email", IsUserApproved: true},
-					{Name: "phone", IsUserApproved: true},
-					{Name: "name", IsUserApproved: true},
-				},
-			},
-		},
-	}
-
-	attrs := collectConsentedAttributes(c)
-
-	assert.Len(suite.T(), attrs, 3)
-	assert.Contains(suite.T(), attrs, "email")
-	assert.Contains(suite.T(), attrs, "phone")
-	assert.Contains(suite.T(), attrs, "name")
-}
-
-// ----- collectConsentedPermissions / collectApprovedByPurposeNamespace Tests -----
-
-func (suite *ConsentExecutorTestSuite) TestCollectConsentedPermissions_OnlyPermissionPurposes() {
-	c := &consent.Consent{
-		Purposes: []consent.ConsentPurposeItem{
-			{
-				Name: "attributes:test-app",
-				Elements: []consent.ConsentElementApproval{
+				Name: buildAttributePurposeName("test-app"),
+				Elements: []providers.ConsentElementApproval{
 					{Name: "email", IsUserApproved: true},
 				},
 			},
 			{
-				Name: "permissions:test-app",
-				Elements: []consent.ConsentElementApproval{
+				Name: buildPermissionsPurposeName("test-app"),
+				Elements: []providers.ConsentElementApproval{
 					{Name: "read", IsUserApproved: true},
 					{Name: "write", IsUserApproved: false},
 					{Name: "cancel", IsUserApproved: true},
@@ -1181,8 +1223,10 @@ func (suite *ConsentExecutorTestSuite) TestCollectConsentedPermissions_OnlyPermi
 		},
 	}
 
-	perms := collectConsentedPermissions(c)
+	attrs := collectApprovedElementsByPurposeName(c, buildAttributePurposeName("test-app"))
+	assert.Equal(suite.T(), []string{"email"}, attrs)
 
+	perms := collectApprovedElementsByPurposeName(c, buildPermissionsPurposeName("test-app"))
 	assert.Len(suite.T(), perms, 2)
 	assert.Contains(suite.T(), perms, "read")
 	assert.Contains(suite.T(), perms, "cancel")
@@ -1190,76 +1234,112 @@ func (suite *ConsentExecutorTestSuite) TestCollectConsentedPermissions_OnlyPermi
 	assert.NotContains(suite.T(), perms, "email", "attribute element must not appear under permissions")
 }
 
-func (suite *ConsentExecutorTestSuite) TestCollectConsentedPermissions_EmptyWhenNoPermissionPurpose() {
-	c := &consent.Consent{
-		Purposes: []consent.ConsentPurposeItem{
+func (suite *ConsentExecutorTestSuite) TestCollectApprovedElementsByPurposeName_PurposeNotFound() {
+	c := &providers.Consent{
+		Purposes: []providers.ConsentPurposeItem{
 			{
-				Name: "attributes:test-app",
-				Elements: []consent.ConsentElementApproval{
+				Name: buildAttributePurposeName("test-app"),
+				Elements: []providers.ConsentElementApproval{
 					{Name: "email", IsUserApproved: true},
 				},
 			},
 		},
 	}
-	assert.Empty(suite.T(), collectConsentedPermissions(c))
+
+	assert.Empty(suite.T(), collectApprovedElementsByPurposeName(c, buildPermissionsPurposeName("test-app")))
+	assert.Empty(suite.T(), collectApprovedElementsByPurposeName(c, buildAttributePurposeName("other-app")))
 }
 
-func (suite *ConsentExecutorTestSuite) TestCollectConsentedPermissions_DedupsAcrossPurposes() {
-	// Hypothetical safety: same permission appearing in two permission purposes is deduped.
-	c := &consent.Consent{
-		Purposes: []consent.ConsentPurposeItem{
+func (suite *ConsentExecutorTestSuite) TestCollectApprovedElementsByPurposeName_EmptyPurposes() {
+	c := &providers.Consent{
+		Purposes: []providers.ConsentPurposeItem{},
+	}
+
+	assert.Empty(suite.T(), collectApprovedElementsByPurposeName(c, buildAttributePurposeName("test-app")))
+}
+
+func (suite *ConsentExecutorTestSuite) TestCollectApprovedElementsByPurposeName_NilPurposes() {
+	c := &providers.Consent{}
+
+	assert.Empty(suite.T(), collectApprovedElementsByPurposeName(c, buildAttributePurposeName("test-app")))
+}
+
+func (suite *ConsentExecutorTestSuite) TestCollectApprovedElementsByPurposeName_AllRejected() {
+	c := &providers.Consent{
+		Purposes: []providers.ConsentPurposeItem{
 			{
-				Name: "permissions:test-app",
-				Elements: []consent.ConsentElementApproval{
-					{Name: "read", IsUserApproved: true},
-				},
-			},
-			{
-				Name: "permissions:other-app",
-				Elements: []consent.ConsentElementApproval{
-					{Name: "read", IsUserApproved: true},
-					{Name: "write", IsUserApproved: true},
+				Name: buildAttributePurposeName("test-app"),
+				Elements: []providers.ConsentElementApproval{
+					{Name: "email", IsUserApproved: false},
+					{Name: "phone", IsUserApproved: false},
 				},
 			},
 		},
 	}
-	perms := collectConsentedPermissions(c)
-	assert.Len(suite.T(), perms, 2)
-	assert.Contains(suite.T(), perms, "read")
-	assert.Contains(suite.T(), perms, "write")
+
+	assert.Empty(suite.T(), collectApprovedElementsByPurposeName(c, buildAttributePurposeName("test-app")))
+}
+
+func (suite *ConsentExecutorTestSuite) TestCollectApprovedElementsByPurposeName_AllApproved() {
+	c := &providers.Consent{
+		Purposes: []providers.ConsentPurposeItem{
+			{
+				Name: buildAttributePurposeName("test-app"),
+				Elements: []providers.ConsentElementApproval{
+					{Name: "email", IsUserApproved: true},
+					{Name: "phone", IsUserApproved: true},
+					{Name: "name", IsUserApproved: true},
+				},
+			},
+		},
+	}
+
+	attrs := collectApprovedElementsByPurposeName(c, buildAttributePurposeName("test-app"))
+
+	assert.Len(suite.T(), attrs, 3)
+	assert.Contains(suite.T(), attrs, "email")
+	assert.Contains(suite.T(), attrs, "phone")
+	assert.Contains(suite.T(), attrs, "name")
+}
+
+// ----- purpose name builder Tests -----
+
+func (suite *ConsentExecutorTestSuite) TestBuildPurposeNames() {
+	assert.Equal(suite.T(), "attributes:test-app", buildAttributePurposeName("test-app"))
+	assert.Equal(suite.T(), "permissions:test-app", buildPermissionsPurposeName("test-app"))
 }
 
 // ----- buildAugmentedAvailableAttributes Tests -----
 
 func (suite *ConsentExecutorTestSuite) TestBuildAugmentedAvailableAttributes_NilBase() {
-	ctx := buildConsentNodeContext()
-	ctx.AuthenticatedUser.AvailableAttributes = nil
-	ctx.AuthenticatedUser.UserType = testUserTypeInternal
-	ctx.AuthenticatedUser.OUID = "ou-123"
-	// AuthUser is zero-value (not authenticated) — falls through to legacy path which is also nil
+	entityRef := &providers.EntityReference{
+		EntityType: testUserTypeInternal,
+		OUID:       "ou-123",
+	}
 
-	result := suite.executor.buildAugmentedAvailableAttributes(ctx)
+	result := suite.executor.buildAugmentedAvailableAttributes(nil, entityRef)
 
-	// Both AuthUser and AuthenticatedUser.AvailableAttributes are nil — return nil so
+	// availableAttrResp is nil — return nil so
 	// the consent enforcer skips profile-presence filtering entirely.
 	assert.Nil(suite.T(), result)
 }
 
 func (suite *ConsentExecutorTestSuite) TestBuildAugmentedAvailableAttributes_EmptyAttributes() {
-	ctx := buildConsentNodeContext()
-	ctx.AuthenticatedUser.AvailableAttributes = &authnprovidercm.AttributesResponse{
-		Attributes: map[string]*authnprovidercm.AttributeResponse{},
+	availableAttrs := &providers.AttributesResponse{
+		Attributes: map[string]*providers.AttributeResponse{},
 	}
-	ctx.AuthenticatedUser.UserType = testUserTypeInternal
-	ctx.AuthenticatedUser.OUID = "ou-123"
-	// AuthUser is zero-value (not authenticated) — uses legacy path
+	entityRef := &providers.EntityReference{
+		EntityID:   testUserID,
+		EntityType: testUserTypeInternal,
+		OUID:       "ou-123",
+	}
 
-	result := suite.executor.buildAugmentedAvailableAttributes(ctx)
+	result := suite.executor.buildAugmentedAvailableAttributes(availableAttrs, entityRef)
 
 	// Even with an empty base we should inject special claim keys so they survive the
 	// consent profile-presence filter.
 	assert.NotNil(suite.T(), result)
-	assert.NotEqual(suite.T(), ctx.AuthenticatedUser.AvailableAttributes, result)
+	assert.NotEqual(suite.T(), availableAttrs, result)
 	assert.Contains(suite.T(), result.Attributes, "userType")
 	assert.Contains(suite.T(), result.Attributes, "ouId")
 	assert.Contains(suite.T(), result.Attributes, "ouName")
@@ -1269,20 +1349,16 @@ func (suite *ConsentExecutorTestSuite) TestBuildAugmentedAvailableAttributes_Emp
 }
 
 func (suite *ConsentExecutorTestSuite) TestBuildAugmentedAvailableAttributes_NoSpecialContext() {
-	ctx := buildConsentNodeContext()
-	// UserType, OUID, UserID are all empty
-	ctx.AuthenticatedUser.UserType = ""
-	ctx.AuthenticatedUser.OUID = ""
-	ctx.AuthenticatedUser.UserID = ""
-	ctx.AuthenticatedUser.AvailableAttributes = &authnprovidercm.AttributesResponse{
-		Attributes: map[string]*authnprovidercm.AttributeResponse{
+	// EntityType, OUID, EntityID are all empty
+	availableAttrs := &providers.AttributesResponse{
+		Attributes: map[string]*providers.AttributeResponse{
 			"email": nil,
 			"phone": nil,
 		},
 	}
-	// AuthUser is zero-value (not authenticated) — uses legacy path
+	entityRef := &providers.EntityReference{}
 
-	result := suite.executor.buildAugmentedAvailableAttributes(ctx)
+	result := suite.executor.buildAugmentedAvailableAttributes(availableAttrs, entityRef)
 
 	assert.NotNil(suite.T(), result)
 	// No special keys should be added; only original keys remain
@@ -1297,17 +1373,17 @@ func (suite *ConsentExecutorTestSuite) TestBuildAugmentedAvailableAttributes_NoS
 func (suite *ConsentExecutorTestSuite) TestBuildAugmentedAvailableAttributes_WithSingleSpecialField() {
 	type testCase struct {
 		name             string
-		userType         string
+		entityType       string
 		ouID             string
-		userID           string
+		entityID         string
 		expectedContains []string
 		expectedAbsent   []string
 	}
 
 	cases := []testCase{
 		{
-			name:             "UserType only",
-			userType:         testUserTypeInternal,
+			name:             "EntityType only",
+			entityType:       testUserTypeInternal,
 			expectedContains: []string{"userType", "email"},
 			expectedAbsent:   []string{"ouId", "ouName", "ouHandle", "groups"},
 		},
@@ -1321,18 +1397,18 @@ func (suite *ConsentExecutorTestSuite) TestBuildAugmentedAvailableAttributes_Wit
 
 	for _, tc := range cases {
 		suite.Run(tc.name, func() {
-			ctx := buildConsentNodeContext()
-			ctx.AuthenticatedUser.UserType = tc.userType
-			ctx.AuthenticatedUser.OUID = tc.ouID
-			ctx.AuthenticatedUser.UserID = tc.userID
-			ctx.AuthenticatedUser.AvailableAttributes = &authnprovidercm.AttributesResponse{
-				Attributes: map[string]*authnprovidercm.AttributeResponse{
+			availableAttrs := &providers.AttributesResponse{
+				Attributes: map[string]*providers.AttributeResponse{
 					"email": nil,
 				},
 			}
-			// AuthUser is zero-value (not authenticated) — uses legacy path
+			entityRef := &providers.EntityReference{
+				EntityType: tc.entityType,
+				OUID:       tc.ouID,
+				EntityID:   tc.entityID,
+			}
 
-			result := suite.executor.buildAugmentedAvailableAttributes(ctx)
+			result := suite.executor.buildAugmentedAvailableAttributes(availableAttrs, entityRef)
 
 			assert.NotNil(suite.T(), result)
 			for _, key := range tc.expectedContains {
@@ -1346,18 +1422,16 @@ func (suite *ConsentExecutorTestSuite) TestBuildAugmentedAvailableAttributes_Wit
 }
 
 func (suite *ConsentExecutorTestSuite) TestBuildAugmentedAvailableAttributes_WithGroups() {
-	ctx := buildConsentNodeContext()
-	ctx.AuthenticatedUser.UserType = ""
-	ctx.AuthenticatedUser.OUID = ""
-	ctx.AuthenticatedUser.UserID = "user-abc"
-	ctx.AuthenticatedUser.AvailableAttributes = &authnprovidercm.AttributesResponse{
-		Attributes: map[string]*authnprovidercm.AttributeResponse{
+	availableAttrs := &providers.AttributesResponse{
+		Attributes: map[string]*providers.AttributeResponse{
 			"email": nil,
 		},
 	}
-	// AuthUser is zero-value (not authenticated) — uses legacy path
+	entityRef := &providers.EntityReference{
+		EntityID: "user-abc",
+	}
 
-	result := suite.executor.buildAugmentedAvailableAttributes(ctx)
+	result := suite.executor.buildAugmentedAvailableAttributes(availableAttrs, entityRef)
 
 	assert.NotNil(suite.T(), result)
 	assert.Contains(suite.T(), result.Attributes, "groups")
@@ -1367,18 +1441,18 @@ func (suite *ConsentExecutorTestSuite) TestBuildAugmentedAvailableAttributes_Wit
 }
 
 func (suite *ConsentExecutorTestSuite) TestBuildAugmentedAvailableAttributes_AllSpecialFields() {
-	ctx := buildConsentNodeContext()
-	ctx.AuthenticatedUser.UserType = testUserTypeInternal
-	ctx.AuthenticatedUser.OUID = "ou-789"
-	ctx.AuthenticatedUser.UserID = "user-xyz"
-	ctx.AuthenticatedUser.AvailableAttributes = &authnprovidercm.AttributesResponse{
-		Attributes: map[string]*authnprovidercm.AttributeResponse{
+	availableAttrs := &providers.AttributesResponse{
+		Attributes: map[string]*providers.AttributeResponse{
 			"email": nil,
 		},
 	}
-	// AuthUser is zero-value (not authenticated) — uses legacy path
+	entityRef := &providers.EntityReference{
+		EntityType: testUserTypeInternal,
+		OUID:       "ou-789",
+		EntityID:   "user-xyz",
+	}
 
-	result := suite.executor.buildAugmentedAvailableAttributes(ctx)
+	result := suite.executor.buildAugmentedAvailableAttributes(availableAttrs, entityRef)
 
 	assert.NotNil(suite.T(), result)
 	assert.Contains(suite.T(), result.Attributes, "email")
@@ -1392,85 +1466,84 @@ func (suite *ConsentExecutorTestSuite) TestBuildAugmentedAvailableAttributes_All
 }
 
 func (suite *ConsentExecutorTestSuite) TestBuildAugmentedAvailableAttributes_DoesNotMutateOriginal() {
-	ctx := buildConsentNodeContext()
-	ctx.AuthenticatedUser.UserType = testUserTypeInternal
-	ctx.AuthenticatedUser.OUID = "ou-789"
-	ctx.AuthenticatedUser.UserID = "user-xyz"
-	ctx.AuthenticatedUser.AvailableAttributes = &authnprovidercm.AttributesResponse{
-		Attributes: map[string]*authnprovidercm.AttributeResponse{
+	availableAttrs := &providers.AttributesResponse{
+		Attributes: map[string]*providers.AttributeResponse{
 			"email": nil,
 			"phone": nil,
 		},
 	}
-	// AuthUser is zero-value (not authenticated) — uses legacy path
+	entityRef := &providers.EntityReference{
+		EntityType: testUserTypeInternal,
+		OUID:       "ou-789",
+		EntityID:   "user-xyz",
+	}
 
-	originalLen := len(ctx.AuthenticatedUser.AvailableAttributes.Attributes)
-	_ = suite.executor.buildAugmentedAvailableAttributes(ctx)
+	originalLen := len(availableAttrs.Attributes)
+	_ = suite.executor.buildAugmentedAvailableAttributes(availableAttrs, entityRef)
 
 	// The original map must not have been modified
-	assert.Len(suite.T(), ctx.AuthenticatedUser.AvailableAttributes.Attributes, originalLen)
-	assert.NotContains(suite.T(), ctx.AuthenticatedUser.AvailableAttributes.Attributes, "userType")
-	assert.NotContains(suite.T(), ctx.AuthenticatedUser.AvailableAttributes.Attributes, "groups")
-	assert.NotContains(suite.T(), ctx.AuthenticatedUser.AvailableAttributes.Attributes, "ouId")
+	assert.Len(suite.T(), availableAttrs.Attributes, originalLen)
+	assert.NotContains(suite.T(), availableAttrs.Attributes, "userType")
+	assert.NotContains(suite.T(), availableAttrs.Attributes, "groups")
+	assert.NotContains(suite.T(), availableAttrs.Attributes, "ouId")
 }
 
 func (suite *ConsentExecutorTestSuite) TestBuildAugmentedAvailableAttributes_PreservesVerifications() {
-	ctx := buildConsentNodeContext()
-	ctx.AuthenticatedUser.UserType = testUserTypeInternal
-	ctx.AuthenticatedUser.AvailableAttributes = &authnprovidercm.AttributesResponse{
-		Attributes: map[string]*authnprovidercm.AttributeResponse{
+	availableAttrs := &providers.AttributesResponse{
+		Attributes: map[string]*providers.AttributeResponse{
 			"email": nil,
 		},
-		Verifications: map[string]*authnprovidercm.VerificationResponse{
+		Verifications: map[string]*providers.VerificationResponse{
 			"v-1": {},
 		},
 	}
-	// AuthUser is zero-value (not authenticated) — uses legacy path
+	entityRef := &providers.EntityReference{
+		EntityType: testUserTypeInternal,
+	}
 
-	result := suite.executor.buildAugmentedAvailableAttributes(ctx)
+	result := suite.executor.buildAugmentedAvailableAttributes(availableAttrs, entityRef)
 
 	assert.NotNil(suite.T(), result)
 	// Verifications reference is preserved (shallow copy)
-	assert.Equal(suite.T(), ctx.AuthenticatedUser.AvailableAttributes.Verifications, result.Verifications)
+	assert.Equal(suite.T(), availableAttrs.Verifications, result.Verifications)
 }
 
 // ----- BasicAuth + Consent integration-style test -----
 
 func (suite *ConsentExecutorTestSuite) TestExecute_BasicAuth_NilAvailableAttributes_PromptsConsent() {
 	// Simulates a BasicAuthExecutor-authenticated user where AuthUser has been populated by the
-	// auth provider (non-zero userID makes IsAuthenticated() true) and GetUserAvailableAttributes
-	// returns the provider's attribute set. ResolveConsent must receive that non-nil map so
-	// profile-presence filtering works correctly.
-	var authUser authnprovidermgr.AuthUser
-	_ = authUser.UnmarshalJSON([]byte(`{"userId":"user-123","userType":"","ouId":""}`))
-
+	// auth provider and GetUserAvailableAttributes returns the provider's attribute set.
+	// ResolveConsent must receive that non-nil map so profile-presence filtering works correctly.
 	ctx := buildConsentNodeContext()
-	ctx.AuthenticatedUser.AvailableAttributes = nil
-	ctx.AuthUser = authUser
 	ctx.Application.Assertion = &inboundmodel.AssertionConfig{
 		UserAttributes: []string{"given_name", "email"},
 	}
 
-	suite.executor.ExecutorInterface.(*coremock.ExecutorInterfaceMock).
-		On("ValidatePrerequisites", ctx, mock.AnythingOfType("*common.ExecutorResponse")).Return(true)
-	suite.executor.ExecutorInterface.(*coremock.ExecutorInterfaceMock).
-		On("HasRequiredInputs", ctx, mock.AnythingOfType("*common.ExecutorResponse")).Return(false)
-
-	authUserAttrs := &authnprovidercm.AttributesResponse{
-		Attributes: map[string]*authnprovidercm.AttributeResponse{
+	entityRef := &providers.EntityReference{
+		EntityID: "user-123",
+	}
+	authUserAttrs := &providers.AttributesResponse{
+		Attributes: map[string]*providers.AttributeResponse{
 			"given_name": {},
 			"email":      {},
 		},
 	}
-	suite.mockAuthnProvider.On("GetUserAvailableAttributes", mock.Anything, authUser).
-		Return(authUserAttrs, (*serviceerror.ServiceError)(nil))
+	suite.mockAuthnProvider.On("GetEntityReference", mock.Anything, mock.Anything).
+		Return(buildConsentAuthUser(), entityRef, (*tidcommon.ServiceError)(nil)).Maybe()
+	suite.mockAuthnProvider.On("GetUserAvailableAttributes", mock.Anything, mock.Anything).
+		Return(authUserAttrs, (*tidcommon.ServiceError)(nil)).Maybe()
 
-	promptData := &consentauthn.ConsentPromptData{
-		Purposes: []consentauthn.ConsentPurposePrompt{
+	suite.executor.Executor.(*coremock.ExecutorInterfaceMock).
+		On("ValidatePrerequisites", ctx, mock.AnythingOfType("*providers.ExecutorResponse"), mock.Anything).Return(true)
+	suite.executor.Executor.(*coremock.ExecutorInterfaceMock).
+		On("HasRequiredInputs", ctx, mock.AnythingOfType("*providers.ExecutorResponse")).Return(false)
+
+	promptData := &providers.ConsentPromptData{
+		Purposes: []providers.ConsentPurposePrompt{
 			{
 				PurposeName: "app:app-123:attrs",
 				PurposeID:   "purpose-1",
-				Optional:    []consentauthn.PromptElement{{Name: "given_name"}, {Name: "email"}},
+				Optional:    []providers.PromptElement{{Name: "given_name"}, {Name: "email"}},
 			},
 		},
 	}
@@ -1479,7 +1552,7 @@ func (suite *ConsentExecutorTestSuite) TestExecute_BasicAuth_NilAvailableAttribu
 		mock.Anything, "default", "app-123", "", "user-123",
 		[]string{}, []string{"given_name", "email"},
 		mock.Anything,
-		mock.MatchedBy(func(aa *authnprovidercm.AttributesResponse) bool {
+		mock.MatchedBy(func(aa *providers.AttributesResponse) bool {
 			if aa == nil {
 				return false
 			}
@@ -1487,42 +1560,35 @@ func (suite *ConsentExecutorTestSuite) TestExecute_BasicAuth_NilAvailableAttribu
 			_, hasEmail := aa.Attributes["email"]
 			_, hasGroups := aa.Attributes["groups"]
 			return hasGivenName && hasEmail && hasGroups
-		})).
+		}), mock.Anything, mock.Anything).
 		Return(promptData, nil)
 
 	resp, err := suite.executor.Execute(ctx)
 
 	assert.NoError(suite.T(), err)
 	assert.NotNil(suite.T(), resp)
-	assert.Equal(suite.T(), common.ExecUserInputRequired, resp.Status,
+	assert.Equal(suite.T(), providers.ExecUserInputRequired, resp.Status,
 		"Executor must prompt for consent when AuthUser is authenticated (BasicAuth)")
 	assert.NotEmpty(suite.T(), resp.AdditionalData[common.DataConsentPrompt])
 	assert.NotNil(suite.T(), resp.ForwardedData[common.ForwardedDataKeyConsentPrompt])
 }
 
-// ----- buildAugmentedAvailableAttributes: AuthUser path tests -----
+// ----- buildAugmentedAvailableAttributes: with availableAttrResp parameter tests -----
 
-func (suite *ConsentExecutorTestSuite) TestBuildAugmentedAvailableAttributes_AuthUserFallback() {
-	// When AuthenticatedUser.AvailableAttributes is nil but AuthUser is authenticated,
-	// the method should use GetUserAvailableAttributes and return augmented attributes.
-	var authUser authnprovidermgr.AuthUser
-	_ = authUser.UnmarshalJSON([]byte(`{"userId":"user-123","userType":"","ouId":""}`))
-
-	ctx := buildConsentNodeContext()
-	ctx.AuthenticatedUser.AvailableAttributes = nil
-	ctx.AuthenticatedUser.UserID = testUserID
-	ctx.AuthUser = authUser
-
-	authUserAttrs := &authnprovidercm.AttributesResponse{
-		Attributes: map[string]*authnprovidercm.AttributeResponse{
+func (suite *ConsentExecutorTestSuite) TestBuildAugmentedAvailableAttributes_WithAvailableAttrs() {
+	// When availableAttrResp is provided, buildAugmentedAvailableAttributes should use it
+	// and return augmented attributes.
+	availableAttrs := &providers.AttributesResponse{
+		Attributes: map[string]*providers.AttributeResponse{
 			"email": {},
 			"phone": {},
 		},
 	}
-	suite.mockAuthnProvider.On("GetUserAvailableAttributes", mock.Anything, authUser).
-		Return(authUserAttrs, (*serviceerror.ServiceError)(nil))
+	entityRef := &providers.EntityReference{
+		EntityID: testUserID,
+	}
 
-	result := suite.executor.buildAugmentedAvailableAttributes(ctx)
+	result := suite.executor.buildAugmentedAvailableAttributes(availableAttrs, entityRef)
 
 	assert.NotNil(suite.T(), result)
 	assert.Contains(suite.T(), result.Attributes, "email")
@@ -1530,88 +1596,14 @@ func (suite *ConsentExecutorTestSuite) TestBuildAugmentedAvailableAttributes_Aut
 	assert.Contains(suite.T(), result.Attributes, "groups")
 }
 
-func (suite *ConsentExecutorTestSuite) TestBuildAugmentedAvailableAttributes_MergesBothSources() {
-	// When both AuthUser and AuthenticatedUser.AvailableAttributes are set, the resulting
-	// attribute set should contain entries from both sources, with AuthUser entries taking
-	// priority on key collision.
-	var authUser authnprovidermgr.AuthUser
-	_ = authUser.UnmarshalJSON([]byte(`{"userId":"user-123","userType":"","ouId":""}`))
-
-	ctx := buildConsentNodeContext()
-	ctx.AuthenticatedUser.UserID = "user-123"
-	legacyEmailAttr := &authnprovidercm.AttributeResponse{Value: "legacy@example.com"}
-	ctx.AuthenticatedUser.AvailableAttributes = &authnprovidercm.AttributesResponse{
-		Attributes: map[string]*authnprovidercm.AttributeResponse{
-			"legacy_attr": {},
-			"email":       legacyEmailAttr,
-		},
+func (suite *ConsentExecutorTestSuite) TestBuildAugmentedAvailableAttributes_NilAvailableAttrs_ReturnsNil() {
+	// When availableAttrResp is nil, should return nil so the consent enforcer
+	// skips profile-presence filtering.
+	entityRef := &providers.EntityReference{
+		EntityID: testUserID,
 	}
-	ctx.AuthUser = authUser
 
-	authUserEmailAttr := &authnprovidercm.AttributeResponse{Value: "authuser@example.com"}
-	authUserAttrs := &authnprovidercm.AttributesResponse{
-		Attributes: map[string]*authnprovidercm.AttributeResponse{
-			"email": authUserEmailAttr,
-			"phone": {},
-		},
-	}
-	suite.mockAuthnProvider.On("GetUserAvailableAttributes", mock.Anything, authUser).
-		Return(authUserAttrs, (*serviceerror.ServiceError)(nil))
-
-	result := suite.executor.buildAugmentedAvailableAttributes(ctx)
-
-	assert.NotNil(suite.T(), result)
-	assert.Contains(suite.T(), result.Attributes, "phone", "AuthUser-only attribute should be merged in")
-	assert.Contains(suite.T(), result.Attributes, "legacy_attr",
-		"AuthenticatedUser-only entries should be preserved alongside AuthUser entries")
-	assert.Same(suite.T(), authUserEmailAttr, result.Attributes["email"],
-		"On key collision, AuthUser attribute should take priority over AuthenticatedUser")
-	assert.Contains(suite.T(), result.Attributes, "groups")
-}
-
-func (suite *ConsentExecutorTestSuite) TestBuildAugmentedAvailableAttributes_AuthUserError_FallsBackToLegacy() {
-	// When GetUserAvailableAttributes fails, should fall back to AuthenticatedUser.AvailableAttributes.
-	var authUser authnprovidermgr.AuthUser
-	_ = authUser.UnmarshalJSON([]byte(`{"userId":"user-123","userType":"","ouId":""}`))
-
-	ctx := buildConsentNodeContext()
-	ctx.AuthenticatedUser.UserID = testUserID
-	ctx.AuthenticatedUser.AvailableAttributes = &authnprovidercm.AttributesResponse{
-		Attributes: map[string]*authnprovidercm.AttributeResponse{
-			"legacy_attr": {},
-		},
-	}
-	ctx.AuthUser = authUser
-
-	suite.mockAuthnProvider.On("GetUserAvailableAttributes", mock.Anything, authUser).
-		Return((*authnprovidercm.AttributesResponse)(nil), &serviceerror.ServiceError{
-			Type: serviceerror.ServerErrorType,
-		})
-
-	result := suite.executor.buildAugmentedAvailableAttributes(ctx)
-
-	assert.NotNil(suite.T(), result)
-	assert.Contains(suite.T(), result.Attributes, "legacy_attr",
-		"Should fall back to AuthenticatedUser.AvailableAttributes on GetUserAvailableAttributes error")
-	assert.Contains(suite.T(), result.Attributes, "groups")
-}
-
-func (suite *ConsentExecutorTestSuite) TestBuildAugmentedAvailableAttributes_AuthUserError_BothNil_ReturnsNil() {
-	// When GetUserAvailableAttributes fails and AuthenticatedUser.AvailableAttributes is also nil,
-	// should return nil so the consent enforcer skips profile-presence filtering.
-	var authUser authnprovidermgr.AuthUser
-	_ = authUser.UnmarshalJSON([]byte(`{"userId":"user-123","userType":"","ouId":""}`))
-
-	ctx := buildConsentNodeContext()
-	ctx.AuthenticatedUser.AvailableAttributes = nil
-	ctx.AuthUser = authUser
-
-	suite.mockAuthnProvider.On("GetUserAvailableAttributes", mock.Anything, authUser).
-		Return((*authnprovidercm.AttributesResponse)(nil), &serviceerror.ServiceError{
-			Type: serviceerror.ServerErrorType,
-		})
-
-	result := suite.executor.buildAugmentedAvailableAttributes(ctx)
+	result := suite.executor.buildAugmentedAvailableAttributes(nil, entityRef)
 
 	assert.Nil(suite.T(), result)
 }

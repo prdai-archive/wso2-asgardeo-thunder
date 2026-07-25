@@ -19,6 +19,7 @@
 package oauth
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -26,17 +27,19 @@ import (
 	"net/url"
 	"strings"
 
+	tidcommon "github.com/thunder-id/thunderid/pkg/thunderidengine/common"
+
 	idpPkg "github.com/thunder-id/thunderid/internal/idp"
 	oauth2const "github.com/thunder-id/thunderid/internal/oauth/oauth2/constants"
 	sysconst "github.com/thunder-id/thunderid/internal/system/constants"
-	"github.com/thunder-id/thunderid/internal/system/error/serviceerror"
 	httpservice "github.com/thunder-id/thunderid/internal/system/http"
 	"github.com/thunder-id/thunderid/internal/system/log"
 	sysutils "github.com/thunder-id/thunderid/internal/system/utils"
+	"github.com/thunder-id/thunderid/pkg/thunderidengine/providers"
 )
 
 // parseIDPConfig extracts the OAuth client configuration from the identity provider details.
-func parseIDPConfig(idp *idpPkg.IDPDTO) (*OAuthClientConfig, error) {
+func parseIDPConfig(idp *providers.IDPDTO) (*OAuthClientConfig, error) {
 	oAuthClientConfig := OAuthClientConfig{
 		AdditionalParams: make(map[string]string),
 	}
@@ -71,6 +74,9 @@ func parseIDPConfig(idp *idpPkg.IDPDTO) (*OAuthClientConfig, error) {
 			oAuthClientConfig.OAuthEndpoints.LogoutEndpoint = value
 		case idpPkg.PropJwksEndpoint:
 			oAuthClientConfig.OAuthEndpoints.JwksEndpoint = value
+		case idpPkg.PropIssuer, idpPkg.PropTokenExchangeEnabled:
+			// Server-side configuration consumed elsewhere (token exchange).
+			// These must not be forwarded as query parameters on the external authorize request.
 		default:
 			if value != "" {
 				oAuthClientConfig.AdditionalParams[name] = value
@@ -90,20 +96,20 @@ func parseIDPConfig(idp *idpPkg.IDPDTO) (*OAuthClientConfig, error) {
 }
 
 // buildTokenRequest constructs the HTTP request to exchange the authorization code for tokens.
-func buildTokenRequest(oAuthClientConfig *OAuthClientConfig, code string, logger *log.Logger) (
-	*http.Request, *serviceerror.ServiceError) {
+func buildTokenRequest(ctx context.Context, oAuthClientConfig *OAuthClientConfig, code string, logger *log.Logger) (
+	*http.Request, *tidcommon.ServiceError) {
 	form := url.Values{}
 	form.Set(oauth2const.RequestParamClientID, oAuthClientConfig.ClientID)
 	form.Set(oauth2const.RequestParamClientSecret, oAuthClientConfig.ClientSecret)
 	form.Set(oauth2const.RequestParamRedirectURI, oAuthClientConfig.RedirectURI)
-	form.Set(oauth2const.RequestParamGrantType, string(oauth2const.GrantTypeAuthorizationCode))
+	form.Set(oauth2const.RequestParamGrantType, string(providers.GrantTypeAuthorizationCode))
 	form.Set(oauth2const.RequestParamCode, code)
 
 	httpReq, err := http.NewRequest(http.MethodPost, oAuthClientConfig.OAuthEndpoints.TokenEndpoint,
 		strings.NewReader(form.Encode()))
 	if err != nil {
-		logger.Error("Failed to create token request", log.Error(err))
-		return nil, &serviceerror.InternalServerError
+		logger.Error(ctx, "Failed to create token request", log.Error(err))
+		return nil, &tidcommon.InternalServerError
 	}
 
 	httpReq.Header.Add(sysconst.ContentTypeHeaderName, sysconst.ContentTypeFormURLEncoded)
@@ -114,41 +120,42 @@ func buildTokenRequest(oAuthClientConfig *OAuthClientConfig, code string, logger
 
 // sendTokenRequest sends the token request to the identity provider and processes the response.
 func sendTokenRequest(httpReq *http.Request, httpClient httpservice.HTTPClientInterface, logger *log.Logger) (
-	*TokenResponse, *serviceerror.ServiceError) {
+	*TokenResponse, *tidcommon.ServiceError) {
+	ctx := httpReq.Context()
 	resp, err := httpClient.Do(httpReq)
 	if err != nil {
-		logger.Error("Token request to identity provider failed", log.Error(err))
-		return nil, &serviceerror.InternalServerError
+		logger.Error(ctx, "Token request to identity provider failed", log.Error(err))
+		return nil, &tidcommon.InternalServerError
 	}
 	defer func() {
 		if closeErr := resp.Body.Close(); closeErr != nil {
-			logger.Error("Failed to close token response body", log.Error(closeErr))
+			logger.Error(ctx, "Failed to close token response body", log.Error(closeErr))
 		}
 	}()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		logger.Error("Token endpoint returned an error response",
+		logger.Error(ctx, "Token endpoint returned an error response",
 			log.Int("statusCode", resp.StatusCode), log.String("response", string(body)))
-		return nil, &serviceerror.InternalServerError
+		return nil, &tidcommon.InternalServerError
 	}
 
 	var tokenResp TokenResponse
 	if err := json.NewDecoder(resp.Body).Decode(&tokenResp); err != nil {
-		logger.Error("Failed to parse token response", log.Error(err))
-		return nil, &serviceerror.InternalServerError
+		logger.Error(ctx, "Failed to parse token response", log.Error(err))
+		return nil, &tidcommon.InternalServerError
 	}
 
 	return &tokenResp, nil
 }
 
 // buildUserInfoRequest constructs the HTTP request to fetch user information from the identity provider.
-func buildUserInfoRequest(userInfoEndpoint string, accessToken string, logger *log.Logger) (
-	*http.Request, *serviceerror.ServiceError) {
+func buildUserInfoRequest(ctx context.Context, userInfoEndpoint string, accessToken string, logger *log.Logger) (
+	*http.Request, *tidcommon.ServiceError) {
 	req, err := http.NewRequest(http.MethodGet, userInfoEndpoint, nil)
 	if err != nil {
-		logger.Error("Failed to create userinfo request", log.Error(err))
-		return nil, &serviceerror.InternalServerError
+		logger.Error(ctx, "Failed to create userinfo request", log.Error(err))
+		return nil, &tidcommon.InternalServerError
 	}
 
 	req.Header.Set(sysconst.AuthorizationHeaderName, sysconst.TokenTypeBearer+" "+accessToken)
@@ -158,36 +165,37 @@ func buildUserInfoRequest(userInfoEndpoint string, accessToken string, logger *l
 }
 
 // sendUserInfoRequest sends the user info request to the identity provider and processes the response.
-func sendUserInfoRequest(httpReq *http.Request, httpClient httpservice.HTTPClientInterface, logger *log.Logger) (
-	map[string]interface{}, *serviceerror.ServiceError) {
+func sendUserInfoRequest(httpReq *http.Request, httpClient httpservice.HTTPClientInterface,
+	logger *log.Logger) (map[string]interface{}, *tidcommon.ServiceError) {
+	ctx := httpReq.Context()
 	resp, err := httpClient.Do(httpReq)
 	if err != nil {
-		logger.Error("Userinfo request to identity provider failed", log.Error(err))
-		return nil, &serviceerror.InternalServerError
+		logger.Error(ctx, "Userinfo request to identity provider failed", log.Error(err))
+		return nil, &tidcommon.InternalServerError
 	}
 	defer func() {
 		if closeErr := resp.Body.Close(); closeErr != nil {
-			logger.Error("Failed to close userinfo response body", log.Error(closeErr))
+			logger.Error(ctx, "Failed to close userinfo response body", log.Error(closeErr))
 		}
 	}()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		logger.Error("Userinfo endpoint returned an error response",
+		logger.Error(ctx, "Userinfo endpoint returned an error response",
 			log.Int("statusCode", resp.StatusCode), log.String("response", string(body)))
-		return nil, &serviceerror.InternalServerError
+		return nil, &tidcommon.InternalServerError
 	}
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		logger.Error("Failed to read userinfo response body", log.Error(err))
-		return nil, &serviceerror.InternalServerError
+		logger.Error(ctx, "Failed to read userinfo response body", log.Error(err))
+		return nil, &tidcommon.InternalServerError
 	}
 
 	var userInfo map[string]interface{}
 	if err := json.Unmarshal(body, &userInfo); err != nil {
-		logger.Error("Failed to parse userinfo response", log.Error(err))
-		return nil, &serviceerror.InternalServerError
+		logger.Error(ctx, "Failed to parse userinfo response", log.Error(err))
+		return nil, &tidcommon.InternalServerError
 	}
 
 	return userInfo, nil
@@ -209,6 +217,27 @@ func ProcessSubClaim(userInfo map[string]interface{}) {
 		delete(userInfo, "id")
 		return
 	}
+}
+
+// ValidateNonce checks that the nonce in the ID token claims matches the expected nonce
+// from the authorization flow. Returns nil on success or an InternalServerError on mismatch.
+func ValidateNonce(ctx context.Context, claims map[string]interface{}, expectedNonce string,
+	logger *log.Logger) *tidcommon.ServiceError {
+	claimNonce, ok := claims[oauth2const.RequestParamNonce].(string)
+	if !ok || claimNonce == "" {
+		logger.Error(ctx, "Nonce missing in ID token claims")
+		return &tidcommon.InternalServerError
+	}
+	if expectedNonce == "" {
+		logger.Error(ctx, "Nonce expected from authorization flow is missing")
+		return &tidcommon.InternalServerError
+	}
+	if claimNonce != expectedNonce {
+		logger.Error(ctx, "Nonce in ID token claims does not match expected nonce")
+		return &tidcommon.InternalServerError
+	}
+
+	return nil
 }
 
 // GetStringUserClaimValue retrieves a string claim value from the user info map.

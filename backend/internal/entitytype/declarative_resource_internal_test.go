@@ -23,11 +23,12 @@ import (
 	"encoding/json"
 	"testing"
 
+	tidcommon "github.com/thunder-id/thunderid/pkg/thunderidengine/common"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 
 	"github.com/thunder-id/thunderid/internal/system/config"
-	"github.com/thunder-id/thunderid/internal/system/error/serviceerror"
 )
 
 // TestValidateEntityType tests the validateEntityType function with various scenarios.
@@ -99,7 +100,7 @@ func TestValidateEntityType(t *testing.T) {
 				OUID: "",
 			},
 			wantErr: true,
-			errMsg:  "organization_unit_id or ou_handle is required",
+			errMsg:  "ouId or ouHandle is required",
 		},
 		{
 			name: "whitespace only organization unit ID",
@@ -109,7 +110,7 @@ func TestValidateEntityType(t *testing.T) {
 				OUID: "   ",
 			},
 			wantErr: true,
-			errMsg:  "organization_unit_id or ou_handle is required",
+			errMsg:  "ouId or ouHandle is required",
 		},
 		{
 			name: "invalid schema JSON",
@@ -178,7 +179,7 @@ func TestValidateEntityTypeWrapper(t *testing.T) {
 		}
 
 		mockSvc.EXPECT().ResolveEntityTypeHandles(mock.Anything, schema).
-			RunAndReturn(func(_ context.Context, et *EntityType) *serviceerror.ServiceError {
+			RunAndReturn(func(_ context.Context, et *EntityType) *tidcommon.ServiceError {
 				et.OUID = "ou-resolved"
 				return nil
 			}).Once()
@@ -236,8 +237,8 @@ func TestParseToEntityTypeDTO(t *testing.T) {
 			yaml: `
 id: schema-1
 name: Test Schema
-organization_unit_id: ou-1
-allow_self_registration: true
+ouId: ou-1
+allowSelfRegistration: true
 schema: '{"type": "object"}'
 `,
 			want: &EntityType{
@@ -254,7 +255,7 @@ schema: '{"type": "object"}'
 			yaml: `
 id: schema-2
 name: Minimal Schema
-organization_unit_id: ou-1
+ouId: ou-1
 schema: '{}'
 `,
 			want: &EntityType{
@@ -278,7 +279,7 @@ invalid: [yaml
 			yaml: `
 id: schema-1
 name: Test Schema
-organization_unit_id: ou-1
+ouId: ou-1
 schema: '{invalid json}'
 `,
 			wantErr: true,
@@ -289,7 +290,7 @@ schema: '{invalid json}'
 			yaml: `
 id: schema-1
 name: Test Schema
-organization_unit_id: ou-1
+ouId: ou-1
 schema:
   username:
     type: string
@@ -311,7 +312,7 @@ schema:
 			yaml: `
 id: schema-1
 name: Test Schema
-organization_unit_id: ou-1
+ouId: ou-1
 `,
 			wantErr: true,
 			errMsg:  "schema field contains invalid JSON",

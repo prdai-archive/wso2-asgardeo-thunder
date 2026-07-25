@@ -21,26 +21,51 @@ package authz
 import (
 	"context"
 	"errors"
+	"net/url"
 	"strings"
 	"testing"
+	"time"
+
+	engineconfig "github.com/thunder-id/thunderid/pkg/thunderidengine/config"
+	"github.com/thunder-id/thunderid/pkg/thunderidengine/providers"
+
+	tidcommon "github.com/thunder-id/thunderid/pkg/thunderidengine/common"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/suite"
 
+	"github.com/thunder-id/thunderid/internal/actorprovider"
 	flowcm "github.com/thunder-id/thunderid/internal/flow/common"
 	"github.com/thunder-id/thunderid/internal/flow/flowexec"
-	inboundmodel "github.com/thunder-id/thunderid/internal/inboundclient/model"
+	oauthconfig "github.com/thunder-id/thunderid/internal/oauth/config"
 	oauth2const "github.com/thunder-id/thunderid/internal/oauth/oauth2/constants"
 	oauth2model "github.com/thunder-id/thunderid/internal/oauth/oauth2/model"
+	"github.com/thunder-id/thunderid/internal/oauth/oauth2/revocation"
 	"github.com/thunder-id/thunderid/internal/system/config"
-	"github.com/thunder-id/thunderid/internal/system/error/serviceerror"
 	"github.com/thunder-id/thunderid/internal/system/jose/jwt"
 	"github.com/thunder-id/thunderid/internal/system/log"
+	"github.com/thunder-id/thunderid/tests/mocks/authnprovider/managermock"
+	"github.com/thunder-id/thunderid/tests/mocks/entityprovidermock"
 	"github.com/thunder-id/thunderid/tests/mocks/flow/flowexecmock"
 	"github.com/thunder-id/thunderid/tests/mocks/inboundclientmock"
 	"github.com/thunder-id/thunderid/tests/mocks/jose/jwtmock"
+	"github.com/thunder-id/thunderid/tests/mocks/oauth/oauth2/revocationmock"
+	"github.com/thunder-id/thunderid/tests/mocks/resourcemock"
 )
+
+func authorizeServiceCfgFromRuntime() oauthconfig.Config {
+	runtime := config.GetServerRuntime()
+	return oauthconfig.Config{
+		JWT:        runtime.Config.JWT,
+		OAuth:      runtime.Config.OAuth,
+		GateClient: runtime.Config.GateClient,
+	}
+}
+
+func resolveUserAttributesCacheTTLForTest(app *providers.OAuthClient) int64 {
+	return (&authorizeService{cfg: authorizeServiceCfgFromRuntime()}).resolveUserAttributesCacheTTL(app)
+}
 
 // stubTransactioner is a no-op Transactioner for use in service tests.
 type stubTransactioner struct{}
@@ -49,22 +74,40 @@ func (s *stubTransactioner) Transact(ctx context.Context, txFunc func(context.Co
 	return txFunc(ctx)
 }
 
-// JWT constants used in service tests.
+// JWT constants used in service tests. All happy-path assertions are bound to testAuthID via
+// the authorization_request_id claim so they pass the assertion<->authorization request binding check.
 const (
-	// Header: {"alg":"none","typ":"JWT"}   Payload: {"sub":"test-user","iat":1701421200}
-	svcJWTWithIat = "eyJhbGciOiJub25lIiwidHlwIjoiSldUIn0.eyJzdWIiOiJ0ZXN0LXVzZXIiLCJpYXQiOjE3MDE0MjEyMDB9."
-	// Header: {"alg":"none","typ":"JWT"}   Payload: {"sub":"test-user"}
-	svcJWTMinimal = "eyJhbGciOiJub25lIiwidHlwIjoiSldUIn0.eyJzdWIiOiJ0ZXN0LXVzZXIifQ."
+	// Header: {"alg":"none","typ":"JWT"}
+	// Payload: {"sub":"test-user","iat":1701421200,"authorization_request_id":"test-auth-id"}
+	svcJWTWithIat = "eyJhbGciOiJub25lIiwidHlwIjoiSldUIn0." +
+		"eyJzdWIiOiJ0ZXN0LXVzZXIiLCJpYXQiOjE3MDE0MjEyMDAsImF1dGhvcml6YXRpb25fcmVxdWVzdF9pZCI6InRlc3QtYXV0aC1pZCJ9."
+	// Header: {"alg":"none","typ":"JWT"}
+	// Payload: {"sub":"test-user","authorization_request_id":"test-auth-id"}
+	svcJWTMinimal = "eyJhbGciOiJub25lIiwidHlwIjoiSldUIn0." +
+		"eyJzdWIiOiJ0ZXN0LXVzZXIiLCJhdXRob3JpemF0aW9uX3JlcXVlc3RfaWQiOiJ0ZXN0LWF1dGgtaWQifQ."
+	// Header: {"alg":"none","typ":"JWT"}
+	// Payload: {"sub":"test-user","iat":1701421200} — no authorization_request_id claim (unbound).
+	svcJWTUnbound = "eyJhbGciOiJub25lIiwidHlwIjoiSldUIn0.eyJzdWIiOiJ0ZXN0LXVzZXIiLCJpYXQiOjE3MDE0MjEyMDB9."
+	// Header: {"alg":"none","typ":"JWT"}
+	// Payload: {"sub":"test-user","iat":1701421200,"authorization_request_id":"other-auth-id"}
+	svcJWTMismatched = "eyJhbGciOiJub25lIiwidHlwIjoiSldUIn0." +
+		"eyJzdWIiOiJ0ZXN0LXVzZXIiLCJpYXQiOjE3MDE0MjEyMDAsImF1dGhvcml6YXRpb25fcmVxdWVzdF9pZCI6Im90aGVyLWF1dGgtaWQifQ."
+	// Header: {"alg":"none","typ":"JWT"}
+	// Payload: {"sub":"test-user","iat":1701421200,"authorization_request_id":42}
+	svcJWTNonStringAuthReqID = "eyJhbGciOiJub25lIiwidHlwIjoiSldUIn0." +
+		"eyJzdWIiOiJ0ZXN0LXVzZXIiLCJpYXQiOjE3MDE0MjEyMDAsImF1dGhvcml6YXRpb25fcmVxdWVzdF9pZCI6NDJ9."
 )
 
 type AuthorizeServiceTestSuite struct {
 	suite.Suite
 	mockInboundClient   *inboundclientmock.InboundClientServiceInterfaceMock
+	mockEntityProvider  *entityprovidermock.EntityProviderInterfaceMock
 	mockJWTService      *jwtmock.JWTServiceInterfaceMock
 	mockAuthzCodeStore  *AuthorizationCodeStoreInterfaceMock
 	mockAuthReqStore    *authorizationRequestStoreInterfaceMock
 	mockFlowExecService *flowexecmock.FlowExecServiceInterfaceMock
 	mockValidator       *AuthorizationValidatorInterfaceMock
+	mockResourceService *resourcemock.ResourceServiceInterfaceMock
 }
 
 func TestAuthorizeServiceTestSuite(t *testing.T) {
@@ -74,7 +117,7 @@ func TestAuthorizeServiceTestSuite(t *testing.T) {
 func (suite *AuthorizeServiceTestSuite) BeforeTest(suiteName, testName string) {
 	config.ResetServerRuntime()
 	testConfig := &config.Config{
-		GateClient: config.GateClientConfig{
+		GateClient: engineconfig.GateClientConfig{
 			Scheme:    "https",
 			Hostname:  "localhost",
 			Port:      3000,
@@ -82,14 +125,14 @@ func (suite *AuthorizeServiceTestSuite) BeforeTest(suiteName, testName string) {
 			ErrorPath: "/error",
 		},
 		Database: config.DatabaseConfig{
-			Config:  config.DataSource{Type: "sqlite", SQLite: config.SQLiteDataSource{Path: ":memory:"}},
-			Runtime: config.DataSource{Type: "sqlite", SQLite: config.SQLiteDataSource{Path: ":memory:"}},
+			Config:           config.DataSource{Type: "sqlite", SQLite: config.SQLiteDataSource{Path: ":memory:"}},
+			RuntimeTransient: config.DataSource{Type: "sqlite", SQLite: config.SQLiteDataSource{Path: ":memory:"}},
 		},
-		JWT: config.JWTConfig{
+		JWT: engineconfig.JWTConfig{
 			Issuer: "https://localhost:8090",
 		},
-		OAuth: config.OAuthConfig{
-			AuthorizationCode: config.AuthorizationCodeConfig{ValidityPeriod: 600},
+		OAuth: engineconfig.OAuthConfig{
+			AuthorizationCode: engineconfig.AuthorizationCodeConfig{ValidityPeriod: 600},
 		},
 	}
 	_ = config.InitializeServerRuntime("test", testConfig)
@@ -97,17 +140,30 @@ func (suite *AuthorizeServiceTestSuite) BeforeTest(suiteName, testName string) {
 
 func (suite *AuthorizeServiceTestSuite) SetupTest() {
 	suite.mockInboundClient = inboundclientmock.NewInboundClientServiceInterfaceMock(suite.T())
+	suite.mockEntityProvider = entityprovidermock.NewEntityProviderInterfaceMock(suite.T())
 	suite.mockJWTService = jwtmock.NewJWTServiceInterfaceMock(suite.T())
 	suite.mockAuthzCodeStore = NewAuthorizationCodeStoreInterfaceMock(suite.T())
 	suite.mockAuthReqStore = newAuthorizationRequestStoreInterfaceMock(suite.T())
 	suite.mockFlowExecService = flowexecmock.NewFlowExecServiceInterfaceMock(suite.T())
 	suite.mockValidator = NewAuthorizationValidatorInterfaceMock(suite.T())
+	suite.mockResourceService = resourcemock.NewResourceServiceInterfaceMock(suite.T())
+
+	// Default resolution path: permission-bearing requests without an explicit resource resolve the
+	// configured default resource server via the empty identifier. Declared optional so tests that
+	// never reach flow initiation (or that exercise resource-binding specifics) are unaffected.
+	suite.mockResourceService.EXPECT().GetResourceServerByIdentifier(mock.Anything, "").
+		Return(&providers.ResourceServer{ID: "rs-default", Identifier: "https://rs-default.example.com"}, nil).Maybe()
+	suite.mockResourceService.EXPECT().ValidatePermissions(mock.Anything, "rs-default", mock.Anything).
+		Return([]string{}, nil).Maybe()
 }
 
 // newService builds an authorizeService with all mocked dependencies.
 func (suite *AuthorizeServiceTestSuite) newService() *authorizeService {
+	inboundClient := actorprovider.Initialize(suite.mockInboundClient, suite.mockEntityProvider, noopAuthnMgr(), nil)
 	return &authorizeService{
-		inboundClient:   suite.mockInboundClient,
+		cfg:             authorizeServiceCfgFromRuntime(),
+		inboundClient:   inboundClient,
+		resourceService: suite.mockResourceService,
 		authZValidator:  suite.mockValidator,
 		authCodeStore:   suite.mockAuthzCodeStore,
 		authReqStore:    suite.mockAuthReqStore,
@@ -119,13 +175,14 @@ func (suite *AuthorizeServiceTestSuite) newService() *authorizeService {
 }
 
 // testApp returns a minimal OAuthClient for use in tests.
-func (suite *AuthorizeServiceTestSuite) testApp() *inboundmodel.OAuthClient {
-	return &inboundmodel.OAuthClient{
+func (suite *AuthorizeServiceTestSuite) testApp() *providers.OAuthClient {
+	return &providers.OAuthClient{
 		ID:           "test-app-id",
 		ClientID:     "test-client-id",
 		RedirectURIs: []string{"https://client.example.com/callback"},
-		GrantTypes:   []oauth2const.GrantType{oauth2const.GrantTypeAuthorizationCode},
+		GrantTypes:   []providers.GrantType{providers.GrantTypeAuthorizationCode},
 		PKCERequired: false,
+		Scopes:       []string{"openid", "profile", "email"},
 	}
 }
 
@@ -133,12 +190,12 @@ func (suite *AuthorizeServiceTestSuite) testApp() *inboundmodel.OAuthClient {
 func (suite *AuthorizeServiceTestSuite) testMsg() *OAuthMessage {
 	return &OAuthMessage{
 		RequestType: oauth2const.TypeInitialAuthorizationRequest,
-		RequestQueryParams: map[string]string{
-			"client_id":     "test-client-id",
-			"redirect_uri":  "https://client.example.com/callback",
-			"response_type": "code",
-			"scope":         "read write",
-			"state":         "test-state",
+		RequestQueryParams: url.Values{
+			"client_id":     {"test-client-id"},
+			"redirect_uri":  {"https://client.example.com/callback"},
+			"response_type": {"code"},
+			"scope":         {"read write"},
+			"state":         {"test-state"},
 		},
 	}
 }
@@ -146,9 +203,9 @@ func (suite *AuthorizeServiceTestSuite) testMsg() *OAuthMessage {
 func (suite *AuthorizeServiceTestSuite) TestHandleInitialAuthorizationRequest_MissingClientID() {
 	msg := &OAuthMessage{
 		RequestType: oauth2const.TypeInitialAuthorizationRequest,
-		RequestQueryParams: map[string]string{
-			"redirect_uri":  "https://client.example.com/callback",
-			"response_type": "code",
+		RequestQueryParams: url.Values{
+			"redirect_uri":  {"https://client.example.com/callback"},
+			"response_type": {"code"},
 		},
 	}
 
@@ -166,10 +223,10 @@ func (suite *AuthorizeServiceTestSuite) TestHandleInitialAuthorizationRequest_In
 
 	msg := &OAuthMessage{
 		RequestType: oauth2const.TypeInitialAuthorizationRequest,
-		RequestQueryParams: map[string]string{
-			"client_id":     "invalid-client",
-			"redirect_uri":  "https://client.example.com/callback",
-			"response_type": "code",
+		RequestQueryParams: url.Values{
+			"client_id":     {"invalid-client"},
+			"redirect_uri":  {"https://client.example.com/callback"},
+			"response_type": {"code"},
 		},
 	}
 
@@ -187,10 +244,10 @@ func (suite *AuthorizeServiceTestSuite) TestHandleInitialAuthorizationRequest_In
 
 	msg := &OAuthMessage{
 		RequestType: oauth2const.TypeInitialAuthorizationRequest,
-		RequestQueryParams: map[string]string{
-			"client_id":    "test-client-id",
-			"redirect_uri": "https://client.example.com/callback",
-			"claims":       "{invalid json}",
+		RequestQueryParams: url.Values{
+			"client_id":    {"test-client-id"},
+			"redirect_uri": {"https://client.example.com/callback"},
+			"claims":       {"{invalid json}"},
 		},
 	}
 
@@ -207,7 +264,7 @@ func (suite *AuthorizeServiceTestSuite) TestHandleInitialAuthorizationRequest_Va
 	suite.mockInboundClient.EXPECT().GetOAuthClientByClientID(mock.Anything, "test-client-id").Return(app, nil)
 
 	// Validator rejects; sendErrorToApp=false → error goes to error page, not client.
-	suite.mockValidator.On("validateInitialAuthorizationRequest", mock.Anything, app).
+	suite.mockValidator.On("validateInitialAuthorizationRequest", mock.Anything, mock.Anything, app).
 		Return(false, oauth2const.ErrorInvalidRequest, "Missing required parameter")
 
 	msg := suite.testMsg()
@@ -226,7 +283,7 @@ func (suite *AuthorizeServiceTestSuite) TestHandleInitialAuthorizationRequest_Va
 	suite.mockInboundClient.EXPECT().GetOAuthClientByClientID(mock.Anything, "test-client-id").Return(app, nil)
 
 	// sendErrorToApp=true + redirect_uri present → error forwarded to client.
-	suite.mockValidator.On("validateInitialAuthorizationRequest", mock.Anything, app).
+	suite.mockValidator.On("validateInitialAuthorizationRequest", mock.Anything, mock.Anything, app).
 		Return(true, oauth2const.ErrorUnsupportedResponseType, "Unsupported response_type value")
 
 	msg := suite.testMsg()
@@ -244,10 +301,30 @@ func (suite *AuthorizeServiceTestSuite) TestHandleInitialAuthorizationRequest_Va
 func (suite *AuthorizeServiceTestSuite) TestHandleInitialAuthorizationRequest_FlowInitError() {
 	app := suite.testApp()
 	suite.mockInboundClient.EXPECT().GetOAuthClientByClientID(mock.Anything, "test-client-id").Return(app, nil)
-	suite.mockValidator.On("validateInitialAuthorizationRequest", mock.Anything, app).
+	suite.mockValidator.On("validateInitialAuthorizationRequest", mock.Anything, mock.Anything, app).
 		Return(false, "", "")
+	suite.mockAuthReqStore.EXPECT().AddRequest(mock.Anything, mock.Anything).Return(testAuthID, nil)
 	suite.mockFlowExecService.EXPECT().InitiateFlow(mock.Anything, mock.Anything).
-		Return("", &serviceerror.InternalServerError)
+		Return("", &tidcommon.InternalServerError)
+
+	svc := suite.newService()
+	result, authErr := svc.HandleInitialAuthorizationRequest(context.Background(), suite.testMsg())
+
+	assert.Nil(suite.T(), result)
+	assert.NotNil(suite.T(), authErr)
+	assert.Equal(suite.T(), oauth2const.ErrorServerError, authErr.Code)
+	assert.True(suite.T(), authErr.SendErrorToClient)
+	assert.Equal(suite.T(), "https://client.example.com/callback", authErr.ClientRedirectURI)
+	assert.Equal(suite.T(), "test-state", authErr.State)
+}
+
+func (suite *AuthorizeServiceTestSuite) TestHandleInitialAuthorizationRequest_StoreRequestError() {
+	app := suite.testApp()
+	suite.mockInboundClient.EXPECT().GetOAuthClientByClientID(mock.Anything, "test-client-id").Return(app, nil)
+	suite.mockValidator.On("validateInitialAuthorizationRequest", mock.Anything, mock.Anything, app).
+		Return(false, "", "")
+	suite.mockAuthReqStore.EXPECT().AddRequest(mock.Anything, mock.Anything).
+		Return("", errors.New("store unavailable"))
 
 	svc := suite.newService()
 	result, authErr := svc.HandleInitialAuthorizationRequest(context.Background(), suite.testMsg())
@@ -263,7 +340,7 @@ func (suite *AuthorizeServiceTestSuite) TestHandleInitialAuthorizationRequest_Fl
 func (suite *AuthorizeServiceTestSuite) TestHandleInitialAuthorizationRequest_Success() {
 	app := suite.testApp()
 	suite.mockInboundClient.EXPECT().GetOAuthClientByClientID(mock.Anything, "test-client-id").Return(app, nil)
-	suite.mockValidator.On("validateInitialAuthorizationRequest", mock.Anything, app).
+	suite.mockValidator.On("validateInitialAuthorizationRequest", mock.Anything, mock.Anything, app).
 		Return(false, "", "")
 	suite.mockFlowExecService.EXPECT().InitiateFlow(mock.Anything, mock.Anything).Return("test-flow-id", nil)
 	suite.mockAuthReqStore.EXPECT().AddRequest(mock.Anything, mock.Anything).Return(testAuthID, nil)
@@ -278,22 +355,148 @@ func (suite *AuthorizeServiceTestSuite) TestHandleInitialAuthorizationRequest_Su
 	assert.Equal(suite.T(), "test-flow-id", result.QueryParams[oauth2const.ExecutionID])
 }
 
+func (suite *AuthorizeServiceTestSuite) TestHandleInitialAuthorizationRequest_ExplicitResourceSetsRuntimeRSID() {
+	app := suite.testApp()
+	suite.mockInboundClient.EXPECT().GetOAuthClientByClientID(mock.Anything, "test-client-id").Return(app, nil)
+	suite.mockValidator.On("validateInitialAuthorizationRequest", mock.Anything, mock.Anything, app).
+		Return(false, "", "")
+	suite.mockResourceService.EXPECT().GetResourceServerByIdentifier(mock.Anything, "https://api.example.com").
+		Return(&providers.ResourceServer{ID: "rs-api", Identifier: "https://api.example.com"}, nil)
+	suite.mockResourceService.EXPECT().ValidatePermissions(mock.Anything, "rs-api", mock.Anything).
+		Return([]string{}, nil)
+
+	var captured *flowexec.FlowInitContext
+	suite.mockFlowExecService.EXPECT().InitiateFlow(mock.Anything, mock.Anything).
+		Run(func(_ context.Context, ic *flowexec.FlowInitContext) { captured = ic }).
+		Return("test-flow-id", nil)
+	suite.mockAuthReqStore.EXPECT().AddRequest(mock.Anything, mock.Anything).Return(testAuthID, nil)
+
+	msg := suite.testMsg()
+	msg.Resources = []string{"https://api.example.com"}
+
+	svc := suite.newService()
+	_, authErr := svc.HandleInitialAuthorizationRequest(context.Background(), msg)
+
+	suite.Require().Nil(authErr)
+	suite.Require().NotNil(captured)
+	assert.Equal(suite.T(), "https://api.example.com", captured.RuntimeData[flowcm.RuntimeKeyResourceServerIdentifier])
+}
+
+func (suite *AuthorizeServiceTestSuite) TestHandleInitialAuthorizationRequest_DefaultResourceServerFallback() {
+	app := suite.testApp()
+	suite.mockInboundClient.EXPECT().GetOAuthClientByClientID(mock.Anything, "test-client-id").Return(app, nil)
+	suite.mockValidator.On("validateInitialAuthorizationRequest", mock.Anything, mock.Anything, app).
+		Return(false, "", "")
+
+	var captured *flowexec.FlowInitContext
+	suite.mockFlowExecService.EXPECT().InitiateFlow(mock.Anything, mock.Anything).
+		Run(func(_ context.Context, ic *flowexec.FlowInitContext) { captured = ic }).
+		Return("test-flow-id", nil)
+	suite.mockAuthReqStore.EXPECT().AddRequest(mock.Anything, mock.Anything).Return(testAuthID, nil)
+
+	// No resource supplied; resolves the default resource server stubbed in SetupTest.
+	svc := suite.newService()
+	_, authErr := svc.HandleInitialAuthorizationRequest(context.Background(), suite.testMsg())
+
+	suite.Require().Nil(authErr)
+	suite.Require().NotNil(captured)
+	assert.Equal(suite.T(), "https://rs-default.example.com",
+		captured.RuntimeData[flowcm.RuntimeKeyResourceServerIdentifier])
+}
+
+func (suite *AuthorizeServiceTestSuite) TestHandleInitialAuthorizationRequest_NoResourceNoDefaultRejects() {
+	app := suite.testApp()
+	suite.mockInboundClient.EXPECT().GetOAuthClientByClientID(mock.Anything, "test-client-id").Return(app, nil)
+	suite.mockValidator.On("validateInitialAuthorizationRequest", mock.Anything, mock.Anything, app).
+		Return(false, "", "")
+
+	// No default resource server configured; resolving the empty identifier fails, so the
+	// permission-bearing request cannot bind and is rejected with invalid_target.
+	rs := resourcemock.NewResourceServiceInterfaceMock(suite.T())
+	rs.EXPECT().GetResourceServerByIdentifier(mock.Anything, "").
+		Return(nil, &tidcommon.ServiceError{Type: tidcommon.ClientErrorType, Code: "RES-1003"})
+
+	svc := suite.newService()
+	svc.resourceService = rs
+
+	_, authErr := svc.HandleInitialAuthorizationRequest(context.Background(), suite.testMsg())
+
+	suite.Require().NotNil(authErr)
+	assert.Equal(suite.T(), oauth2const.ErrorInvalidTarget, authErr.Code)
+}
+
+func (suite *AuthorizeServiceTestSuite) TestHandleInitialAuthorizationRequest_OIDCOnlyLeavesRSIDEmpty() {
+	app := suite.testApp()
+	suite.mockInboundClient.EXPECT().GetOAuthClientByClientID(mock.Anything, "test-client-id").Return(app, nil)
+	suite.mockValidator.On("validateInitialAuthorizationRequest", mock.Anything, mock.Anything, app).
+		Return(false, "", "")
+
+	var captured *flowexec.FlowInitContext
+	suite.mockFlowExecService.EXPECT().InitiateFlow(mock.Anything, mock.Anything).
+		Run(func(_ context.Context, ic *flowexec.FlowInitContext) { captured = ic }).
+		Return("test-flow-id", nil)
+	suite.mockAuthReqStore.EXPECT().AddRequest(mock.Anything, mock.Anything).Return(testAuthID, nil)
+
+	msg := suite.testMsg()
+	msg.RequestQueryParams["scope"] = []string{"openid profile"}
+
+	svc := suite.newService()
+	_, authErr := svc.HandleInitialAuthorizationRequest(context.Background(), msg)
+
+	suite.Require().Nil(authErr)
+	suite.Require().NotNil(captured)
+	assert.Empty(suite.T(), captured.RuntimeData[flowcm.RuntimeKeyResourceServerIdentifier])
+}
+
+func (suite *AuthorizeServiceTestSuite) TestHandleInitialAuthorizationRequest_FiltersOIDCScopesByAppScopes() {
+	app := suite.testApp()
+	app.Scopes = []string{"profile"}
+	suite.mockInboundClient.EXPECT().GetOAuthClientByClientID(mock.Anything, "test-client-id").Return(app, nil)
+	suite.mockValidator.On("validateInitialAuthorizationRequest", mock.Anything, mock.Anything, app).
+		Return(false, "", "")
+	suite.mockFlowExecService.EXPECT().InitiateFlow(mock.Anything, mock.Anything).Return("test-flow-id", nil)
+
+	var captured authRequestContext
+	suite.mockAuthReqStore.EXPECT().AddRequest(mock.Anything, mock.Anything).
+		Run(func(_ context.Context, value authRequestContext) {
+			captured = value
+		}).Return(testAuthID, nil)
+
+	msg := &OAuthMessage{
+		RequestType: oauth2const.TypeInitialAuthorizationRequest,
+		RequestQueryParams: url.Values{
+			"client_id":     {"test-client-id"},
+			"redirect_uri":  {"https://client.example.com/callback"},
+			"response_type": {"code"},
+			"scope":         {"openid email profile"},
+			"state":         {"test-state"},
+		},
+	}
+
+	svc := suite.newService()
+	result, authErr := svc.HandleInitialAuthorizationRequest(context.Background(), msg)
+
+	assert.Nil(suite.T(), authErr)
+	assert.NotNil(suite.T(), result)
+	assert.Equal(suite.T(), []string{"profile"}, captured.OAuthParameters.StandardScopes)
+}
+
 func (suite *AuthorizeServiceTestSuite) TestHandleInitialAuthorizationRequest_InsecureRedirectURI() {
 	app := suite.testApp()
 	app.RedirectURIs = []string{"http://client.example.com/callback"}
 	suite.mockInboundClient.EXPECT().GetOAuthClientByClientID(mock.Anything, "test-client-id").Return(app, nil)
-	suite.mockValidator.On("validateInitialAuthorizationRequest", mock.Anything, app).
+	suite.mockValidator.On("validateInitialAuthorizationRequest", mock.Anything, mock.Anything, app).
 		Return(false, "", "")
 	suite.mockFlowExecService.EXPECT().InitiateFlow(mock.Anything, mock.Anything).Return("test-flow-id", nil)
 	suite.mockAuthReqStore.EXPECT().AddRequest(mock.Anything, mock.Anything).Return(testAuthID, nil)
 
 	msg := &OAuthMessage{
 		RequestType: oauth2const.TypeInitialAuthorizationRequest,
-		RequestQueryParams: map[string]string{
-			"client_id":     "test-client-id",
-			"redirect_uri":  "http://client.example.com/callback",
-			"response_type": "code",
-			"scope":         "read write",
+		RequestQueryParams: url.Values{
+			"client_id":     {"test-client-id"},
+			"redirect_uri":  {"http://client.example.com/callback"},
+			"response_type": {"code"},
+			"scope":         {"read write"},
 		},
 	}
 
@@ -308,17 +511,17 @@ func (suite *AuthorizeServiceTestSuite) TestHandleInitialAuthorizationRequest_In
 func (suite *AuthorizeServiceTestSuite) TestHandleInitialAuthorizationRequest_EmptyRedirectURIUsesAppDefault() {
 	app := suite.testApp() // RedirectURIs: ["https://client.example.com/callback"]
 	suite.mockInboundClient.EXPECT().GetOAuthClientByClientID(mock.Anything, "test-client-id").Return(app, nil)
-	suite.mockValidator.On("validateInitialAuthorizationRequest", mock.Anything, app).
+	suite.mockValidator.On("validateInitialAuthorizationRequest", mock.Anything, mock.Anything, app).
 		Return(false, "", "")
 	suite.mockFlowExecService.EXPECT().InitiateFlow(mock.Anything, mock.Anything).Return("test-flow-id", nil)
 	suite.mockAuthReqStore.EXPECT().AddRequest(mock.Anything, mock.Anything).Return(testAuthID, nil)
 
 	msg := &OAuthMessage{
 		RequestType: oauth2const.TypeInitialAuthorizationRequest,
-		RequestQueryParams: map[string]string{
-			"client_id":     "test-client-id",
-			"response_type": "code",
-			"scope":         "read write",
+		RequestQueryParams: url.Values{
+			"client_id":     {"test-client-id"},
+			"response_type": {"code"},
+			"scope":         {"read write"},
 			// No redirect_uri — service should use app.RedirectURIs[0].
 		},
 	}
@@ -333,19 +536,19 @@ func (suite *AuthorizeServiceTestSuite) TestHandleInitialAuthorizationRequest_Em
 func (suite *AuthorizeServiceTestSuite) TestHandleInitialAuthorizationRequest_WithClaimsLocales() {
 	app := suite.testApp()
 	suite.mockInboundClient.EXPECT().GetOAuthClientByClientID(mock.Anything, "test-client-id").Return(app, nil)
-	suite.mockValidator.On("validateInitialAuthorizationRequest", mock.Anything, app).
+	suite.mockValidator.On("validateInitialAuthorizationRequest", mock.Anything, mock.Anything, app).
 		Return(false, "", "")
 	suite.mockFlowExecService.EXPECT().InitiateFlow(mock.Anything, mock.Anything).Return("test-flow-id", nil)
 	suite.mockAuthReqStore.EXPECT().AddRequest(mock.Anything, mock.Anything).Return(testAuthID, nil)
 
 	msg := &OAuthMessage{
 		RequestType: oauth2const.TypeInitialAuthorizationRequest,
-		RequestQueryParams: map[string]string{
-			"client_id":      "test-client-id",
-			"redirect_uri":   "https://client.example.com/callback",
-			"response_type":  "code",
-			"scope":          "openid read write",
-			"claims_locales": "en-US fr-CA",
+		RequestQueryParams: url.Values{
+			"client_id":      {"test-client-id"},
+			"redirect_uri":   {"https://client.example.com/callback"},
+			"response_type":  {"code"},
+			"scope":          {"openid read write"},
+			"claims_locales": {"en-US fr-CA"},
 		},
 	}
 
@@ -358,27 +561,28 @@ func (suite *AuthorizeServiceTestSuite) TestHandleInitialAuthorizationRequest_Wi
 
 func (suite *AuthorizeServiceTestSuite) TestHandleInitialAuthorizationRequest_SetsRuntimeRequiredAttrs() {
 	app := suite.testApp()
-	app.Token = &inboundmodel.OAuthTokenConfig{
-		AccessToken: &inboundmodel.AccessTokenConfig{
-			UserAttributes: []string{"user_id"},
+	app.Token = &providers.OAuthTokenConfig{
+		AccessToken: &providers.AccessTokenConfig{
+			UserConfig: &providers.AccessTokenSubConfig{Attributes: []string{"user_id"}},
 		},
-		IDToken: &inboundmodel.IDTokenConfig{
+		IDToken: &providers.IDTokenConfig{
 			UserAttributes: []string{"email"},
 		},
 	}
-	app.UserInfo = &inboundmodel.UserInfoConfig{
+	app.UserInfo = &providers.UserInfoConfig{
 		UserAttributes: []string{"phone_number"},
 	}
 
 	suite.mockInboundClient.EXPECT().GetOAuthClientByClientID(mock.Anything, "test-client-id").Return(app, nil)
-	suite.mockValidator.On("validateInitialAuthorizationRequest", mock.Anything, app).
+	suite.mockValidator.On("validateInitialAuthorizationRequest", mock.Anything, mock.Anything, app).
 		Return(false, "", "")
 	suite.mockFlowExecService.EXPECT().InitiateFlow(mock.Anything,
 		mock.AnythingOfType("*flowexec.FlowInitContext")).
 		Run(func(_ context.Context, initContext *flowexec.FlowInitContext) {
 			assert.Equal(suite.T(), "test-app-id", initContext.ApplicationID)
-			assert.Equal(suite.T(), string(flowcm.FlowTypeAuthentication), initContext.FlowType)
+			assert.Equal(suite.T(), string(providers.FlowTypeAuthentication), initContext.FlowType)
 			assert.Equal(suite.T(), "test-client-id", initContext.RuntimeData[flowcm.RuntimeKeyClientID])
+			assert.Equal(suite.T(), testAuthID, initContext.RuntimeData[flowcm.RuntimeKeyAuthorizationRequestID])
 			assert.ElementsMatch(suite.T(), []string{"email"},
 				strings.Fields(initContext.RuntimeData[flowcm.RuntimeKeyRequiredEssentialAttributes]))
 			assert.ElementsMatch(suite.T(), []string{"user_id", "phone_number"},
@@ -389,12 +593,12 @@ func (suite *AuthorizeServiceTestSuite) TestHandleInitialAuthorizationRequest_Se
 
 	msg := &OAuthMessage{
 		RequestType: oauth2const.TypeInitialAuthorizationRequest,
-		RequestQueryParams: map[string]string{
-			"client_id":     "test-client-id",
-			"redirect_uri":  "https://client.example.com/callback",
-			"response_type": "code",
-			"scope":         "openid",
-			"claims":        `{"id_token":{"email":{"essential":true}},"userinfo":{"phone_number":{}}}`,
+		RequestQueryParams: url.Values{
+			"client_id":     {"test-client-id"},
+			"redirect_uri":  {"https://client.example.com/callback"},
+			"response_type": {"code"},
+			"scope":         {"openid"},
+			"claims":        {`{"id_token":{"email":{"essential":true}},"userinfo":{"phone_number":{}}}`},
 		},
 	}
 
@@ -500,6 +704,78 @@ func (suite *AuthorizeServiceTestSuite) TestHandleAuthorizationCallback_FailedTo
 	assert.Equal(suite.T(), "https://client.example.com/callback", authErr.ClientRedirectURI)
 }
 
+func (suite *AuthorizeServiceTestSuite) TestHandleAuthorizationCallback_UnboundAssertion() {
+	// Assertion has no auth_req_id claim → binding check must reject it.
+	authCtx := authRequestContext{
+		OAuthParameters: oauth2model.OAuthParameters{
+			ClientID:    "test-client",
+			RedirectURI: "https://client.example.com/callback",
+			State:       "test-state",
+		},
+	}
+	suite.mockAuthReqStore.EXPECT().GetRequest(mock.Anything, testAuthID).Return(true, authCtx, nil)
+	suite.mockAuthReqStore.EXPECT().ClearRequest(mock.Anything, testAuthID).Return(nil)
+	suite.mockJWTService.EXPECT().VerifyJWT(mock.Anything, svcJWTUnbound, "", "").Return(nil)
+
+	svc := suite.newService()
+	redirectURI, authErr := svc.HandleAuthorizationCallback(context.Background(), testAuthID, svcJWTUnbound)
+
+	assert.Empty(suite.T(), redirectURI)
+	assert.NotNil(suite.T(), authErr)
+	assert.Equal(suite.T(), oauth2const.ErrorAccessDenied, authErr.Code)
+	assert.Equal(suite.T(), "Assertion does not match the authorization request", authErr.Message)
+	assert.Equal(suite.T(), "test-state", authErr.State)
+	assert.True(suite.T(), authErr.SendErrorToClient)
+	assert.Equal(suite.T(), "https://client.example.com/callback", authErr.ClientRedirectURI)
+}
+
+func (suite *AuthorizeServiceTestSuite) TestHandleAuthorizationCallback_MismatchedAssertion() {
+	// Assertion's auth_req_id claim identifies a different authorization request → must reject.
+	authCtx := authRequestContext{
+		OAuthParameters: oauth2model.OAuthParameters{
+			ClientID:    "test-client",
+			RedirectURI: "https://client.example.com/callback",
+			State:       "test-state",
+		},
+	}
+	suite.mockAuthReqStore.EXPECT().GetRequest(mock.Anything, testAuthID).Return(true, authCtx, nil)
+	suite.mockAuthReqStore.EXPECT().ClearRequest(mock.Anything, testAuthID).Return(nil)
+	suite.mockJWTService.EXPECT().VerifyJWT(mock.Anything, svcJWTMismatched, "", "").Return(nil)
+
+	svc := suite.newService()
+	redirectURI, authErr := svc.HandleAuthorizationCallback(context.Background(), testAuthID, svcJWTMismatched)
+
+	assert.Empty(suite.T(), redirectURI)
+	assert.NotNil(suite.T(), authErr)
+	assert.Equal(suite.T(), oauth2const.ErrorAccessDenied, authErr.Code)
+	assert.Equal(suite.T(), "Assertion does not match the authorization request", authErr.Message)
+}
+
+func (suite *AuthorizeServiceTestSuite) TestHandleAuthorizationCallback_NonStringAuthReqID() {
+	// Assertion's authorization_request_id claim is not a string → malformed client input,
+	// mapped to invalid_request rather than server_error.
+	authCtx := authRequestContext{
+		OAuthParameters: oauth2model.OAuthParameters{
+			ClientID:    "test-client",
+			RedirectURI: "https://client.example.com/callback",
+			State:       "test-state",
+		},
+	}
+	suite.mockAuthReqStore.EXPECT().GetRequest(mock.Anything, testAuthID).Return(true, authCtx, nil)
+	suite.mockAuthReqStore.EXPECT().ClearRequest(mock.Anything, testAuthID).Return(nil)
+	suite.mockJWTService.EXPECT().VerifyJWT(mock.Anything, svcJWTNonStringAuthReqID, "", "").Return(nil)
+
+	svc := suite.newService()
+	redirectURI, authErr := svc.HandleAuthorizationCallback(context.Background(), testAuthID, svcJWTNonStringAuthReqID)
+
+	assert.Empty(suite.T(), redirectURI)
+	assert.NotNil(suite.T(), authErr)
+	assert.Equal(suite.T(), oauth2const.ErrorInvalidRequest, authErr.Code)
+	assert.True(suite.T(), authErr.SendErrorToClient)
+	assert.Equal(suite.T(), "https://client.example.com/callback", authErr.ClientRedirectURI)
+	assert.Equal(suite.T(), "test-state", authErr.State)
+}
+
 func (suite *AuthorizeServiceTestSuite) TestHandleAuthorizationCallback_PersistAuthCodeError() {
 	authCtx := authRequestContext{
 		OAuthParameters: oauth2model.OAuthParameters{
@@ -571,7 +847,7 @@ func (suite *AuthorizeServiceTestSuite) TestHandleAuthorizationCallback_WithStat
 }
 
 func (suite *AuthorizeServiceTestSuite) TestHandleAuthorizationCallback_EmptyAuthorizedPermissions() {
-	// svcJWTWithIat has only "sub" and "iat" — no authorized_permissions.
+	// svcJWTWithIat has no authorized_permissions claim.
 	// Permission scopes in the auth context should be cleared.
 	authCtx := authRequestContext{
 		OAuthParameters: oauth2model.OAuthParameters{
@@ -692,6 +968,62 @@ func (suite *AuthorizeServiceTestSuite) TestGetAuthorizationCodeDetails_AlreadyC
 	assert.ErrorIs(suite.T(), err, errAuthorizationCodeAlreadyConsumed)
 }
 
+func (suite *AuthorizeServiceTestSuite) TestGetAuthorizationCodeDetails_ReplayRevokesTokenFamily() {
+	// A replay of an already-consumed code: the code is gone from the store, but the replay marker
+	// written at first redemption still carries the grant's tfid, so the whole family is revoked.
+	suite.mockAuthzCodeStore.EXPECT().GetAuthorizationCode(mock.Anything, "code").
+		Return(nil, errAuthorizationCodeNotFound)
+	suite.mockAuthzCodeStore.EXPECT().ConsumedTokenFamily(mock.Anything, "code").
+		Return("tfid-replay", true, nil)
+
+	revoker := revocationmock.NewCriteriaRevokerInterfaceMock(suite.T())
+	revoker.EXPECT().RevokeTokenFamily(mock.Anything, "tfid-replay", revocation.RevocationReasonCodeReplay).
+		Return(nil)
+
+	svc := suite.newService()
+	svc.criteriaRevoker = revoker
+	svc.cfg.OAuth.Revocation.TokenFamily.OnCodeReplay = true
+
+	result, err := svc.GetAuthorizationCodeDetails(context.Background(), "client-id", "code")
+
+	assert.Nil(suite.T(), result)
+	assert.ErrorIs(suite.T(), err, errAuthorizationCodeNotFound)
+	revoker.AssertExpectations(suite.T())
+}
+
+func (suite *AuthorizeServiceTestSuite) TestCreateAuthorizationCode_MintsFallbackTokenFamilyID() {
+	// A non-SSO flow issues no token family id, so the code must mint one to anchor a revocable family.
+	authCtx := &authRequestContext{
+		OAuthParameters: oauth2model.OAuthParameters{
+			ClientID:    "test-client",
+			RedirectURI: "https://client.example.com/callback",
+		},
+	}
+	claims := &assertionClaims{userID: "user-1"}
+
+	code, err := createAuthorizationCode(authorizeServiceCfgFromRuntime(), authCtx, claims, time.Now())
+
+	assert.NoError(suite.T(), err)
+	assert.NotEmpty(suite.T(), code.TokenFamilyID)
+}
+
+func (suite *AuthorizeServiceTestSuite) TestCreateAuthorizationCode_PreservesIncomingTokenFamilyID() {
+	// An SSO flow already minted the tfid at the session node; the code must carry that same value so
+	// its session-participant linkage stays consistent.
+	authCtx := &authRequestContext{
+		OAuthParameters: oauth2model.OAuthParameters{
+			ClientID:    "test-client",
+			RedirectURI: "https://client.example.com/callback",
+		},
+	}
+	claims := &assertionClaims{userID: "user-1", tokenFamilyID: "tfid-from-sso"}
+
+	code, err := createAuthorizationCode(authorizeServiceCfgFromRuntime(), authCtx, claims, time.Now())
+
+	assert.NoError(suite.T(), err)
+	assert.Equal(suite.T(), "tfid-from-sso", code.TokenFamilyID)
+}
+
 func (suite *AuthorizeServiceTestSuite) TestGetAuthorizationCodeDetails_Success() {
 	record := &AuthorizationCode{
 		CodeID:           "code-id-123",
@@ -718,7 +1050,7 @@ func (suite *AuthorizeServiceTestSuite) TestDetermineClaimsForTokens_NilApp() {
 	accessTokenClaims, idTokenClaims, userInfoClaims := determineClaimsForTokens(
 		[]string{"openid", "profile"},
 		nil,
-		string(oauth2const.ResponseTypeCode),
+		string(providers.ResponseTypeCode),
 		nil,
 	)
 
@@ -728,7 +1060,7 @@ func (suite *AuthorizeServiceTestSuite) TestDetermineClaimsForTokens_NilApp() {
 }
 
 func (suite *AuthorizeServiceTestSuite) TestDetermineClaimsForTokens_NilTokenConfig() {
-	app := &inboundmodel.OAuthClient{
+	app := &providers.OAuthClient{
 		ID:       "test-app",
 		ClientID: "test-client",
 		Token:    nil,
@@ -737,7 +1069,7 @@ func (suite *AuthorizeServiceTestSuite) TestDetermineClaimsForTokens_NilTokenCon
 	accessTokenClaims, idTokenClaims, userInfoClaims := determineClaimsForTokens(
 		[]string{"openid", "profile"},
 		nil,
-		string(oauth2const.ResponseTypeCode),
+		string(providers.ResponseTypeCode),
 		app,
 	)
 
@@ -747,12 +1079,12 @@ func (suite *AuthorizeServiceTestSuite) TestDetermineClaimsForTokens_NilTokenCon
 }
 
 func (suite *AuthorizeServiceTestSuite) TestDetermineClaimsForTokens_AccessTokenClaimsOnly() {
-	app := &inboundmodel.OAuthClient{
+	app := &providers.OAuthClient{
 		ID:       "test-app",
 		ClientID: "test-client",
-		Token: &inboundmodel.OAuthTokenConfig{
-			AccessToken: &inboundmodel.AccessTokenConfig{
-				UserAttributes: []string{"user_id", "org_id", "role"},
+		Token: &providers.OAuthTokenConfig{
+			AccessToken: &providers.AccessTokenConfig{
+				UserConfig: &providers.AccessTokenSubConfig{Attributes: []string{"user_id", "org_id", "role"}},
 			},
 		},
 	}
@@ -760,7 +1092,7 @@ func (suite *AuthorizeServiceTestSuite) TestDetermineClaimsForTokens_AccessToken
 	accessTokenClaims, idTokenClaims, userInfoClaims := determineClaimsForTokens(
 		[]string{}, // No OIDC scopes
 		nil,
-		string(oauth2const.ResponseTypeCode),
+		string(providers.ResponseTypeCode),
 		app,
 	)
 
@@ -773,18 +1105,18 @@ func (suite *AuthorizeServiceTestSuite) TestDetermineClaimsForTokens_AccessToken
 }
 
 func (suite *AuthorizeServiceTestSuite) TestDetermineClaimsForTokens_NoOpenIDScope() {
-	app := &inboundmodel.OAuthClient{
+	app := &providers.OAuthClient{
 		ID:       "test-app",
 		ClientID: "test-client",
-		Token: &inboundmodel.OAuthTokenConfig{
-			AccessToken: &inboundmodel.AccessTokenConfig{
-				UserAttributes: []string{"user_id"},
+		Token: &providers.OAuthTokenConfig{
+			AccessToken: &providers.AccessTokenConfig{
+				UserConfig: &providers.AccessTokenSubConfig{Attributes: []string{"user_id"}},
 			},
-			IDToken: &inboundmodel.IDTokenConfig{
+			IDToken: &providers.IDTokenConfig{
 				UserAttributes: []string{"email", "name"},
 			},
 		},
-		UserInfo: &inboundmodel.UserInfoConfig{
+		UserInfo: &providers.UserInfoConfig{
 			UserAttributes: []string{"email", "name"},
 		},
 	}
@@ -792,7 +1124,7 @@ func (suite *AuthorizeServiceTestSuite) TestDetermineClaimsForTokens_NoOpenIDSco
 	accessTokenClaims, idTokenClaims, userInfoClaims := determineClaimsForTokens(
 		[]string{"profile"}, // OIDC scope but no openid
 		nil,
-		string(oauth2const.ResponseTypeCode),
+		string(providers.ResponseTypeCode),
 		app,
 	)
 
@@ -804,15 +1136,15 @@ func (suite *AuthorizeServiceTestSuite) TestDetermineClaimsForTokens_NoOpenIDSco
 }
 
 func (suite *AuthorizeServiceTestSuite) TestDetermineClaimsForTokens_StandardOIDCScopes_CodeFlow() {
-	app := &inboundmodel.OAuthClient{
+	app := &providers.OAuthClient{
 		ID:       "test-app",
 		ClientID: "test-client",
-		Token: &inboundmodel.OAuthTokenConfig{
-			IDToken: &inboundmodel.IDTokenConfig{
+		Token: &providers.OAuthTokenConfig{
+			IDToken: &providers.IDTokenConfig{
 				UserAttributes: []string{"email", "email_verified", "name"},
 			},
 		},
-		UserInfo: &inboundmodel.UserInfoConfig{
+		UserInfo: &providers.UserInfoConfig{
 			UserAttributes: []string{"email", "email_verified", "name", "picture"},
 		},
 	}
@@ -820,7 +1152,7 @@ func (suite *AuthorizeServiceTestSuite) TestDetermineClaimsForTokens_StandardOID
 	accessTokenClaims, idTokenClaims, userInfoClaims := determineClaimsForTokens(
 		[]string{"openid", "email"},
 		nil,
-		string(oauth2const.ResponseTypeCode),
+		string(providers.ResponseTypeCode),
 		app,
 	)
 
@@ -833,15 +1165,15 @@ func (suite *AuthorizeServiceTestSuite) TestDetermineClaimsForTokens_StandardOID
 }
 
 func (suite *AuthorizeServiceTestSuite) TestDetermineClaimsForTokens_StandardOIDCScopes_ImplicitFlow() {
-	app := &inboundmodel.OAuthClient{
+	app := &providers.OAuthClient{
 		ID:       "test-app",
 		ClientID: "test-client",
-		Token: &inboundmodel.OAuthTokenConfig{
-			IDToken: &inboundmodel.IDTokenConfig{
+		Token: &providers.OAuthTokenConfig{
+			IDToken: &providers.IDTokenConfig{
 				UserAttributes: []string{"email", "email_verified", "name"},
 			},
 		},
-		UserInfo: &inboundmodel.UserInfoConfig{
+		UserInfo: &providers.UserInfoConfig{
 			UserAttributes: []string{"email", "email_verified", "name", "picture"},
 		},
 	}
@@ -849,7 +1181,7 @@ func (suite *AuthorizeServiceTestSuite) TestDetermineClaimsForTokens_StandardOID
 	accessTokenClaims, idTokenClaims, userInfoClaims := determineClaimsForTokens(
 		[]string{"openid", "email"},
 		nil,
-		string(oauth2const.ResponseTypeIDToken), // Implicit flow - no access token
+		string(providers.ResponseTypeIDToken), // Implicit flow - no access token
 		app,
 	)
 
@@ -869,11 +1201,11 @@ func (suite *AuthorizeServiceTestSuite) TestDetermineClaimsForTokens_ClaimsParam
 		},
 	}
 
-	app := &inboundmodel.OAuthClient{
+	app := &providers.OAuthClient{
 		ID:       "test-app",
 		ClientID: "test-client",
-		Token: &inboundmodel.OAuthTokenConfig{
-			IDToken: &inboundmodel.IDTokenConfig{
+		Token: &providers.OAuthTokenConfig{
+			IDToken: &providers.IDTokenConfig{
 				UserAttributes: []string{"email", "name", "picture"},
 			},
 		},
@@ -882,7 +1214,7 @@ func (suite *AuthorizeServiceTestSuite) TestDetermineClaimsForTokens_ClaimsParam
 	accessTokenClaims, idTokenClaims, userInfoClaims := determineClaimsForTokens(
 		[]string{"openid"},
 		claimsRequest,
-		string(oauth2const.ResponseTypeCode),
+		string(providers.ResponseTypeCode),
 		app,
 	)
 
@@ -901,11 +1233,11 @@ func (suite *AuthorizeServiceTestSuite) TestDetermineClaimsForTokens_ClaimsParam
 		},
 	}
 
-	app := &inboundmodel.OAuthClient{
+	app := &providers.OAuthClient{
 		ID:       "test-app",
 		ClientID: "test-client",
-		Token:    &inboundmodel.OAuthTokenConfig{}, // Need Token config for the method to process claims
-		UserInfo: &inboundmodel.UserInfoConfig{
+		Token:    &providers.OAuthTokenConfig{}, // Need Token config for the method to process claims
+		UserInfo: &providers.UserInfoConfig{
 			UserAttributes: []string{"email", "name", "picture"},
 		},
 	}
@@ -913,7 +1245,7 @@ func (suite *AuthorizeServiceTestSuite) TestDetermineClaimsForTokens_ClaimsParam
 	accessTokenClaims, idTokenClaims, userInfoClaims := determineClaimsForTokens(
 		[]string{"openid"},
 		claimsRequest,
-		string(oauth2const.ResponseTypeCode),
+		string(providers.ResponseTypeCode),
 		app,
 	)
 
@@ -933,11 +1265,11 @@ func (suite *AuthorizeServiceTestSuite) TestDetermineClaimsForTokens_ClaimsParam
 		},
 	}
 
-	app := &inboundmodel.OAuthClient{
+	app := &providers.OAuthClient{
 		ID:       "test-app",
 		ClientID: "test-client",
-		Token: &inboundmodel.OAuthTokenConfig{
-			IDToken: &inboundmodel.IDTokenConfig{
+		Token: &providers.OAuthTokenConfig{
+			IDToken: &providers.IDTokenConfig{
 				UserAttributes: []string{"email", "name"}, // not_found is not allowed
 			},
 		},
@@ -946,7 +1278,7 @@ func (suite *AuthorizeServiceTestSuite) TestDetermineClaimsForTokens_ClaimsParam
 	accessTokenClaims, idTokenClaims, userInfoClaims := determineClaimsForTokens(
 		[]string{"openid"},
 		claimsRequest,
-		string(oauth2const.ResponseTypeCode),
+		string(providers.ResponseTypeCode),
 		app,
 	)
 
@@ -960,15 +1292,15 @@ func (suite *AuthorizeServiceTestSuite) TestDetermineClaimsForTokens_ClaimsParam
 }
 
 func (suite *AuthorizeServiceTestSuite) TestDetermineClaimsForTokens_CustomScopeMapping() {
-	app := &inboundmodel.OAuthClient{
+	app := &providers.OAuthClient{
 		ID:       "test-app",
 		ClientID: "test-client",
-		Token: &inboundmodel.OAuthTokenConfig{
-			IDToken: &inboundmodel.IDTokenConfig{
+		Token: &providers.OAuthTokenConfig{
+			IDToken: &providers.IDTokenConfig{
 				UserAttributes: []string{"org_id", "org_name", "department"},
 			},
 		},
-		UserInfo: &inboundmodel.UserInfoConfig{
+		UserInfo: &providers.UserInfoConfig{
 			UserAttributes: []string{"org_id", "org_name", "department"},
 		},
 		ScopeClaims: map[string][]string{
@@ -979,7 +1311,7 @@ func (suite *AuthorizeServiceTestSuite) TestDetermineClaimsForTokens_CustomScope
 	accessTokenClaims, idTokenClaims, userInfoClaims := determineClaimsForTokens(
 		[]string{"openid", "organization"},
 		nil,
-		string(oauth2const.ResponseTypeCode),
+		string(providers.ResponseTypeCode),
 		app,
 	)
 
@@ -993,15 +1325,15 @@ func (suite *AuthorizeServiceTestSuite) TestDetermineClaimsForTokens_CustomScope
 
 func (suite *AuthorizeServiceTestSuite) TestDetermineClaimsForTokens_CustomScopeOverridesStandardScope() {
 	// If app defines custom mapping for a standard scope, it should override
-	app := &inboundmodel.OAuthClient{
+	app := &providers.OAuthClient{
 		ID:       "test-app",
 		ClientID: "test-client",
-		Token: &inboundmodel.OAuthTokenConfig{
-			IDToken: &inboundmodel.IDTokenConfig{
+		Token: &providers.OAuthTokenConfig{
+			IDToken: &providers.IDTokenConfig{
 				UserAttributes: []string{"custom_email", "email"},
 			},
 		},
-		UserInfo: &inboundmodel.UserInfoConfig{
+		UserInfo: &providers.UserInfoConfig{
 			UserAttributes: []string{"custom_email", "email"},
 		},
 		ScopeClaims: map[string][]string{
@@ -1012,7 +1344,7 @@ func (suite *AuthorizeServiceTestSuite) TestDetermineClaimsForTokens_CustomScope
 	accessTokenClaims, idTokenClaims, userInfoClaims := determineClaimsForTokens(
 		[]string{"openid", "email"},
 		nil,
-		string(oauth2const.ResponseTypeCode),
+		string(providers.ResponseTypeCode),
 		app,
 	)
 
@@ -1026,18 +1358,18 @@ func (suite *AuthorizeServiceTestSuite) TestDetermineClaimsForTokens_CustomScope
 }
 
 func (suite *AuthorizeServiceTestSuite) TestDetermineClaimsForTokens_MultipleScopesCodeFlow() {
-	app := &inboundmodel.OAuthClient{
+	app := &providers.OAuthClient{
 		ID:       "test-app",
 		ClientID: "test-client",
-		Token: &inboundmodel.OAuthTokenConfig{
-			AccessToken: &inboundmodel.AccessTokenConfig{
-				UserAttributes: []string{"user_id"},
+		Token: &providers.OAuthTokenConfig{
+			AccessToken: &providers.AccessTokenConfig{
+				UserConfig: &providers.AccessTokenSubConfig{Attributes: []string{"user_id"}},
 			},
-			IDToken: &inboundmodel.IDTokenConfig{
+			IDToken: &providers.IDTokenConfig{
 				UserAttributes: []string{"email", "email_verified", "name", "picture"},
 			},
 		},
-		UserInfo: &inboundmodel.UserInfoConfig{
+		UserInfo: &providers.UserInfoConfig{
 			UserAttributes: []string{"email", "email_verified", "name", "picture", "phone_number"},
 		},
 	}
@@ -1045,7 +1377,7 @@ func (suite *AuthorizeServiceTestSuite) TestDetermineClaimsForTokens_MultipleSco
 	accessTokenClaims, idTokenClaims, userInfoClaims := determineClaimsForTokens(
 		[]string{"openid", "email", "profile"},
 		nil,
-		string(oauth2const.ResponseTypeCode),
+		string(providers.ResponseTypeCode),
 		app,
 	)
 
@@ -1075,18 +1407,18 @@ func (suite *AuthorizeServiceTestSuite) TestDetermineClaimsForTokens_CompleteSce
 		},
 	}
 
-	app := &inboundmodel.OAuthClient{
+	app := &providers.OAuthClient{
 		ID:       "test-app",
 		ClientID: "test-client",
-		Token: &inboundmodel.OAuthTokenConfig{
-			AccessToken: &inboundmodel.AccessTokenConfig{
-				UserAttributes: []string{"user_id", "role"},
+		Token: &providers.OAuthTokenConfig{
+			AccessToken: &providers.AccessTokenConfig{
+				UserConfig: &providers.AccessTokenSubConfig{Attributes: []string{"user_id", "role"}},
 			},
-			IDToken: &inboundmodel.IDTokenConfig{
+			IDToken: &providers.IDTokenConfig{
 				UserAttributes: []string{"email", "email_verified", "name"},
 			},
 		},
-		UserInfo: &inboundmodel.UserInfoConfig{
+		UserInfo: &providers.UserInfoConfig{
 			UserAttributes: []string{"email", "email_verified", "name", "picture", "phone_number"},
 		},
 		ScopeClaims: map[string][]string{
@@ -1097,7 +1429,7 @@ func (suite *AuthorizeServiceTestSuite) TestDetermineClaimsForTokens_CompleteSce
 	accessTokenClaims, idTokenClaims, userInfoClaims := determineClaimsForTokens(
 		[]string{"openid", "custom"},
 		claimsRequest,
-		string(oauth2const.ResponseTypeCode),
+		string(providers.ResponseTypeCode),
 		app,
 	)
 
@@ -1117,15 +1449,15 @@ func (suite *AuthorizeServiceTestSuite) TestDetermineClaimsForTokens_CompleteSce
 }
 
 func (suite *AuthorizeServiceTestSuite) TestDetermineClaimsForTokens_EmptyAllowedSets() {
-	app := &inboundmodel.OAuthClient{
+	app := &providers.OAuthClient{
 		ID:       "test-app",
 		ClientID: "test-client",
-		Token: &inboundmodel.OAuthTokenConfig{
-			IDToken: &inboundmodel.IDTokenConfig{
+		Token: &providers.OAuthTokenConfig{
+			IDToken: &providers.IDTokenConfig{
 				UserAttributes: []string{}, // Empty allowed set
 			},
 		},
-		UserInfo: &inboundmodel.UserInfoConfig{
+		UserInfo: &providers.UserInfoConfig{
 			UserAttributes: []string{}, // Empty allowed set
 		},
 	}
@@ -1133,7 +1465,7 @@ func (suite *AuthorizeServiceTestSuite) TestDetermineClaimsForTokens_EmptyAllowe
 	accessTokenClaims, idTokenClaims, userInfoClaims := determineClaimsForTokens(
 		[]string{"openid", "email", "profile"},
 		nil,
-		string(oauth2const.ResponseTypeCode),
+		string(providers.ResponseTypeCode),
 		app,
 	)
 
@@ -1146,7 +1478,7 @@ func (suite *AuthorizeServiceTestSuite) TestGetRequiredAttributes_NilApp() {
 	essential, optional := getRequiredAttributes(
 		[]string{"openid", "profile"},
 		nil,
-		string(oauth2const.ResponseTypeCode),
+		string(providers.ResponseTypeCode),
 		nil,
 	)
 
@@ -1155,7 +1487,7 @@ func (suite *AuthorizeServiceTestSuite) TestGetRequiredAttributes_NilApp() {
 }
 
 func (suite *AuthorizeServiceTestSuite) TestGetRequiredAttributes_NilTokenConfig() {
-	app := &inboundmodel.OAuthClient{
+	app := &providers.OAuthClient{
 		ID:       "test-app",
 		ClientID: "test-client",
 		Token:    nil,
@@ -1164,7 +1496,7 @@ func (suite *AuthorizeServiceTestSuite) TestGetRequiredAttributes_NilTokenConfig
 	essential, optional := getRequiredAttributes(
 		[]string{"openid", "profile"},
 		nil,
-		string(oauth2const.ResponseTypeCode),
+		string(providers.ResponseTypeCode),
 		app,
 	)
 
@@ -1173,12 +1505,12 @@ func (suite *AuthorizeServiceTestSuite) TestGetRequiredAttributes_NilTokenConfig
 }
 
 func (suite *AuthorizeServiceTestSuite) TestGetRequiredAttributes_AccessTokenOnly() {
-	app := &inboundmodel.OAuthClient{
+	app := &providers.OAuthClient{
 		ID:       "test-app",
 		ClientID: "test-client",
-		Token: &inboundmodel.OAuthTokenConfig{
-			AccessToken: &inboundmodel.AccessTokenConfig{
-				UserAttributes: []string{"user_id", "role"},
+		Token: &providers.OAuthTokenConfig{
+			AccessToken: &providers.AccessTokenConfig{
+				UserConfig: &providers.AccessTokenSubConfig{Attributes: []string{"user_id", "role"}},
 			},
 		},
 	}
@@ -1186,7 +1518,7 @@ func (suite *AuthorizeServiceTestSuite) TestGetRequiredAttributes_AccessTokenOnl
 	essential, optional := getRequiredAttributes(
 		[]string{},
 		nil,
-		string(oauth2const.ResponseTypeCode),
+		string(providers.ResponseTypeCode),
 		app,
 	)
 
@@ -1200,18 +1532,18 @@ func (suite *AuthorizeServiceTestSuite) TestGetRequiredAttributes_AccessTokenOnl
 }
 
 func (suite *AuthorizeServiceTestSuite) TestGetRequiredAttributes_CodeFlowWithScopes() {
-	app := &inboundmodel.OAuthClient{
+	app := &providers.OAuthClient{
 		ID:       "test-app",
 		ClientID: "test-client",
-		Token: &inboundmodel.OAuthTokenConfig{
-			AccessToken: &inboundmodel.AccessTokenConfig{
-				UserAttributes: []string{"user_id"},
+		Token: &providers.OAuthTokenConfig{
+			AccessToken: &providers.AccessTokenConfig{
+				UserConfig: &providers.AccessTokenSubConfig{Attributes: []string{"user_id"}},
 			},
-			IDToken: &inboundmodel.IDTokenConfig{
+			IDToken: &providers.IDTokenConfig{
 				UserAttributes: []string{"email", "email_verified", "name"},
 			},
 		},
-		UserInfo: &inboundmodel.UserInfoConfig{
+		UserInfo: &providers.UserInfoConfig{
 			UserAttributes: []string{"email", "email_verified", "name", "picture"},
 		},
 	}
@@ -1219,7 +1551,7 @@ func (suite *AuthorizeServiceTestSuite) TestGetRequiredAttributes_CodeFlowWithSc
 	essential, optional := getRequiredAttributes(
 		[]string{"openid", "email"},
 		nil,
-		string(oauth2const.ResponseTypeCode),
+		string(providers.ResponseTypeCode),
 		app,
 	)
 
@@ -1235,11 +1567,11 @@ func (suite *AuthorizeServiceTestSuite) TestGetRequiredAttributes_CodeFlowWithSc
 }
 
 func (suite *AuthorizeServiceTestSuite) TestGetRequiredAttributes_ImplicitFlowWithScopes() {
-	app := &inboundmodel.OAuthClient{
+	app := &providers.OAuthClient{
 		ID:       "test-app",
 		ClientID: "test-client",
-		Token: &inboundmodel.OAuthTokenConfig{
-			IDToken: &inboundmodel.IDTokenConfig{
+		Token: &providers.OAuthTokenConfig{
+			IDToken: &providers.IDTokenConfig{
 				UserAttributes: []string{"email", "email_verified", "name"},
 			},
 		},
@@ -1248,7 +1580,7 @@ func (suite *AuthorizeServiceTestSuite) TestGetRequiredAttributes_ImplicitFlowWi
 	essential, optional := getRequiredAttributes(
 		[]string{"openid", "email"},
 		nil,
-		string(oauth2const.ResponseTypeIDToken),
+		string(providers.ResponseTypeIDToken),
 		app,
 	)
 
@@ -1272,18 +1604,18 @@ func (suite *AuthorizeServiceTestSuite) TestGetRequiredAttributes_WithClaimsPara
 		},
 	}
 
-	app := &inboundmodel.OAuthClient{
+	app := &providers.OAuthClient{
 		ID:       "test-app",
 		ClientID: "test-client",
-		Token: &inboundmodel.OAuthTokenConfig{
-			AccessToken: &inboundmodel.AccessTokenConfig{
-				UserAttributes: []string{"user_id"},
+		Token: &providers.OAuthTokenConfig{
+			AccessToken: &providers.AccessTokenConfig{
+				UserConfig: &providers.AccessTokenSubConfig{Attributes: []string{"user_id"}},
 			},
-			IDToken: &inboundmodel.IDTokenConfig{
+			IDToken: &providers.IDTokenConfig{
 				UserAttributes: []string{"email", "name"},
 			},
 		},
-		UserInfo: &inboundmodel.UserInfoConfig{
+		UserInfo: &providers.UserInfoConfig{
 			UserAttributes: []string{"email", "phone_number"},
 		},
 	}
@@ -1291,7 +1623,7 @@ func (suite *AuthorizeServiceTestSuite) TestGetRequiredAttributes_WithClaimsPara
 	essential, optional := getRequiredAttributes(
 		[]string{"openid"},
 		claimsRequest,
-		string(oauth2const.ResponseTypeCode),
+		string(providers.ResponseTypeCode),
 		app,
 	)
 
@@ -1317,18 +1649,18 @@ func (suite *AuthorizeServiceTestSuite) TestGetRequiredAttributes_ClaimsParamete
 		},
 	}
 
-	app := &inboundmodel.OAuthClient{
+	app := &providers.OAuthClient{
 		ID:       "test-app",
 		ClientID: "test-client",
-		Token: &inboundmodel.OAuthTokenConfig{
-			AccessToken: &inboundmodel.AccessTokenConfig{
-				UserAttributes: []string{"email", "role"},
+		Token: &providers.OAuthTokenConfig{
+			AccessToken: &providers.AccessTokenConfig{
+				UserConfig: &providers.AccessTokenSubConfig{Attributes: []string{"email", "role"}},
 			},
-			IDToken: &inboundmodel.IDTokenConfig{
+			IDToken: &providers.IDTokenConfig{
 				UserAttributes: []string{"email", "name"},
 			},
 		},
-		UserInfo: &inboundmodel.UserInfoConfig{
+		UserInfo: &providers.UserInfoConfig{
 			UserAttributes: []string{"email", "phone_number"},
 		},
 	}
@@ -1336,7 +1668,7 @@ func (suite *AuthorizeServiceTestSuite) TestGetRequiredAttributes_ClaimsParamete
 	essential, optional := getRequiredAttributes(
 		[]string{"openid"},
 		claimsRequest,
-		string(oauth2const.ResponseTypeCode),
+		string(providers.ResponseTypeCode),
 		app,
 	)
 
@@ -1357,18 +1689,20 @@ func (suite *AuthorizeServiceTestSuite) TestGetRequiredAttributes_DeduplicatesCl
 		},
 	}
 
-	app := &inboundmodel.OAuthClient{
+	app := &providers.OAuthClient{
 		ID:       "test-app",
 		ClientID: "test-client",
-		Token: &inboundmodel.OAuthTokenConfig{
-			AccessToken: &inboundmodel.AccessTokenConfig{
-				UserAttributes: []string{"email"}, // Same claim in access token too
+		Token: &providers.OAuthTokenConfig{
+			AccessToken: &providers.AccessTokenConfig{
+				UserConfig: &providers.AccessTokenSubConfig{
+					Attributes: []string{"email"}, // Same claim in access token too
+				},
 			},
-			IDToken: &inboundmodel.IDTokenConfig{
+			IDToken: &providers.IDTokenConfig{
 				UserAttributes: []string{"email"},
 			},
 		},
-		UserInfo: &inboundmodel.UserInfoConfig{
+		UserInfo: &providers.UserInfoConfig{
 			UserAttributes: []string{"email"},
 		},
 	}
@@ -1376,7 +1710,7 @@ func (suite *AuthorizeServiceTestSuite) TestGetRequiredAttributes_DeduplicatesCl
 	essential, optional := getRequiredAttributes(
 		[]string{"openid"},
 		claimsRequest,
-		string(oauth2const.ResponseTypeCode),
+		string(providers.ResponseTypeCode),
 		app,
 	)
 
@@ -1386,15 +1720,15 @@ func (suite *AuthorizeServiceTestSuite) TestGetRequiredAttributes_DeduplicatesCl
 }
 
 func (suite *AuthorizeServiceTestSuite) TestGetRequiredAttributes_CustomScopeMapping() {
-	app := &inboundmodel.OAuthClient{
+	app := &providers.OAuthClient{
 		ID:       "test-app",
 		ClientID: "test-client",
-		Token: &inboundmodel.OAuthTokenConfig{
-			IDToken: &inboundmodel.IDTokenConfig{
+		Token: &providers.OAuthTokenConfig{
+			IDToken: &providers.IDTokenConfig{
 				UserAttributes: []string{"org_id", "org_name"},
 			},
 		},
-		UserInfo: &inboundmodel.UserInfoConfig{
+		UserInfo: &providers.UserInfoConfig{
 			UserAttributes: []string{"org_id", "org_name"},
 		},
 		ScopeClaims: map[string][]string{
@@ -1405,7 +1739,7 @@ func (suite *AuthorizeServiceTestSuite) TestGetRequiredAttributes_CustomScopeMap
 	essential, optional := getRequiredAttributes(
 		[]string{"openid", "organization"},
 		nil,
-		string(oauth2const.ResponseTypeCode),
+		string(providers.ResponseTypeCode),
 		app,
 	)
 
@@ -1428,18 +1762,18 @@ func (suite *AuthorizeServiceTestSuite) TestGetRequiredAttributes_ComplexScenari
 		},
 	}
 
-	app := &inboundmodel.OAuthClient{
+	app := &providers.OAuthClient{
 		ID:       "test-app",
 		ClientID: "test-client",
-		Token: &inboundmodel.OAuthTokenConfig{
-			AccessToken: &inboundmodel.AccessTokenConfig{
-				UserAttributes: []string{"user_id", "role"},
+		Token: &providers.OAuthTokenConfig{
+			AccessToken: &providers.AccessTokenConfig{
+				UserConfig: &providers.AccessTokenSubConfig{Attributes: []string{"user_id", "role"}},
 			},
-			IDToken: &inboundmodel.IDTokenConfig{
+			IDToken: &providers.IDTokenConfig{
 				UserAttributes: []string{"email", "email_verified", "name"},
 			},
 		},
-		UserInfo: &inboundmodel.UserInfoConfig{
+		UserInfo: &providers.UserInfoConfig{
 			UserAttributes: []string{"email", "email_verified", "name", "picture", "phone_number"},
 		},
 		ScopeClaims: map[string][]string{
@@ -1450,7 +1784,7 @@ func (suite *AuthorizeServiceTestSuite) TestGetRequiredAttributes_ComplexScenari
 	essential, optional := getRequiredAttributes(
 		[]string{"openid", "custom"},
 		claimsRequest,
-		string(oauth2const.ResponseTypeCode),
+		string(providers.ResponseTypeCode),
 		app,
 	)
 
@@ -1472,14 +1806,14 @@ func (suite *AuthorizeServiceTestSuite) TestGetRequiredAttributes_ComplexScenari
 }
 
 func (suite *AuthorizeServiceTestSuite) TestGetRequiredAttributes_NoOpenIDScope() {
-	app := &inboundmodel.OAuthClient{
+	app := &providers.OAuthClient{
 		ID:       "test-app",
 		ClientID: "test-client",
-		Token: &inboundmodel.OAuthTokenConfig{
-			AccessToken: &inboundmodel.AccessTokenConfig{
-				UserAttributes: []string{"user_id"},
+		Token: &providers.OAuthTokenConfig{
+			AccessToken: &providers.AccessTokenConfig{
+				UserConfig: &providers.AccessTokenSubConfig{Attributes: []string{"user_id"}},
 			},
-			IDToken: &inboundmodel.IDTokenConfig{
+			IDToken: &providers.IDTokenConfig{
 				UserAttributes: []string{"email", "name"},
 			},
 		},
@@ -1488,7 +1822,7 @@ func (suite *AuthorizeServiceTestSuite) TestGetRequiredAttributes_NoOpenIDScope(
 	essential, optional := getRequiredAttributes(
 		[]string{"profile"}, // OIDC scope but no openid
 		nil,
-		string(oauth2const.ResponseTypeCode),
+		string(providers.ResponseTypeCode),
 		app,
 	)
 
@@ -1508,146 +1842,154 @@ func (suite *AuthorizeServiceTestSuite) TestResolveScopeAttributes_UnknownScope(
 func (suite *AuthorizeServiceTestSuite) TestResolveAttrCacheTTL_RefreshAllowed_UsesMaxOfRefreshAndAccessValidity() {
 	config.ResetServerRuntime()
 	_ = config.InitializeServerRuntime("test", &config.Config{
-		JWT: config.JWTConfig{ValidityPeriod: 900},
-		OAuth: config.OAuthConfig{
-			RefreshToken:      config.RefreshTokenConfig{ValidityPeriod: 7200},
-			AuthorizationCode: config.AuthorizationCodeConfig{ValidityPeriod: 600},
+		JWT: engineconfig.JWTConfig{ValidityPeriod: 900},
+		OAuth: engineconfig.OAuthConfig{
+			RefreshToken:      engineconfig.RefreshTokenConfig{ValidityPeriod: 7200},
+			AuthorizationCode: engineconfig.AuthorizationCodeConfig{ValidityPeriod: 600},
 		},
 	})
 
-	app := &inboundmodel.OAuthClient{
-		GrantTypes: []oauth2const.GrantType{
-			oauth2const.GrantTypeAuthorizationCode,
-			oauth2const.GrantTypeRefreshToken,
+	app := &providers.OAuthClient{
+		GrantTypes: []providers.GrantType{
+			providers.GrantTypeAuthorizationCode,
+			providers.GrantTypeRefreshToken,
 		},
-		Token: &inboundmodel.OAuthTokenConfig{
-			AccessToken: &inboundmodel.AccessTokenConfig{ValidityPeriod: 3600},
+		Token: &providers.OAuthTokenConfig{
+			AccessToken: &providers.AccessTokenConfig{
+				UserConfig: &providers.AccessTokenSubConfig{ValidityPeriod: 3600},
+			},
 		},
 	}
 
 	// Refresh token validity (7200) > access token validity (3600) → max(7200) + authCode(600) + buffer(60) = 7860.
-	assert.Equal(suite.T(), int64(7860), resolveUserAttributesCacheTTL(app))
+	assert.Equal(suite.T(), int64(7860), resolveUserAttributesCacheTTLForTest(app))
 }
 
 func (suite *AuthorizeServiceTestSuite) TestResolveAttrCacheTTL_RefreshTokenAllowed_UsesAccessTokenWhenLonger() {
 	config.ResetServerRuntime()
 	_ = config.InitializeServerRuntime("test", &config.Config{
-		JWT: config.JWTConfig{ValidityPeriod: 900},
-		OAuth: config.OAuthConfig{
-			RefreshToken:      config.RefreshTokenConfig{ValidityPeriod: 1800},
-			AuthorizationCode: config.AuthorizationCodeConfig{ValidityPeriod: 600},
+		JWT: engineconfig.JWTConfig{ValidityPeriod: 900},
+		OAuth: engineconfig.OAuthConfig{
+			RefreshToken:      engineconfig.RefreshTokenConfig{ValidityPeriod: 1800},
+			AuthorizationCode: engineconfig.AuthorizationCodeConfig{ValidityPeriod: 600},
 		},
 	})
 
-	app := &inboundmodel.OAuthClient{
-		GrantTypes: []oauth2const.GrantType{
-			oauth2const.GrantTypeAuthorizationCode,
-			oauth2const.GrantTypeRefreshToken,
+	app := &providers.OAuthClient{
+		GrantTypes: []providers.GrantType{
+			providers.GrantTypeAuthorizationCode,
+			providers.GrantTypeRefreshToken,
 		},
-		Token: &inboundmodel.OAuthTokenConfig{
-			AccessToken: &inboundmodel.AccessTokenConfig{ValidityPeriod: 7200},
+		Token: &providers.OAuthTokenConfig{
+			AccessToken: &providers.AccessTokenConfig{
+				UserConfig: &providers.AccessTokenSubConfig{ValidityPeriod: 7200},
+			},
 		},
 	}
 
 	// Access token validity (7200) > refresh token validity (1800) → max(7200) + authCode(600) + buffer(60) = 7860.
-	assert.Equal(suite.T(), int64(7860), resolveUserAttributesCacheTTL(app))
+	assert.Equal(suite.T(), int64(7860), resolveUserAttributesCacheTTLForTest(app))
 }
 
 func (suite *AuthorizeServiceTestSuite) TestResolveUserAttributesCacheTTL_RefreshTokenAllowed_FallsBackToGlobalJWT() {
 	config.ResetServerRuntime()
 	_ = config.InitializeServerRuntime("test", &config.Config{
-		JWT: config.JWTConfig{ValidityPeriod: 900},
-		OAuth: config.OAuthConfig{
+		JWT: engineconfig.JWTConfig{ValidityPeriod: 900},
+		OAuth: engineconfig.OAuthConfig{
 			// RefreshToken.ValidityPeriod is 0 → ResolveTokenConfig falls back to global JWT validity.
-			RefreshToken:      config.RefreshTokenConfig{ValidityPeriod: 0},
-			AuthorizationCode: config.AuthorizationCodeConfig{ValidityPeriod: 600},
+			RefreshToken:      engineconfig.RefreshTokenConfig{ValidityPeriod: 0},
+			AuthorizationCode: engineconfig.AuthorizationCodeConfig{ValidityPeriod: 600},
 		},
 	})
 
-	app := &inboundmodel.OAuthClient{
-		GrantTypes: []oauth2const.GrantType{
-			oauth2const.GrantTypeAuthorizationCode,
-			oauth2const.GrantTypeRefreshToken,
+	app := &providers.OAuthClient{
+		GrantTypes: []providers.GrantType{
+			providers.GrantTypeAuthorizationCode,
+			providers.GrantTypeRefreshToken,
 		},
 	}
 
 	// JWT fallback (900) + authCode(600) + buffer(60) = 1560.
-	assert.Equal(suite.T(), int64(1560), resolveUserAttributesCacheTTL(app))
+	assert.Equal(suite.T(), int64(1560), resolveUserAttributesCacheTTLForTest(app))
 }
 
 func (suite *AuthorizeServiceTestSuite) TestResolveAttrCacheTTL_RefreshTokenNotAllowed_UsesAccessTokenValidity() {
-	app := &inboundmodel.OAuthClient{
-		GrantTypes: []oauth2const.GrantType{oauth2const.GrantTypeAuthorizationCode},
-		Token: &inboundmodel.OAuthTokenConfig{
-			AccessToken: &inboundmodel.AccessTokenConfig{ValidityPeriod: 3600},
+	app := &providers.OAuthClient{
+		GrantTypes: []providers.GrantType{providers.GrantTypeAuthorizationCode},
+		Token: &providers.OAuthTokenConfig{
+			AccessToken: &providers.AccessTokenConfig{
+				UserConfig: &providers.AccessTokenSubConfig{ValidityPeriod: 3600},
+			},
 		},
 	}
 
 	// Access token validity (3600) + authCode(600) + buffer(60) = 4260.
-	assert.Equal(suite.T(), int64(4260), resolveUserAttributesCacheTTL(app))
+	assert.Equal(suite.T(), int64(4260), resolveUserAttributesCacheTTLForTest(app))
 }
 
 func (suite *AuthorizeServiceTestSuite) TestResolveAttrCacheTTL_NoRefreshToken_ZeroAccessTTL_FallsBackToGlobalJWT() {
 	config.ResetServerRuntime()
 	_ = config.InitializeServerRuntime("test", &config.Config{
-		JWT: config.JWTConfig{ValidityPeriod: 900},
-		OAuth: config.OAuthConfig{
-			AuthorizationCode: config.AuthorizationCodeConfig{ValidityPeriod: 600},
+		JWT: engineconfig.JWTConfig{ValidityPeriod: 900},
+		OAuth: engineconfig.OAuthConfig{
+			AuthorizationCode: engineconfig.AuthorizationCodeConfig{ValidityPeriod: 600},
 		},
 	})
 
-	app := &inboundmodel.OAuthClient{
-		GrantTypes: []oauth2const.GrantType{oauth2const.GrantTypeAuthorizationCode},
-		Token: &inboundmodel.OAuthTokenConfig{
+	app := &providers.OAuthClient{
+		GrantTypes: []providers.GrantType{providers.GrantTypeAuthorizationCode},
+		Token: &providers.OAuthTokenConfig{
 			// ValidityPeriod 0 is treated as unset by ResolveTokenConfig → falls back to global JWT validity.
-			AccessToken: &inboundmodel.AccessTokenConfig{ValidityPeriod: 0},
+			AccessToken: &providers.AccessTokenConfig{
+				UserConfig: &providers.AccessTokenSubConfig{ValidityPeriod: 0},
+			},
 		},
 	}
 
 	// JWT fallback (900) + authCode(600) + buffer(60) = 1560.
-	assert.Equal(suite.T(), int64(1560), resolveUserAttributesCacheTTL(app))
+	assert.Equal(suite.T(), int64(1560), resolveUserAttributesCacheTTLForTest(app))
 }
 
 func (suite *AuthorizeServiceTestSuite) TestResolveAttrCacheTTL_NoRefreshToken_NilToken_FallsBackToGlobalJWT() {
 	config.ResetServerRuntime()
 	_ = config.InitializeServerRuntime("test", &config.Config{
-		JWT: config.JWTConfig{ValidityPeriod: 900},
-		OAuth: config.OAuthConfig{
-			AuthorizationCode: config.AuthorizationCodeConfig{ValidityPeriod: 600},
+		JWT: engineconfig.JWTConfig{ValidityPeriod: 900},
+		OAuth: engineconfig.OAuthConfig{
+			AuthorizationCode: engineconfig.AuthorizationCodeConfig{ValidityPeriod: 600},
 		},
 	})
 
-	app := &inboundmodel.OAuthClient{
-		GrantTypes: []oauth2const.GrantType{oauth2const.GrantTypeAuthorizationCode},
+	app := &providers.OAuthClient{
+		GrantTypes: []providers.GrantType{providers.GrantTypeAuthorizationCode},
 		Token:      nil,
 	}
 
 	// JWT fallback (900) + authCode(600) + buffer(60) = 1560.
-	assert.Equal(suite.T(), int64(1560), resolveUserAttributesCacheTTL(app))
+	assert.Equal(suite.T(), int64(1560), resolveUserAttributesCacheTTLForTest(app))
 }
 
 func (suite *AuthorizeServiceTestSuite) TestResolveAttrCacheTTL_NoRefreshToken_NilAccessToken_FallsBackToGlobalJWT() {
 	config.ResetServerRuntime()
 	_ = config.InitializeServerRuntime("test", &config.Config{
-		JWT: config.JWTConfig{ValidityPeriod: 900},
-		OAuth: config.OAuthConfig{
-			AuthorizationCode: config.AuthorizationCodeConfig{ValidityPeriod: 600},
+		JWT: engineconfig.JWTConfig{ValidityPeriod: 900},
+		OAuth: engineconfig.OAuthConfig{
+			AuthorizationCode: engineconfig.AuthorizationCodeConfig{ValidityPeriod: 600},
 		},
 	})
 
-	app := &inboundmodel.OAuthClient{
-		GrantTypes: []oauth2const.GrantType{oauth2const.GrantTypeAuthorizationCode},
-		Token:      &inboundmodel.OAuthTokenConfig{AccessToken: nil},
+	app := &providers.OAuthClient{
+		GrantTypes: []providers.GrantType{providers.GrantTypeAuthorizationCode},
+		Token:      &providers.OAuthTokenConfig{AccessToken: nil},
 	}
 
 	// JWT fallback (900) + authCode(600) + buffer(60) = 1560.
-	assert.Equal(suite.T(), int64(1560), resolveUserAttributesCacheTTL(app))
+	assert.Equal(suite.T(), int64(1560), resolveUserAttributesCacheTTLForTest(app))
 }
 
 // determineClaimsForTokens is a test helper retained to keep existing token-claim tests readable.
 // It mirrors the token-specific split (access_token / id_token / userinfo) on top of current helper functions.
 func determineClaimsForTokens(oidcScopes []string, claimsRequest *oauth2model.ClaimsRequest,
-	responseType string, app *inboundmodel.OAuthClient) (
+	responseType string, app *providers.OAuthClient) (
 	map[string]bool, map[string]bool, map[string]bool) {
 	accessTokenClaims := make(map[string]bool)
 	idTokenClaims := make(map[string]bool)
@@ -1657,8 +1999,8 @@ func determineClaimsForTokens(oidcScopes []string, claimsRequest *oauth2model.Cl
 		return accessTokenClaims, idTokenClaims, userInfoClaims
 	}
 
-	if app.Token.AccessToken != nil {
-		for _, claim := range app.Token.AccessToken.UserAttributes {
+	if app.Token.AccessToken != nil && app.Token.AccessToken.UserConfig != nil {
+		for _, claim := range app.Token.AccessToken.UserConfig.Attributes {
 			accessTokenClaims[claim] = true
 		}
 	}
@@ -1697,7 +2039,7 @@ func determineClaimsForTokens(oidcScopes []string, claimsRequest *oauth2model.Cl
 	for _, scope := range oidcScopes {
 		scopeAttributes := resolveScopeAttributes(scope, app.ScopeClaims)
 		for _, attribute := range scopeAttributes {
-			if responseType == string(oauth2const.ResponseTypeIDToken) {
+			if responseType == string(providers.ResponseTypeIDToken) {
 				if idTokenAllowedSet != nil && idTokenAllowedSet[attribute] {
 					idTokenClaims[attribute] = true
 				}
@@ -1715,7 +2057,7 @@ func determineClaimsForTokens(oidcScopes []string, claimsRequest *oauth2model.Cl
 func (suite *AuthorizeServiceTestSuite) TestHandleInitialAuthorizationRequest_NoAcrValues_NoDefaults() {
 	app := suite.testApp()
 	suite.mockInboundClient.EXPECT().GetOAuthClientByClientID(mock.Anything, "test-client-id").Return(app, nil)
-	suite.mockValidator.On("validateInitialAuthorizationRequest", mock.Anything, app).
+	suite.mockValidator.On("validateInitialAuthorizationRequest", mock.Anything, mock.Anything, app).
 		Return(false, "", "")
 	suite.mockFlowExecService.EXPECT().InitiateFlow(mock.Anything,
 		mock.AnythingOfType("*flowexec.FlowInitContext")).
@@ -1735,7 +2077,7 @@ func (suite *AuthorizeServiceTestSuite) TestHandleInitialAuthorizationRequest_No
 func (suite *AuthorizeServiceTestSuite) TestHandleInitialAuthorizationRequest_AcrValues_NoDefaults() {
 	app := suite.testApp()
 	suite.mockInboundClient.EXPECT().GetOAuthClientByClientID(mock.Anything, "test-client-id").Return(app, nil)
-	suite.mockValidator.On("validateInitialAuthorizationRequest", mock.Anything, app).
+	suite.mockValidator.On("validateInitialAuthorizationRequest", mock.Anything, mock.Anything, app).
 		Return(false, "", "")
 	suite.mockFlowExecService.EXPECT().InitiateFlow(mock.Anything,
 		mock.AnythingOfType("*flowexec.FlowInitContext")).
@@ -1746,8 +2088,8 @@ func (suite *AuthorizeServiceTestSuite) TestHandleInitialAuthorizationRequest_Ac
 	suite.mockAuthReqStore.EXPECT().AddRequest(mock.Anything, mock.Anything).Return(testAuthID, nil)
 
 	msg := suite.testMsg()
-	msg.RequestQueryParams[oauth2const.RequestParamAcrValues] =
-		"urn:thunder:acr:password urn:thunder:acr:generated-code"
+	acrValues := "urn:thunder:acr:password urn:thunder:acr:generated-code"
+	url.Values(msg.RequestQueryParams).Set(oauth2const.RequestParamAcrValues, acrValues)
 
 	svc := suite.newService()
 	result, authErr := svc.HandleInitialAuthorizationRequest(context.Background(), msg)
@@ -1765,7 +2107,7 @@ func (suite *AuthorizeServiceTestSuite) TestHandleInitialAuthorizationRequest_Ac
 	}
 
 	suite.mockInboundClient.EXPECT().GetOAuthClientByClientID(mock.Anything, "test-client-id").Return(app, nil)
-	suite.mockValidator.On("validateInitialAuthorizationRequest", mock.Anything, app).
+	suite.mockValidator.On("validateInitialAuthorizationRequest", mock.Anything, mock.Anything, app).
 		Return(false, "", "")
 	suite.mockFlowExecService.EXPECT().InitiateFlow(mock.Anything,
 		mock.AnythingOfType("*flowexec.FlowInitContext")).
@@ -1778,8 +2120,8 @@ func (suite *AuthorizeServiceTestSuite) TestHandleInitialAuthorizationRequest_Ac
 	suite.mockAuthReqStore.EXPECT().AddRequest(mock.Anything, mock.Anything).Return(testAuthID, nil)
 
 	msg := suite.testMsg()
-	msg.RequestQueryParams[oauth2const.RequestParamAcrValues] =
-		"urn:thunder:acr:generated-code urn:thunder:acr:password"
+	acrValues := "urn:thunder:acr:generated-code urn:thunder:acr:password"
+	url.Values(msg.RequestQueryParams).Set(oauth2const.RequestParamAcrValues, acrValues)
 
 	svc := suite.newService()
 	result, authErr := svc.HandleInitialAuthorizationRequest(context.Background(), msg)
@@ -1796,7 +2138,7 @@ func (suite *AuthorizeServiceTestSuite) TestHandleInitialAuthorizationRequest_Ac
 	}
 
 	suite.mockInboundClient.EXPECT().GetOAuthClientByClientID(mock.Anything, "test-client-id").Return(app, nil)
-	suite.mockValidator.On("validateInitialAuthorizationRequest", mock.Anything, app).
+	suite.mockValidator.On("validateInitialAuthorizationRequest", mock.Anything, mock.Anything, app).
 		Return(false, "", "")
 	suite.mockFlowExecService.EXPECT().InitiateFlow(mock.Anything,
 		mock.AnythingOfType("*flowexec.FlowInitContext")).
@@ -1809,7 +2151,8 @@ func (suite *AuthorizeServiceTestSuite) TestHandleInitialAuthorizationRequest_Ac
 	suite.mockAuthReqStore.EXPECT().AddRequest(mock.Anything, mock.Anything).Return(testAuthID, nil)
 
 	msg := suite.testMsg()
-	msg.RequestQueryParams[oauth2const.RequestParamAcrValues] = "urn:thunder:acr:password urn:thunder:acr:biometrics"
+	url.Values(msg.RequestQueryParams).Set(oauth2const.RequestParamAcrValues,
+		"urn:thunder:acr:password urn:thunder:acr:biometrics")
 
 	svc := suite.newService()
 	result, authErr := svc.HandleInitialAuthorizationRequest(context.Background(), msg)
@@ -1824,7 +2167,7 @@ func (suite *AuthorizeServiceTestSuite) TestHandleInitialAuthorizationRequest_Ac
 	app.AcrValues = defaults
 
 	suite.mockInboundClient.EXPECT().GetOAuthClientByClientID(mock.Anything, "test-client-id").Return(app, nil)
-	suite.mockValidator.On("validateInitialAuthorizationRequest", mock.Anything, app).
+	suite.mockValidator.On("validateInitialAuthorizationRequest", mock.Anything, mock.Anything, app).
 		Return(false, "", "")
 	suite.mockFlowExecService.EXPECT().InitiateFlow(mock.Anything,
 		mock.AnythingOfType("*flowexec.FlowInitContext")).
@@ -1836,8 +2179,8 @@ func (suite *AuthorizeServiceTestSuite) TestHandleInitialAuthorizationRequest_Ac
 	suite.mockAuthReqStore.EXPECT().AddRequest(mock.Anything, mock.Anything).Return(testAuthID, nil)
 
 	msg := suite.testMsg()
-	msg.RequestQueryParams[oauth2const.RequestParamAcrValues] =
-		"urn:thunder:acr:biometrics urn:thunder:acr:linked-wallet"
+	acrValues := "urn:thunder:acr:biometrics urn:thunder:acr:linked-wallet"
+	url.Values(msg.RequestQueryParams).Set(oauth2const.RequestParamAcrValues, acrValues)
 
 	svc := suite.newService()
 	result, authErr := svc.HandleInitialAuthorizationRequest(context.Background(), msg)
@@ -1854,7 +2197,7 @@ func (suite *AuthorizeServiceTestSuite) TestHandleInitialAuthorizationRequest_Ac
 	}
 
 	suite.mockInboundClient.EXPECT().GetOAuthClientByClientID(mock.Anything, "test-client-id").Return(app, nil)
-	suite.mockValidator.On("validateInitialAuthorizationRequest", mock.Anything, app).
+	suite.mockValidator.On("validateInitialAuthorizationRequest", mock.Anything, mock.Anything, app).
 		Return(false, "", "")
 	suite.mockFlowExecService.EXPECT().InitiateFlow(mock.Anything,
 		mock.AnythingOfType("*flowexec.FlowInitContext")).
@@ -1867,8 +2210,8 @@ func (suite *AuthorizeServiceTestSuite) TestHandleInitialAuthorizationRequest_Ac
 	suite.mockAuthReqStore.EXPECT().AddRequest(mock.Anything, mock.Anything).Return(testAuthID, nil)
 
 	msg := suite.testMsg()
-	msg.RequestQueryParams[oauth2const.RequestParamAcrValues] =
-		"urn:thunder:acr:password urn:thunder:acr:password urn:thunder:acr:generated-code"
+	acrValues := "urn:thunder:acr:password urn:thunder:acr:password urn:thunder:acr:generated-code"
+	url.Values(msg.RequestQueryParams).Set(oauth2const.RequestParamAcrValues, acrValues)
 
 	svc := suite.newService()
 	result, authErr := svc.HandleInitialAuthorizationRequest(context.Background(), msg)
@@ -1882,7 +2225,7 @@ func (suite *AuthorizeServiceTestSuite) TestHandleInitialAuthorizationRequest_Ac
 	app.AcrValues = []string{"urn:thunder:acr:password"}
 
 	suite.mockInboundClient.EXPECT().GetOAuthClientByClientID(mock.Anything, "test-client-id").Return(app, nil)
-	suite.mockValidator.On("validateInitialAuthorizationRequest", mock.Anything, app).
+	suite.mockValidator.On("validateInitialAuthorizationRequest", mock.Anything, mock.Anything, app).
 		Return(false, "", "")
 	suite.mockFlowExecService.EXPECT().InitiateFlow(mock.Anything,
 		mock.AnythingOfType("*flowexec.FlowInitContext")).
@@ -1895,11 +2238,33 @@ func (suite *AuthorizeServiceTestSuite) TestHandleInitialAuthorizationRequest_Ac
 	suite.mockAuthReqStore.EXPECT().AddRequest(mock.Anything, mock.Anything).Return(testAuthID, nil)
 
 	msg := suite.testMsg()
-	msg.RequestQueryParams[oauth2const.RequestParamAcrValues] = "urn:thunder:acr:password"
+	url.Values(msg.RequestQueryParams).Set(oauth2const.RequestParamAcrValues, "urn:thunder:acr:password")
 
 	svc := suite.newService()
 	result, authErr := svc.HandleInitialAuthorizationRequest(context.Background(), msg)
 
 	assert.Nil(suite.T(), authErr)
 	assert.NotNil(suite.T(), result)
+}
+
+// noopAuthnMgr returns an authentication-provider mock with no expectations, for tests that
+// build a real actor provider but never exercise actor authentication.
+func noopAuthnMgr() *managermock.AuthnProviderManagerMock {
+	return &managermock.AuthnProviderManagerMock{}
+}
+
+func (suite *AuthorizeServiceTestSuite) TestHandleInitialAuthorizationRequest_MultipleResources_InvalidTarget() {
+	app := suite.testApp()
+	suite.mockInboundClient.EXPECT().GetOAuthClientByClientID(mock.Anything, "test-client-id").Return(app, nil)
+	// The single-resource guard runs before request validation, so no validator call is expected.
+
+	msg := suite.testMsg()
+	msg.Resources = []string{"https://a.example.com", "https://b.example.com"}
+
+	svc := suite.newService()
+	result, authErr := svc.HandleInitialAuthorizationRequest(context.Background(), msg)
+
+	assert.Nil(suite.T(), result)
+	assert.NotNil(suite.T(), authErr)
+	assert.Equal(suite.T(), oauth2const.ErrorInvalidTarget, authErr.Code)
 }

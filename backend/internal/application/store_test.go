@@ -25,7 +25,7 @@ import (
 
 	"github.com/thunder-id/thunderid/internal/application/model"
 	inboundmodel "github.com/thunder-id/thunderid/internal/inboundclient/model"
-	oauth2const "github.com/thunder-id/thunderid/internal/oauth/oauth2/constants"
+	"github.com/thunder-id/thunderid/pkg/thunderidengine/providers"
 )
 
 // ApplicationStoreTestSuite covers helpers remaining in the application package after the
@@ -44,7 +44,7 @@ func (suite *ApplicationStoreTestSuite) createTestApplication() model.Applicatio
 		ID:          "app1",
 		Name:        "Test App 1",
 		Description: "Test application description",
-		InboundAuthProfile: inboundmodel.InboundAuthProfile{
+		InboundAuthProfile: providers.InboundAuthProfile{
 			AuthFlowID:                "auth_flow_1",
 			RegistrationFlowID:        "reg_flow_1",
 			IsRegistrationFlowEnabled: true,
@@ -60,26 +60,28 @@ func (suite *ApplicationStoreTestSuite) createTestApplication() model.Applicatio
 		Contacts:  []string{"contact@example.com", "support@example.com"},
 		InboundAuthConfig: []inboundmodel.InboundAuthConfigProcessed{
 			{
-				Type: inboundmodel.OAuthInboundAuthType,
-				OAuthConfig: &inboundmodel.OAuthClient{
+				Type: providers.OAuthInboundAuthType,
+				OAuthConfig: &providers.OAuthClient{
 					ID:           "app1",
 					ClientID:     "client_app1",
 					RedirectURIs: []string{"https://example.com/callback", "https://example.com/cb2"},
-					GrantTypes: []oauth2const.GrantType{
-						oauth2const.GrantTypeAuthorizationCode,
-						oauth2const.GrantTypeRefreshToken,
+					GrantTypes: []providers.GrantType{
+						providers.GrantTypeAuthorizationCode,
+						providers.GrantTypeRefreshToken,
 					},
-					ResponseTypes:           []oauth2const.ResponseType{oauth2const.ResponseTypeCode},
-					TokenEndpointAuthMethod: oauth2const.TokenEndpointAuthMethodClientSecretPost,
+					ResponseTypes:           []providers.ResponseType{providers.ResponseTypeCode},
+					TokenEndpointAuthMethod: providers.TokenEndpointAuthMethodClientSecretPost,
 					PKCERequired:            true,
 					PublicClient:            false,
 					Scopes:                  []string{"openid", "profile", "email"},
-					Token: &inboundmodel.OAuthTokenConfig{
-						AccessToken: &inboundmodel.AccessTokenConfig{
-							ValidityPeriod: 7200,
-							UserAttributes: []string{"sub", "email", "name"},
+					Token: &providers.OAuthTokenConfig{
+						AccessToken: &providers.AccessTokenConfig{
+							UserConfig: &providers.AccessTokenSubConfig{
+								ValidityPeriod: 7200,
+								Attributes:     []string{"sub", "email", "name"},
+							},
 						},
-						IDToken: &inboundmodel.IDTokenConfig{
+						IDToken: &providers.IDTokenConfig{
 							ValidityPeriod: 3600,
 							UserAttributes: []string{"sub", "email", "name", "given_name"},
 						},
@@ -111,7 +113,7 @@ func (suite *ApplicationStoreTestSuite) TestBuildOAuthProfileFromProcessed_Succe
 	suite.Len(cfg.RedirectURIs, 2)
 	suite.NotNil(cfg.Token)
 	suite.NotNil(cfg.Token.AccessToken)
-	suite.Equal(int64(7200), cfg.Token.AccessToken.ValidityPeriod)
+	suite.Equal(int64(7200), cfg.Token.AccessToken.UserConfig.ValidityPeriod)
 	suite.NotNil(cfg.Token.IDToken)
 	suite.Equal(int64(3600), cfg.Token.IDToken.ValidityPeriod)
 	suite.NotNil(cfg.ScopeClaims)
@@ -157,7 +159,7 @@ func (suite *ApplicationStoreTestSuite) TestBuildOAuthProfileFromProcessed_Witho
 func (suite *ApplicationStoreTestSuite) TestBuildOAuthProfileFromProcessed_WithUserInfo() {
 	app := suite.createTestApplication()
 	inboundAuthConfig := app.InboundAuthConfig[0]
-	inboundAuthConfig.OAuthConfig.UserInfo = &inboundmodel.UserInfoConfig{
+	inboundAuthConfig.OAuthConfig.UserInfo = &providers.UserInfoConfig{
 		ResponseType:   "jwt",
 		UserAttributes: []string{"email", "name"},
 	}
@@ -166,7 +168,7 @@ func (suite *ApplicationStoreTestSuite) TestBuildOAuthProfileFromProcessed_WithU
 
 	suite.NotNil(cfg)
 	suite.NotNil(cfg.UserInfo)
-	suite.Equal(inboundmodel.UserInfoResponseType("jwt"), cfg.UserInfo.ResponseType)
+	suite.Equal(providers.UserInfoResponseType("jwt"), cfg.UserInfo.ResponseType)
 	suite.Len(cfg.UserInfo.UserAttributes, 2)
 }
 

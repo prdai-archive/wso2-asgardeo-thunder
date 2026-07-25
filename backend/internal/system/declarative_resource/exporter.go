@@ -21,7 +21,8 @@ package declarativeresource
 import (
 	"context"
 
-	"github.com/thunder-id/thunderid/internal/system/error/serviceerror"
+	tidcommon "github.com/thunder-id/thunderid/pkg/thunderidengine/common"
+
 	"github.com/thunder-id/thunderid/internal/system/log"
 )
 
@@ -42,15 +43,15 @@ type ResourceExporter interface {
 	GetParameterizerType() string
 
 	// GetAllResourceIDs retrieves all resource IDs for wildcard export
-	GetAllResourceIDs(ctx context.Context) ([]string, *serviceerror.ServiceError)
+	GetAllResourceIDs(ctx context.Context) ([]string, *tidcommon.ServiceError)
 
 	// GetResourceByID retrieves a single resource by its ID
 	// Returns: resource object, resource name, error
-	GetResourceByID(ctx context.Context, id string) (interface{}, string, *serviceerror.ServiceError)
+	GetResourceByID(ctx context.Context, id string) (interface{}, string, *tidcommon.ServiceError)
 
 	// ValidateResource validates the resource and extracts its name
 	// Returns: resource name, export error
-	ValidateResource(resource interface{}, id string, logger *log.Logger) (string, *ExportError)
+	ValidateResource(ctx context.Context, resource interface{}, id string, logger *log.Logger) (string, *ExportError)
 
 	// GetResourceRules returns the parameterization rules for this resource type
 	GetResourceRules() *ResourceRules
@@ -83,9 +84,10 @@ func CreateTypeError(resourceType, resourceID string) *ExportError {
 }
 
 // ValidateResourceName validates that a resource name is not empty and returns an error if it is.
-func ValidateResourceName(name, resourceType, resourceID, errorCode string, logger *log.Logger) *ExportError {
+func ValidateResourceName(
+	ctx context.Context, name, resourceType, resourceID, errorCode string, logger *log.Logger) *ExportError {
 	if name == "" {
-		logger.Warn(resourceType+" missing name, skipping export",
+		logger.Warn(ctx, resourceType+" missing name, skipping export",
 			log.String("resourceID", resourceID))
 		return &ExportError{
 			ResourceType: resourceType,

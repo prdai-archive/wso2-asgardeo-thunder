@@ -21,12 +21,13 @@ package authz
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"testing"
 
-	"github.com/thunder-id/thunderid/tests/integration/testutils"
 	"github.com/stretchr/testify/suite"
+	"github.com/thunder-id/thunderid/tests/integration/testutils"
 )
 
 const (
@@ -34,18 +35,26 @@ const (
 	scopeTestClientSecret = "scope_authz_test_secret_456"
 	scopeTestAppName      = "ScopeAuthzTestApp"
 	scopeTestRedirectURI  = "https://localhost:3000/callback"
+
+	scopeTestResourceServerIdentifier  = "https://oauth-document-mgmt.example.com"
+	scopeTestResourceServerBIdentifier = "https://oauth-document-mgmt-b.example.com"
 )
 
 var (
-	scopeTestOUID           string
-	scopeTestRoleID         string
-	scopeUserWithRole       string
-	scopeUserNoRole         string
-	scopeUserWithGroup      string
-	scopeGroupID            string
-	scopeEntityTypeID       string
-	scopeTestResourceServer string
-	scopeTestEntityType     = testutils.UserType{
+	scopeTestOUID            string
+	scopeTestRoleID          string
+	scopeUserWithRole        string
+	scopeUserNoRole          string
+	scopeUserWithGroup       string
+	scopeGroupID             string
+	scopeEntityTypeID        string
+	scopeTestResourceServer  string
+	scopeTestResourceServerB string
+	scopeUserMultiRS         string
+	scopeUserSplitRS         string
+	scopeMultiRSRoleID       string
+	scopeSplitRSRoleID       string
+	scopeTestEntityType      = testutils.UserType{
 		Name: "authz-test-person",
 		Schema: map[string]interface{}{
 			"username": map[string]interface{}{
@@ -182,6 +191,41 @@ func (ts *OAuthAuthzScopeTestSuite) SetupSuite() {
 		ts.T().Fatalf("Failed to create user with group: %v", err)
 	}
 
+	// Create a user granted the same permissions on BOTH resource servers.
+	userMultiRS := testutils.User{
+		OUID: scopeTestOUID,
+		Type: "authz-test-person",
+		Attributes: json.RawMessage(`{
+			"username": "oauth_multi_rs_user",
+			"password": "SecurePass123!",
+			"email": "oauth_multi_rs@test.com",
+			"given_name": "OAuth",
+			"family_name": "MultiRS"
+		}`),
+	}
+	scopeUserMultiRS, err = testutils.CreateUser(userMultiRS)
+	if err != nil {
+		ts.T().Fatalf("Failed to create multi-resource-server user: %v", err)
+	}
+
+	// Create a user granted read on resource server A and write on resource server B, so the same
+	// permission strings map to different grants depending on the target resource server.
+	userSplitRS := testutils.User{
+		OUID: scopeTestOUID,
+		Type: "authz-test-person",
+		Attributes: json.RawMessage(`{
+			"username": "oauth_split_rs_user",
+			"password": "SecurePass123!",
+			"email": "oauth_split_rs@test.com",
+			"given_name": "OAuth",
+			"family_name": "SplitRS"
+		}`),
+	}
+	scopeUserSplitRS, err = testutils.CreateUser(userSplitRS)
+	if err != nil {
+		ts.T().Fatalf("Failed to create split-resource-server user: %v", err)
+	}
+
 	// Create group and assign user to group
 	group := testutils.Group{
 		Name:        "OAuth_DocumentEditors",
@@ -203,7 +247,7 @@ func (ts *OAuthAuthzScopeTestSuite) SetupSuite() {
 	resourceServer := testutils.ResourceServer{
 		Name:        "OAuth Document Management System",
 		Description: "System for managing documents via OAuth",
-		Identifier:  "oauth-document-mgmt",
+		Identifier:  scopeTestResourceServerIdentifier,
 		OUID:        scopeTestOUID,
 	}
 	actions := []testutils.Action{
@@ -221,6 +265,20 @@ func (ts *OAuthAuthzScopeTestSuite) SetupSuite() {
 	scopeTestResourceServer, err = testutils.CreateResourceServerWithActions(resourceServer, actions)
 	if err != nil {
 		ts.T().Fatalf("Failed to create resource server with actions: %v", err)
+	}
+
+	// Create a second resource server that defines the SAME read/write permission strings. The test
+	// role below grants these on the first resource server only, so a request targeting this second
+	// server must not receive them because permissions must be scoped to the requested resource server.
+	resourceServerB := testutils.ResourceServer{
+		Name:        "OAuth Document Management System B",
+		Description: "A different system that happens to define the same permission strings",
+		Identifier:  scopeTestResourceServerBIdentifier,
+		OUID:        scopeTestOUID,
+	}
+	scopeTestResourceServerB, err = testutils.CreateResourceServerWithActions(resourceServerB, actions)
+	if err != nil {
+		ts.T().Fatalf("Failed to create second resource server with actions: %v", err)
 	}
 
 	// Create role with permissions and assign to first user
@@ -243,6 +301,42 @@ func (ts *OAuthAuthzScopeTestSuite) SetupSuite() {
 	if err != nil {
 		ts.T().Fatalf("Failed to create test role: %v", err)
 	}
+
+	// Role granting read/write on BOTH resource servers, assigned to the multi-RS user.
+	multiRSRole := testutils.Role{
+		Name:        "OAuth_MultiRSEditor",
+		Description: "Can read and write documents on both resource servers (OAuth test)",
+		OUID:        scopeTestOUID,
+		Permissions: []testutils.ResourcePermissions{
+			{ResourceServerID: scopeTestResourceServer, Permissions: []string{"read", "write"}},
+			{ResourceServerID: scopeTestResourceServerB, Permissions: []string{"read", "write"}},
+		},
+		Assignments: []testutils.Assignment{
+			{ID: scopeUserMultiRS, Type: "user"},
+		},
+	}
+	scopeMultiRSRoleID, err = testutils.CreateRole(multiRSRole)
+	if err != nil {
+		ts.T().Fatalf("Failed to create multi-resource-server role: %v", err)
+	}
+
+	// Role granting read on resource server A and write on resource server B, assigned to the split user.
+	splitRSRole := testutils.Role{
+		Name:        "OAuth_SplitRSEditor",
+		Description: "Can read on A and write on B (OAuth test)",
+		OUID:        scopeTestOUID,
+		Permissions: []testutils.ResourcePermissions{
+			{ResourceServerID: scopeTestResourceServer, Permissions: []string{"read"}},
+			{ResourceServerID: scopeTestResourceServerB, Permissions: []string{"write"}},
+		},
+		Assignments: []testutils.Assignment{
+			{ID: scopeUserSplitRS, Type: "user"},
+		},
+	}
+	scopeSplitRSRoleID, err = testutils.CreateRole(splitRSRole)
+	if err != nil {
+		ts.T().Fatalf("Failed to create split-resource-server role: %v", err)
+	}
 }
 
 func (ts *OAuthAuthzScopeTestSuite) TearDownSuite() {
@@ -253,9 +347,27 @@ func (ts *OAuthAuthzScopeTestSuite) TearDownSuite() {
 		}
 	}
 
+	if scopeMultiRSRoleID != "" {
+		if err := testutils.DeleteRole(scopeMultiRSRoleID); err != nil {
+			ts.T().Logf("Failed to delete multi-resource-server role: %v", err)
+		}
+	}
+
+	if scopeSplitRSRoleID != "" {
+		if err := testutils.DeleteRole(scopeSplitRSRoleID); err != nil {
+			ts.T().Logf("Failed to delete split-resource-server role: %v", err)
+		}
+	}
+
 	if scopeTestResourceServer != "" {
 		if err := testutils.DeleteResourceServer(scopeTestResourceServer); err != nil {
 			ts.T().Logf("Failed to delete test resource server: %v", err)
+		}
+	}
+
+	if scopeTestResourceServerB != "" {
+		if err := testutils.DeleteResourceServer(scopeTestResourceServerB); err != nil {
+			ts.T().Logf("Failed to delete second test resource server: %v", err)
 		}
 	}
 
@@ -280,6 +392,18 @@ func (ts *OAuthAuthzScopeTestSuite) TearDownSuite() {
 	if scopeUserWithRole != "" {
 		if err := testutils.DeleteUser(scopeUserWithRole); err != nil {
 			ts.T().Logf("Failed to delete user with role: %v", err)
+		}
+	}
+
+	if scopeUserMultiRS != "" {
+		if err := testutils.DeleteUser(scopeUserMultiRS); err != nil {
+			ts.T().Logf("Failed to delete multi-resource-server user: %v", err)
+		}
+	}
+
+	if scopeUserSplitRS != "" {
+		if err := testutils.DeleteUser(scopeUserSplitRS); err != nil {
+			ts.T().Logf("Failed to delete split-resource-server user: %v", err)
 		}
 	}
 
@@ -323,17 +447,63 @@ func (ts *OAuthAuthzScopeTestSuite) TestOAuthAuthzFlow_WithAuthorizedScopesWithR
 	ts.testOAuthAuthzFlow_WithAuthorizedScopes("oauth_authorized_group_user")
 }
 
+// obtainTokenWithResource runs the password authorization-code flow binding the token to the given
+// resource server via the RFC 8707 resource parameter at the authorize step (inherited by the token step).
+func (ts *OAuthAuthzScopeTestSuite) obtainTokenWithResource(clientID, clientSecret, scope, username,
+	resource string) (*testutils.TokenResponse, error) {
+	resp, err := testutils.InitiateAuthorizationFlowWithResource(clientID, scopeTestRedirectURI, "code",
+		scope, "test-state", resource)
+	if err != nil {
+		return nil, fmt.Errorf("failed to initiate authorization: %w", err)
+	}
+	defer resp.Body.Close()
+
+	authID, executionID, err := testutils.ExtractAuthData(resp.Header.Get("Location"))
+	if err != nil {
+		return nil, fmt.Errorf("failed to extract auth data: %w", err)
+	}
+
+	flowStep, err := testutils.ExecuteAuthenticationFlow(executionID, map[string]string{
+		"username": username,
+		"password": "SecurePass123!",
+	}, "action_001")
+	if err != nil {
+		return nil, fmt.Errorf("failed to execute authentication flow: %w", err)
+	}
+
+	authzResp, err := testutils.CompleteAuthorization(authID, flowStep.Assertion)
+	if err != nil {
+		return nil, fmt.Errorf("failed to complete authorization: %w", err)
+	}
+
+	code, err := testutils.ExtractAuthorizationCode(authzResp.RedirectURI)
+	if err != nil {
+		return nil, fmt.Errorf("failed to extract authorization code: %w", err)
+	}
+
+	tokenResult, err := testutils.RequestTokenWithResourceAndClientCredentialsInBody(
+		clientID, clientSecret, code, scopeTestRedirectURI, "authorization_code", resource)
+	if err != nil {
+		return nil, fmt.Errorf("failed to request token: %w", err)
+	}
+	if tokenResult.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("token request failed with status %d: %s", tokenResult.StatusCode,
+			string(tokenResult.Body))
+	}
+
+	return tokenResult.Token, nil
+}
+
 // testOAuthAuthzFlow_WithAuthorizedScopes tests complete OAuth flow with authorized scopes
 func (ts *OAuthAuthzScopeTestSuite) testOAuthAuthzFlow_WithAuthorizedScopes(username string) {
-	// Step 1: Execute full OAuth flow and obtain token for authorized user
-	tokenResp, err := testutils.ObtainAccessTokenWithPassword(
+	// Step 1: Execute full OAuth flow and obtain token for authorized user. Bind the token to the
+	// suite's resource server so the read/write permissions defined there survive downscoping.
+	tokenResp, err := ts.obtainTokenWithResource(
 		scopeTestClientID,
-		scopeTestRedirectURI,
+		scopeTestClientSecret,
 		"openid read write",
 		username,
-		"SecurePass123!",
-		false,
-		scopeTestClientSecret,
+		"https://oauth-document-mgmt.example.com",
 	)
 	ts.Require().NoError(err, "Failed to obtain access token")
 	ts.Require().NotNil(tokenResp, "Token response should not be nil")
@@ -360,15 +530,14 @@ func (ts *OAuthAuthzScopeTestSuite) testOAuthAuthzFlow_WithAuthorizedScopes(user
 
 // TestOAuthAuthzFlow_WithNoAuthorizedScopes tests OAuth flow when user has no custom scopes
 func (ts *OAuthAuthzScopeTestSuite) TestOAuthAuthzFlow_WithNoAuthorizedScopes() {
-	// Step 1: Execute full OAuth flow and obtain token for user without role assignments
-	tokenResp, err := testutils.ObtainAccessTokenWithPassword(
+	// Step 1: Execute full OAuth flow and obtain token for user without role assignments. Bind the
+	// token to the suite's resource server; read/write downscope away since the user lacks the grant.
+	tokenResp, err := ts.obtainTokenWithResource(
 		scopeTestClientID,
-		scopeTestRedirectURI,
+		scopeTestClientSecret,
 		"openid read write",
 		"oauth_unauthorized_user",
-		"SecurePass123!",
-		false,
-		scopeTestClientSecret,
+		"https://oauth-document-mgmt.example.com",
 	)
 	ts.Require().NoError(err, "Failed to obtain access token")
 	ts.Require().NotNil(tokenResp, "Token response should not be nil")
@@ -399,6 +568,212 @@ func (ts *OAuthAuthzScopeTestSuite) TestOAuthAuthzFlow_WithNoAuthorizedScopes() 
 			scope == "address" || scope == "phone" || scope == "offline_access"
 		ts.Require().True(isOIDCScope, "Scope '%s' should be an OIDC scope", scope)
 	}
+}
+
+// TestOAuthAuthzFlow_CrossResourceServerPermissionIsolation verifies that a user granted
+// read/write on resource server A must NOT receive those permissions when the token is bound to
+// resource server B, even though B defines the same permission strings.
+func (ts *OAuthAuthzScopeTestSuite) TestOAuthAuthzFlow_CrossResourceServerPermissionIsolation() {
+	// The authorized user holds read/write on resource server A only. Bind the token to server B,
+	// which defines the same permission strings but which the user has no grant on.
+	tokenResp, err := ts.obtainTokenWithResource(
+		scopeTestClientID,
+		scopeTestClientSecret,
+		"openid read write",
+		"oauth_authorized_user",
+		scopeTestResourceServerBIdentifier,
+	)
+	ts.Require().NoError(err, "Failed to obtain access token")
+	ts.Require().NotNil(tokenResp, "Token response should not be nil")
+	ts.Require().NotEmpty(tokenResp.AccessToken, "Access token should not be empty")
+
+	claims, err := testutils.DecodeJWT(tokenResp.AccessToken)
+	ts.Require().NoError(err, "Failed to decode access token")
+	ts.Require().NotNil(claims, "Claims should not be nil")
+
+	scopeRaw, ok := claims.Additional["scope"]
+	ts.Require().True(ok, "scope claim should be present in access token")
+	scopeStr, ok := scopeRaw.(string)
+	ts.Require().True(ok, "scope claim should be a string")
+	scopes := strings.Split(scopeStr, " ")
+
+	// read/write are dropped because the user has no grant on resource server B, even though B
+	// defines them. Only the OIDC scope survives.
+	ts.Require().Contains(scopes, "openid", "Token should retain the openid scope")
+	ts.Require().NotContains(scopes, "read", "read must not leak to resource server B")
+	ts.Require().NotContains(scopes, "write", "write must not leak to resource server B")
+
+	// The access token is bound to resource server B.
+	ts.Require().Equal(scopeTestResourceServerBIdentifier, claims.Aud,
+		"Access token audience should be resource server B")
+}
+
+// obtainScopesAndAudience runs the flow for the given user requesting "openid read write" bound to
+// the given resource server, and returns the issued token's scope list and audience.
+func (ts *OAuthAuthzScopeTestSuite) obtainScopesAndAudience(username, resource string) ([]string, string) {
+	tokenResp, err := ts.obtainTokenWithResource(
+		scopeTestClientID, scopeTestClientSecret, "openid read write", username, resource)
+	ts.Require().NoError(err, "Failed to obtain access token")
+	ts.Require().NotNil(tokenResp, "Token response should not be nil")
+	ts.Require().NotEmpty(tokenResp.AccessToken, "Access token should not be empty")
+
+	claims, err := testutils.DecodeJWT(tokenResp.AccessToken)
+	ts.Require().NoError(err, "Failed to decode access token")
+	ts.Require().NotNil(claims, "Claims should not be nil")
+
+	scopeRaw, ok := claims.Additional["scope"]
+	ts.Require().True(ok, "scope claim should be present in access token")
+	scopeStr, ok := scopeRaw.(string)
+	ts.Require().True(ok, "scope claim should be a string")
+	return strings.Split(scopeStr, " "), claims.Aud
+}
+
+// TestOAuthAuthzFlow_GrantedOnBothResourceServers_ResourceA verifies a user granted read/write on
+// both resource servers receives them when targeting resource server A.
+func (ts *OAuthAuthzScopeTestSuite) TestOAuthAuthzFlow_GrantedOnBothResourceServers_ResourceA() {
+	scopes, aud := ts.obtainScopesAndAudience("oauth_multi_rs_user", scopeTestResourceServerIdentifier)
+	ts.Require().Equal(scopeTestResourceServerIdentifier, aud, "Audience should be resource server A")
+	ts.Require().Contains(scopes, "openid")
+	ts.Require().Contains(scopes, "read")
+	ts.Require().Contains(scopes, "write")
+}
+
+// TestOAuthAuthzFlow_GrantedOnBothResourceServers_ResourceB verifies the same user receives read/write
+// when targeting resource server B, even though B defines the identical permission strings.
+func (ts *OAuthAuthzScopeTestSuite) TestOAuthAuthzFlow_GrantedOnBothResourceServers_ResourceB() {
+	scopes, aud := ts.obtainScopesAndAudience("oauth_multi_rs_user", scopeTestResourceServerBIdentifier)
+	ts.Require().Equal(scopeTestResourceServerBIdentifier, aud, "Audience should be resource server B")
+	ts.Require().Contains(scopes, "openid")
+	ts.Require().Contains(scopes, "read")
+	ts.Require().Contains(scopes, "write")
+}
+
+// TestOAuthAuthzFlow_SharedPermissionStringScopedPerResourceServer_A verifies that the colliding
+// permission strings resolve to the user's grant on resource server A only (read granted, write not).
+func (ts *OAuthAuthzScopeTestSuite) TestOAuthAuthzFlow_SharedPermissionStringScopedPerResourceServer_A() {
+	scopes, aud := ts.obtainScopesAndAudience("oauth_split_rs_user", scopeTestResourceServerIdentifier)
+	ts.Require().Equal(scopeTestResourceServerIdentifier, aud, "Audience should be resource server A")
+	ts.Require().Contains(scopes, "openid")
+	ts.Require().Contains(scopes, "read", "read is granted on resource server A")
+	ts.Require().NotContains(scopes, "write", "write is not granted on resource server A")
+}
+
+// TestOAuthAuthzFlow_SharedPermissionStringScopedPerResourceServer_B verifies the mirror case: the same
+// user's grant on resource server B is write only, so read is dropped when targeting B.
+func (ts *OAuthAuthzScopeTestSuite) TestOAuthAuthzFlow_SharedPermissionStringScopedPerResourceServer_B() {
+	scopes, aud := ts.obtainScopesAndAudience("oauth_split_rs_user", scopeTestResourceServerBIdentifier)
+	ts.Require().Equal(scopeTestResourceServerBIdentifier, aud, "Audience should be resource server B")
+	ts.Require().Contains(scopes, "openid")
+	ts.Require().Contains(scopes, "write", "write is granted on resource server B")
+	ts.Require().NotContains(scopes, "read", "read is not granted on resource server B")
+}
+
+// TestOAuthAuthzFlow_FiltersOIDCScopesByApplicationScopes verifies that requested OIDC scopes are
+// filtered by the application's active scopes before token issuance.
+func (ts *OAuthAuthzScopeTestSuite) TestOAuthAuthzFlow_FiltersOIDCScopesByApplicationScopes() {
+	const (
+		clientID     = "oidc_scope_filter_test_client"
+		clientSecret = "oidc_scope_filter_test_secret"
+	)
+
+	appConfig := map[string]interface{}{
+		"name":                      "OIDCScopeFilterTestApp",
+		"description":               "OAuth application for OIDC scope filtering integration test",
+		"ouId":                      scopeTestOUID,
+		"authFlowId":                ts.flowID,
+		"isRegistrationFlowEnabled": false,
+		"allowedUserTypes":          []string{"authz-test-person"},
+		"inboundAuthConfig": []map[string]interface{}{
+			{
+				"type": "oauth2",
+				"config": map[string]interface{}{
+					"clientId":                clientID,
+					"clientSecret":            clientSecret,
+					"redirectUris":            []string{scopeTestRedirectURI},
+					"grantTypes":              []string{"authorization_code", "refresh_token"},
+					"responseTypes":           []string{"code"},
+					"tokenEndpointAuthMethod": "client_secret_post",
+					"scopes":                  []string{"profile"},
+				},
+			},
+		},
+	}
+
+	appID, err := ts.createApplicationRaw(appConfig)
+	ts.Require().NoError(err, "Failed to create OAuth application")
+	defer func() {
+		_ = testutils.DeleteApplication(appID)
+	}()
+
+	persistedScopes, err := ts.getApplicationOAuthScopes(appID)
+	ts.Require().NoError(err, "Failed to get persisted OAuth application scopes")
+	ts.Require().ElementsMatch([]string{"profile"}, persistedScopes,
+		"Application should persist only the active OIDC scope used by this test")
+
+	tokenResp, err := ts.obtainTokenWithResource(
+		clientID,
+		clientSecret,
+		"openid email profile",
+		"oauth_authorized_user",
+		"https://oauth-document-mgmt.example.com",
+	)
+	ts.Require().NoError(err, "Failed to obtain access token")
+	ts.Require().NotNil(tokenResp, "Token response should not be nil")
+	ts.Require().NotEmpty(tokenResp.AccessToken, "Access token should not be empty")
+
+	tokenResponseScopes := strings.Fields(tokenResp.Scope)
+	ts.Require().ElementsMatch([]string{"profile"}, tokenResponseScopes,
+		"Token response scope should only include active requested OIDC scopes")
+
+	claims, err := testutils.DecodeJWT(tokenResp.AccessToken)
+	ts.Require().NoError(err, "Failed to decode access token")
+
+	scopeRaw, ok := claims.Additional["scope"]
+	ts.Require().True(ok, "scope claim should be present in access token")
+
+	scopeStr, ok := scopeRaw.(string)
+	ts.Require().True(ok, "scope claim should be a string")
+
+	accessTokenScopes := strings.Fields(scopeStr)
+	ts.Require().ElementsMatch([]string{"profile"}, accessTokenScopes,
+		"Access token scope should only include active requested OIDC scopes")
+	ts.Require().Empty(tokenResp.IDToken, "ID token should not be issued when openid is not active")
+}
+
+func (ts *OAuthAuthzScopeTestSuite) getApplicationOAuthScopes(appID string) ([]string, error) {
+	req, err := http.NewRequest(http.MethodGet, testutils.TestServerURL+"/applications/"+appID, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := ts.client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("failed to get application, status: %d, body: %s", resp.StatusCode, string(body))
+	}
+
+	var app struct {
+		InboundAuthConfig []struct {
+			OAuthConfig struct {
+				Scopes []string `json:"scopes"`
+			} `json:"config"`
+		} `json:"inboundAuthConfig"`
+	}
+	if err := json.Unmarshal(body, &app); err != nil {
+		return nil, err
+	}
+	if len(app.InboundAuthConfig) == 0 {
+		return nil, fmt.Errorf("application has no inbound auth config")
+	}
+	return app.InboundAuthConfig[0].OAuthConfig.Scopes, nil
 }
 
 // createOAuthApplication creates an OAuth application using the low-level API
@@ -491,16 +866,16 @@ func (ts *OAuthAuthzScopeTestSuite) createTestAuthenticationFlow() string {
 						},
 						"action": map[string]interface{}{
 							"ref":      "action_001",
-							"nextNode": "basic_auth",
+							"nextNode": "credentials_auth",
 						},
 					},
 				},
 			},
 			{
-				"id":   "basic_auth",
+				"id":   "credentials_auth",
 				"type": "TASK_EXECUTION",
 				"executor": map[string]interface{}{
-					"name": "BasicAuthExecutor",
+					"name": "CredentialsAuthExecutor",
 					"inputs": []map[string]interface{}{
 						{
 							"ref":        "input_001",
@@ -576,7 +951,9 @@ func (ts *OAuthAuthzScopeTestSuite) TestOAuthAuthzFlow_WithRequiredAttributes() 
 							"userAttributes": []string{"sub", "name", "email"}, // Only allow these in ID token
 						},
 						"accessToken": map[string]interface{}{
-							"userAttributes": []string{"groups", "roles"}, // Access token attributes
+							"userConfig": map[string]interface{}{
+								"attributes": []string{"groups", "roles"}, // Access token attributes
+							},
 						},
 					},
 					"scopeClaims": map[string]interface{}{
@@ -726,9 +1103,10 @@ func (ts *OAuthAuthzScopeTestSuite) TestOAuthAuthzFlow_WithRequiredAttributes() 
 	ts.Require().NoError(err, "Failed to extract authorization code")
 	ts.Require().NotEmpty(code, "Authorization code should not be empty")
 
-	tokenResult, err := testutils.RequestToken(
+	tokenResult, err := testutils.RequestTokenWithResource(
 		"required_attrs_test_client", "required_attrs_test_secret",
 		code, scopeTestRedirectURI, "authorization_code",
+		"https://oauth-document-mgmt.example.com",
 	)
 	ts.Require().NoError(err, "Failed to request access token")
 	ts.Require().Equal(http.StatusOK, tokenResult.StatusCode, "Token request should succeed")

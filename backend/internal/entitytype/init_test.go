@@ -25,13 +25,14 @@ import (
 	"os"
 	"testing"
 
-	oupkg "github.com/thunder-id/thunderid/internal/ou"
+	engineconfig "github.com/thunder-id/thunderid/pkg/thunderidengine/config"
+
+	tidcommon "github.com/thunder-id/thunderid/pkg/thunderidengine/common"
+
 	"github.com/thunder-id/thunderid/internal/system/cache"
 	"github.com/thunder-id/thunderid/internal/system/config"
 	"github.com/thunder-id/thunderid/internal/system/database/provider"
-	"github.com/thunder-id/thunderid/internal/system/error/serviceerror"
-	"github.com/thunder-id/thunderid/internal/system/i18n/core"
-	"github.com/thunder-id/thunderid/tests/mocks/consentmock"
+	"github.com/thunder-id/thunderid/pkg/thunderidengine/providers"
 	"github.com/thunder-id/thunderid/tests/mocks/oumock"
 
 	"github.com/stretchr/testify/assert"
@@ -49,12 +50,47 @@ func (m *mockTransactioner) Transact(ctx context.Context, txFunc func(context.Co
 	return txFunc(ctx)
 }
 
+func testCacheManager() cache.CacheManagerInterface {
+	return cache.Initialize(config.GetServerRuntime().Config.Cache, "test-deployment")
+}
+
+func setupEntityTypeStoreRuntime(t *testing.T, entityTypeStore string, declarativeEnabled bool) {
+	t.Helper()
+
+	testConfig := &config.Config{
+		DeclarativeResources: config.DeclarativeResources{
+			Enabled: declarativeEnabled,
+		},
+		EntityType: config.EntityTypeConfig{
+			Store: entityTypeStore,
+		},
+		Database: config.DatabaseConfig{
+			Config: config.DataSource{
+				Type:   "sqlite",
+				SQLite: config.SQLiteDataSource{Path: ":memory:"},
+			},
+		},
+	}
+
+	config.ResetServerRuntime()
+	err := config.InitializeServerRuntime("", testConfig)
+	assert.NoError(t, err)
+}
+
+func assertMutableEntityTypeStore(t *testing.T, store entityTypeStoreInterface) {
+	t.Helper()
+
+	_, isComposite := store.(*compositeEntityTypeStore)
+	assert.False(t, isComposite, "Store should not be composite in mutable mode")
+	_, isFileBased := store.(*entityTypeFileBasedStore)
+	assert.False(t, isFileBased, "Store should not be file-based in mutable mode")
+}
+
 // InitTestSuite contains comprehensive tests for the init.go file.
 type InitTestSuite struct {
 	suite.Suite
-	mockOUService      *oumock.OrganizationUnitServiceInterfaceMock
-	mockConsentService *consentmock.ConsentServiceInterfaceMock
-	mux                *http.ServeMux
+	mockOUService *oumock.OrganizationUnitServiceInterfaceMock
+	mux           *http.ServeMux
 }
 
 func TestInitTestSuite(t *testing.T) {
@@ -63,8 +99,6 @@ func TestInitTestSuite(t *testing.T) {
 
 func (suite *InitTestSuite) SetupTest() {
 	suite.mockOUService = oumock.NewOrganizationUnitServiceInterfaceMock(suite.T())
-	suite.mockConsentService = consentmock.NewConsentServiceInterfaceMock(suite.T())
-	suite.mockConsentService.EXPECT().IsEnabled().Return(false).Maybe()
 	suite.mux = http.NewServeMux()
 }
 
@@ -89,7 +123,7 @@ func (suite *InitTestSuite) TestInitialize() {
 	assert.NoError(suite.T(), err)
 
 	service, _, err := Initialize(
-		suite.mux, nil, cache.Initialize(), suite.mockOUService, nil, suite.mockConsentService)
+		suite.mux, nil, testCacheManager(), suite.mockOUService, nil)
 	assert.NoError(suite.T(), err)
 
 	suite.NotNil(service)
@@ -113,7 +147,7 @@ func (suite *InitTestSuite) TestRegisterRoutes_ListEndpoint() {
 	assert.NoError(suite.T(), err)
 
 	_, _, err = Initialize(
-		suite.mux, nil, cache.Initialize(), suite.mockOUService, nil, suite.mockConsentService)
+		suite.mux, nil, testCacheManager(), suite.mockOUService, nil)
 	assert.NoError(suite.T(), err)
 
 	req := httptest.NewRequest(http.MethodGet, "/user-types", nil)
@@ -141,7 +175,7 @@ func (suite *InitTestSuite) TestRegisterRoutes_CreateEndpoint() {
 	assert.NoError(suite.T(), err)
 
 	_, _, err = Initialize(
-		suite.mux, nil, cache.Initialize(), suite.mockOUService, nil, suite.mockConsentService)
+		suite.mux, nil, testCacheManager(), suite.mockOUService, nil)
 	assert.NoError(suite.T(), err)
 
 	req := httptest.NewRequest(http.MethodPost, "/user-types", nil)
@@ -177,7 +211,7 @@ func (suite *InitTestSuite) TestInitialize_DBTransactionerError() {
 	assert.NoError(suite.T(), err)
 
 	_, _, err = Initialize(
-		suite.mux, nil, cache.Initialize(), suite.mockOUService, nil, suite.mockConsentService)
+		suite.mux, nil, testCacheManager(), suite.mockOUService, nil)
 	assert.Error(suite.T(), err)
 	if err != nil {
 		assert.Contains(suite.T(), err.Error(), "failed to get config database client")
@@ -201,7 +235,7 @@ func (suite *InitTestSuite) TestRegisterRoutes_GetByIDEndpoint() {
 	assert.NoError(suite.T(), err)
 
 	_, _, err = Initialize(
-		suite.mux, nil, cache.Initialize(), suite.mockOUService, nil, suite.mockConsentService)
+		suite.mux, nil, testCacheManager(), suite.mockOUService, nil)
 	assert.NoError(suite.T(), err)
 
 	req := httptest.NewRequest(http.MethodGet, "/user-types/test-id", nil)
@@ -229,7 +263,7 @@ func (suite *InitTestSuite) TestRegisterRoutes_UpdateEndpoint() {
 	assert.NoError(suite.T(), err)
 
 	_, _, err = Initialize(
-		suite.mux, nil, cache.Initialize(), suite.mockOUService, nil, suite.mockConsentService)
+		suite.mux, nil, testCacheManager(), suite.mockOUService, nil)
 	assert.NoError(suite.T(), err)
 
 	req := httptest.NewRequest(http.MethodPut, "/user-types/test-id", nil)
@@ -257,7 +291,7 @@ func (suite *InitTestSuite) TestRegisterRoutes_DeleteEndpoint() {
 	assert.NoError(suite.T(), err)
 
 	_, _, err = Initialize(
-		suite.mux, nil, cache.Initialize(), suite.mockOUService, nil, suite.mockConsentService)
+		suite.mux, nil, testCacheManager(), suite.mockOUService, nil)
 	assert.NoError(suite.T(), err)
 
 	req := httptest.NewRequest(http.MethodDelete, "/user-types/test-id", nil)
@@ -285,7 +319,7 @@ func (suite *InitTestSuite) TestRegisterRoutes_CORSPreflight() {
 	assert.NoError(suite.T(), err)
 
 	_, _, err = Initialize(
-		suite.mux, nil, cache.Initialize(), suite.mockOUService, nil, suite.mockConsentService)
+		suite.mux, nil, testCacheManager(), suite.mockOUService, nil)
 	assert.NoError(suite.T(), err)
 
 	req := httptest.NewRequest(http.MethodOptions, "/user-types", nil)
@@ -313,7 +347,7 @@ func (suite *InitTestSuite) TestRegisterRoutes_CORSPreflightByID() {
 	assert.NoError(suite.T(), err)
 
 	_, _, err = Initialize(
-		suite.mux, nil, cache.Initialize(), suite.mockOUService, nil, suite.mockConsentService)
+		suite.mux, nil, testCacheManager(), suite.mockOUService, nil)
 	assert.NoError(suite.T(), err)
 
 	req := httptest.NewRequest(http.MethodOptions, "/user-types/test-id", nil)
@@ -329,8 +363,8 @@ func (suite *InitTestSuite) TestParseToEntityTypeDTO_ValidYAML() {
 	yamlData := `
 id: "schema-001"
 name: "Employee Schema"
-organization_unit_id: "550e8400-e29b-41d4-a716-446655440000"
-allow_self_registration: true
+ouId: "550e8400-e29b-41d4-a716-446655440000"
+allowSelfRegistration: true
 schema: |
   {
     "type": "object",
@@ -358,7 +392,7 @@ func (suite *InitTestSuite) TestParseToEntityTypeDTO_MinimalYAML() {
 	yamlData := `
 id: "minimal-schema"
 name: "Minimal Schema"
-organization_unit_id: "550e8400-e29b-41d4-a716-446655440000"
+ouId: "550e8400-e29b-41d4-a716-446655440000"
 schema: |
   {
     "type": "object",
@@ -397,8 +431,8 @@ func (suite *InitTestSuite) TestParseToEntityTypeDTO_ComplexSchema() {
 	yamlData := `
 id: "complex-schema"
 name: "Complex Schema"
-organization_unit_id: "550e8400-e29b-41d4-a716-446655440000"
-allow_self_registration: true
+ouId: "550e8400-e29b-41d4-a716-446655440000"
+allowSelfRegistration: true
 schema: |
   {
     "type": "object",
@@ -443,7 +477,7 @@ func BenchmarkParseToEntityTypeDTO(b *testing.B) {
 	yamlData := `
 id: "benchmark-schema"
 name: "Benchmark Schema"
-organization_unit_id: "550e8400-e29b-41d4-a716-446655440000"
+ouId: "550e8400-e29b-41d4-a716-446655440000"
 schema: |
   {
     "type": "object",
@@ -467,8 +501,8 @@ func TestParseToEntityTypeDTO_Standalone(t *testing.T) {
 	yamlData := `
 id: "standalone-schema"
 name: "Standalone Schema"
-organization_unit_id: "550e8400-e29b-41d4-a716-446655440000"
-allow_self_registration: false
+ouId: "550e8400-e29b-41d4-a716-446655440000"
+allowSelfRegistration: false
 schema: |
   {
     "type": "object",
@@ -519,9 +553,7 @@ func TestInitialize_Standalone(t *testing.T) {
 
 	mux := http.NewServeMux()
 	mockOUService := oumock.NewOrganizationUnitServiceInterfaceMock(t)
-	mockConsentService := mockConsentServiceWithDisabled(t)
-
-	service, exporter, err := Initialize(mux, nil, cache.Initialize(), mockOUService, nil, mockConsentService)
+	service, exporter, err := Initialize(mux, nil, testCacheManager(), mockOUService, nil)
 
 	assert.NoError(t, err)
 	assert.NotNil(t, service)
@@ -530,35 +562,14 @@ func TestInitialize_Standalone(t *testing.T) {
 
 // TestInitializeStore_MutableMode tests initializeStore with mutable mode (database only).
 func TestInitializeStore_MutableMode(t *testing.T) {
-	testConfig := &config.Config{
-		DeclarativeResources: config.DeclarativeResources{
-			Enabled: false,
-		},
-		EntityType: config.EntityTypeConfig{
-			Store: "mutable",
-		},
-		Database: config.DatabaseConfig{
-			Config: config.DataSource{
-				Type:   "sqlite",
-				SQLite: config.SQLiteDataSource{Path: ":memory:"},
-			},
-		},
-	}
+	setupEntityTypeStoreRuntime(t, "mutable", false)
 
-	config.ResetServerRuntime()
-	err := config.InitializeServerRuntime("", testConfig)
-	assert.NoError(t, err)
-
-	store, transactioner, err := initializeStore(getEntityTypeStoreMode(), cache.Initialize())
+	store, transactioner, err := initializeStore(getEntityTypeStoreMode(), testCacheManager())
 
 	assert.NoError(t, err)
 	assert.NotNil(t, store)
 	assert.NotNil(t, transactioner)
-	// In mutable mode, should return entityTypeStore (not composite or file-based)
-	_, isComposite := store.(*compositeEntityTypeStore)
-	assert.False(t, isComposite, "Store should not be composite in mutable mode")
-	_, isFileBased := store.(*entityTypeFileBasedStore)
-	assert.False(t, isFileBased, "Store should not be file-based in mutable mode")
+	assertMutableEntityTypeStore(t, store)
 }
 
 // TestInitializeStore_DeclarativeMode tests initializeStore with declarative mode (file-based only).
@@ -582,7 +593,7 @@ func TestInitializeStore_DeclarativeMode(t *testing.T) {
 	err := config.InitializeServerRuntime("", testConfig)
 	assert.NoError(t, err)
 
-	store, transactioner, err := initializeStore(getEntityTypeStoreMode(), cache.Initialize())
+	store, transactioner, err := initializeStore(getEntityTypeStoreMode(), testCacheManager())
 
 	assert.NoError(t, err)
 	assert.NotNil(t, store)
@@ -613,7 +624,7 @@ func TestInitializeStore_CompositeMode(t *testing.T) {
 	err := config.InitializeServerRuntime("", testConfig)
 	assert.NoError(t, err)
 
-	store, transactioner, err := initializeStore(getEntityTypeStoreMode(), cache.Initialize())
+	store, transactioner, err := initializeStore(getEntityTypeStoreMode(), testCacheManager())
 
 	assert.NoError(t, err)
 	assert.NotNil(t, store)
@@ -627,35 +638,14 @@ func TestInitializeStore_CompositeMode(t *testing.T) {
 
 // TestInitializeStore_DefaultFallbackToMutable tests that default config falls back to mutable mode.
 func TestInitializeStore_DefaultFallbackToMutable(t *testing.T) {
-	testConfig := &config.Config{
-		DeclarativeResources: config.DeclarativeResources{
-			Enabled: false, // Disabled, should default to mutable
-		},
-		EntityType: config.EntityTypeConfig{
-			Store: "", // Not specified
-		},
-		Database: config.DatabaseConfig{
-			Config: config.DataSource{
-				Type:   "sqlite",
-				SQLite: config.SQLiteDataSource{Path: ":memory:"},
-			},
-		},
-	}
+	setupEntityTypeStoreRuntime(t, "", false)
 
-	config.ResetServerRuntime()
-	err := config.InitializeServerRuntime("", testConfig)
-	assert.NoError(t, err)
-
-	store, transactioner, err := initializeStore(getEntityTypeStoreMode(), cache.Initialize())
+	store, transactioner, err := initializeStore(getEntityTypeStoreMode(), testCacheManager())
 
 	assert.NoError(t, err)
 	assert.NotNil(t, store)
 	assert.NotNil(t, transactioner)
-	// Should default to mutable mode (database store)
-	_, isComposite := store.(*compositeEntityTypeStore)
-	assert.False(t, isComposite, "Store should not be composite when not specified")
-	_, isFileBased := store.(*entityTypeFileBasedStore)
-	assert.False(t, isFileBased, "Store should not be file-based when declarative disabled")
+	assertMutableEntityTypeStore(t, store)
 }
 
 // TestInitializeStore_GlobalDeclarativeEnabled tests fallback to global declarative setting.
@@ -679,7 +669,7 @@ func TestInitializeStore_GlobalDeclarativeEnabled(t *testing.T) {
 	err := config.InitializeServerRuntime("", testConfig)
 	assert.NoError(t, err)
 
-	store, transactioner, err := initializeStore(getEntityTypeStoreMode(), cache.Initialize())
+	store, transactioner, err := initializeStore(getEntityTypeStoreMode(), testCacheManager())
 
 	assert.NoError(t, err)
 	assert.NotNil(t, store)
@@ -712,9 +702,7 @@ func TestInitialize_MutableMode(t *testing.T) {
 
 	mux := http.NewServeMux()
 	mockOUService := oumock.NewOrganizationUnitServiceInterfaceMock(t)
-	mockConsentService := mockConsentServiceWithDisabled(t)
-
-	service, exporter, err := Initialize(mux, nil, cache.Initialize(), mockOUService, nil, mockConsentService)
+	service, exporter, err := Initialize(mux, nil, testCacheManager(), mockOUService, nil)
 
 	assert.NoError(t, err)
 	assert.NotNil(t, service)
@@ -753,11 +741,9 @@ func TestInitialize_StoreModes(t *testing.T) {
 			mockOUService := oumock.NewOrganizationUnitServiceInterfaceMock(t)
 			// Mock OU service for potential declarative resource loading
 			mockOUService.On("GetOrganizationUnit", mock.Anything, mock.Anything).
-				Return(oupkg.OrganizationUnit{ID: "ou-1"}, nil).
+				Return(providers.OrganizationUnit{ID: "ou-1"}, nil).
 				Maybe()
-			mockConsentService := mockConsentServiceWithDisabled(t)
-
-			service, exporter, err := Initialize(mux, nil, cache.Initialize(), mockOUService, nil, mockConsentService)
+			service, exporter, err := Initialize(mux, nil, testCacheManager(), mockOUService, nil)
 
 			assert.NoError(t, err)
 			assert.NotNil(t, service)
@@ -799,7 +785,7 @@ func TestParseToEntityTypeDTO_InvalidJSONSchema(t *testing.T) {
 	yamlData := `
 id: "invalid-json-schema"
 name: "Invalid JSON Schema"
-organization_unit_id: "550e8400-e29b-41d4-a716-446655440000"
+ouId: "550e8400-e29b-41d4-a716-446655440000"
 schema: |
   {invalid json here}
 `
@@ -816,7 +802,7 @@ func TestParseToEntityTypeDTO_EmptySchemaField(t *testing.T) {
 	yamlData := `
 id: "empty-schema"
 name: "Empty Schema"
-organization_unit_id: "550e8400-e29b-41d4-a716-446655440000"
+ouId: "550e8400-e29b-41d4-a716-446655440000"
 schema: ""
 `
 
@@ -904,7 +890,7 @@ func TestValidateEntityTypeWithOUCheck(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			err := validateEntityTypeDefinition(TypeCategoryUser, tc.schema)
+			err := validateEntityTypeDefinition(context.Background(), TypeCategoryUser, tc.schema)
 
 			if tc.shouldBeValid {
 				assert.Nil(t, err, "Expected schema to be valid but got error: %v", err)
@@ -927,7 +913,7 @@ func TestOUServiceInteractionDuringValidation(t *testing.T) {
 		name           string
 		ouID           string
 		ouExists       bool
-		ouServiceError *serviceerror.ServiceError
+		ouServiceError *tidcommon.ServiceError
 		expectedResult string
 	}{
 		{
@@ -948,14 +934,14 @@ func TestOUServiceInteractionDuringValidation(t *testing.T) {
 			name:     "OU service returns error - should fail",
 			ouID:     "550e8400-e29b-41d4-a716-446655440002",
 			ouExists: false,
-			ouServiceError: &serviceerror.ServiceError{
+			ouServiceError: &tidcommon.ServiceError{
 				Code: "OUS-5000",
-				Type: serviceerror.ServerErrorType,
-				Error: core.I18nMessage{
+				Type: tidcommon.ServerErrorType,
+				Error: tidcommon.I18nMessage{
 					Key:          "error.organizationunit.internal_server_error",
 					DefaultValue: "Internal server error",
 				},
-				ErrorDescription: core.I18nMessage{
+				ErrorDescription: tidcommon.I18nMessage{
 					Key:          "error.organizationunit.failed_to_query",
 					DefaultValue: "Failed to query organization unit",
 				},
@@ -971,20 +957,20 @@ func TestOUServiceInteractionDuringValidation(t *testing.T) {
 			// Mock the GetOrganizationUnit call that happens in Initialize()
 			if tc.ouServiceError != nil {
 				mockOUService.On("GetOrganizationUnit", mock.Anything, tc.ouID).
-					Return(oupkg.OrganizationUnit{}, tc.ouServiceError).Once()
+					Return(providers.OrganizationUnit{}, tc.ouServiceError).Once()
 			} else if tc.ouExists {
 				mockOUService.On("GetOrganizationUnit", mock.Anything, tc.ouID).
-					Return(oupkg.OrganizationUnit{ID: tc.ouID}, (*serviceerror.ServiceError)(nil)).Once()
+					Return(providers.OrganizationUnit{ID: tc.ouID}, (*tidcommon.ServiceError)(nil)).Once()
 			} else {
 				mockOUService.On("GetOrganizationUnit", mock.Anything, tc.ouID).
-					Return(oupkg.OrganizationUnit{}, &serviceerror.ServiceError{
+					Return(providers.OrganizationUnit{}, &tidcommon.ServiceError{
 						Code: "OUS-1002",
-						Type: serviceerror.ClientErrorType,
-						Error: core.I18nMessage{
+						Type: tidcommon.ClientErrorType,
+						Error: tidcommon.I18nMessage{
 							Key:          "error.organizationunit.not_found",
 							DefaultValue: "Organization unit not found",
 						},
-						ErrorDescription: core.I18nMessage{
+						ErrorDescription: tidcommon.I18nMessage{
 							Key:          "error.organizationunit.not_found_description",
 							DefaultValue: "The organization unit does not exist",
 						},
@@ -1025,7 +1011,7 @@ func TestParseAndValidateEntityTypeFlow(t *testing.T) {
 			yamlData: `
 id: "flow-test-001"
 name: "Flow Test Schema"
-organization_unit_id: "550e8400-e29b-41d4-a716-446655440000"
+ouId: "550e8400-e29b-41d4-a716-446655440000"
 schema: |
   {
     "email": {"type": "string", "required": true}
@@ -1039,7 +1025,7 @@ schema: |
 			yamlData: `
 id: "flow-test-002"
 name: "Invalid Schema"
-organization_unit_id: "550e8400-e29b-41d4-a716-446655440000"
+ouId: "550e8400-e29b-41d4-a716-446655440000"
 schema: |
   {
     "email": {"required": true}
@@ -1054,7 +1040,7 @@ schema: |
 			yamlData: `
 id: "flow-test-003"
 name: ""
-organization_unit_id: "550e8400-e29b-41d4-a716-446655440000"
+ouId: "550e8400-e29b-41d4-a716-446655440000"
 schema: |
   {
     "email": {"type": "string"}
@@ -1085,7 +1071,7 @@ this is not valid yaml:
 				assert.NotNil(t, schemaDTO)
 
 				// Step 2: Validate schema (as done in Initialize before OU check)
-				validationErr := validateEntityTypeDefinition(TypeCategoryUser, *schemaDTO)
+				validationErr := validateEntityTypeDefinition(context.Background(), TypeCategoryUser, *schemaDTO)
 
 				if tc.expectValidOK {
 					assert.Nil(t, validationErr, "Expected validation to succeed")
@@ -1108,7 +1094,7 @@ this is not valid yaml:
 //nolint:dupl // Similar test setup required for different error scenarios
 func TestInitialize_WithDeclarativeResourcesEnabled_InvalidYAML(t *testing.T) {
 	tmpDir := t.TempDir()
-	confDir := tmpDir + "/repository/resources"
+	confDir := tmpDir + "/config/resources"
 	schemaDir := confDir + "/user_types"
 
 	err := os.MkdirAll(schemaDir, 0750)
@@ -1132,7 +1118,7 @@ func TestInitialize_WithDeclarativeResourcesEnabled_InvalidYAML(t *testing.T) {
 			},
 		},
 		Crypto: config.CryptoConfig{
-			Encryption: config.EncryptionConfig{
+			Encryption: engineconfig.EncryptionConfig{
 				Key: testCryptoKey,
 			},
 		},
@@ -1145,10 +1131,8 @@ func TestInitialize_WithDeclarativeResourcesEnabled_InvalidYAML(t *testing.T) {
 
 	mux := http.NewServeMux()
 	mockOUService := oumock.NewOrganizationUnitServiceInterfaceMock(t)
-	mockConsentService := mockConsentServiceWithDisabled(t)
-
 	// Initialize should return an error due to invalid YAML
-	_, _, err = Initialize(mux, nil, cache.Initialize(), mockOUService, nil, mockConsentService)
+	_, _, err = Initialize(mux, nil, testCacheManager(), mockOUService, nil)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to load entity type resources")
 }
@@ -1158,21 +1142,21 @@ func TestInitialize_WithDeclarativeResourcesEnabled_InvalidYAML(t *testing.T) {
 //nolint:dupl // Similar test setup required for different error scenarios
 func TestInitialize_WithDeclarativeResourcesEnabled_ValidationFailure(t *testing.T) {
 	tmpDir := t.TempDir()
-	confDir := tmpDir + "/repository/resources"
+	confDir := tmpDir + "/config/resources"
 	schemaDir := confDir + "/user_types"
 
 	err := os.MkdirAll(schemaDir, 0750)
 	assert.NoError(t, err)
 
 	// Create crypto directory
-	cryptoDir := tmpDir + "/repository/conf"
+	cryptoDir := tmpDir + "/config/certs"
 	err = os.MkdirAll(cryptoDir, 0750)
 	assert.NoError(t, err)
 
 	// Create a YAML file with invalid configuration (empty name)
 	invalidSchemaYAML := `id: "invalid-schema"
 name: ""
-organization_unit_id: "550e8400-e29b-41d4-a716-446655440000"
+ouId: "550e8400-e29b-41d4-a716-446655440000"
 schema: |
   {
     "email": {"type": "string"}
@@ -1192,7 +1176,7 @@ schema: |
 			},
 		},
 		Crypto: config.CryptoConfig{
-			Encryption: config.EncryptionConfig{
+			Encryption: engineconfig.EncryptionConfig{
 				Key: testCryptoKey,
 			},
 		},
@@ -1205,10 +1189,8 @@ schema: |
 
 	mux := http.NewServeMux()
 	mockOUService := oumock.NewOrganizationUnitServiceInterfaceMock(t)
-	mockConsentService := mockConsentServiceWithDisabled(t)
-
 	// Initialize should return an error due to validation failure
-	_, _, err = Initialize(mux, nil, cache.Initialize(), mockOUService, nil, mockConsentService)
+	_, _, err = Initialize(mux, nil, testCacheManager(), mockOUService, nil)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to load entity type resources")
 }
@@ -1217,22 +1199,22 @@ schema: |
 // ou_handle in a declarative resource cannot be resolved.
 func TestInitialize_WithDeclarativeResourcesEnabled_OUHandleNotFound(t *testing.T) {
 	tmpDir := t.TempDir()
-	confDir := tmpDir + "/repository/resources"
+	confDir := tmpDir + "/config/resources"
 	schemaDir := confDir + "/user_types"
 
 	err := os.MkdirAll(schemaDir, 0750)
 	assert.NoError(t, err)
 
 	// Create crypto directory
-	cryptoDir := tmpDir + "/repository/conf"
+	cryptoDir := tmpDir + "/config/certs"
 	err = os.MkdirAll(cryptoDir, 0750)
 	assert.NoError(t, err)
 
 	// Create a YAML file that uses an ou_handle that cannot be resolved
 	validSchemaYAML := `id: "test-schema"
 name: "Test Schema"
-ou_handle: "nonexistent-handle"
-allow_self_registration: true
+ouHandle: "nonexistent-handle"
+allowSelfRegistration: true
 schema: |
   {
     "email": {"type": "string", "required": true}
@@ -1252,7 +1234,7 @@ schema: |
 			},
 		},
 		Crypto: config.CryptoConfig{
-			Encryption: config.EncryptionConfig{
+			Encryption: engineconfig.EncryptionConfig{
 				Key: testCryptoKey,
 			},
 		},
@@ -1268,21 +1250,19 @@ schema: |
 
 	// Mock OU service to return not-found for the handle
 	mockOUService.On("GetOrganizationUnitByPath", mock.Anything, "nonexistent-handle").
-		Return(oupkg.OrganizationUnit{}, &serviceerror.ServiceError{
+		Return(providers.OrganizationUnit{}, &tidcommon.ServiceError{
 			Code: "OUS-1002",
-			Type: serviceerror.ClientErrorType,
-			Error: core.I18nMessage{
+			Type: tidcommon.ClientErrorType,
+			Error: tidcommon.I18nMessage{
 				Key:          "error.organizationunit.not_found",
 				DefaultValue: "Organization unit not found",
 			},
-			ErrorDescription: core.I18nMessage{
+			ErrorDescription: tidcommon.I18nMessage{
 				Key:          "error.organizationunit.not_found_description",
 				DefaultValue: "The organization unit does not exist",
 			},
 		}).Once()
-	mockConsentService := mockConsentServiceWithDisabled(t)
-
-	_, _, err = Initialize(mux, nil, cache.Initialize(), mockOUService, nil, mockConsentService)
+	_, _, err = Initialize(mux, nil, testCacheManager(), mockOUService, nil)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to load entity type resources")
 
@@ -1294,21 +1274,21 @@ schema: |
 //nolint:dupl // Similar test setup required for different error scenarios
 func TestInitialize_WithDeclarativeResourcesEnabled_InvalidJSONSchema(t *testing.T) {
 	tmpDir := t.TempDir()
-	confDir := tmpDir + "/repository/resources"
+	confDir := tmpDir + "/config/resources"
 	schemaDir := confDir + "/user_types"
 
 	err := os.MkdirAll(schemaDir, 0750)
 	assert.NoError(t, err)
 
 	// Create crypto directory
-	cryptoDir := tmpDir + "/repository/conf"
+	cryptoDir := tmpDir + "/config/certs"
 	err = os.MkdirAll(cryptoDir, 0750)
 	assert.NoError(t, err)
 
 	// Create a YAML file with invalid JSON in schema field
 	invalidJSONYAML := `id: "invalid-json-schema"
 name: "Invalid JSON Schema"
-organization_unit_id: "550e8400-e29b-41d4-a716-446655440000"
+ouId: "550e8400-e29b-41d4-a716-446655440000"
 schema: |
   {invalid json here}
 `
@@ -1326,7 +1306,7 @@ schema: |
 			},
 		},
 		Crypto: config.CryptoConfig{
-			Encryption: config.EncryptionConfig{
+			Encryption: engineconfig.EncryptionConfig{
 				Key: testCryptoKey,
 			},
 		},
@@ -1339,17 +1319,8 @@ schema: |
 
 	mux := http.NewServeMux()
 	mockOUService := oumock.NewOrganizationUnitServiceInterfaceMock(t)
-	mockConsentService := mockConsentServiceWithDisabled(t)
-
 	// Initialize should return an error due to invalid JSON
-	_, _, err = Initialize(mux, nil, cache.Initialize(), mockOUService, nil, mockConsentService)
+	_, _, err = Initialize(mux, nil, testCacheManager(), mockOUService, nil)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to load entity type resources")
-}
-
-// mockConsentServiceWithDisabled creates a mock ConsentServiceInterface with IsEnabled returning false
-func mockConsentServiceWithDisabled(t *testing.T) *consentmock.ConsentServiceInterfaceMock {
-	mockConsentService := consentmock.NewConsentServiceInterfaceMock(t)
-	mockConsentService.EXPECT().IsEnabled().Return(false).Maybe()
-	return mockConsentService
 }

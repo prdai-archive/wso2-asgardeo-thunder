@@ -26,20 +26,20 @@ import (
 	"sync"
 	"testing"
 
+	engineconfig "github.com/thunder-id/thunderid/pkg/thunderidengine/config"
+
+	tidcommon "github.com/thunder-id/thunderid/pkg/thunderidengine/common"
+
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/suite"
 
 	"github.com/thunder-id/thunderid/internal/authn/common"
-	"github.com/thunder-id/thunderid/internal/entityprovider"
 	"github.com/thunder-id/thunderid/internal/system/config"
-	"github.com/thunder-id/thunderid/internal/system/error/serviceerror"
 	"github.com/thunder-id/thunderid/internal/system/jose/jwt"
-	"github.com/thunder-id/thunderid/tests/mocks/entityprovidermock"
 	"github.com/thunder-id/thunderid/tests/mocks/jose/jwtmock"
 )
 
 const (
-	testUserOUID    = "test-ou"
 	testExecutionID = "flow-123"
 	testToken       = "jwt-token-123" // nolint:gosec // G101: test data, not a real secret
 	testIssuedAt    = int64(1609459200)
@@ -72,18 +72,19 @@ func createMagicLinkJWTWithSubject(subject string) string {
 
 func initializeTestRuntime(root string) error {
 	testConfig := &config.Config{
-		Server: config.ServerConfig{
+		Server: engineconfig.ServerConfig{
 			Hostname: "localhost",
 			Port:     8090,
 		},
-		JWT: config.JWTConfig{
+		JWT: engineconfig.JWTConfig{
 			Issuer: "magiclink-svc",
 		},
-		GateClient: config.GateClientConfig{
-			Hostname:  "localhost",
-			Port:      8090,
-			Scheme:    "https",
-			LoginPath: "/gate/signin",
+		GateClient: engineconfig.GateClientConfig{
+			Hostname:     "localhost",
+			Port:         8090,
+			Scheme:       "https",
+			LoginPath:    "/gate/signin",
+			CallbackPath: "/gate/callback",
 		},
 	}
 	return config.InitializeServerRuntime(root, testConfig)
@@ -91,9 +92,8 @@ func initializeTestRuntime(root string) error {
 
 type MagicLinkServiceTestSuite struct {
 	suite.Suite
-	mockJWTService  *jwtmock.JWTServiceInterfaceMock
-	mockUserService *entityprovidermock.EntityProviderInterfaceMock
-	service         MagicLinkAuthnServiceInterface
+	mockJWTService *jwtmock.JWTServiceInterfaceMock
+	service        MagicLinkAuthnServiceInterface
 }
 
 func TestMagicLinkServiceTestSuite(t *testing.T) {
@@ -113,8 +113,7 @@ func (suite *MagicLinkServiceTestSuite) TearDownSuite() {
 
 func (suite *MagicLinkServiceTestSuite) SetupTest() {
 	suite.mockJWTService = jwtmock.NewJWTServiceInterfaceMock(suite.T())
-	suite.mockUserService = entityprovidermock.NewEntityProviderInterfaceMock(suite.T())
-	suite.service = newMagicLinkAuthnService(suite.mockJWTService, suite.mockUserService)
+	suite.service = newMagicLinkAuthnService(suite.mockJWTService)
 }
 
 func (suite *MagicLinkServiceTestSuite) TestGenerateMagicLinkSuccess() {
@@ -163,7 +162,7 @@ func (suite *MagicLinkServiceTestSuite) TestGenerateMagicLinkJWTGenerationError(
 		mock.Anything,
 		jwt.TokenTypeJWT,
 		"",
-	).Return("", int64(0), &serviceerror.ServiceError{Code: serviceerror.InternalServerError.Code})
+	).Return("", int64(0), &tidcommon.ServiceError{Code: tidcommon.InternalServerError.Code})
 
 	magicLinkURL, err := suite.service.GenerateMagicLink(context.Background(), testUserID, 0,
 		map[string]string{"id": testExecutionID}, nil, "")
@@ -180,7 +179,7 @@ func (suite *MagicLinkServiceTestSuite) TestAuthenticateEmptyToken() {
 }
 
 func (suite *MagicLinkServiceTestSuite) TestAuthenticateExpiredToken() {
-	expiredErr := &serviceerror.ServiceError{
+	expiredErr := &tidcommon.ServiceError{
 		Code: jwt.ErrorTokenExpired.Code,
 	}
 	suite.mockJWTService.On("VerifyJWT", mock.Anything, testToken, tokenAudience, mock.Anything).Return(expiredErr)
@@ -193,7 +192,7 @@ func (suite *MagicLinkServiceTestSuite) TestAuthenticateExpiredToken() {
 
 func (suite *MagicLinkServiceTestSuite) TestAuthenticateInvalidToken() {
 	suite.mockJWTService.On("VerifyJWT", mock.Anything, testToken, tokenAudience, mock.Anything).
-		Return(&serviceerror.ServiceError{
+		Return(&tidcommon.ServiceError{
 			Code: "JWT_INVALID",
 		})
 
@@ -206,45 +205,26 @@ func (suite *MagicLinkServiceTestSuite) TestAuthenticateInvalidToken() {
 func (suite *MagicLinkServiceTestSuite) TestAuthenticateSuccess() {
 	suite.mockJWTService.On("VerifyJWT", mock.Anything, testValidJWT, tokenAudience, mock.Anything).Return(nil)
 
-	testUser := &entityprovider.Entity{
-		ID:   testUserID,
-		OUID: testUserOUID,
-		Type: "person",
-	}
-	suite.mockUserService.On("GetEntity", testUserID).Return(testUser, nil)
-
 	result, err := suite.service.Authenticate(context.Background(), testValidJWT, "")
 	suite.Nil(err)
 	suite.NotNil(result)
-	suite.NotNil(result.InternalEntity)
-	suite.Equal(testUserID, result.InternalEntity.ID)
-	suite.Equal(testUserOUID, result.InternalEntity.OUID)
+	suite.Equal(testUserID, result.Token[common.UserAttributeUserID])
+	suite.Equal(testUserID, result.AuthenticatedClaims[common.UserAttributeUserID])
 }
 
-func (suite *MagicLinkServiceTestSuite) TestAuthenticateSuccessWithDestinationAttribute() {
+func (suite *MagicLinkServiceTestSuite) TestAuthenticateSuccessWithSubjectAttribute() {
 	const (
 		workEmailAttr  = "workemail"
 		workEmailValue = "johnwork@company.lk"
 	)
-	workEmailUser := "user-work"
 	testWorkEmailJWT := createMagicLinkJWTWithSubject(workEmailValue)
 	suite.mockJWTService.On("VerifyJWT", mock.Anything, testWorkEmailJWT, tokenAudience, mock.Anything).Return(nil)
-	suite.mockUserService.On("IdentifyEntity", map[string]interface{}{
-		workEmailAttr: workEmailValue,
-	}).Return(&workEmailUser, nil)
-
-	testUser := &entityprovider.Entity{
-		ID:   workEmailUser,
-		OUID: testUserOUID,
-		Type: "person",
-	}
-	suite.mockUserService.On("GetEntity", workEmailUser).Return(testUser, nil)
 
 	result, err := suite.service.Authenticate(context.Background(), testWorkEmailJWT, workEmailAttr)
 	suite.Nil(err)
 	suite.NotNil(result)
-	suite.NotNil(result.InternalEntity)
-	suite.Equal(workEmailUser, result.InternalEntity.ID)
+	suite.Equal(workEmailValue, result.Token[workEmailAttr])
+	suite.Equal(workEmailValue, result.AuthenticatedClaims[workEmailAttr])
 }
 
 func (suite *MagicLinkServiceTestSuite) TestAuthenticateMissingSubjectClaim() {
@@ -256,63 +236,11 @@ func (suite *MagicLinkServiceTestSuite) TestAuthenticateMissingSubjectClaim() {
 	suite.Equal(ErrorMalformedTokenClaims.Code, err.Code)
 }
 
-func (suite *MagicLinkServiceTestSuite) TestAuthenticateUserNotFound_ReturnsVerifiedIdentifiers() {
-	suite.mockJWTService.
-		On("VerifyJWT", mock.Anything, testValidJWT, tokenAudience, mock.Anything).Return(nil)
-	suite.mockUserService.On("GetEntity", testUserID).Return(nil, &entityprovider.EntityProviderError{
-		Code:    entityprovider.ErrorCodeEntityNotFound,
-		Message: "Entity not found",
-	})
-
-	result, err := suite.service.Authenticate(context.Background(), testValidJWT, "")
-	suite.Nil(err)
-	suite.NotNil(result)
-	suite.Nil(result.InternalEntity)
-	suite.Empty(result.VerifiedIdentifiers)
-}
-
-func (suite *MagicLinkServiceTestSuite) TestAuthenticateUserNotFound_WithSubjectAttribute() {
-	const destAttr = "email"
-	suite.mockJWTService.On("VerifyJWT", mock.Anything, testValidJWT, tokenAudience, mock.Anything).Return(nil)
-	suite.mockUserService.On("IdentifyEntity", map[string]interface{}{
-		destAttr: testUserID,
-	}).Return(nil, &entityprovider.EntityProviderError{
-		Code:    entityprovider.ErrorCodeEntityNotFound,
-		Message: "Entity not found",
-	})
-
-	result, err := suite.service.Authenticate(context.Background(), testValidJWT, destAttr)
-	suite.Nil(err)
-	suite.NotNil(result)
-	suite.Nil(result.InternalEntity)
-	suite.Equal(testUserID, result.VerifiedIdentifiers[destAttr])
-}
-
-func (suite *MagicLinkServiceTestSuite) TestAuthenticateGetUserError() {
-	suite.mockJWTService.On("VerifyJWT", mock.Anything, testValidJWT, tokenAudience, mock.Anything).Return(nil)
-	suite.mockUserService.On("GetEntity", testUserID).Return(nil, &entityprovider.EntityProviderError{
-		Code:    entityprovider.ErrorCodeInvalidRequestFormat,
-		Message: "Invalid request",
-	})
-
-	result, err := suite.service.Authenticate(context.Background(), testValidJWT, "")
+func (suite *MagicLinkServiceTestSuite) TestAuthenticateWhitespaceOnlyToken() {
+	result, err := suite.service.Authenticate(context.Background(), "   ", "")
 	suite.Nil(result)
 	suite.NotNil(err)
-	suite.Equal(ErrorClientErrorWhileResolvingUser.Code, err.Code)
-}
-
-func (suite *MagicLinkServiceTestSuite) TestAuthenticateEntityProviderSystemError() {
-	suite.mockJWTService.On("VerifyJWT", mock.Anything, testValidJWT, tokenAudience, mock.Anything).Return(nil)
-	suite.mockUserService.On("GetEntity", testUserID).Return(nil, &entityprovider.EntityProviderError{
-		Code:        entityprovider.ErrorCodeSystemError,
-		Message:     "System error",
-		Description: "Database connection failed",
-	})
-
-	result, err := suite.service.Authenticate(context.Background(), testValidJWT, "")
-	suite.Nil(result)
-	suite.NotNil(err)
-	suite.Equal(serviceerror.InternalServerError.Code, err.Code)
+	suite.Equal(ErrorInvalidToken.Code, err.Code)
 }
 
 func (suite *MagicLinkServiceTestSuite) TestGetAuthenticatorMetadata() {
@@ -325,18 +253,18 @@ func (suite *MagicLinkServiceTestSuite) TestGetAuthenticatorMetadata() {
 func (suite *MagicLinkServiceTestSuite) TestBuildMagicLinkURLUsesQueryParams() {
 	service := suite.service.(*magicLinkAuthnService)
 
-	result := service.buildMagicLinkURL("", testToken, map[string]string{"id": testExecutionID})
+	result := service.buildMagicLinkURL(context.Background(), "", testToken, map[string]string{"id": testExecutionID})
 	parsedURL, err := url.Parse(result)
 
 	suite.Require().NoError(err)
-	suite.Equal("/gate/signin", parsedURL.Path)
+	suite.Equal("/gate/callback", parsedURL.Path)
 	suite.Equal(testExecutionID, parsedURL.Query().Get("id"))
 	suite.Equal(testToken, parsedURL.Query().Get("token"))
 }
 
 func (suite *MagicLinkServiceTestSuite) TestBuildMagicLinkURLUsesQueryParamsForCustomURL() {
 	service := suite.service.(*magicLinkAuthnService)
-	result := service.buildMagicLinkURL("https://example.com/signin?tenant=alpha", testToken,
+	result := service.buildMagicLinkURL(context.Background(), "https://example.com/signin?tenant=alpha", testToken,
 		map[string]string{"id": testExecutionID})
 	parsedURL, err := url.Parse(result)
 
@@ -349,8 +277,8 @@ func (suite *MagicLinkServiceTestSuite) TestBuildMagicLinkURLUsesQueryParamsForC
 func (suite *MagicLinkServiceTestSuite) TestBuildMagicLinkURLDefaultURLIsNotMutated() {
 	service := suite.service.(*magicLinkAuthnService)
 
-	result1 := service.buildMagicLinkURL("", "token-aaa", map[string]string{"id": "flow-aaa"})
-	result2 := service.buildMagicLinkURL("", "token-bbb", map[string]string{"id": "flow-bbb"})
+	result1 := service.buildMagicLinkURL(context.Background(), "", "token-aaa", map[string]string{"id": "flow-aaa"})
+	result2 := service.buildMagicLinkURL(context.Background(), "", "token-bbb", map[string]string{"id": "flow-bbb"})
 
 	parsedURL1, err1 := url.Parse(result1)
 	parsedURL2, err2 := url.Parse(result2)

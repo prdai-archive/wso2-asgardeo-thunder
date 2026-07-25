@@ -19,20 +19,11 @@
 package manager
 
 import (
-	authncommon "github.com/thunder-id/thunderid/internal/authn/common"
-	"github.com/thunder-id/thunderid/internal/authn/magiclink"
-	"github.com/thunder-id/thunderid/internal/authn/otp"
-	"github.com/thunder-id/thunderid/internal/authn/passkey"
-	"github.com/thunder-id/thunderid/internal/authnprovider/provider"
-	"github.com/thunder-id/thunderid/internal/entity"
-	"github.com/thunder-id/thunderid/internal/idp"
+	"github.com/thunder-id/thunderid/pkg/thunderidengine/providers"
 )
 
-// InitializeAuthnProviderManager initializes and returns an AuthnProviderManagerInterface.
-func InitializeAuthnProviderManager(entitySvc entity.EntityServiceInterface,
-	passkeySvc passkey.PasskeyServiceInterface, otpSvc otp.OTPAuthnServiceInterface,
-	magicLinkSvc magiclink.MagicLinkAuthnServiceInterface,
-	federatedAuths map[idp.IDPType]authncommon.FederatedAuthenticator) AuthnProviderManagerInterface {
-	p := provider.InitializeAuthnProvider(entitySvc, passkeySvc, otpSvc, magicLinkSvc, federatedAuths)
-	return newAuthnProviderManager(p)
+// Initialize creates a new AuthnProviderManager. defaultProvider is required.
+func Initialize(defaultProvider providers.AuthnProviderInterface,
+	others map[string]providers.CustomAuthnProvider) (providers.AuthnProviderManager, error) {
+	return newAuthnProviderManager(defaultProvider, others)
 }

@@ -103,11 +103,12 @@ CREATE TABLE "INBOUND_CLIENT" (
     IS_REGISTRATION_FLOW_ENABLED CHAR(1) DEFAULT '1',
     RECOVERY_FLOW_ID VARCHAR(100),
     IS_RECOVERY_FLOW_ENABLED CHAR(1) DEFAULT '0',
+    SIGNOUT_FLOW_ID VARCHAR(100),
     THEME_ID VARCHAR(36),
     LAYOUT_ID VARCHAR(36),
     PROPERTIES TEXT,
-    FOREIGN KEY (THEME_ID) REFERENCES "THEME"(ID) ON DELETE RESTRICT,
-    FOREIGN KEY (LAYOUT_ID) REFERENCES "LAYOUT"(ID) ON DELETE RESTRICT
+    FOREIGN KEY (THEME_ID) REFERENCES "THEME"(ID) ON DELETE SET NULL,
+    FOREIGN KEY (LAYOUT_ID) REFERENCES "LAYOUT"(ID) ON DELETE SET NULL
 );
 
 -- Index for efficient lookups by theme.
@@ -133,6 +134,7 @@ CREATE TABLE "IDP" (
     DESCRIPTION VARCHAR(500),
     TYPE VARCHAR(20) NOT NULL,
     PROPERTIES TEXT,
+    ATTRIBUTE_CONFIGURATION TEXT,
     CREATED_AT TEXT DEFAULT (datetime('now')),
     UPDATED_AT TEXT DEFAULT (datetime('now'))
 );
@@ -179,8 +181,8 @@ CREATE TABLE "RESOURCE_SERVER" (
     OU_ID VARCHAR(36) NOT NULL,
     NAME VARCHAR(100) NOT NULL,
     DESCRIPTION TEXT,
-    HANDLE VARCHAR(100),
-    IDENTIFIER VARCHAR(2048),
+    IDENTIFIER VARCHAR(2048) NOT NULL,
+    TYPE VARCHAR(20) CHECK (TYPE IS NULL OR TYPE IN ('API', 'MCP', 'CUSTOM')),
     PROPERTIES TEXT,
     CREATED_AT TEXT DEFAULT (datetime('now')),
     UPDATED_AT TEXT DEFAULT (datetime('now')),
@@ -190,15 +192,9 @@ CREATE TABLE "RESOURCE_SERVER" (
 -- Composite index for name-based resource server lookups
 CREATE INDEX idx_resource_server_name_deployment ON "RESOURCE_SERVER" (DEPLOYMENT_ID, NAME);
 
--- Unique constraint: Resource server handle must be unique per deployment (when not null)
-CREATE UNIQUE INDEX uq_resource_server_handle
-    ON "RESOURCE_SERVER"(HANDLE, DEPLOYMENT_ID)
-    WHERE HANDLE IS NOT NULL;
-
--- Unique constraint: Resource server identifier must be unique per deployment (when not null)
+-- Unique constraint: Resource server identifier must be unique per deployment
 CREATE UNIQUE INDEX uq_resource_server_identifier
-    ON "RESOURCE_SERVER"(IDENTIFIER, DEPLOYMENT_ID)
-    WHERE IDENTIFIER IS NOT NULL;
+    ON "RESOURCE_SERVER"(IDENTIFIER, DEPLOYMENT_ID);
 
 -- Table to store resources within resource servers.
 CREATE TABLE "RESOURCE" (
@@ -296,6 +292,7 @@ CREATE TABLE "FLOW_VERSION" (
     FLOW_ID VARCHAR(36) NOT NULL,
     VERSION INTEGER NOT NULL,
     NODES TEXT NOT NULL,
+    INTERCEPTORS TEXT,
     CREATED_AT TEXT DEFAULT (datetime('now')),
     PRIMARY KEY (FLOW_ID, VERSION, DEPLOYMENT_ID),
     FOREIGN KEY (FLOW_ID)
@@ -317,3 +314,53 @@ CREATE TABLE "TRANSLATION" (
 
 -- Index for efficient language and namespace combination lookups
 CREATE INDEX idx_translation_lang_namespace ON "TRANSLATION" (DEPLOYMENT_ID, LANGUAGE_CODE, NAMESPACE);
+
+-- Table to store OpenID4VP presentation definitions.
+CREATE TABLE "PRESENTATION_DEFINITION" (
+    DEPLOYMENT_ID VARCHAR(255) NOT NULL,
+    ID VARCHAR(36) PRIMARY KEY,
+    HANDLE VARCHAR(255) NOT NULL,
+    OU_ID VARCHAR(36) NOT NULL,
+    NAME VARCHAR(255),
+    DESCRIPTION VARCHAR(255),
+    VCT VARCHAR(512) NOT NULL,
+    FORMAT VARCHAR(64) NOT NULL DEFAULT 'dc+sd-jwt',
+    CLAIMS TEXT,
+    ENFORCE_TRUSTED_ISSUER INTEGER,
+    TRUSTED_AUTHORITIES TEXT,
+    CREATED_AT TEXT DEFAULT (datetime('now')),
+    UPDATED_AT TEXT DEFAULT (datetime('now'))
+);
+
+-- Each presentation definition handle is unique per deployment.
+CREATE UNIQUE INDEX idx_openid4vp_pd_handle ON "PRESENTATION_DEFINITION" (DEPLOYMENT_ID, HANDLE);
+
+-- Table to store OpenID4VCI credential configurations.
+CREATE TABLE "CREDENTIAL_CONFIGURATION" (
+    DEPLOYMENT_ID VARCHAR(255) NOT NULL,
+    ID VARCHAR(36) PRIMARY KEY,
+    HANDLE VARCHAR(255) NOT NULL,
+    OU_ID VARCHAR(36) NOT NULL,
+    NAME VARCHAR(255),
+    DESCRIPTION VARCHAR(255),
+    FORMAT VARCHAR(64) NOT NULL DEFAULT 'dc+sd-jwt',
+    VCT VARCHAR(512) NOT NULL,
+    CLAIMS TEXT,
+    DISPLAY TEXT,
+    VALIDITY_SECONDS INTEGER,
+    CREATED_AT TEXT DEFAULT (datetime('now')),
+    UPDATED_AT TEXT DEFAULT (datetime('now'))
+);
+
+-- Each credential configuration handle is unique per deployment.
+CREATE UNIQUE INDEX idx_openid4vci_cc_handle ON "CREDENTIAL_CONFIGURATION" (DEPLOYMENT_ID, HANDLE);
+
+-- Table to store server-wide configuration
+CREATE TABLE "SERVER_CONFIG" (
+    DEPLOYMENT_ID VARCHAR(255) NOT NULL,
+    NAME          VARCHAR(255) NOT NULL,
+    VALUE         TEXT         NOT NULL,
+    CREATED_AT    TEXT         DEFAULT (datetime('now')),
+    UPDATED_AT    TEXT         DEFAULT (datetime('now')),
+    PRIMARY KEY (DEPLOYMENT_ID, NAME)
+);

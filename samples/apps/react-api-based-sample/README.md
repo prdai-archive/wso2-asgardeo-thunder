@@ -27,13 +27,15 @@ Edit `public/config.json` with your server settings:
 
 ```json
 {
-  "baseUrl": "https://localhost:8090"
+  "baseUrl": "https://localhost:8090",
+  "directAuthSecret": "YOUR_DIRECT_AUTH_SECRET_HERE"
 }
 ```
 
 | Property | Description |
 |----------|-------------|
 | `baseUrl` | The base URL of your server |
+| `directAuthSecret` | The Direct Auth Secret gating the Direct API endpoints (`/auth/**`). Sent in the `Direct-Auth-Secret` header. Get it from the server's `deployment.yaml` (`server.security.direct_auth_secret`) or the value shown by `setup.sh`. |
 
 ### 2. Set Up SSL Certificates
 
@@ -41,8 +43,8 @@ The application runs on HTTPS. Copy the SSL certificates from your distribution:
 
 ```bash
 # From distribution
-cp /path/to/thunder/repository/resources/security/server.key .
-cp /path/to/thunder/repository/resources/security/server.cert .
+cp /path/to/thunder/config/certs/server.key .
+cp /path/to/thunder/config/certs/server.cert .
 
 # Or from build output (if building from source)
 cp ../../target/out/.cert/server.key .
@@ -82,15 +84,12 @@ The application will be available at [https://localhost:3000](https://localhost:
 
 ## Important: Sign Up Requirements
 
-To use the sign-up functionality, you need to temporarily disable security by setting the following environment variable before starting the server:
-
-```bash
-export SKIP_SECURITY=true
-```
-
-This is required because the sign-up API creates users without authentication. In a production environment, you would typically use a different approach such as:
+The server always enforces API security, so the sign-up functionality must use an
+unauthenticated registration flow rather than calling the management `/users` API
+directly. Configure a self-registration flow for the application and drive sign-up
+through it. Other approaches include:
 - OAuth-based registration flows
-- Admin-created user accounts
+- Admin-created user accounts (using an authenticated admin token)
 - Custom registration endpoints with appropriate security controls
 
 ## Application Structure
@@ -155,21 +154,27 @@ This sample interacts with the following APIs:
 
 **Issue**: "Failed to fetch" errors
 - Ensure server is running and accessible at the configured base URL
-- Check CORS configuration in `deployment.yaml`
+- Check the CORS configuration in the server-config `cors` section
 
 **Issue**: "User type not found" error during sign-up
 - Import `thunderid-config/thunderid-config.yaml` via the ThunderID Console (see "Set Up Sample Resources" above) to create the "Customer" user type
 
 **Issue**: Sign-up fails with authentication/authorization errors
-- Ensure `SKIP_SECURITY=true` is set when starting the server
+- Drive sign-up through an unauthenticated self-registration flow rather than the management `/users` API (the server always enforces security)
 
 **Issue**: CORS errors
-- Add your application URL to "Allowed Origins" in configuration:
-  ```yaml
-  cors:
-    allowed_origins:
-      - "https://localhost:3000"
-  ```
+- Add your application URL to the server-config `cors` section:
+  - Create or update `config/resources/server_configs/cors.yaml`:
+    ```yaml
+    name: cors
+    value:
+      allowedOrigins:
+        - "https://localhost:3000"
+    ```
+  - Or update it at runtime with `PUT /server-config/cors`:
+    ```json
+    { "allowedOrigins": ["https://localhost:3000"] }
+    ```
 
 **Issue**: SSL certificate errors
 - Ensure `server.key` and `server.cert` exist in the project root

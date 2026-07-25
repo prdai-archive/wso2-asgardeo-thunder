@@ -25,11 +25,13 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	tidcommon "github.com/thunder-id/thunderid/pkg/thunderidengine/common"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/suite"
 
-	"github.com/thunder-id/thunderid/internal/system/error/serviceerror"
+	"github.com/thunder-id/thunderid/internal/actorprovider"
 )
 
 // mockFlowMetaService is a manual mock for FlowMetaServiceInterface to avoid import cycles
@@ -43,10 +45,10 @@ func (m *mockFlowMetaService) GetFlowMetadata(
 	id string,
 	language *string,
 	namespace *string,
-) (*FlowMetadataResponse, *serviceerror.ServiceError) {
+) (*FlowMetadataResponse, *tidcommon.ServiceError) {
 	args := m.Called(ctx, metaType, id, language, namespace)
 	if args.Get(1) != nil {
-		return nil, args.Get(1).(*serviceerror.ServiceError)
+		return nil, args.Get(1).(*tidcommon.ServiceError)
 	}
 	return args.Get(0).(*FlowMetadataResponse), nil
 }
@@ -81,7 +83,7 @@ func (suite *FlowMetaHandlerTestSuite) TestHandleGetFlowMetadata_Success_AppType
 
 	expectedResponse := &FlowMetadataResponse{
 		IsRegistrationFlowEnabled: true,
-		Application: &ApplicationMetadata{
+		Application: &actorprovider.ApplicationMetadata{
 			ID:        appID,
 			Name:      "Test App",
 			LogoURL:   "https://example.com/logo.png",
@@ -287,7 +289,7 @@ func (suite *FlowMetaHandlerTestSuite) TestHandleGetFlowMetadata_ServiceError_In
 	metaType := MetaTypeAPP
 
 	suite.mockService.On("GetFlowMetadata", mock.Anything, metaType, appID, (*string)(nil), (*string)(nil)).
-		Return(nil, &serviceerror.InternalServerError)
+		Return(nil, &tidcommon.InternalServerError)
 
 	req := httptest.NewRequest(http.MethodGet, "/flow/meta?type=APP&id="+appID, nil)
 	w := httptest.NewRecorder()
@@ -307,7 +309,7 @@ func (suite *FlowMetaHandlerTestSuite) TestHandleGetFlowMetadata_WithLanguagePar
 
 	expectedResponse := &FlowMetadataResponse{
 		IsRegistrationFlowEnabled: true,
-		Application: &ApplicationMetadata{
+		Application: &actorprovider.ApplicationMetadata{
 			ID:   appID,
 			Name: "Test App",
 		},
@@ -354,7 +356,7 @@ func (suite *FlowMetaHandlerTestSuite) TestHandleGetFlowMetadata_WithNamespacePa
 
 	expectedResponse := &FlowMetadataResponse{
 		IsRegistrationFlowEnabled: true,
-		Application: &ApplicationMetadata{
+		Application: &actorprovider.ApplicationMetadata{
 			ID:   appID,
 			Name: "Test App",
 		},

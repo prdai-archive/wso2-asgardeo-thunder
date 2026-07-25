@@ -26,6 +26,7 @@ import (
 	"github.com/thunder-id/thunderid/internal/system/config"
 	"github.com/thunder-id/thunderid/internal/system/database/provider"
 	"github.com/thunder-id/thunderid/internal/system/log"
+	"github.com/thunder-id/thunderid/pkg/thunderidengine/providers"
 )
 
 const storeLoggerComponentName = "GroupStore"
@@ -52,7 +53,10 @@ type groupStoreInterface interface {
 		ctx context.Context, oUID string, limit, offset int) ([]GroupBasicDAO, error)
 	AddGroupMembers(ctx context.Context, groupID string, members []Member) error
 	RemoveGroupMembers(ctx context.Context, groupID string, members []Member) error
+	DeleteMembershipsByMember(ctx context.Context, memberType, memberID string) (int64, error)
 	GetGroupsByIDs(ctx context.Context, groupIDs []string) ([]GroupBasicDAO, error)
+	IsGroupDeclarative(ctx context.Context, id string) (bool, error)
+	GetTransitiveGroupsForEntity(ctx context.Context, entityID string) ([]providers.EntityGroup, error)
 }
 
 // groupStore is the default implementation of groupStoreInterface.
@@ -71,7 +75,7 @@ func newGroupStore() groupStoreInterface {
 
 // GetGroupListCount retrieves the total count of root groups.
 func (s *groupStore) GetGroupListCount(ctx context.Context) (int, error) {
-	dbClient, err := s.dbProvider.GetUserDBClient()
+	dbClient, err := s.dbProvider.GetEntityDBClient()
 	if err != nil {
 		return 0, fmt.Errorf("failed to get database client: %w", err)
 	}
@@ -93,7 +97,7 @@ func (s *groupStore) GetGroupListCount(ctx context.Context) (int, error) {
 
 // GetGroupList retrieves root groups.
 func (s *groupStore) GetGroupList(ctx context.Context, limit, offset int) ([]GroupBasicDAO, error) {
-	dbClient, err := s.dbProvider.GetUserDBClient()
+	dbClient, err := s.dbProvider.GetEntityDBClient()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get database client: %w", err)
 	}
@@ -128,7 +132,7 @@ func (s *groupStore) GetGroupListCountByOUIDs(ctx context.Context, ouIDs []strin
 		return 0, nil
 	}
 
-	dbClient, err := s.dbProvider.GetUserDBClient()
+	dbClient, err := s.dbProvider.GetEntityDBClient()
 	if err != nil {
 		return 0, fmt.Errorf("failed to get database client for counter query: %w", err)
 	}
@@ -159,7 +163,7 @@ func (s *groupStore) GetGroupListByOUIDs(
 		return []GroupBasicDAO{}, nil
 	}
 
-	dbClient, err := s.dbProvider.GetUserDBClient()
+	dbClient, err := s.dbProvider.GetEntityDBClient()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get database client for query: %w", err)
 	}
@@ -192,7 +196,7 @@ func (s *groupStore) GetGroupListByOUIDs(
 
 // CreateGroup adds a new group record to the database.
 func (s *groupStore) CreateGroup(ctx context.Context, group GroupDAO) error {
-	dbClient, err := s.dbProvider.GetUserDBClient()
+	dbClient, err := s.dbProvider.GetEntityDBClient()
 	if err != nil {
 		return fmt.Errorf("failed to get database client: %w", err)
 	}
@@ -223,7 +227,7 @@ func (s *groupStore) CreateGroup(ctx context.Context, group GroupDAO) error {
 
 // GetGroup retrieves a group by its id.
 func (s *groupStore) GetGroup(ctx context.Context, id string) (GroupDAO, error) {
-	dbClient, err := s.dbProvider.GetUserDBClient()
+	dbClient, err := s.dbProvider.GetEntityDBClient()
 	if err != nil {
 		return GroupDAO{}, fmt.Errorf("failed to get database client: %w", err)
 	}
@@ -252,7 +256,7 @@ func (s *groupStore) GetGroup(ctx context.Context, id string) (GroupDAO, error) 
 
 // GetGroupMembers retrieves members of a group with pagination.
 func (s *groupStore) GetGroupMembers(ctx context.Context, groupID string, limit, offset int) ([]Member, error) {
-	dbClient, err := s.dbProvider.GetUserDBClient()
+	dbClient, err := s.dbProvider.GetEntityDBClient()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get database client: %w", err)
 	}
@@ -279,7 +283,7 @@ func (s *groupStore) GetGroupMembers(ctx context.Context, groupID string, limit,
 
 // GetGroupMemberCount retrieves the total count of members in a group.
 func (s *groupStore) GetGroupMemberCount(ctx context.Context, groupID string) (int, error) {
-	dbClient, err := s.dbProvider.GetUserDBClient()
+	dbClient, err := s.dbProvider.GetEntityDBClient()
 	if err != nil {
 		return 0, fmt.Errorf("failed to get database client: %w", err)
 	}
@@ -302,7 +306,7 @@ func (s *groupStore) GetGroupMemberCount(ctx context.Context, groupID string) (i
 
 // UpdateGroup updates an existing group.
 func (s *groupStore) UpdateGroup(ctx context.Context, group GroupDAO) error {
-	dbClient, err := s.dbProvider.GetUserDBClient()
+	dbClient, err := s.dbProvider.GetEntityDBClient()
 	if err != nil {
 		return fmt.Errorf("failed to get database client: %w", err)
 	}
@@ -332,7 +336,7 @@ func (s *groupStore) UpdateGroup(ctx context.Context, group GroupDAO) error {
 func (s *groupStore) DeleteGroup(ctx context.Context, id string) error {
 	logger := log.GetLogger().With(log.String(log.LoggerKeyComponentName, storeLoggerComponentName))
 
-	dbClient, err := s.dbProvider.GetUserDBClient()
+	dbClient, err := s.dbProvider.GetEntityDBClient()
 	if err != nil {
 		return fmt.Errorf("failed to get database client: %w", err)
 	}
@@ -348,7 +352,7 @@ func (s *groupStore) DeleteGroup(ctx context.Context, id string) error {
 	}
 
 	if result == 0 {
-		logger.Debug("Group not found with id: " + id)
+		logger.Debug(ctx, "Group not found with id: "+id)
 	}
 
 	return nil
@@ -360,7 +364,7 @@ func (s *groupStore) ValidateGroupIDs(ctx context.Context, groupIDs []string) ([
 		return []string{}, nil
 	}
 
-	dbClient, err := s.dbProvider.GetUserDBClient()
+	dbClient, err := s.dbProvider.GetEntityDBClient()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get database client: %w", err)
 	}
@@ -396,7 +400,7 @@ func (s *groupStore) ValidateGroupIDs(ctx context.Context, groupIDs []string) ([
 // in the same organization unit.
 func (s *groupStore) CheckGroupNameConflictForCreate(
 	ctx context.Context, name string, oUID string) error {
-	dbClient, err := s.dbProvider.GetUserDBClient()
+	dbClient, err := s.dbProvider.GetEntityDBClient()
 	if err != nil {
 		return fmt.Errorf("failed to get database client: %w", err)
 	}
@@ -408,7 +412,7 @@ func (s *groupStore) CheckGroupNameConflictForCreate(
 // in the same organization unit.
 func (s *groupStore) CheckGroupNameConflictForUpdate(
 	ctx context.Context, name string, oUID string, groupID string) error {
-	dbClient, err := s.dbProvider.GetUserDBClient()
+	dbClient, err := s.dbProvider.GetEntityDBClient()
 	if err != nil {
 		return fmt.Errorf("failed to get database client: %w", err)
 	}
@@ -418,7 +422,7 @@ func (s *groupStore) CheckGroupNameConflictForUpdate(
 
 // GetGroupsByOrganizationUnitCount retrieves the total count of groups in a specific organization unit.
 func (s *groupStore) GetGroupsByOrganizationUnitCount(ctx context.Context, oUID string) (int, error) {
-	dbClient, err := s.dbProvider.GetUserDBClient()
+	dbClient, err := s.dbProvider.GetEntityDBClient()
 	if err != nil {
 		return 0, fmt.Errorf("failed to get database client: %w", err)
 	}
@@ -444,7 +448,7 @@ func (s *groupStore) GetGroupsByOrganizationUnitCount(ctx context.Context, oUID 
 func (s *groupStore) GetGroupsByOrganizationUnit(
 	ctx context.Context, oUID string, limit, offset int,
 ) ([]GroupBasicDAO, error) {
-	dbClient, err := s.dbProvider.GetUserDBClient()
+	dbClient, err := s.dbProvider.GetEntityDBClient()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get database client: %w", err)
 	}
@@ -475,7 +479,7 @@ func (s *groupStore) GetGroupsByOrganizationUnit(
 
 // AddGroupMembers adds members to a group.
 func (s *groupStore) AddGroupMembers(ctx context.Context, groupID string, members []Member) error {
-	dbClient, err := s.dbProvider.GetUserDBClient()
+	dbClient, err := s.dbProvider.GetEntityDBClient()
 	if err != nil {
 		return fmt.Errorf("failed to get database client: %w", err)
 	}
@@ -485,7 +489,7 @@ func (s *groupStore) AddGroupMembers(ctx context.Context, groupID string, member
 
 // RemoveGroupMembers removes members from a group.
 func (s *groupStore) RemoveGroupMembers(ctx context.Context, groupID string, members []Member) error {
-	dbClient, err := s.dbProvider.GetUserDBClient()
+	dbClient, err := s.dbProvider.GetEntityDBClient()
 	if err != nil {
 		return fmt.Errorf("failed to get database client: %w", err)
 	}
@@ -503,6 +507,23 @@ func (s *groupStore) RemoveGroupMembers(ctx context.Context, groupID string, mem
 	return nil
 }
 
+// DeleteMembershipsByMember deletes all group memberships held by a given member principal across
+// groups, returning the number removed.
+func (s *groupStore) DeleteMembershipsByMember(
+	ctx context.Context, memberType, memberID string) (int64, error) {
+	dbClient, err := s.dbProvider.GetEntityDBClient()
+	if err != nil {
+		return 0, fmt.Errorf("failed to get database client: %w", err)
+	}
+
+	rowsAffected, err := dbClient.ExecuteContext(
+		ctx, QueryDeleteGroupMembershipsByMember, memberType, memberID, s.deploymentID)
+	if err != nil {
+		return 0, fmt.Errorf("failed to delete memberships for member: %w", err)
+	}
+	return rowsAffected, nil
+}
+
 // GetGroupsByIDs retrieves groups by a list of IDs.
 func (s *groupStore) GetGroupsByIDs(ctx context.Context, groupIDs []string) ([]GroupBasicDAO, error) {
 	const batchSize = 100
@@ -511,7 +532,7 @@ func (s *groupStore) GetGroupsByIDs(ctx context.Context, groupIDs []string) ([]G
 		return []GroupBasicDAO{}, nil
 	}
 
-	dbClient, err := s.dbProvider.GetUserDBClient()
+	dbClient, err := s.dbProvider.GetEntityDBClient()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get database client: %w", err)
 	}
@@ -549,6 +570,45 @@ func (s *groupStore) GetGroupsByIDs(ctx context.Context, groupIDs []string) ([]G
 		}
 	}
 
+	return groups, nil
+}
+
+// IsGroupDeclarative returns false for the database store — database groups are never declarative.
+func (s *groupStore) IsGroupDeclarative(ctx context.Context, id string) (bool, error) {
+	return false, nil
+}
+
+// GetTransitiveGroupsForEntity retrieves all groups an entity belongs to, including groups
+// inherited through nested group membership, using a recursive CTE.
+func (s *groupStore) GetTransitiveGroupsForEntity(
+	ctx context.Context, entityID string,
+) ([]providers.EntityGroup, error) {
+	dbClient, err := s.dbProvider.GetEntityDBClient()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get database client: %w", err)
+	}
+
+	results, err := dbClient.QueryContext(ctx, QueryGetTransitiveGroupsForMember, entityID, s.deploymentID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get transitive groups for entity: %w", err)
+	}
+
+	groups := make([]providers.EntityGroup, 0, len(results))
+	for _, row := range results {
+		groupID, ok := row["id"].(string)
+		if !ok {
+			return nil, fmt.Errorf("failed to parse group id as string")
+		}
+		name, ok := row["name"].(string)
+		if !ok {
+			return nil, fmt.Errorf("failed to parse group name as string")
+		}
+		ouID, ok := row["ou_id"].(string)
+		if !ok {
+			return nil, fmt.Errorf("failed to parse group ou_id as string")
+		}
+		groups = append(groups, providers.EntityGroup{ID: groupID, Name: name, OUID: ouID})
+	}
 	return groups, nil
 }
 

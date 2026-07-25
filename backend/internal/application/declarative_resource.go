@@ -24,13 +24,16 @@ import (
 	"fmt"
 	"testing"
 
+	tidcommon "github.com/thunder-id/thunderid/pkg/thunderidengine/common"
+	"github.com/thunder-id/thunderid/pkg/thunderidengine/providers"
+
 	"github.com/thunder-id/thunderid/internal/application/model"
 	"github.com/thunder-id/thunderid/internal/entity"
 	"github.com/thunder-id/thunderid/internal/inboundclient"
 	inboundmodel "github.com/thunder-id/thunderid/internal/inboundclient/model"
 	declarativeresource "github.com/thunder-id/thunderid/internal/system/declarative_resource"
-	"github.com/thunder-id/thunderid/internal/system/error/serviceerror"
 	"github.com/thunder-id/thunderid/internal/system/log"
+	"github.com/thunder-id/thunderid/internal/system/security"
 
 	"gopkg.in/yaml.v3"
 )
@@ -70,10 +73,10 @@ func (e *applicationExporter) GetParameterizerType() string {
 
 // GetAllResourceIDs retrieves all application IDs.
 // In composite mode, this excludes declarative (YAML-based) applications.
-func (e *applicationExporter) GetAllResourceIDs(ctx context.Context) ([]string, *serviceerror.ServiceError) {
+func (e *applicationExporter) GetAllResourceIDs(ctx context.Context) ([]string, *tidcommon.ServiceError) {
 	apps, err := e.service.GetApplicationList(ctx)
 	if err != nil {
-		return nil, &serviceerror.InternalServerError
+		return nil, &tidcommon.InternalServerError
 	}
 	ids := make([]string, 0, len(apps.Applications))
 	for _, app := range apps.Applications {
@@ -87,7 +90,7 @@ func (e *applicationExporter) GetAllResourceIDs(ctx context.Context) ([]string, 
 
 // GetResourceByID retrieves an application by its ID.
 func (e *applicationExporter) GetResourceByID(ctx context.Context, id string) (
-	interface{}, string, *serviceerror.ServiceError,
+	interface{}, string, *tidcommon.ServiceError,
 ) {
 	app, err := e.service.GetApplication(ctx, id)
 	if err != nil {
@@ -97,15 +100,15 @@ func (e *applicationExporter) GetResourceByID(ctx context.Context, id string) (
 }
 
 // ValidateResource validates an application resource.
-func (e *applicationExporter) ValidateResource(
+func (e *applicationExporter) ValidateResource(ctx context.Context,
 	resource interface{}, id string, logger *log.Logger,
 ) (string, *declarativeresource.ExportError) {
-	app, ok := resource.(*model.Application)
+	app, ok := resource.(*providers.Application)
 	if !ok {
 		return "", declarativeresource.CreateTypeError(resourceTypeApplication, id)
 	}
 
-	if err := declarativeresource.ValidateResourceName(
+	if err := declarativeresource.ValidateResourceName(ctx,
 		app.Name, resourceTypeApplication, id, "APP_VALIDATION_ERROR", logger); err != nil {
 		return "", err
 	}
@@ -135,7 +138,8 @@ func makeAppInboundParser(appService ApplicationServiceInterface) func([]byte) (
 		if err != nil {
 			return nil, err
 		}
-		validatedApp, _, svcErr := appService.ValidateApplication(context.Background(), appDTO)
+		validatedApp, _, svcErr := appService.ValidateApplication(
+			security.WithRuntimeContext(context.Background()), appDTO)
 		if svcErr != nil {
 			return nil, fmt.Errorf("error validating application '%s': %v", appDTO.Name, svcErr)
 		}
@@ -170,7 +174,7 @@ func parseToApplicationDTO(data []byte) (*model.ApplicationDTO, error) {
 		OUHandle:    appRequest.OUHandle,
 		Name:        appRequest.Name,
 		Description: appRequest.Description,
-		InboundAuthProfile: inboundmodel.InboundAuthProfile{
+		InboundAuthProfile: providers.InboundAuthProfile{
 			AuthFlowID:                appRequest.AuthFlowID,
 			AuthFlowHandle:            appRequest.AuthFlowHandle,
 			RegistrationFlowID:        appRequest.RegistrationFlowID,
@@ -179,34 +183,37 @@ func parseToApplicationDTO(data []byte) (*model.ApplicationDTO, error) {
 			RecoveryFlowID:            appRequest.RecoveryFlowID,
 			RecoveryFlowHandle:        appRequest.RecoveryFlowHandle,
 			IsRecoveryFlowEnabled:     appRequest.IsRecoveryFlowEnabled,
+			SignOutFlowID:             appRequest.SignOutFlowID,
+			SignOutFlowHandle:         appRequest.SignOutFlowHandle,
 			ThemeID:                   appRequest.ThemeID,
 			LayoutID:                  appRequest.LayoutID,
 			Assertion:                 appRequest.Assertion,
-			Certificate:               appRequest.Certificate,
 			AllowedUserTypes:          appRequest.AllowedUserTypes,
 			LoginConsent:              appRequest.LoginConsent,
 		},
-		Template:  appRequest.Template,
-		URL:       appRequest.URL,
-		LogoURL:   appRequest.LogoURL,
-		TosURI:    appRequest.TosURI,
-		PolicyURI: appRequest.PolicyURI,
-		Contacts:  appRequest.Contacts,
-		Metadata:  appRequest.Metadata,
+		Template:   appRequest.Template,
+		FlowSecret: appRequest.FlowSecret,
+		URL:        appRequest.URL,
+		LogoURL:    appRequest.LogoURL,
+		TosURI:     appRequest.TosURI,
+		PolicyURI:  appRequest.PolicyURI,
+		Contacts:   appRequest.Contacts,
+		Metadata:   appRequest.Metadata,
 	}
 	if len(appRequest.InboundAuthConfig) > 0 {
-		inboundAuthConfigDTOs := make([]inboundmodel.InboundAuthConfigWithSecret, 0)
+		inboundAuthConfigDTOs := make([]providers.InboundAuthConfigWithSecret, 0)
 		for _, config := range appRequest.InboundAuthConfig {
-			if config.Type != inboundmodel.OAuthInboundAuthType || config.OAuthConfig == nil {
+			if config.Type != providers.OAuthInboundAuthType || config.OAuthConfig == nil {
 				continue
 			}
 
-			inboundAuthConfigDTO := inboundmodel.InboundAuthConfigWithSecret{
+			inboundAuthConfigDTO := providers.InboundAuthConfigWithSecret{
 				Type: config.Type,
-				OAuthConfig: &inboundmodel.OAuthConfigWithSecret{
+				OAuthConfig: &providers.OAuthConfigWithSecret{
 					ClientID:                           config.OAuthConfig.ClientID,
 					ClientSecret:                       config.OAuthConfig.ClientSecret,
 					RedirectURIs:                       config.OAuthConfig.RedirectURIs,
+					PostLogoutRedirectURIs:             config.OAuthConfig.PostLogoutRedirectURIs,
 					GrantTypes:                         config.OAuthConfig.GrantTypes,
 					ResponseTypes:                      config.OAuthConfig.ResponseTypes,
 					TokenEndpointAuthMethod:            config.OAuthConfig.TokenEndpointAuthMethod,
@@ -214,6 +221,7 @@ func parseToApplicationDTO(data []byte) (*model.ApplicationDTO, error) {
 					PublicClient:                       config.OAuthConfig.PublicClient,
 					RequirePushedAuthorizationRequests: config.OAuthConfig.RequirePushedAuthorizationRequests,
 					DPoPBoundAccessTokens:              config.OAuthConfig.DPoPBoundAccessTokens,
+					IncludeActClaim:                    config.OAuthConfig.IncludeActClaim,
 					Token:                              config.OAuthConfig.Token,
 					Scopes:                             config.OAuthConfig.Scopes,
 					UserInfo:                           config.OAuthConfig.UserInfo,
@@ -245,7 +253,7 @@ func (e *applicationExporter) GetResourceRules() *declarativeresource.ResourceRu
 // instance. Public clients do not have a client secret, so the ClientSecret variable is excluded
 // from their export to avoid injecting an empty or invalid placeholder into the YAML template.
 func (e *applicationExporter) GetResourceRulesForResource(resource interface{}) *declarativeresource.ResourceRules {
-	app, ok := resource.(*model.Application)
+	app, ok := resource.(*providers.Application)
 	if !ok {
 		return e.GetResourceRules()
 	}
@@ -271,7 +279,7 @@ func (e *applicationExporter) GetResourceRulesForResource(resource interface{}) 
 func makeAppDeclarativeConfig(appService ApplicationServiceInterface) entity.DeclarativeLoaderConfig {
 	return entity.DeclarativeLoaderConfig{
 		Directory: "applications",
-		Category:  entity.EntityCategoryApp,
+		Category:  providers.EntityCategoryApp,
 		Parser:    makeAppEntityParser(appService),
 	}
 }
@@ -279,8 +287,8 @@ func makeAppDeclarativeConfig(appService ApplicationServiceInterface) entity.Dec
 // makeAppEntityParser creates a parser that converts application YAML into an entity.
 func makeAppEntityParser(
 	appService ApplicationServiceInterface,
-) func(data []byte) (*entity.Entity, json.RawMessage, json.RawMessage, error) {
-	return func(data []byte) (*entity.Entity, json.RawMessage, json.RawMessage, error) {
+) func(data []byte) (*providers.Entity, json.RawMessage, json.RawMessage, error) {
+	return func(data []byte) (*providers.Entity, json.RawMessage, json.RawMessage, error) {
 		if appService == nil {
 			return nil, nil, nil, fmt.Errorf("application service is required for declarative entity parsing")
 		}
@@ -290,7 +298,8 @@ func makeAppEntityParser(
 			return nil, nil, nil, fmt.Errorf("failed to parse application YAML: %w", err)
 		}
 
-		_, inboundAuthConfig, svcErr := appService.ValidateApplication(context.Background(), appDTO)
+		_, inboundAuthConfig, svcErr := appService.ValidateApplication(
+			security.WithRuntimeContext(context.Background()), appDTO)
 		if svcErr != nil {
 			return nil, nil, nil, fmt.Errorf("error validating application '%s': %v", appDTO.Name, svcErr)
 		}
@@ -306,16 +315,18 @@ func makeAppEntityParser(
 			return nil, nil, nil, fmt.Errorf("failed to build system attributes: %w", err)
 		}
 
-		sysCredsJSON, err := buildSystemCredentials(clientSecret)
+		// Declarative resources do not get an auto-generated Flow Secret; an explicitly declared
+		// value is honored to keep declarative definitions deterministic.
+		sysCredsJSON, err := buildSystemCredentials(clientSecret, appDTO.FlowSecret)
 		if err != nil {
 			return nil, nil, nil, fmt.Errorf("failed to build system credentials: %w", err)
 		}
 
-		e := &entity.Entity{
+		e := &providers.Entity{
 			ID:               appDTO.ID,
-			Category:         entity.EntityCategoryApp,
+			Category:         providers.EntityCategoryApp,
 			Type:             "application",
-			State:            entity.EntityStateActive,
+			State:            providers.EntityStateActive,
 			OUID:             appDTO.OUID,
 			SystemAttributes: sysAttrsJSON,
 		}

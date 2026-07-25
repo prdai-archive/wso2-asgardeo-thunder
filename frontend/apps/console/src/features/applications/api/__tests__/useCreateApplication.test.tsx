@@ -16,8 +16,8 @@
  * under the License.
  */
 
-import {useThunderID} from '@thunderid/react';
 import {useConfig} from '@thunderid/contexts';
+import {useThunderID} from '@thunderid/react';
 import {waitFor, act, renderHook} from '@thunderid/test-utils';
 import {describe, it, expect, beforeEach, afterEach, vi} from 'vitest';
 import ApplicationQueryKeys from '../../constants/application-query-keys';
@@ -66,8 +66,10 @@ describe('useCreateApplication', () => {
           publicClient: true,
           token: {
             accessToken: {
-              validityPeriod: 3600,
-              userAttributes: ['given_name', 'family_name', 'email', 'groups', 'name'],
+              userConfig: {
+                validityPeriod: 3600,
+                attributes: ['given_name', 'family_name', 'email', 'groups', 'name'],
+              },
             },
             idToken: {
               validityPeriod: 3600,
@@ -113,8 +115,10 @@ describe('useCreateApplication', () => {
           publicClient: true,
           token: {
             accessToken: {
-              validityPeriod: 3600,
-              userAttributes: ['given_name', 'family_name', 'email', 'groups', 'name'],
+              userConfig: {
+                validityPeriod: 3600,
+                attributes: ['given_name', 'family_name', 'email', 'groups', 'name'],
+              },
             },
             idToken: {
               validityPeriod: 3600,

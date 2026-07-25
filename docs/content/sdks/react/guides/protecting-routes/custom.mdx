@@ -1,6 +1,7 @@
 ---
 title: Custom Implementation
-description: Build custom route protection using SDK primitives
+docType: guide
+description: Build custom route protection in React using the useThunderID hook and SDK authentication primitives.
 ---
 
 # Custom Implementation
@@ -11,7 +12,7 @@ If you prefer full control over how app routes are secured, you can build a cust
 
 ```tsx title="src/App.tsx" showLineNumbers
 import React, { ReactNode } from 'react'
-import { Routes, Route } from 'react-router-dom'
+import { Routes, Route } from 'react-router'
 import { useThunderID } from '@thunderid/react'
 
 const ProtectedRoute = ({ children }: { children: ReactNode }) => {
@@ -50,7 +51,7 @@ You can extend the basic pattern to include loading states, redirects, and custo
 
 ```tsx title="src/components/ProtectedRoute.tsx" showLineNumbers
 import React, { ReactNode } from 'react'
-import { Navigate } from 'react-router-dom'
+import { Navigate } from 'react-router'
 import { useThunderID } from '@thunderid/react'
 
 interface ProtectedRouteProps {

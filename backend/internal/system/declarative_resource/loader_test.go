@@ -20,10 +20,13 @@ package declarativeresource
 
 import (
 	"errors"
+	"flag"
 	"os"
 	"path/filepath"
 	"strconv"
 	"testing"
+
+	engineconfig "github.com/thunder-id/thunderid/pkg/thunderidengine/config"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/suite"
@@ -31,6 +34,12 @@ import (
 
 	"github.com/thunder-id/thunderid/internal/system/config"
 )
+
+func init() {
+	if flag.Lookup("resources") == nil {
+		flag.String("resources", "", "Path to declarative resources YAML file")
+	}
+}
 
 // Mock Storer implementation for testing
 type mockStorer struct {
@@ -84,7 +93,7 @@ func (suite *ResourceLoaderTestSuite) SetupSuite() {
 
 	// Initialize server runtime for testing
 	testConfig := &config.Config{
-		Server: config.ServerConfig{
+		Server: engineconfig.ServerConfig{
 			Hostname: "localhost",
 			Port:     8080,
 		},
@@ -93,7 +102,7 @@ func (suite *ResourceLoaderTestSuite) SetupSuite() {
 	suite.Require().NoError(err, "Failed to initialize server runtime")
 
 	// Create the resources directory structure
-	suite.resourcesDir = filepath.Join(tempThunderHome, "repository", "resources")
+	suite.resourcesDir = filepath.Join(tempThunderHome, "config", "resources")
 	err = os.MkdirAll(suite.resourcesDir, 0750)
 	suite.Require().NoError(err)
 }
@@ -618,6 +627,153 @@ value: -100`
 // TestResourceLoader runs the test suite
 func TestResourceLoader(t *testing.T) {
 	suite.Run(t, new(ResourceLoaderTestSuite))
+}
+
+// ─── Three-level precedence tests ────────────────────────────────────────────
+
+// createRootYAMLFile creates a multi-document YAML file directly in config/resources/.
+func (suite *ResourceLoaderTestSuite) createRootYAMLFile(filename, content string) {
+	err := os.WriteFile(filepath.Join(suite.resourcesDir, filename), []byte(content), 0600)
+	suite.Require().NoError(err)
+}
+
+// removeRootYAMLFile removes a file from config/resources/.
+func (suite *ResourceLoaderTestSuite) removeRootYAMLFile(filename string) {
+	_ = os.Remove(filepath.Join(suite.resourcesDir, filename))
+}
+
+// TestLoadResources_FromRootDirFile verifies that a YAML file placed directly in
+// config/resources/ is picked up when no --resources flag is set and no subdir exists.
+func (suite *ResourceLoaderTestSuite) TestLoadResources_FromRootDirFile() {
+	content := `resource_type: testresource
+id: root-res-1
+name: Root Resource
+description: Loaded from root dir
+value: 42
+`
+	suite.createRootYAMLFile("root-prec.yaml", content)
+	defer suite.removeRootYAMLFile("root-prec.yaml")
+
+	cfg := ResourceConfig{
+		ResourceType:  "TestResource",
+		DirectoryName: "testresources",
+		Parser:        testParser,
+		IDExtractor:   testIDExtractor,
+		Validator:     testValidator,
+	}
+	store := newMockStorer()
+	loader := NewResourceLoader(cfg, store)
+
+	err := loader.LoadResources()
+
+	suite.NoError(err)
+	suite.Len(store.stored, 1)
+	suite.NotNil(store.stored["root-res-1"])
+}
+
+// TestLoadResources_RootDirTakesPrecedenceOverSubdir verifies level-2 beats level-3:
+// when a matching document exists in a root YAML file AND in a subdir file, only the
+// root dir resources are loaded.
+func (suite *ResourceLoaderTestSuite) TestLoadResources_RootDirTakesPrecedenceOverSubdir() {
+	// level-3: subdir file
+	suite.createYAMLFile("prec-subdir-dir", "sub.yaml", `id: sub-res
+name: Subdir Resource
+description: Should be shadowed
+value: 1`)
+
+	// level-2: root dir file with matching resource_type
+	suite.createRootYAMLFile("root-prec2.yaml", `resource_type: prec-subdir-di
+id: root-res
+name: Root Resource
+description: From root dir
+value: 99
+`)
+	defer suite.removeRootYAMLFile("root-prec2.yaml")
+
+	cfg := ResourceConfig{
+		ResourceType:  "TestResource",
+		DirectoryName: "prec-subdir-di",
+		Parser:        testParser,
+		IDExtractor:   testIDExtractor,
+		Validator:     testValidator,
+	}
+	store := newMockStorer()
+	loader := NewResourceLoader(cfg, store)
+
+	err := loader.LoadResources()
+
+	suite.NoError(err)
+	suite.Len(store.stored, 1)
+	suite.NotNil(store.stored["root-res"])
+	suite.Nil(store.stored["sub-res"])
+}
+
+// TestLoadResources_ArgFileTakesPrecedenceOverRootDir verifies level-1 beats level-2.
+func (suite *ResourceLoaderTestSuite) TestLoadResources_ArgFileTakesPrecedenceOverRootDir() {
+	// level-2: root dir file
+	suite.createRootYAMLFile("root-prec3.yaml", `resource_type: argvresource
+id: from-root
+name: Root File Resource
+description: Should be ignored
+value: 1
+`)
+	defer suite.removeRootYAMLFile("root-prec3.yaml")
+
+	// level-1: explicit arg file (wins)
+	argContent := `resource_type: argvresource
+id: from-arg
+name: Arg File Resource
+description: From arg file
+value: 99
+`
+	argFile := filepath.Join(suite.T().TempDir(), "arg-resources.yaml")
+	suite.Require().NoError(os.WriteFile(argFile, []byte(argContent), 0600))
+
+	suite.Require().NoError(flag.Set("resources", argFile))
+	defer func() { suite.Require().NoError(flag.Set("resources", "")) }()
+
+	cfg := ResourceConfig{
+		ResourceType:  "TestResource",
+		DirectoryName: "argvresources",
+		Parser:        testParser,
+		IDExtractor:   testIDExtractor,
+		Validator:     testValidator,
+	}
+	store := newMockStorer()
+	loader := NewResourceLoader(cfg, store)
+
+	err := loader.LoadResources()
+
+	suite.NoError(err)
+	suite.Len(store.stored, 1)
+	suite.NotNil(store.stored["from-arg"])
+	suite.Nil(store.stored["from-root"])
+}
+
+// TestLoadResources_FallsBackToSubdirWhenNoRootFiles verifies that when no YAML files
+// matching the resource type exist in config/resources/, the loader falls through to
+// the subdirectory (level-3).
+func (suite *ResourceLoaderTestSuite) TestLoadResources_FallsBackToSubdirWhenNoRootFiles() {
+	suite.createYAMLFile("fallback-subdir", "sub.yaml", `id: sub-only
+name: Subdir Only
+description: No root file present
+value: 7`)
+
+	cfg := ResourceConfig{
+		ResourceType:  "TestResource",
+		DirectoryName: "fallback-subdir",
+		Parser:        testParser,
+		IDExtractor:   testIDExtractor,
+		Validator:     testValidator,
+	}
+	store := newMockStorer()
+	loader := NewResourceLoader(cfg, store)
+
+	err := loader.LoadResources()
+
+	suite.NoError(err)
+	suite.Len(store.stored, 1)
+	suite.NotNil(store.stored["sub-only"])
 }
 
 // Additional unit tests without test suite

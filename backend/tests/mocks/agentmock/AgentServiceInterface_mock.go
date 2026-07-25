@@ -10,7 +10,8 @@ import (
 	mock "github.com/stretchr/testify/mock"
 	"github.com/thunder-id/thunderid/internal/agent/model"
 	model0 "github.com/thunder-id/thunderid/internal/inboundclient/model"
-	"github.com/thunder-id/thunderid/internal/system/error/serviceerror"
+	"github.com/thunder-id/thunderid/internal/system/resourcedependency"
+	"github.com/thunder-id/thunderid/pkg/thunderidengine/common"
 )
 
 // NewAgentServiceInterfaceMock creates a new instance of AgentServiceInterfaceMock. It also registers a testing interface on the mock and a cleanup function to assert the mocks expectations.
@@ -41,7 +42,7 @@ func (_m *AgentServiceInterfaceMock) EXPECT() *AgentServiceInterfaceMock_Expecte
 }
 
 // CreateAgent provides a mock function for the type AgentServiceInterfaceMock
-func (_mock *AgentServiceInterfaceMock) CreateAgent(ctx context.Context, agent *model.Agent) (*model.AgentCompleteResponse, *serviceerror.ServiceError) {
+func (_mock *AgentServiceInterfaceMock) CreateAgent(ctx context.Context, agent *model.Agent) (*model.AgentCompleteResponse, *common.ServiceError) {
 	ret := _mock.Called(ctx, agent)
 
 	if len(ret) == 0 {
@@ -49,8 +50,8 @@ func (_mock *AgentServiceInterfaceMock) CreateAgent(ctx context.Context, agent *
 	}
 
 	var r0 *model.AgentCompleteResponse
-	var r1 *serviceerror.ServiceError
-	if returnFunc, ok := ret.Get(0).(func(context.Context, *model.Agent) (*model.AgentCompleteResponse, *serviceerror.ServiceError)); ok {
+	var r1 *common.ServiceError
+	if returnFunc, ok := ret.Get(0).(func(context.Context, *model.Agent) (*model.AgentCompleteResponse, *common.ServiceError)); ok {
 		return returnFunc(ctx, agent)
 	}
 	if returnFunc, ok := ret.Get(0).(func(context.Context, *model.Agent) *model.AgentCompleteResponse); ok {
@@ -60,11 +61,11 @@ func (_mock *AgentServiceInterfaceMock) CreateAgent(ctx context.Context, agent *
 			r0 = ret.Get(0).(*model.AgentCompleteResponse)
 		}
 	}
-	if returnFunc, ok := ret.Get(1).(func(context.Context, *model.Agent) *serviceerror.ServiceError); ok {
+	if returnFunc, ok := ret.Get(1).(func(context.Context, *model.Agent) *common.ServiceError); ok {
 		r1 = returnFunc(ctx, agent)
 	} else {
 		if ret.Get(1) != nil {
-			r1 = ret.Get(1).(*serviceerror.ServiceError)
+			r1 = ret.Get(1).(*common.ServiceError)
 		}
 	}
 	return r0, r1
@@ -100,30 +101,30 @@ func (_c *AgentServiceInterfaceMock_CreateAgent_Call) Run(run func(ctx context.C
 	return _c
 }
 
-func (_c *AgentServiceInterfaceMock_CreateAgent_Call) Return(agentCompleteResponse *model.AgentCompleteResponse, serviceError *serviceerror.ServiceError) *AgentServiceInterfaceMock_CreateAgent_Call {
+func (_c *AgentServiceInterfaceMock_CreateAgent_Call) Return(agentCompleteResponse *model.AgentCompleteResponse, serviceError *common.ServiceError) *AgentServiceInterfaceMock_CreateAgent_Call {
 	_c.Call.Return(agentCompleteResponse, serviceError)
 	return _c
 }
 
-func (_c *AgentServiceInterfaceMock_CreateAgent_Call) RunAndReturn(run func(ctx context.Context, agent *model.Agent) (*model.AgentCompleteResponse, *serviceerror.ServiceError)) *AgentServiceInterfaceMock_CreateAgent_Call {
+func (_c *AgentServiceInterfaceMock_CreateAgent_Call) RunAndReturn(run func(ctx context.Context, agent *model.Agent) (*model.AgentCompleteResponse, *common.ServiceError)) *AgentServiceInterfaceMock_CreateAgent_Call {
 	_c.Call.Return(run)
 	return _c
 }
 
 // DeleteAgent provides a mock function for the type AgentServiceInterfaceMock
-func (_mock *AgentServiceInterfaceMock) DeleteAgent(ctx context.Context, agentID string) *serviceerror.ServiceError {
+func (_mock *AgentServiceInterfaceMock) DeleteAgent(ctx context.Context, agentID string) *common.ServiceError {
 	ret := _mock.Called(ctx, agentID)
 
 	if len(ret) == 0 {
 		panic("no return value specified for DeleteAgent")
 	}
 
-	var r0 *serviceerror.ServiceError
-	if returnFunc, ok := ret.Get(0).(func(context.Context, string) *serviceerror.ServiceError); ok {
+	var r0 *common.ServiceError
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string) *common.ServiceError); ok {
 		r0 = returnFunc(ctx, agentID)
 	} else {
 		if ret.Get(0) != nil {
-			r0 = ret.Get(0).(*serviceerror.ServiceError)
+			r0 = ret.Get(0).(*common.ServiceError)
 		}
 	}
 	return r0
@@ -159,18 +160,18 @@ func (_c *AgentServiceInterfaceMock_DeleteAgent_Call) Run(run func(ctx context.C
 	return _c
 }
 
-func (_c *AgentServiceInterfaceMock_DeleteAgent_Call) Return(serviceError *serviceerror.ServiceError) *AgentServiceInterfaceMock_DeleteAgent_Call {
+func (_c *AgentServiceInterfaceMock_DeleteAgent_Call) Return(serviceError *common.ServiceError) *AgentServiceInterfaceMock_DeleteAgent_Call {
 	_c.Call.Return(serviceError)
 	return _c
 }
 
-func (_c *AgentServiceInterfaceMock_DeleteAgent_Call) RunAndReturn(run func(ctx context.Context, agentID string) *serviceerror.ServiceError) *AgentServiceInterfaceMock_DeleteAgent_Call {
+func (_c *AgentServiceInterfaceMock_DeleteAgent_Call) RunAndReturn(run func(ctx context.Context, agentID string) *common.ServiceError) *AgentServiceInterfaceMock_DeleteAgent_Call {
 	_c.Call.Return(run)
 	return _c
 }
 
 // GetAgent provides a mock function for the type AgentServiceInterfaceMock
-func (_mock *AgentServiceInterfaceMock) GetAgent(ctx context.Context, agentID string, includeDisplay bool) (*model.AgentGetResponse, *serviceerror.ServiceError) {
+func (_mock *AgentServiceInterfaceMock) GetAgent(ctx context.Context, agentID string, includeDisplay bool) (*model.AgentGetResponse, *common.ServiceError) {
 	ret := _mock.Called(ctx, agentID, includeDisplay)
 
 	if len(ret) == 0 {
@@ -178,8 +179,8 @@ func (_mock *AgentServiceInterfaceMock) GetAgent(ctx context.Context, agentID st
 	}
 
 	var r0 *model.AgentGetResponse
-	var r1 *serviceerror.ServiceError
-	if returnFunc, ok := ret.Get(0).(func(context.Context, string, bool) (*model.AgentGetResponse, *serviceerror.ServiceError)); ok {
+	var r1 *common.ServiceError
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string, bool) (*model.AgentGetResponse, *common.ServiceError)); ok {
 		return returnFunc(ctx, agentID, includeDisplay)
 	}
 	if returnFunc, ok := ret.Get(0).(func(context.Context, string, bool) *model.AgentGetResponse); ok {
@@ -189,11 +190,11 @@ func (_mock *AgentServiceInterfaceMock) GetAgent(ctx context.Context, agentID st
 			r0 = ret.Get(0).(*model.AgentGetResponse)
 		}
 	}
-	if returnFunc, ok := ret.Get(1).(func(context.Context, string, bool) *serviceerror.ServiceError); ok {
+	if returnFunc, ok := ret.Get(1).(func(context.Context, string, bool) *common.ServiceError); ok {
 		r1 = returnFunc(ctx, agentID, includeDisplay)
 	} else {
 		if ret.Get(1) != nil {
-			r1 = ret.Get(1).(*serviceerror.ServiceError)
+			r1 = ret.Get(1).(*common.ServiceError)
 		}
 	}
 	return r0, r1
@@ -235,18 +236,18 @@ func (_c *AgentServiceInterfaceMock_GetAgent_Call) Run(run func(ctx context.Cont
 	return _c
 }
 
-func (_c *AgentServiceInterfaceMock_GetAgent_Call) Return(agentGetResponse *model.AgentGetResponse, serviceError *serviceerror.ServiceError) *AgentServiceInterfaceMock_GetAgent_Call {
+func (_c *AgentServiceInterfaceMock_GetAgent_Call) Return(agentGetResponse *model.AgentGetResponse, serviceError *common.ServiceError) *AgentServiceInterfaceMock_GetAgent_Call {
 	_c.Call.Return(agentGetResponse, serviceError)
 	return _c
 }
 
-func (_c *AgentServiceInterfaceMock_GetAgent_Call) RunAndReturn(run func(ctx context.Context, agentID string, includeDisplay bool) (*model.AgentGetResponse, *serviceerror.ServiceError)) *AgentServiceInterfaceMock_GetAgent_Call {
+func (_c *AgentServiceInterfaceMock_GetAgent_Call) RunAndReturn(run func(ctx context.Context, agentID string, includeDisplay bool) (*model.AgentGetResponse, *common.ServiceError)) *AgentServiceInterfaceMock_GetAgent_Call {
 	_c.Call.Return(run)
 	return _c
 }
 
 // GetAgentGroups provides a mock function for the type AgentServiceInterfaceMock
-func (_mock *AgentServiceInterfaceMock) GetAgentGroups(ctx context.Context, agentID string, limit int, offset int) (*model.AgentGroupListResponse, *serviceerror.ServiceError) {
+func (_mock *AgentServiceInterfaceMock) GetAgentGroups(ctx context.Context, agentID string, limit int, offset int) (*model.AgentGroupListResponse, *common.ServiceError) {
 	ret := _mock.Called(ctx, agentID, limit, offset)
 
 	if len(ret) == 0 {
@@ -254,8 +255,8 @@ func (_mock *AgentServiceInterfaceMock) GetAgentGroups(ctx context.Context, agen
 	}
 
 	var r0 *model.AgentGroupListResponse
-	var r1 *serviceerror.ServiceError
-	if returnFunc, ok := ret.Get(0).(func(context.Context, string, int, int) (*model.AgentGroupListResponse, *serviceerror.ServiceError)); ok {
+	var r1 *common.ServiceError
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string, int, int) (*model.AgentGroupListResponse, *common.ServiceError)); ok {
 		return returnFunc(ctx, agentID, limit, offset)
 	}
 	if returnFunc, ok := ret.Get(0).(func(context.Context, string, int, int) *model.AgentGroupListResponse); ok {
@@ -265,11 +266,11 @@ func (_mock *AgentServiceInterfaceMock) GetAgentGroups(ctx context.Context, agen
 			r0 = ret.Get(0).(*model.AgentGroupListResponse)
 		}
 	}
-	if returnFunc, ok := ret.Get(1).(func(context.Context, string, int, int) *serviceerror.ServiceError); ok {
+	if returnFunc, ok := ret.Get(1).(func(context.Context, string, int, int) *common.ServiceError); ok {
 		r1 = returnFunc(ctx, agentID, limit, offset)
 	} else {
 		if ret.Get(1) != nil {
-			r1 = ret.Get(1).(*serviceerror.ServiceError)
+			r1 = ret.Get(1).(*common.ServiceError)
 		}
 	}
 	return r0, r1
@@ -317,18 +318,18 @@ func (_c *AgentServiceInterfaceMock_GetAgentGroups_Call) Run(run func(ctx contex
 	return _c
 }
 
-func (_c *AgentServiceInterfaceMock_GetAgentGroups_Call) Return(agentGroupListResponse *model.AgentGroupListResponse, serviceError *serviceerror.ServiceError) *AgentServiceInterfaceMock_GetAgentGroups_Call {
+func (_c *AgentServiceInterfaceMock_GetAgentGroups_Call) Return(agentGroupListResponse *model.AgentGroupListResponse, serviceError *common.ServiceError) *AgentServiceInterfaceMock_GetAgentGroups_Call {
 	_c.Call.Return(agentGroupListResponse, serviceError)
 	return _c
 }
 
-func (_c *AgentServiceInterfaceMock_GetAgentGroups_Call) RunAndReturn(run func(ctx context.Context, agentID string, limit int, offset int) (*model.AgentGroupListResponse, *serviceerror.ServiceError)) *AgentServiceInterfaceMock_GetAgentGroups_Call {
+func (_c *AgentServiceInterfaceMock_GetAgentGroups_Call) RunAndReturn(run func(ctx context.Context, agentID string, limit int, offset int) (*model.AgentGroupListResponse, *common.ServiceError)) *AgentServiceInterfaceMock_GetAgentGroups_Call {
 	_c.Call.Return(run)
 	return _c
 }
 
 // GetAgentList provides a mock function for the type AgentServiceInterfaceMock
-func (_mock *AgentServiceInterfaceMock) GetAgentList(ctx context.Context, limit int, offset int, filters map[string]interface{}, includeDisplay bool) (*model.AgentListResponse, *serviceerror.ServiceError) {
+func (_mock *AgentServiceInterfaceMock) GetAgentList(ctx context.Context, limit int, offset int, filters map[string]interface{}, includeDisplay bool) (*model.AgentListResponse, *common.ServiceError) {
 	ret := _mock.Called(ctx, limit, offset, filters, includeDisplay)
 
 	if len(ret) == 0 {
@@ -336,8 +337,8 @@ func (_mock *AgentServiceInterfaceMock) GetAgentList(ctx context.Context, limit 
 	}
 
 	var r0 *model.AgentListResponse
-	var r1 *serviceerror.ServiceError
-	if returnFunc, ok := ret.Get(0).(func(context.Context, int, int, map[string]interface{}, bool) (*model.AgentListResponse, *serviceerror.ServiceError)); ok {
+	var r1 *common.ServiceError
+	if returnFunc, ok := ret.Get(0).(func(context.Context, int, int, map[string]interface{}, bool) (*model.AgentListResponse, *common.ServiceError)); ok {
 		return returnFunc(ctx, limit, offset, filters, includeDisplay)
 	}
 	if returnFunc, ok := ret.Get(0).(func(context.Context, int, int, map[string]interface{}, bool) *model.AgentListResponse); ok {
@@ -347,11 +348,11 @@ func (_mock *AgentServiceInterfaceMock) GetAgentList(ctx context.Context, limit 
 			r0 = ret.Get(0).(*model.AgentListResponse)
 		}
 	}
-	if returnFunc, ok := ret.Get(1).(func(context.Context, int, int, map[string]interface{}, bool) *serviceerror.ServiceError); ok {
+	if returnFunc, ok := ret.Get(1).(func(context.Context, int, int, map[string]interface{}, bool) *common.ServiceError); ok {
 		r1 = returnFunc(ctx, limit, offset, filters, includeDisplay)
 	} else {
 		if ret.Get(1) != nil {
-			r1 = ret.Get(1).(*serviceerror.ServiceError)
+			r1 = ret.Get(1).(*common.ServiceError)
 		}
 	}
 	return r0, r1
@@ -405,18 +406,214 @@ func (_c *AgentServiceInterfaceMock_GetAgentList_Call) Run(run func(ctx context.
 	return _c
 }
 
-func (_c *AgentServiceInterfaceMock_GetAgentList_Call) Return(agentListResponse *model.AgentListResponse, serviceError *serviceerror.ServiceError) *AgentServiceInterfaceMock_GetAgentList_Call {
+func (_c *AgentServiceInterfaceMock_GetAgentList_Call) Return(agentListResponse *model.AgentListResponse, serviceError *common.ServiceError) *AgentServiceInterfaceMock_GetAgentList_Call {
 	_c.Call.Return(agentListResponse, serviceError)
 	return _c
 }
 
-func (_c *AgentServiceInterfaceMock_GetAgentList_Call) RunAndReturn(run func(ctx context.Context, limit int, offset int, filters map[string]interface{}, includeDisplay bool) (*model.AgentListResponse, *serviceerror.ServiceError)) *AgentServiceInterfaceMock_GetAgentList_Call {
+func (_c *AgentServiceInterfaceMock_GetAgentList_Call) RunAndReturn(run func(ctx context.Context, limit int, offset int, filters map[string]interface{}, includeDisplay bool) (*model.AgentListResponse, *common.ServiceError)) *AgentServiceInterfaceMock_GetAgentList_Call {
 	_c.Call.Return(run)
 	return _c
 }
 
+// GetAgentRoles provides a mock function for the type AgentServiceInterfaceMock
+func (_mock *AgentServiceInterfaceMock) GetAgentRoles(ctx context.Context, agentID string, limit int, offset int) (*model.AgentRoleListResponse, *common.ServiceError) {
+	ret := _mock.Called(ctx, agentID, limit, offset)
+
+	if len(ret) == 0 {
+		panic("no return value specified for GetAgentRoles")
+	}
+
+	var r0 *model.AgentRoleListResponse
+	var r1 *common.ServiceError
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string, int, int) (*model.AgentRoleListResponse, *common.ServiceError)); ok {
+		return returnFunc(ctx, agentID, limit, offset)
+	}
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string, int, int) *model.AgentRoleListResponse); ok {
+		r0 = returnFunc(ctx, agentID, limit, offset)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(*model.AgentRoleListResponse)
+		}
+	}
+	if returnFunc, ok := ret.Get(1).(func(context.Context, string, int, int) *common.ServiceError); ok {
+		r1 = returnFunc(ctx, agentID, limit, offset)
+	} else {
+		if ret.Get(1) != nil {
+			r1 = ret.Get(1).(*common.ServiceError)
+		}
+	}
+	return r0, r1
+}
+
+// AgentServiceInterfaceMock_GetAgentRoles_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'GetAgentRoles'
+type AgentServiceInterfaceMock_GetAgentRoles_Call struct {
+	*mock.Call
+}
+
+// GetAgentRoles is a helper method to define mock.On call
+//   - ctx context.Context
+//   - agentID string
+//   - limit int
+//   - offset int
+func (_e *AgentServiceInterfaceMock_Expecter) GetAgentRoles(ctx interface{}, agentID interface{}, limit interface{}, offset interface{}) *AgentServiceInterfaceMock_GetAgentRoles_Call {
+	return &AgentServiceInterfaceMock_GetAgentRoles_Call{Call: _e.mock.On("GetAgentRoles", ctx, agentID, limit, offset)}
+}
+
+func (_c *AgentServiceInterfaceMock_GetAgentRoles_Call) Run(run func(ctx context.Context, agentID string, limit int, offset int)) *AgentServiceInterfaceMock_GetAgentRoles_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		var arg0 context.Context
+		if args[0] != nil {
+			arg0 = args[0].(context.Context)
+		}
+		var arg1 string
+		if args[1] != nil {
+			arg1 = args[1].(string)
+		}
+		var arg2 int
+		if args[2] != nil {
+			arg2 = args[2].(int)
+		}
+		var arg3 int
+		if args[3] != nil {
+			arg3 = args[3].(int)
+		}
+		run(
+			arg0,
+			arg1,
+			arg2,
+			arg3,
+		)
+	})
+	return _c
+}
+
+func (_c *AgentServiceInterfaceMock_GetAgentRoles_Call) Return(agentRoleListResponse *model.AgentRoleListResponse, serviceError *common.ServiceError) *AgentServiceInterfaceMock_GetAgentRoles_Call {
+	_c.Call.Return(agentRoleListResponse, serviceError)
+	return _c
+}
+
+func (_c *AgentServiceInterfaceMock_GetAgentRoles_Call) RunAndReturn(run func(ctx context.Context, agentID string, limit int, offset int) (*model.AgentRoleListResponse, *common.ServiceError)) *AgentServiceInterfaceMock_GetAgentRoles_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// GetResourceDependencies provides a mock function for the type AgentServiceInterfaceMock
+func (_mock *AgentServiceInterfaceMock) GetResourceDependencies(ctx context.Context, resourceType string, id string) ([]resourcedependency.ResourceDependency, error) {
+	ret := _mock.Called(ctx, resourceType, id)
+
+	if len(ret) == 0 {
+		panic("no return value specified for GetResourceDependencies")
+	}
+
+	var r0 []resourcedependency.ResourceDependency
+	var r1 error
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string, string) ([]resourcedependency.ResourceDependency, error)); ok {
+		return returnFunc(ctx, resourceType, id)
+	}
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string, string) []resourcedependency.ResourceDependency); ok {
+		r0 = returnFunc(ctx, resourceType, id)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).([]resourcedependency.ResourceDependency)
+		}
+	}
+	if returnFunc, ok := ret.Get(1).(func(context.Context, string, string) error); ok {
+		r1 = returnFunc(ctx, resourceType, id)
+	} else {
+		r1 = ret.Error(1)
+	}
+	return r0, r1
+}
+
+// AgentServiceInterfaceMock_GetResourceDependencies_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'GetResourceDependencies'
+type AgentServiceInterfaceMock_GetResourceDependencies_Call struct {
+	*mock.Call
+}
+
+// GetResourceDependencies is a helper method to define mock.On call
+//   - ctx context.Context
+//   - resourceType string
+//   - id string
+func (_e *AgentServiceInterfaceMock_Expecter) GetResourceDependencies(ctx interface{}, resourceType interface{}, id interface{}) *AgentServiceInterfaceMock_GetResourceDependencies_Call {
+	return &AgentServiceInterfaceMock_GetResourceDependencies_Call{Call: _e.mock.On("GetResourceDependencies", ctx, resourceType, id)}
+}
+
+func (_c *AgentServiceInterfaceMock_GetResourceDependencies_Call) Run(run func(ctx context.Context, resourceType string, id string)) *AgentServiceInterfaceMock_GetResourceDependencies_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		var arg0 context.Context
+		if args[0] != nil {
+			arg0 = args[0].(context.Context)
+		}
+		var arg1 string
+		if args[1] != nil {
+			arg1 = args[1].(string)
+		}
+		var arg2 string
+		if args[2] != nil {
+			arg2 = args[2].(string)
+		}
+		run(
+			arg0,
+			arg1,
+			arg2,
+		)
+	})
+	return _c
+}
+
+func (_c *AgentServiceInterfaceMock_GetResourceDependencies_Call) Return(resourceDependencys []resourcedependency.ResourceDependency, err error) *AgentServiceInterfaceMock_GetResourceDependencies_Call {
+	_c.Call.Return(resourceDependencys, err)
+	return _c
+}
+
+func (_c *AgentServiceInterfaceMock_GetResourceDependencies_Call) RunAndReturn(run func(ctx context.Context, resourceType string, id string) ([]resourcedependency.ResourceDependency, error)) *AgentServiceInterfaceMock_GetResourceDependencies_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// SetDependencyRegistry provides a mock function for the type AgentServiceInterfaceMock
+func (_mock *AgentServiceInterfaceMock) SetDependencyRegistry(r resourcedependency.Registry) {
+	_mock.Called(r)
+	return
+}
+
+// AgentServiceInterfaceMock_SetDependencyRegistry_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'SetDependencyRegistry'
+type AgentServiceInterfaceMock_SetDependencyRegistry_Call struct {
+	*mock.Call
+}
+
+// SetDependencyRegistry is a helper method to define mock.On call
+//   - r resourcedependency.Registry
+func (_e *AgentServiceInterfaceMock_Expecter) SetDependencyRegistry(r interface{}) *AgentServiceInterfaceMock_SetDependencyRegistry_Call {
+	return &AgentServiceInterfaceMock_SetDependencyRegistry_Call{Call: _e.mock.On("SetDependencyRegistry", r)}
+}
+
+func (_c *AgentServiceInterfaceMock_SetDependencyRegistry_Call) Run(run func(r resourcedependency.Registry)) *AgentServiceInterfaceMock_SetDependencyRegistry_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		var arg0 resourcedependency.Registry
+		if args[0] != nil {
+			arg0 = args[0].(resourcedependency.Registry)
+		}
+		run(
+			arg0,
+		)
+	})
+	return _c
+}
+
+func (_c *AgentServiceInterfaceMock_SetDependencyRegistry_Call) Return() *AgentServiceInterfaceMock_SetDependencyRegistry_Call {
+	_c.Call.Return()
+	return _c
+}
+
+func (_c *AgentServiceInterfaceMock_SetDependencyRegistry_Call) RunAndReturn(run func(r resourcedependency.Registry)) *AgentServiceInterfaceMock_SetDependencyRegistry_Call {
+	_c.Run(run)
+	return _c
+}
+
 // UpdateAgent provides a mock function for the type AgentServiceInterfaceMock
-func (_mock *AgentServiceInterfaceMock) UpdateAgent(ctx context.Context, agentID string, req *model.UpdateAgentRequest) (*model.AgentCompleteResponse, *serviceerror.ServiceError) {
+func (_mock *AgentServiceInterfaceMock) UpdateAgent(ctx context.Context, agentID string, req *model.UpdateAgentRequest) (*model.AgentCompleteResponse, *common.ServiceError) {
 	ret := _mock.Called(ctx, agentID, req)
 
 	if len(ret) == 0 {
@@ -424,8 +621,8 @@ func (_mock *AgentServiceInterfaceMock) UpdateAgent(ctx context.Context, agentID
 	}
 
 	var r0 *model.AgentCompleteResponse
-	var r1 *serviceerror.ServiceError
-	if returnFunc, ok := ret.Get(0).(func(context.Context, string, *model.UpdateAgentRequest) (*model.AgentCompleteResponse, *serviceerror.ServiceError)); ok {
+	var r1 *common.ServiceError
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string, *model.UpdateAgentRequest) (*model.AgentCompleteResponse, *common.ServiceError)); ok {
 		return returnFunc(ctx, agentID, req)
 	}
 	if returnFunc, ok := ret.Get(0).(func(context.Context, string, *model.UpdateAgentRequest) *model.AgentCompleteResponse); ok {
@@ -435,11 +632,11 @@ func (_mock *AgentServiceInterfaceMock) UpdateAgent(ctx context.Context, agentID
 			r0 = ret.Get(0).(*model.AgentCompleteResponse)
 		}
 	}
-	if returnFunc, ok := ret.Get(1).(func(context.Context, string, *model.UpdateAgentRequest) *serviceerror.ServiceError); ok {
+	if returnFunc, ok := ret.Get(1).(func(context.Context, string, *model.UpdateAgentRequest) *common.ServiceError); ok {
 		r1 = returnFunc(ctx, agentID, req)
 	} else {
 		if ret.Get(1) != nil {
-			r1 = ret.Get(1).(*serviceerror.ServiceError)
+			r1 = ret.Get(1).(*common.ServiceError)
 		}
 	}
 	return r0, r1
@@ -481,18 +678,18 @@ func (_c *AgentServiceInterfaceMock_UpdateAgent_Call) Run(run func(ctx context.C
 	return _c
 }
 
-func (_c *AgentServiceInterfaceMock_UpdateAgent_Call) Return(agentCompleteResponse *model.AgentCompleteResponse, serviceError *serviceerror.ServiceError) *AgentServiceInterfaceMock_UpdateAgent_Call {
+func (_c *AgentServiceInterfaceMock_UpdateAgent_Call) Return(agentCompleteResponse *model.AgentCompleteResponse, serviceError *common.ServiceError) *AgentServiceInterfaceMock_UpdateAgent_Call {
 	_c.Call.Return(agentCompleteResponse, serviceError)
 	return _c
 }
 
-func (_c *AgentServiceInterfaceMock_UpdateAgent_Call) RunAndReturn(run func(ctx context.Context, agentID string, req *model.UpdateAgentRequest) (*model.AgentCompleteResponse, *serviceerror.ServiceError)) *AgentServiceInterfaceMock_UpdateAgent_Call {
+func (_c *AgentServiceInterfaceMock_UpdateAgent_Call) RunAndReturn(run func(ctx context.Context, agentID string, req *model.UpdateAgentRequest) (*model.AgentCompleteResponse, *common.ServiceError)) *AgentServiceInterfaceMock_UpdateAgent_Call {
 	_c.Call.Return(run)
 	return _c
 }
 
 // ValidateAgent provides a mock function for the type AgentServiceInterfaceMock
-func (_mock *AgentServiceInterfaceMock) ValidateAgent(ctx context.Context, agent *model.Agent, excludeID string) (string, string, model0.InboundClient, *serviceerror.ServiceError) {
+func (_mock *AgentServiceInterfaceMock) ValidateAgent(ctx context.Context, agent *model.Agent, excludeID string) (string, string, model0.InboundClient, *common.ServiceError) {
 	ret := _mock.Called(ctx, agent, excludeID)
 
 	if len(ret) == 0 {
@@ -502,8 +699,8 @@ func (_mock *AgentServiceInterfaceMock) ValidateAgent(ctx context.Context, agent
 	var r0 string
 	var r1 string
 	var r2 model0.InboundClient
-	var r3 *serviceerror.ServiceError
-	if returnFunc, ok := ret.Get(0).(func(context.Context, *model.Agent, string) (string, string, model0.InboundClient, *serviceerror.ServiceError)); ok {
+	var r3 *common.ServiceError
+	if returnFunc, ok := ret.Get(0).(func(context.Context, *model.Agent, string) (string, string, model0.InboundClient, *common.ServiceError)); ok {
 		return returnFunc(ctx, agent, excludeID)
 	}
 	if returnFunc, ok := ret.Get(0).(func(context.Context, *model.Agent, string) string); ok {
@@ -521,11 +718,11 @@ func (_mock *AgentServiceInterfaceMock) ValidateAgent(ctx context.Context, agent
 	} else {
 		r2 = ret.Get(2).(model0.InboundClient)
 	}
-	if returnFunc, ok := ret.Get(3).(func(context.Context, *model.Agent, string) *serviceerror.ServiceError); ok {
+	if returnFunc, ok := ret.Get(3).(func(context.Context, *model.Agent, string) *common.ServiceError); ok {
 		r3 = returnFunc(ctx, agent, excludeID)
 	} else {
 		if ret.Get(3) != nil {
-			r3 = ret.Get(3).(*serviceerror.ServiceError)
+			r3 = ret.Get(3).(*common.ServiceError)
 		}
 	}
 	return r0, r1, r2, r3
@@ -567,12 +764,12 @@ func (_c *AgentServiceInterfaceMock_ValidateAgent_Call) Run(run func(ctx context
 	return _c
 }
 
-func (_c *AgentServiceInterfaceMock_ValidateAgent_Call) Return(clientID string, clientSecret string, client model0.InboundClient, svcErr *serviceerror.ServiceError) *AgentServiceInterfaceMock_ValidateAgent_Call {
+func (_c *AgentServiceInterfaceMock_ValidateAgent_Call) Return(clientID string, clientSecret string, client model0.InboundClient, svcErr *common.ServiceError) *AgentServiceInterfaceMock_ValidateAgent_Call {
 	_c.Call.Return(clientID, clientSecret, client, svcErr)
 	return _c
 }
 
-func (_c *AgentServiceInterfaceMock_ValidateAgent_Call) RunAndReturn(run func(ctx context.Context, agent *model.Agent, excludeID string) (string, string, model0.InboundClient, *serviceerror.ServiceError)) *AgentServiceInterfaceMock_ValidateAgent_Call {
+func (_c *AgentServiceInterfaceMock_ValidateAgent_Call) RunAndReturn(run func(ctx context.Context, agent *model.Agent, excludeID string) (string, string, model0.InboundClient, *common.ServiceError)) *AgentServiceInterfaceMock_ValidateAgent_Call {
 	_c.Call.Return(run)
 	return _c
 }

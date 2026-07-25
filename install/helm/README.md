@@ -26,7 +26,7 @@ ThunderID's configuration system supports multiple value formats for **any param
    ```yaml
    crypto:
      encryption:
-       key: "file://repository/resources/security/crypto.key"
+       key: "file://config/certs/crypto.key"
    ```
    Supports both quoted and unquoted paths:
    - `file://path/to/file` - Unquoted path (no spaces)
@@ -83,14 +83,17 @@ If you want to install ThunderID with SQLite databases, use the following comman
 ```bash
 helm install my-thunderid oci://ghcr.io/thunder-id/helm-charts/thunderid \
   --set configuration.database.config.type=sqlite \
-  --set configuration.database.runtime.type=sqlite \
-  --set configuration.database.user.type=sqlite
+  --set configuration.database.runtime_transient.type=sqlite \
+  --set configuration.database.entity.type=sqlite \
+  --set configuration.database.runtime_persistent.type=sqlite \
+  --set deployment.securityContext.readOnlyRootFilesystem=false
 ```
 
 **Note:** When using SQLite:
 - **Persistence is automatically enabled** when any database is configured to use SQLite
 - The setup job's init container will automatically copy SQLite databases from the image to a PVC
 - Database files will persist across pod restarts
+- **`deployment.securityContext.readOnlyRootFilesystem` must be `false`** (the chart defaults it to `true`), otherwise the setup job and server cannot write to the container filesystem
 
 ### 2. Get the External IP
 
@@ -281,12 +284,12 @@ configuration:
     config:
       postgres:
         password: "my-secret-password-1"  # Auto-converted to Secret!
-    runtime:
+    runtime_transient:
       postgres:
         password: "my-secret-password-2"
       redis:
         password: "my-runtime-redis-password"
-    user:
+    entity:
       postgres:
         password: "my-secret-password-3"
 ```
@@ -295,14 +298,15 @@ configuration:
 ```bash
 helm install my-thunderid oci://ghcr.io/thunder-id/helm-charts/thunderid \
   --set configuration.database.config.postgres.password=mypass1 \
-  --set configuration.database.runtime.postgres.password=mypass2 \
-  --set configuration.database.runtime.redis.password=myredispass \
-  --set configuration.database.user.postgres.password=mypass3
+  --set configuration.database.runtime_transient.postgres.password=mypass2 \
+  --set configuration.database.runtime_transient.redis.password=myredispass \
+  --set configuration.database.entity.postgres.password=mypass3 \
+  --set configuration.database.runtime_persistent.postgres.password=mypass4
 ```
 
 Helm automatically:
 - Creates `<release-name>-db-credentials` Secret as a pre-install/pre-upgrade hook
-- Injects environment variables (`DB_CONFIG_PASSWORD`, `DB_RUNTIME_PASSWORD`, `DB_RUNTIME_REDIS_PASSWORD`, `DB_USER_PASSWORD`) into pods
+- Injects environment variables (`DB_CONFIG_PASSWORD`, `DB_RUNTIME_TRANSIENT_PASSWORD`, `DB_RUNTIME_TRANSIENT_REDIS_PASSWORD`, `DB_ENTITY_PASSWORD`, `DB_RUNTIME_PERSISTENT_PASSWORD`) into pods
 - Updates pods when passwords change (via checksum annotations)
 
 #### Pattern 2: External Secret (For Production - Recommended)
@@ -314,7 +318,8 @@ Reference a pre-existing Kubernetes Secret (created manually or by external-secr
 kubectl create secret generic my-db-secrets \
   --from-literal=config-password=secret1 \
   --from-literal=runtime-password=secret2 \
-  --from-literal=user-password=secret3
+  --from-literal=user-password=secret3 \
+  --from-literal=operation-password=secret4
 ```
 
 **Step 2:** Configure Helm to reference the external Secret:
@@ -326,7 +331,7 @@ configuration:
         passwordRef:
           name: "my-db-secrets"      # Your Secret name
           key: "config-password"      # Key within Secret
-    runtime:
+    runtime_transient:
       postgres:
         passwordRef:
           name: "my-db-secrets"
@@ -334,12 +339,17 @@ configuration:
       redis:
         passwordRef:
           name: "my-db-secrets"
-          key: "runtime-redis-password"
-    user:
+          key: "runtime-transient-redis-password"
+    entity:
       postgres:
         passwordRef:
           name: "my-db-secrets"
           key: "user-password"
+    runtime_persistent:
+      postgres:
+        passwordRef:
+          name: "my-db-secrets"
+          key: "operation-password"
 ```
 
 When `passwordRef.key` is set, the `password` field is ignored and Helm uses your external Secret.
@@ -354,7 +364,7 @@ when ThunderID reads configuration directly via its application config loader (e
 They are not resolved when the value is first converted into a Kubernetes Secret by this chart.
 
 #### Password Field Options
-Password fields are available in `configuration.database.config.postgres`, `configuration.database.runtime.postgres`, `configuration.database.runtime.redis`, and `configuration.database.user.postgres`:
+Password fields are available in `configuration.database.config.postgres`, `configuration.database.runtime_transient.postgres`, `configuration.database.runtime_transient.redis`, `configuration.database.entity.postgres`, and `configuration.database.runtime_persistent.postgres`:
 
 | Field                  | Description                                                                                                                                    | Example                      |
 | ---------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------- |
@@ -369,6 +379,7 @@ Password fields are available in `configuration.database.config.postgres`, `conf
 | `configuration.server.port`                       | ThunderID server port                                                                                                                                     | `8090`                       |
 | `configuration.server.httpOnly`                   | Whether the server should run in HTTP-only mode                                                                                                         | `false`                      |
 | `configuration.server.publicURL`                  | Public URL of the ThunderID server                                                                                                                        | `https://thunderid.local`      |
+| `configuration.server.security.directAuthSecret`  | Secret that gates the Direct API endpoints (`/auth/**`, `/register/passkey/**`). Leave unset to let the setup job generate one per deployment onto the secrets PVC (referenced from `deployment.yaml` as `file://config/secrets/direct_auth_secret`); set an explicit value to override generation. When unset and `setup.enabled=false`, the Direct API stays blocked. See [Direct API Secret](#direct-api-secret). | `""` (generated) |
 | `configuration.gateClient.hostname`               | Gate client hostname                                                                                                                                    | `thunderid.local`              |
 | `configuration.gateClient.port`                   | Gate client port                                                                                                                                        | `443`                       |
 | `configuration.gateClient.scheme`                 | Gate client scheme                                                                                                                                      | `https`                      |
@@ -376,10 +387,11 @@ Password fields are available in `configuration.database.config.postgres`, `conf
 | `configuration.consoleClient.path`                | Console client base path                                                                                                                                | `/console`                   |
 | `configuration.consoleClient.clientId`            | Console client ID                                                                                                                                       | `CONSOLE`                    |
 | `configuration.consoleClient.scopes`              | Console client scopes                                                                                                                                   | `['openid', 'profile', 'email', 'system']` |
+| `configuration.consoleClient.resourceIdentifier`  | Resource indicator (audience) the console sends on token requests. Must match the identifier of the System resource server seeded by the bootstrap defaults. When empty, the parameter is omitted (requires a configured default resource server). | `https://localhost:8090/mcp` |
 | `configuration.tls.minVersion`                    | Minimum TLS version                                                                                                                                     | `1.3`                        |
-| `configuration.tls.certFile`                      | Server TLS certificate file path                                                                                                                        | `repository/resources/security/server.cert` |
-| `configuration.tls.keyFile`                       | Server TLS key file path                                                                                                                                | `repository/resources/security/server.key`  |
-| `configuration.crypto.encryption.key`             | Crypto encryption key (change the default key with a 32-byte (64 character) hex string in production)                                                   | `file://repository/resources/security/crypto.key` |
+| `configuration.tls.certFile`                      | Server TLS certificate file path                                                                                                                        | `config/certs/server.cert` |
+| `configuration.tls.keyFile`                       | Server TLS key file path                                                                                                                                | `config/certs/server.key`  |
+| `configuration.crypto.encryption.key`             | Crypto encryption key. The setup job generates a unique per-deployment key at this path; supply your own 32-byte (64-character) hex value to manage it yourself.  | `file://config/certs/crypto.key` |
 | `configuration.crypto.passwordHashing.algorithm`  | Password hashing algorithm                                            | `PBKDF2`                     |
 | `configuration.crypto.passwordHashing.pbkdf2.salt_size` | PBKDF2 salt size                                                | `16`                         |
 | `configuration.crypto.passwordHashing.pbkdf2.iterations` | PBKDF2 iterations                                              | `600000`                     |
@@ -391,10 +403,12 @@ Password fields are available in `configuration.database.config.postgres`, `conf
 | `configuration.crypto.passwordHashing.argon2id.parallelism` | Argon2id parallelism                                        | `1`                          |
 | `configuration.crypto.passwordHashing.sha256.salt_size` | SHA256 salt size                                                | `16`                         |
 | `configuration.crypto.keys[].id`                  | Signing key identifier                                                                                                                                  | `default-key`                |
-| `configuration.crypto.keys[].certFile`            | Signing certificate file path                                                                                                                           | `repository/resources/security/signing.cert` |
-| `configuration.crypto.keys[].keyFile`             | Signing key file path                                                                                                                                   | `repository/resources/security/signing.key`  |
+| `configuration.crypto.keys[].certFile`            | Signing certificate file path                                                                                                                           | `config/certs/signing.cert` |
+| `configuration.crypto.keys[].keyFile`             | Signing key file path                                                                                                                                   | `config/certs/signing.key`  |
+
+> The default `configuration.crypto.keys` list includes two entries: `default-key` (RSA, used for JWT signing) and `ecdsa-key` (ECDSA at `config/certs/ecdsa-signing.{cert,key}`, used by the OpenID4VP/OpenID4VCI engines). The setup job generates both key pairs per deployment.
 | `configuration.database.config.type`            | Config database type (postgres or sqlite)                                                                                                               | `postgres`                   |
-| `configuration.database.config.sqlite.path`      | SQLite database path (for SQLite only)                                                                                                                  | `repository/database/configdb.db` |
+| `configuration.database.config.sqlite.path`      | SQLite database path (for SQLite only)                                                                                                                  | `database/configdb.db` |
 | `configuration.database.config.sqlite.options`   | SQLite options (for SQLite only)                                                                                                                        | `_journal_mode=WAL&_busy_timeout=5000&_pragma=foreign_keys(1)` |
 | `configuration.database.config.sqlite.max_open_conns` | Maximum number of open connections for SQLite                                                                                                      | `500`                        |
 | `configuration.database.config.sqlite.max_idle_conns` | Maximum number of idle SQLite connections                                                                                                          | `100`                        |
@@ -410,47 +424,64 @@ Password fields are available in `configuration.database.config.postgres`, `conf
 | `configuration.database.config.postgres.max_open_conns`  | Maximum number of open connections to the database                                                                                                      | `500`                        |
 | `configuration.database.config.postgres.max_idle_conns`  | Maximum number of idle connections in the pool                                                                                                          | `100`                        |
 | `configuration.database.config.postgres.conn_max_lifetime` | Maximum lifetime of a connection in seconds                                                                                                             | `3600`                       |
-| `configuration.database.runtime.type`             | Runtime database type (`postgres`, `sqlite`, or `redis`)                                                                                               | `postgres`                   |
-| `configuration.database.runtime.sqlite.path`       | SQLite database path (for SQLite only)                                                                                                                  | `repository/database/runtimedb.db` |
-| `configuration.database.runtime.sqlite.options`    | SQLite options (for SQLite only)                                                                                                                        | `_journal_mode=WAL&_busy_timeout=5000&_pragma=foreign_keys(1)` |
-| `configuration.database.runtime.sqlite.max_open_conns` | Maximum number of open connections for SQLite                                                                                                      | `500`                        |
-| `configuration.database.runtime.sqlite.max_idle_conns` | Maximum number of idle SQLite connections                                                                                                          | `100`                        |
-| `configuration.database.runtime.sqlite.conn_max_lifetime` | Maximum SQLite connection lifetime in seconds                                                                                                    | `3600`                       |
-| `configuration.database.runtime.postgres.name`             | Postgres database name (for postgres only)                                                                                                              | `runtimedb`                  |
-| `configuration.database.runtime.postgres.hostname`         | Postgres hostname (for postgres only)                                                                                                                   | `localhost` |
-| `configuration.database.runtime.postgres.port`             | Postgres port (for postgres only)                                                                                                                       | `5432`                      |
-| `configuration.database.runtime.postgres.username`         | Postgres username (for postgres only)                                                                                                                   | `dbuser`                   |
-| `configuration.database.runtime.postgres.password`         | Runtime Postgres password - supports plaintext. When `passwordRef.key` is set, this field is ignored and the external Secret is used instead.          | `dbpassword`     |
-| `configuration.database.runtime.postgres.passwordRef.name`  | Kubernetes Secret name for runtime Postgres password                                                                                                    | `""`    |
-| `configuration.database.runtime.postgres.passwordRef.key`   | Kubernetes Secret key for runtime Postgres password                                                                                                     | `""`    |
-| `configuration.database.runtime.postgres.sslmode`          | Postgres SSL mode (for postgres only)                                                                                                                   | `require`                    |
-| `configuration.database.runtime.postgres.max_open_conns`   | Maximum number of open connections to the database                                                                                                      | `500`                        |
-| `configuration.database.runtime.postgres.max_idle_conns`   | Maximum number of idle connections in the pool                                                                                                          | `100`                        |
-| `configuration.database.runtime.postgres.conn_max_lifetime` | Maximum lifetime of a connection in seconds                                                                                                             | `3600`                       |
-| `configuration.database.runtime.redis.address`     | Redis server address in `host:port` format (for Redis only)                                                                                             | `""`                         |
-| `configuration.database.runtime.redis.username`    | Redis username (for Redis only)                                                                                                                          | `""`                         |
-| `configuration.database.runtime.redis.password`    | Runtime Redis password. When `passwordRef.key` is set, this field is ignored and the external Secret is used instead.                                  | `""`                         |
-| `configuration.database.runtime.redis.passwordRef.name` | Kubernetes Secret name for runtime Redis password                                                                                                      | `""`                         |
-| `configuration.database.runtime.redis.passwordRef.key` | Kubernetes Secret key for runtime Redis password                                                                                                      | `""`                         |
-| `configuration.database.runtime.redis.db`          | Redis logical database index (0–15) (for Redis only)                                                                                                   | `0`                          |
-| `configuration.database.runtime.redis.key_prefix`   | Prefix applied to all Redis keys written by ThunderID (for Redis only)                                                                                   | `""`                         |
-| `configuration.database.user.type`                | User database type (postgres or sqlite)                                                                                                                 | `postgres`                   |
-| `configuration.database.user.sqlite.path`          | SQLite database path (for SQLite only)                                                                                                                  | `repository/database/userdb.db` |
-| `configuration.database.user.sqlite.options`       | SQLite options (for SQLite only)                                                                                                                        | `_journal_mode=WAL&_busy_timeout=5000&_pragma=foreign_keys(1)` |
-| `configuration.database.user.sqlite.max_open_conns` | Maximum number of open connections for SQLite                                                                                                        | `500`                        |
-| `configuration.database.user.sqlite.max_idle_conns` | Maximum number of idle SQLite connections                                                                                                            | `100`                        |
-| `configuration.database.user.sqlite.conn_max_lifetime` | Maximum SQLite connection lifetime in seconds                                                                                                      | `3600`                       |
-| `configuration.database.user.postgres.name`                | Postgres database name (for postgres only)                                                                                                              | `userdb`                     |
-| `configuration.database.user.postgres.hostname`            | Postgres hostname (for postgres only)                                                                                                                   | `localhost` |
-| `configuration.database.user.postgres.port`                | Postgres port (for postgres only)                                                                                                                       | `5432`                       |
-| `configuration.database.user.postgres.username`            | Postgres username (for postgres only)                                                                                                                   | `dbuser`                   |
-| `configuration.database.user.postgres.password`            | User Postgres password - supports plaintext. When `passwordRef.key` is set, this field is ignored and the external Secret is used instead.              | `dbpassword`        |
-| `configuration.database.user.postgres.passwordRef.name`     | Kubernetes Secret name for user Postgres password                                                                                                       | `""`    |
-| `configuration.database.user.postgres.passwordRef.key`      | Kubernetes Secret key for user Postgres password                                                                                                        | `""`    |
-| `configuration.database.user.postgres.sslmode`             | Postgres SSL mode (for postgres only)                                                                                                                   | `require`                    |
-| `configuration.database.user.postgres.max_open_conns`      | Maximum number of open connections to the database                                                                                                      | `500`                        |
-| `configuration.database.user.postgres.max_idle_conns`      | Maximum number of idle connections in the pool                                                                                                          | `100`                        |
-| `configuration.database.user.postgres.conn_max_lifetime`   | Maximum lifetime of a connection in seconds                                                                                                             | `3600`                       |
+| `configuration.database.runtime_transient.type`             | Runtime-transient database type (`postgres`, `sqlite`, or `redis`)                                                                                               | `postgres`                   |
+| `configuration.database.runtime_transient.sqlite.path`       | SQLite database path (for SQLite only)                                                                                                                  | `database/runtime_transient.db` |
+| `configuration.database.runtime_transient.sqlite.options`    | SQLite options (for SQLite only)                                                                                                                        | `_journal_mode=WAL&_busy_timeout=5000&_pragma=foreign_keys(1)` |
+| `configuration.database.runtime_transient.sqlite.max_open_conns` | Maximum number of open connections for SQLite                                                                                                      | `500`                        |
+| `configuration.database.runtime_transient.sqlite.max_idle_conns` | Maximum number of idle SQLite connections                                                                                                          | `100`                        |
+| `configuration.database.runtime_transient.sqlite.conn_max_lifetime` | Maximum SQLite connection lifetime in seconds                                                                                                    | `3600`                       |
+| `configuration.database.runtime_transient.postgres.name`             | Postgres database name (for postgres only)                                                                                                              | `runtime_transient`                  |
+| `configuration.database.runtime_transient.postgres.hostname`         | Postgres hostname (for postgres only)                                                                                                                   | `localhost` |
+| `configuration.database.runtime_transient.postgres.port`             | Postgres port (for postgres only)                                                                                                                       | `5432`                      |
+| `configuration.database.runtime_transient.postgres.username`         | Postgres username (for postgres only)                                                                                                                   | `dbuser`                   |
+| `configuration.database.runtime_transient.postgres.password`         | Runtime-transient Postgres password - supports plaintext. When `passwordRef.key` is set, this field is ignored and the external Secret is used instead.          | `dbpassword`     |
+| `configuration.database.runtime_transient.postgres.passwordRef.name`  | Kubernetes Secret name for runtime-transient Postgres password                                                                                                    | `""`    |
+| `configuration.database.runtime_transient.postgres.passwordRef.key`   | Kubernetes Secret key for runtime-transient Postgres password                                                                                                     | `""`    |
+| `configuration.database.runtime_transient.postgres.sslmode`          | Postgres SSL mode (for postgres only)                                                                                                                   | `require`                    |
+| `configuration.database.runtime_transient.postgres.max_open_conns`   | Maximum number of open connections to the database                                                                                                      | `500`                        |
+| `configuration.database.runtime_transient.postgres.max_idle_conns`   | Maximum number of idle connections in the pool                                                                                                          | `100`                        |
+| `configuration.database.runtime_transient.postgres.conn_max_lifetime` | Maximum lifetime of a connection in seconds                                                                                                             | `3600`                       |
+| `configuration.database.runtime_transient.redis.address`     | Redis server address in `host:port` format (for Redis only)                                                                                             | `""`                         |
+| `configuration.database.runtime_transient.redis.username`    | Redis username (for Redis only)                                                                                                                          | `""`                         |
+| `configuration.database.runtime_transient.redis.password`    | Runtime-transient Redis password. When `passwordRef.key` is set, this field is ignored and the external Secret is used instead.                                  | `""`                         |
+| `configuration.database.runtime_transient.redis.passwordRef.name` | Kubernetes Secret name for runtime-transient Redis password                                                                                                      | `""`                         |
+| `configuration.database.runtime_transient.redis.passwordRef.key` | Kubernetes Secret key for runtime-transient Redis password                                                                                                      | `""`                         |
+| `configuration.database.runtime_transient.redis.db`          | Redis logical database index (0–15) (for Redis only)                                                                                                   | `0`                          |
+| `configuration.database.runtime_transient.redis.key_prefix`   | Prefix applied to all Redis keys written by ThunderID (for Redis only)                                                                                   | `""`                         |
+| `configuration.database.entity.type`                | Entity database type (postgres or sqlite)                                                                                                                 | `postgres`                   |
+| `configuration.database.entity.sqlite.path`          | SQLite database path (for SQLite only)                                                                                                                  | `database/entitydb.db` |
+| `configuration.database.entity.sqlite.options`       | SQLite options (for SQLite only)                                                                                                                        | `_journal_mode=WAL&_busy_timeout=5000&_pragma=foreign_keys(1)` |
+| `configuration.database.entity.sqlite.max_open_conns` | Maximum number of open connections for SQLite                                                                                                        | `500`                        |
+| `configuration.database.entity.sqlite.max_idle_conns` | Maximum number of idle SQLite connections                                                                                                            | `100`                        |
+| `configuration.database.entity.sqlite.conn_max_lifetime` | Maximum SQLite connection lifetime in seconds                                                                                                      | `3600`                       |
+| `configuration.database.entity.postgres.name`                | Postgres database name (for postgres only)                                                                                                              | `entitydb`                     |
+| `configuration.database.entity.postgres.hostname`            | Postgres hostname (for postgres only)                                                                                                                   | `localhost` |
+| `configuration.database.entity.postgres.port`                | Postgres port (for postgres only)                                                                                                                       | `5432`                       |
+| `configuration.database.entity.postgres.username`            | Postgres username (for postgres only)                                                                                                                   | `dbuser`                   |
+| `configuration.database.entity.postgres.password`            | Entity Postgres password - supports plaintext. When `passwordRef.key` is set, this field is ignored and the external Secret is used instead.              | `dbpassword`        |
+| `configuration.database.entity.postgres.passwordRef.name`     | Kubernetes Secret name for entity Postgres password                                                                                                       | `""`    |
+| `configuration.database.entity.postgres.passwordRef.key`      | Kubernetes Secret key for entity Postgres password                                                                                                        | `""`    |
+| `configuration.database.entity.postgres.sslmode`             | Postgres SSL mode (for postgres only)                                                                                                                   | `require`                    |
+| `configuration.database.entity.postgres.max_open_conns`      | Maximum number of open connections to the database                                                                                                      | `500`                        |
+| `configuration.database.entity.postgres.max_idle_conns`      | Maximum number of idle connections in the pool                                                                                                          | `100`                        |
+| `configuration.database.entity.postgres.conn_max_lifetime`   | Maximum lifetime of a connection in seconds                                                                                                             | `3600`                       |
+| `configuration.database.runtime_persistent.type`           | Runtime-persistent database type (postgres or sqlite). Stores SSO sessions, revoked tokens, and consent records.                                                 | `postgres`                   |
+| `configuration.database.runtime_persistent.sqlite.path`     | SQLite database path (for SQLite only)                                                                                                                  | `database/runtime_persistent.db` |
+| `configuration.database.runtime_persistent.sqlite.options`  | SQLite options (for SQLite only)                                                                                                                        | `_journal_mode=WAL&_busy_timeout=5000&_pragma=foreign_keys(1)` |
+| `configuration.database.runtime_persistent.sqlite.max_open_conns` | Maximum number of open connections for SQLite                                                                                                     | `500`                        |
+| `configuration.database.runtime_persistent.sqlite.max_idle_conns` | Maximum number of idle SQLite connections                                                                                                         | `100`                        |
+| `configuration.database.runtime_persistent.sqlite.conn_max_lifetime` | Maximum SQLite connection lifetime in seconds                                                                                                  | `3600`                       |
+| `configuration.database.runtime_persistent.postgres.name`           | Postgres database name (for postgres only)                                                                                                              | `runtime_persistent`                |
+| `configuration.database.runtime_persistent.postgres.hostname`       | Postgres hostname (for postgres only)                                                                                                                   | `localhost` |
+| `configuration.database.runtime_persistent.postgres.port`           | Postgres port (for postgres only)                                                                                                                       | `5432`                       |
+| `configuration.database.runtime_persistent.postgres.username`       | Postgres username (for postgres only)                                                                                                                   | `dbuser`                   |
+| `configuration.database.runtime_persistent.postgres.password`       | Runtime-persistent Postgres password - supports plaintext. When `passwordRef.key` is set, this field is ignored and the external Secret is used instead.         | `dbpassword`        |
+| `configuration.database.runtime_persistent.postgres.passwordRef.name` | Kubernetes Secret name for runtime-persistent Postgres password                                                                                                | `""`    |
+| `configuration.database.runtime_persistent.postgres.passwordRef.key`  | Kubernetes Secret key for runtime-persistent Postgres password                                                                                                 | `""`    |
+| `configuration.database.runtime_persistent.postgres.sslmode`        | Postgres SSL mode (for postgres only)                                                                                                                   | `require`                    |
+| `configuration.database.runtime_persistent.postgres.max_open_conns` | Maximum number of open connections to the database                                                                                                      | `500`                        |
+| `configuration.database.runtime_persistent.postgres.max_idle_conns` | Maximum number of idle connections in the pool                                                                                                          | `100`                        |
+| `configuration.database.runtime_persistent.postgres.conn_max_lifetime` | Maximum lifetime of a connection in seconds                                                                                                          | `3600`                       |
 | `configuration.cache.disabled`                    | Disable cache                                                                                                                                           | `true`                       |
 | `configuration.cache.type`                        | Cache type                                                                                                                                              | `inmemory`                   |
 | `configuration.cache.size`                        | Cache size                                                                                                                                              | `1000`                       |
@@ -469,16 +500,14 @@ Password fields are available in `configuration.database.config.postgres`, `conf
 | `configuration.jwt.audience`                      | Default audience for auth assertions                                                                                                                    | `application`                |
 | `configuration.jwt.preferredKeyId`                | Preferred key ID for signing JWTs (must match a key in configuration.crypto.keys)                                                                       | `default-key`                |
 | `configuration.oauth.refreshToken.renewOnGrant`   | Renew refresh token on grant                                                                                                                            | `false`                      |
+| `configuration.oauth.refreshToken.revokePreviousOnRenew` | Revoke the consumed refresh token on rotation (single-use); effective only when `renewOnGrant` is `true`                                          | `true`                       |
 | `configuration.oauth.refreshToken.validityPeriod` | Refresh token validity period in seconds                                                                                                                | `86400`                      |
-| `configuration.flow.defaultAuthFlowHandle`        | Default authentication flow handle                                                                                                                      | `default-basic-flow`         |
+| `configuration.flow.defaultAuthFlowHandle`        | Default authentication flow handle                                                                                                                      | `default-flow`         |
 | `configuration.flow.maxVersionHistory`            | Maximum flow version history to retain                                                                                                                  | `3`                          |
 | `configuration.flow.autoInferRegistration`        | Enable auto-infer registration flow                                                                                                                     | `true`                       |
-| `configuration.cors.allowedOrigins`               | CORS allowed origins                                                                                                                                    | See values.yaml              |
 | `configuration.passkey.allowedOrigins`            | Passkey allowed origins                                                                                                                                 | `[]`                         |
-| `configuration.consent.enabled`                   | Enable consent service                                                                                                                                  | `false`                      |
-| `configuration.consent.baseUrl`                   | Base URL of the consent service                                                                                                                         | `""`                         |
-| `configuration.consent.timeout`                   | Timeout for consent service API calls in seconds                                                                                                        | `5`                          |
-| `configuration.consent.maxRetries`                | Max retry attempts for transient errors when calling consent service API                                                                                | `3`                          |
+
+> CORS allowed origins are configured through the server-config `cors` section — by creating the declarative resource `config/resources/server_configs/cors.yaml` (with `server_config.store: composite` set so it loads at boot) or at runtime with `PUT /server-config/cors` — not through Helm values.
 
 ### Persistence Parameters
 
@@ -497,14 +526,31 @@ Persistence is **automatically enabled** when using SQLite as the database type 
 - The PVC is mounted by the setup job's init container (if `setup.enabled` is true) to initialize the database, and by the main ThunderID deployment for ongoing operation.
 - You can customize the storage size and storage class for the PVC using the `persistence.size` and `persistence.storageClass` values.
 
+#### Setup-generated Storage (Certificates and Secrets)
+
+When `setup.enabled=true`, the setup job generates per-deployment material onto two dedicated PVCs that the ThunderID deployment then reads: `certs` (TLS, JWT/ECDSA signing, and AES encryption keys) and `secrets` (the generated Direct Auth Secret). Both are created before the setup job runs and persist across pod restarts. Treat the `certs` PVC as durable, losing it invalidates all issued tokens and previously encrypted data.
+
+| Name                                   | Description                                                     | Default                      |
+| -------------------------------------- | --------------------------------------------------------------- | ---------------------------- |
+| `certs.persistence.storageClass`       | Storage class for the certificates PVC (use "-" for none)       | `""`                         |
+| `certs.persistence.accessMode`         | Certificates PVC access mode                                    | `ReadWriteOnce`              |
+| `certs.persistence.size`               | Certificates PVC storage size                                   | `16Mi`                       |
+| `certs.persistence.annotations`        | Additional annotations for the certificates PVC                 | `{}`                         |
+| `secrets.persistence.storageClass`     | Storage class for the secrets PVC (use "-" for none)            | `""`                         |
+| `secrets.persistence.accessMode`       | Secrets PVC access mode                                         | `ReadWriteOnce`              |
+| `secrets.persistence.size`             | Secrets PVC storage size                                        | `16Mi`                       |
+| `secrets.persistence.annotations`      | Additional annotations for the secrets PVC                      | `{}`                         |
+
+**Note:** With `deployment.replicaCount > 1` and replicas potentially scheduled onto different nodes, set `accessMode` to `ReadWriteMany` (requires a supporting storage class) on these PVCs so every replica can read the material, or supply your own key material / Direct Auth Secret and set `setup.enabled=false`.
+
 ### Declarative Resources Parameters
 
-Declarative resources can be mounted into ThunderID's `repository/resources` directory from either a ConfigMap or Secret.
+Declarative resources can be mounted into ThunderID's `config/resources` directory from either a ConfigMap or Secret.
 
 | Name                                   | Description                                                     | Default                      |
 | -------------------------------------- | --------------------------------------------------------------- | ---------------------------- |
 | `declarativeResources.enabled`         | Enable declarative resources mount                              | `false`                      |
-| `declarativeResources.mountPath`       | Mount path inside container                                     | `/opt/thunderid/repository/resources` |
+| `declarativeResources.mountPath`       | Mount path inside container                                     | `/opt/thunderid/config/resources` |
 | `declarativeResources.readOnly`        | Mount declarative resources as read-only                        | `true`                       |
 | `declarativeResources.configMap.name`  | Existing ConfigMap name containing declarative resources        | `""`                        |
 | `declarativeResources.configMap.items` | ConfigMap items to mount (string or `{key,path}`; empty = all keys) | `[]`                    |
@@ -527,12 +573,12 @@ Example using a ConfigMap:
 ```yaml
 declarativeResources:
   enabled: true
-  mountPath: /opt/thunderid/repository/resources
+  mountPath: /opt/thunderid/config/resources
   configMap:
     name: thunderid-declarative-resources
     items:
       - organizations/default/organization.yaml
-      - identity-providers/google.yaml
+      - connections/google.yaml
 ```
 
 ### Declarative Resources Mounting Guide
@@ -554,10 +600,10 @@ Each entry in `declarativeResources.configMap.items` (or `declarativeResources.s
 
 Use object format when you need to mount a source key to a different directory/file path under `declarativeResources.mountPath`.
 
-When `items` are provided, the chart mounts declarative resources file-by-file using `subPath`. This preserves existing files already present in ThunderID's `repository/resources` directory.
+When `items` are provided, the chart mounts declarative resources file-by-file using `subPath`. This preserves existing files already present in ThunderID's `config/resources` directory.
 
 Resulting file path example:
-- With `path: applications/application1.yaml`, file is mounted at `/opt/thunderid/repository/resources/applications/application1.yaml`
+- With `path: applications/application1.yaml`, file is mounted at `/opt/thunderid/config/resources/applications/application1.yaml`
 
 #### End-to-end example with ConfigMap
 
@@ -567,7 +613,7 @@ Create a ConfigMap where keys represent the target directory structure:
 kubectl create configmap thunderid-declarative-resources \
   --from-file=applications/application1.yaml=./declarative-resources/applications/application1.yaml \
   --from-file=organizations/default/organization.yaml=./declarative-resources/organizations/default/organization.yaml \
-  --from-file=identity-providers/google.yaml=./declarative-resources/identity-providers/google.yaml
+  --from-file=connections/google.yaml=./declarative-resources/connections/google.yaml
 ```
 
 Configure Helm values:
@@ -575,7 +621,7 @@ Configure Helm values:
 ```yaml
 declarativeResources:
   enabled: true
-  mountPath: /opt/thunderid/repository/resources
+  mountPath: /opt/thunderid/config/resources
   readOnly: true
   configMap:
     name: thunderid-declarative-resources
@@ -584,8 +630,8 @@ declarativeResources:
         path: applications/application1.yaml
       - key: organizations/default/organization.yaml
         path: organizations/default/organization.yaml
-      - key: identity-providers/google.yaml
-        path: identity-providers/google.yaml
+      - key: connections/google.yaml
+        path: connections/google.yaml
 
 # Example with explicit key/path remapping
 declarativeResources:
@@ -596,7 +642,7 @@ declarativeResources:
       - key: app1
         path: applications/application1.yaml
       - key: idp-google
-        path: identity-providers/google.yaml
+        path: connections/google.yaml
 ```
 
 Install or upgrade:
@@ -618,7 +664,7 @@ declarativeResources:
       - key: app1
         path: applications/application1.yaml
       - key: idp-google
-        path: identity-providers/google.yaml
+        path: connections/google.yaml
 ```
 
 #### Mount All Keys From Source
@@ -633,7 +679,7 @@ declarativeResources:
     items: []
 ```
 
-  Note: With empty `items`, Kubernetes mounts the source at the directory level. This can hide existing files in `repository/resources` during pod runtime. To preserve bundled files and add only selected declarative resources, configure explicit `items`.
+  Note: With empty `items`, Kubernetes mounts the source at the directory level. This can hide existing files in `config/resources` during pod runtime. To preserve bundled files and add only selected declarative resources, configure explicit `items`.
 
 #### Runtime Configuration Sync
 
@@ -648,7 +694,7 @@ declarative_resources:
 
 ```bash
 # Check mounted files inside ThunderID pod
-kubectl exec -it deploy/my-thunderid -- ls -R /opt/thunderid/repository/resources
+kubectl exec -it deploy/my-thunderid -- ls -R /opt/thunderid/config/resources
 
 # Confirm declarative_resources.enabled in generated deployment config
 kubectl exec -it deploy/my-thunderid -- grep -n "declarative_resources\|enabled" /opt/thunderid/conf/deployment.yaml
@@ -666,7 +712,7 @@ kubectl exec -it deploy/my-thunderid -- grep -n "declarative_resources\|enabled"
 
 ### Setup Job Parameters
 
-The setup job runs `setup.sh` as a one-time Helm pre-install hook to initialize ThunderID with default resources (admin user, organization, etc.).
+The setup job runs `setup.sh` as a one-time Helm pre-install hook to initialize ThunderID: it generates per-deployment key material (TLS, JWT/ECDSA signing, and AES keys) and the [Direct API Secret](#direct-api-secret) onto their PVCs, then bootstraps the default resources (admin user, organization, etc.).
 
 | Name                                   | Description                                                     | Default                      |
 | -------------------------------------- | --------------------------------------------------------------- | ---------------------------- |
@@ -682,22 +728,37 @@ The setup job runs `setup.sh` as a one-time Helm pre-install hook to initialize 
 | `setup.resources.requests.memory`      | Memory request for setup job                                    | `50Mi`                       |
 | `setup.resources.limits.cpu`           | CPU limit for setup job                                         | `200m`                       |
 | `setup.resources.limits.memory`        | Memory limit for setup job                                      | `100Mi`                      |
-| `setup.admin.username`                 | Username for the default admin user                             | `admin`                      |
-| `setup.admin.password`                 | Password for the default admin user. Ignored when `setup.admin.passwordRef.name` is set | `admin` |
-| `setup.admin.passwordRef.name`         | Existing Kubernetes Secret name containing the admin password. Must be set together with `passwordRef.key` | `""` |
-| `setup.admin.passwordRef.key`          | Key in the Secret whose value is used as the admin password. Must be set together with `passwordRef.name` | `""` |
+| `setup.admin.username`                 | Username for the admin user. Ignored when `usernameRef` is set                | `admin`    |
+| `setup.admin.usernameRef.name`         | Existing Secret holding the username. Set together with `usernameRef.key`; takes precedence over inline username | `""` |
+| `setup.admin.usernameRef.key`          | Key in the Secret holding the username. Set together with `usernameRef.name`  | `""`         |
+| `setup.admin.password`                 | Inline password for the admin user. Leave empty to generate one. Ignored when `passwordRef` is set | `""` |
+| `setup.admin.passwordRef.name`         | Existing Secret holding the password. Set together with `passwordRef.key`; takes precedence over inline password and generation | `""` |
+| `setup.admin.passwordRef.key`          | Key in the Secret holding the password. Set together with `passwordRef.name`  | `""`         |
 | `setup.extraVolumeMounts`              | Additional volume mounts for setup job                          | `[]`                         |
 | `setup.extraVolumes`                   | Additional volumes for setup job                                | `[]`                         |
 
 ### Admin Credentials
 
-The setup job seeds a default admin user during first install. The password can be supplied as a plain value (for development) or sourced from an existing Kubernetes Secret (recommended for production).
+The setup job seeds an admin user during first install (only when `setup.enabled=true`). No default password is shipped. The password is resolved in the following order of precedence:
 
-#### Security Warning
+1. **`passwordRef`** — sourced from an existing Kubernetes Secret.
+2. **`password`** — the inline value in `values.yaml`.
+3. **generated** — a random password is generated and stored in the `<release>-admin-credentials` Secret.
 
-⚠️ **The default `admin`/`admin` credentials must be changed before any non-development deployment.** When defaults are used, the credentials are printed in the setup completion summary. Always set explicit credentials for any non-development environment.
+The username is resolved independently: **`usernameRef`** (existing Secret) if set, otherwise the inline **`username`** (default `admin`).
 
-#### Pattern 1: Plain value (Development / Quick-start)
+#### Pattern 1: Generated password (default)
+
+Leave `setup.admin.password` and `setup.admin.passwordRef` unset. A random password is generated during install and stored in a Kubernetes Secret. Retrieve it with:
+
+```bash
+kubectl get secret --namespace <namespace> <release>-thunderid-admin-credentials \
+  -o jsonpath="{.data.admin-password}" | base64 -d; echo
+```
+
+The Secret name follows the chart's fullname (`nameOverride`/`fullnameOverride` change it), so use the exact command printed in the post-install notes.
+
+#### Pattern 2: Inline value (Development / Quick-start)
 
 ```yaml
 setup:
@@ -714,29 +775,32 @@ helm install my-thunderid oci://ghcr.io/thunder-id/helm-charts/thunderid \
   --set setup.admin.password='MyP@ssw0rd!'
 ```
 
-#### Pattern 2: External Kubernetes Secret (Production — Recommended)
+#### Pattern 3: Existing Kubernetes Secret (Production — Recommended)
 
-**Step 1:** Create the Secret:
+**Step 1:** Create a Secret holding the credentials. Read the values from files (each written without a trailing newline) so they do not appear in your shell history or process arguments:
 
 ```bash
 kubectl create secret generic thunderid-admin-credentials \
-  --from-literal=password='MyP@ssw0rd!'
+  --from-file=username=./admin-username \
+  --from-file=password=./admin-password
 ```
 
-**Step 2:** Reference it in your values:
+**Step 2:** Reference it in your values. Point both refs at the same Secret name with different keys (or at different Secrets):
 
 ```yaml
 setup:
   admin:
-    username: "myAdmin"
+    usernameRef:              # optional; falls back to setup.admin.username
+      name: "thunderid-admin-credentials"
+      key: "username"
     passwordRef:
       name: "thunderid-admin-credentials"
       key: "password"
 ```
 
-When `passwordRef.name` and `passwordRef.key` are both set, the `password` field is ignored and the admin password is injected directly from the Secret — no plaintext appears in the rendered Job manifest.
+When `passwordRef` is set it takes precedence over the inline password and over generation; likewise `usernameRef` over the inline username. Credentials are injected directly from the Secret via `secretKeyRef`, so no plaintext appears in the rendered Job manifest.
 
-**Validation:** The chart fails at render time if only one of `passwordRef.name` / `passwordRef.key` is provided. Both must be set together or both must be left empty.
+**Validation:** The chart fails at render time if either ref has only one of `name`/`key` set. Provide both or neither.
 
 Environment variable item structure for plain value environment variables in `deployment.env` and `setup.env`:
 
@@ -748,11 +812,11 @@ Example:
 ```yaml
 deployment:
   env:
-    - name: LOG_LEVEL
-      value: debug
     - name: EXTERNAL_API_BASE_URL
       value: https://api.example.com
 ```
+
+The log level is configured via `deployment.yaml` (`log.level`).
 
 Environment variable item structure for secret-backed environment variables in `deployment.secretEnv` and `setup.secretEnv`:
 
@@ -765,59 +829,71 @@ Environment variable item structure for secret-backed environment variables in `
 - When `preserveJob=false` (default): Successful jobs are deleted immediately. Failed jobs are kept for `ttlSecondsAfterFinished` (24 hours) to allow debugging.
 - When `preserveJob=true`: Job is kept indefinitely regardless of success/failure status. Use this for troubleshooting or audit purposes.
 
-### Bootstrap Script Parameters
+### Direct API Secret
 
-Bootstrap scripts extend ThunderID's setup process by adding your own initialization logic. These scripts run as part of the setup job.
+The Direct API endpoints (`/auth/**`, `/register/passkey/**`) are gated by a server-level secret. They are **secure by default**: while no secret is configured they are blocked with `401`, and once configured every request must send the value in the `Direct-Auth-Secret` header.
 
-#### Understanding Default Bootstrap Scripts
+The secret is stored in a file rather than inline in `deployment.yaml`, so generation keeps working even though `deployment.yaml` is mounted as a read-only ConfigMap. `deployment.yaml` references it as `direct_auth_secret: "file://config/secrets/direct_auth_secret"`, and the setup job writes the value to that path on the shared secrets PVC.
 
-ThunderID provides these default bootstrap scripts in `/opt/thunderid/bootstrap/`:
-- **`common.sh`** - Helper functions for logging (`log_info`, `log_success`, `log_warning`, `log_error`) and API calls (`thunderid_api_call`)
-- **`01-default-resources.sh`** - Creates admin user, default organization, and Person user type
+Behavior depends on your values:
+
+- **`setup.enabled=true`, `configuration.server.security.directAuthSecret` unset (default):** the setup job generates a random secret onto the secrets PVC, so the Direct API works out of the box. The generated value is printed once in the setup completion summary — capture it there.
+- **`configuration.server.security.directAuthSecret` set:** the inline value is used as-is and generation is skipped. Prefer supplying it via a Kubernetes Secret / `--set` rather than committing it to `values.yaml`.
+- **`setup.enabled=false` and no inline value:** no secret is configured and the Direct API stays blocked.
+
+### Bootstrap Resource Parameters
+
+Custom bootstrap resources extend ThunderID's setup process. Files are mounted into the bootstrap directory (`/opt/thunderid/bootstrap/`) and applied by the in-process bootstrap (`thunderid bootstrap`) through the import service. Each file is a YAML/JSON **resource definition** (the same format as the shipped defaults) — not a shell script.
+
+#### Understanding Default Bootstrap Resources
+
+ThunderID ships its default resource definitions in `/opt/thunderid/bootstrap/01-default-resources.yaml` (organization unit, user/agent types, admin user, system resource server, Administrators group/role, the Console application, flows, themes, and translations). Each document is typed via a `# resource_type: <type>` comment (or inferred from its keys).
 
 #### Configuration Parameters
 
-| Name                        | Description                                                                      | Default |
-| --------------------------- | -------------------------------------------------------------------------------- | ------- |
-| `bootstrap.scripts`         | Inline custom bootstrap scripts (key: filename, value: content)                 | `{}`    |
-| `bootstrap.configMap.name`  | Name of external ConfigMap containing bootstrap scripts                          | `""`    |
-| `bootstrap.configMap.files` | List of script filenames to mount from ConfigMap (empty = mount entire ConfigMap) | `[]`    |
+| Name                        | Description                                                                       | Default |
+| --------------------------- | --------------------------------------------------------------------------------- | ------- |
+| `bootstrap.scripts`         | Inline resource definitions (key: filename, value: content)                       | `{}`    |
+| `bootstrap.configMap.name`  | Name of external ConfigMap containing resource definition files                   | `""`    |
+| `bootstrap.configMap.files` | List of filenames to mount from ConfigMap (empty = mount entire ConfigMap)        | `[]`    |
 
 #### Three Bootstrap Patterns
 
-**Pattern 1: Add Inline Scripts** (Preserves Defaults)
+**Pattern 1: Add Inline Resource Definitions** (Preserves Defaults)
 
-Use `bootstrap.scripts` to define scripts directly in values.yaml. These scripts are added to the default bootstrap scripts.
+Use `bootstrap.scripts` to define resource files directly in values.yaml. They are mounted alongside the shipped defaults.
 
 ```yaml
 bootstrap:
   scripts:
-    30-custom-users.sh: |
-      #!/bin/bash
-      set -e
-      SCRIPT_DIR="$(dirname "${BASH_SOURCE[0]:-$0}")"
-      source "${SCRIPT_DIR}/common.sh"
-
-      log_info "Creating custom user..."
-      thunderid_api_call POST "/users" '{"type":"person","attributes":{"username":"alice","password":"alice123","sub":"alice","email":"alice@example.com"}}'
-      log_success "User created"
+    70-custom-users.yaml: |
+      # resource_type: user
+      type: Person
+      ouHandle: default
+      attributes:
+        username: alice
+        sub: alice
+        email: alice@example.com
+        name: Alice Johnson
+      credentials:
+        password: alice123
 ```
 
-- ✅ Preserves ThunderID's default scripts (`common.sh`, `01-*`)
-- ✅ Can use helper functions from `common.sh`
+- ✅ Preserves ThunderID's shipped default resources
+- ✅ Uses the same definition format as the defaults
 - ✅ No additional configuration needed
 
 ---
 
-**Pattern 2: Add External ConfigMap Scripts** (Preserves Defaults)
+**Pattern 2: Add External ConfigMap Files** (Preserves Defaults)
 
-Use `bootstrap.configMap` with a `files` list to mount specific scripts from an external ConfigMap.
+Use `bootstrap.configMap` with a `files` list to mount specific resource files from an external ConfigMap.
 
 Create your ConfigMap:
 ```bash
 kubectl create configmap my-bootstrap \
-  --from-file=30-users.sh=./30-users.sh \
-  --from-file=40-apps.sh=./40-apps.sh
+  --from-file=70-users.yaml=./70-users.yaml \
+  --from-file=80-apps.yaml=./80-apps.yaml
 ```
 
 Configure Helm values:
@@ -826,27 +902,27 @@ bootstrap:
   configMap:
     name: "my-bootstrap"
     files:
-      - 30-users.sh
-      - 40-apps.sh
+      - 70-users.yaml
+      - 80-apps.yaml
 ```
 
-- ✅ Preserves ThunderID's default scripts
-- ✅ Can use helper functions from `common.sh`
-- ✅ Scripts managed separately from Helm chart
+- ✅ Preserves ThunderID's shipped default resources
+- ✅ Resource files managed separately from the Helm chart
 
 ---
 
-**Pattern 3: Replace All Scripts with ConfigMap** (Complete Replacement)
+**Pattern 3: Replace the Default Resource Bundle with a ConfigMap** (Complete Replacement)
 
-⚠️ **WARNING**: This entirely replaces ThunderID's default bootstrap scripts. Use only if you need complete control.
+⚠️ **WARNING**: This entirely replaces ThunderID's shipped default resource bundle. Use only if you need complete control.
 
-Use `bootstrap.configMap` **without** specifying `files` to mount the entire ConfigMap and replace all defaults.
+Use `bootstrap.configMap` **without** specifying `files` to mount the entire ConfigMap over `bootstrap/`.
 
-Create your complete ConfigMap (must include `common.sh`):
+Create your complete ConfigMap:
 ```bash
 kubectl create configmap complete-bootstrap \
-  --from-file=common.sh=./common.sh \
-  --from-file=01-my-setup.sh=./01-my-setup.sh
+  --from-file=00-org-unit.yaml=./00-org-unit.yaml \
+  --from-file=10-user-types.yaml=./10-user-types.yaml \
+  --from-file=30-admin-user.yaml=./30-admin-user.yaml
 ```
 
 Configure Helm values:
@@ -857,12 +933,9 @@ bootstrap:
     # No files list = mounts entire ConfigMap (replaces all defaults)
 ```
 
-- ⚠️ **Removes ALL default scripts** (`common.sh`, `01-default-resources.sh`)
-- ⚠️ You MUST provide your own `common.sh` with required helper functions
-- ⚠️ No default admin user, organization, or schemas will be created
-- ✅ Complete control over bootstrap process
-
-**For comprehensive examples, helper function documentation, and best practices, see:** [Custom Bootstrap Guide](../../docs/guides/setup/custom-bootstrap.md)
+- ⚠️ **Replaces ALL shipped default resource definitions**
+- ⚠️ You MUST provide a complete resource set (admin user, organization unit, user types, etc.) or the system will be missing core resources
+- ✅ Complete control over the bootstrapped resources
 
 ### Custom Configuration
 

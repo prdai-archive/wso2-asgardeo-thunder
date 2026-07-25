@@ -63,7 +63,6 @@ const siteUrl = process.env.DOCUSAURUS_URL || productConfig.documentation.deploy
 const config: Config = {
   title: productConfig.project.name,
   tagline: productConfig.project.description,
-  favicon: 'assets/images/favicon-inverted.ico',
 
   noIndex: false,
 
@@ -83,6 +82,9 @@ const config: Config = {
   onBrokenLinks: 'throw',
 
   markdown: {
+    hooks: {
+      onBrokenMarkdownLinks: 'throw',
+    },
     // Replace {{ProductName}} placeholders in frontmatter values at build time.
     // This applies globally to all content (docs, pages, etc.).
     // See: https://docusaurus.io/docs/api/docusaurus-config#markdown
@@ -158,7 +160,13 @@ j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
     },
   ],
 
-  plugins: [webpackPlugin, personaPlugin],
+  plugins: [
+    '@docsearch/docusaurus-adapter',
+    webpackPlugin,
+    personaPlugin,
+    './plugins/docusaurus-plugin-llms-txt',
+    './plugins/docusaurus-plugin-markdown-export',
+  ],
 
   presets: [
     [
@@ -187,6 +195,7 @@ j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
                 replacements: {
                   '{{ConsoleUrl}}': productConfig.local.consoleUrl,
                   '{{WayFinderSampleUrl}}': productConfig.local.samples.wayfinderUrl,
+                  '{{WayFinderMailUrl}}': productConfig.local.samples.wayfinderMailUrl,
                 },
               },
             ],
@@ -207,7 +216,7 @@ j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
   ],
 
   themeConfig: {
-    image: 'assets/images/social-card.png',
+    image: 'assets/images/og-image.png',
     colorMode: {
       respectPrefersColorScheme: true,
     },
@@ -236,10 +245,9 @@ j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
           label: 'APIs',
         },
         {
-          type: 'doc',
-          docId: 'sdks/overview',
+          to: '/sdks',
           position: 'right',
-          label: 'SDKs',
+          label: 'SDKs & Tools',
         },
         {
           to: '/blog',
@@ -280,10 +288,16 @@ j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
       theme: prismThemes.nightOwlLight,
       darkTheme: prismThemes.nightOwl,
     },
-    algolia: {
-      appId: 'I2J00F96K6',
-      apiKey: '109b36a4b48dc5da1f24d1f764e7685f',
+    docsearch: {
+      appId: 'PML8PAKD9O',
+      apiKey: '04e88f06bc04c51b7f246d180438cf25',
       indexName: 'thunderid-docs-prod',
+      askAi: {
+        assistantId: "3e6fb420-3ffa-4b8b-9f59-5d8fc76a6236",
+        indexName: "thunderid-llm-md",
+        sidePanel: true,
+        agentStudio: true,
+      }
     },
   } satisfies Preset.ThemeConfig,
 

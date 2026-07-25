@@ -1,0 +1,449 @@
+/**
+ * Copyright (c) 2026, WSO2 LLC. (https://www.wso2.com).
+ *
+ * WSO2 LLC. licenses this file to you under the Apache License,
+ * Version 2.0 (the "License"); you may not use this file except
+ * in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied. See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ */
+
+import * as componentsModule from '@thunderid/components';
+import * as thunderIdReactModule from '@thunderid/react';
+import {renderWithProviders, screen, fireEvent, waitFor} from '@thunderid/test-utils';
+import type {ReactNode} from 'react';
+import {describe, it, expect, vi, beforeEach} from 'vitest';
+import type {ResourceServer} from '../../models/resource-server';
+import ResourceServerEditPage from '../ResourceServerEditPage';
+
+const mockNavigate = vi.fn();
+const mockRefetch = vi.fn();
+
+vi.mock('react-router', async () => {
+  const actual = await vi.importActual<typeof import('react-router')>('react-router');
+  return {
+    ...actual,
+    useNavigate: () => mockNavigate,
+    useParams: () => ({resourceServerId: 'rs-1'}),
+    useSearchParams: () => [new URLSearchParams(), vi.fn()],
+    Link: ({to, children = undefined, ...props}: {to: string; children?: ReactNode; [key: string]: unknown}) => (
+      <a
+        {...(props as Record<string, unknown>)}
+        href={to}
+        onClick={(e) => {
+          e.preventDefault();
+          Promise.resolve(mockNavigate(to)).catch(() => null);
+        }}
+      >
+        {children}
+      </a>
+    ),
+  };
+});
+
+vi.mock('@thunderid/react', {spy: true});
+
+// eslint-disable-next-line @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access -- vi.mock({spy:true}) type inference doesn't resolve for this package's conditional exports
+vi.mocked(thunderIdReactModule.useThunderID).mockImplementation(() => ({http: {request: vi.fn()}}) as never);
+
+vi.mock('@thunderid/contexts', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@thunderid/contexts')>();
+  return {
+    ...actual,
+    useConfig: () => ({getServerUrl: () => 'http://localhost:8090'}),
+    useToast: () => ({showToast: vi.fn()}),
+  };
+});
+
+vi.mock('@thunderid/logger/react', () => ({
+  useLogger: () => ({error: vi.fn(), info: vi.fn(), debug: vi.fn()}),
+}));
+
+vi.mock('@thunderid/components', {spy: true});
+
+vi.mocked(componentsModule.PageLoadingAnimation).mockImplementation(() => <div role="progressbar" />);
+vi.mocked(componentsModule.SettingsCard).mockImplementation(
+  ({children, title}: {children: ReactNode; title?: string}) => (
+    <div data-testid="settings-card">
+      {title && <span>{title}</span>}
+      {children}
+    </div>
+  ),
+);
+vi.mocked(componentsModule.UnsavedChangesBar).mockImplementation(
+  ({message, onReset, onSave}: {message: string; onReset: () => void; onSave: () => void}) => (
+    <div data-testid="unsaved-changes-bar">
+      <span>{message}</span>
+      <button type="button" onClick={onReset}>
+        Discard
+      </button>
+      <button type="button" onClick={onSave}>
+        Save
+      </button>
+    </div>
+  ),
+);
+
+const mockUseGetResourceServer = vi.fn();
+const mockUpdateMutate = vi.fn();
+
+vi.mock('../../api/useGetResourceServer', () => ({
+  default: () =>
+    mockUseGetResourceServer() as {
+      data: ResourceServer | undefined;
+      isLoading: boolean;
+      error: Error | null;
+      refetch: () => void;
+    },
+}));
+
+vi.mock('../../api/useUpdateResourceServer', () => ({
+  default: () => ({mutate: mockUpdateMutate, isPending: false}),
+}));
+
+const mockUseGetDefaultResourceServer = vi.fn();
+
+vi.mock('../../api/useGetDefaultResourceServer', () => ({
+  default: () => mockUseGetDefaultResourceServer() as {data: unknown},
+}));
+
+vi.mock('../../components/SetDefaultResourceServerDialog', () => ({
+  default: () => null,
+}));
+
+vi.mock('../../api/useGetResources', () => ({
+  default: () => ({data: {resources: [], totalResults: 0, startIndex: 0, count: 0}, isLoading: false}),
+}));
+
+vi.mock('../../api/useGetServerActions', () => ({
+  default: () => ({data: {actions: [], totalResults: 0, startIndex: 0, count: 0}, isLoading: false}),
+}));
+
+vi.mock('../../components/ResourceServerDeleteDialog', () => ({
+  default: () => null,
+}));
+
+vi.mock('../../components/resource-tree/ResourceTree', () => ({
+  default: () => <div data-testid="resource-tree" />,
+}));
+
+vi.mock('../../components/resource-server-detail/AdvancedTab', () => ({
+  default: ({identifier, onIdentifierChange}: {identifier: string; onIdentifierChange: (value: string) => void}) => (
+    <div data-testid="advanced-tab">
+      <input aria-label="Identifier" value={identifier} onChange={(e) => onIdentifierChange(e.target.value)} />
+    </div>
+  ),
+}));
+
+const mockResourceServer: ResourceServer = {
+  id: 'rs-1',
+  name: 'Dark Dodos Smash',
+  identifier: 'https://api.example.com',
+  ouId: 'ou-1',
+  delimiter: '/',
+  type: 'API',
+};
+
+const readOnlyResourceServer: ResourceServer = {
+  ...mockResourceServer,
+  isReadOnly: true,
+};
+
+const mockMcpResourceServer: ResourceServer = {
+  ...mockResourceServer,
+  type: 'MCP',
+};
+
+describe('ResourceServerEditPage', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockUseGetResourceServer.mockReturnValue({
+      data: mockResourceServer,
+      isLoading: false,
+      error: null,
+      refetch: mockRefetch,
+    });
+    mockUseGetDefaultResourceServer.mockReturnValue({
+      data: {readOnly: {}, writable: {}, merged: {}},
+    });
+  });
+
+  it('renders the loading animation when data is loading', () => {
+    mockUseGetResourceServer.mockReturnValue({
+      data: undefined,
+      isLoading: true,
+      error: null,
+      refetch: mockRefetch,
+    });
+
+    renderWithProviders(<ResourceServerEditPage />);
+
+    expect(screen.getByRole('progressbar')).toBeInTheDocument();
+  });
+
+  it('renders the error alert when the fetch fails', () => {
+    mockUseGetResourceServer.mockReturnValue({
+      data: undefined,
+      isLoading: false,
+      error: new Error('Network error'),
+      refetch: mockRefetch,
+    });
+
+    renderWithProviders(<ResourceServerEditPage />);
+
+    expect(screen.getByText('Network error')).toBeInTheDocument();
+  });
+
+  it('renders the resource server name after successful load', () => {
+    renderWithProviders(<ResourceServerEditPage />);
+
+    expect(screen.getByText('Dark Dodos Smash')).toBeInTheDocument();
+  });
+
+  it('does not render a resource server handle chip', () => {
+    renderWithProviders(<ResourceServerEditPage />);
+
+    expect(screen.queryByText('dark-dodos')).not.toBeInTheDocument();
+  });
+
+  it('renders the Resources tab as active by default', () => {
+    renderWithProviders(<ResourceServerEditPage />);
+
+    expect(screen.getByRole('tab', {name: 'Resources', selected: true})).toBeInTheDocument();
+  });
+
+  it('renders the ResourceTree in the Resources tab by default', () => {
+    renderWithProviders(<ResourceServerEditPage />);
+
+    expect(screen.getByTestId('resource-tree')).toBeInTheDocument();
+  });
+
+  it('shows the AdvancedTab when the Advanced Settings tab is clicked', async () => {
+    renderWithProviders(<ResourceServerEditPage />);
+
+    fireEvent.click(screen.getByRole('tab', {name: 'Advanced Settings'}));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('advanced-tab')).toBeInTheDocument();
+    });
+  });
+
+  it('renders the Danger Zone card for a non-read-only server', () => {
+    renderWithProviders(<ResourceServerEditPage />);
+
+    expect(screen.getByText('Danger Zone')).toBeInTheDocument();
+  });
+
+  it('renders the delete button inside the Danger Zone', () => {
+    renderWithProviders(<ResourceServerEditPage />);
+
+    expect(screen.getByRole('button', {name: /Delete resource server/i})).toBeInTheDocument();
+  });
+
+  it('does not render the Danger Zone for a read-only server', () => {
+    mockUseGetResourceServer.mockReturnValue({
+      data: readOnlyResourceServer,
+      isLoading: false,
+      error: null,
+      refetch: mockRefetch,
+    });
+
+    renderWithProviders(<ResourceServerEditPage />);
+
+    expect(screen.queryByText('Danger Zone')).not.toBeInTheDocument();
+  });
+
+  it('renders the read-only info alert for a read-only server', () => {
+    mockUseGetResourceServer.mockReturnValue({
+      data: readOnlyResourceServer,
+      isLoading: false,
+      error: null,
+      refetch: mockRefetch,
+    });
+
+    renderWithProviders(<ResourceServerEditPage />);
+
+    expect(screen.getByText(/This resource is read-only and cannot be modified/i)).toBeInTheDocument();
+  });
+
+  it('shows the unsaved changes bar when the identifier is edited in the Advanced tab', async () => {
+    renderWithProviders(<ResourceServerEditPage />);
+
+    fireEvent.click(screen.getByRole('tab', {name: 'Advanced Settings'}));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('advanced-tab')).toBeInTheDocument();
+    });
+
+    fireEvent.change(screen.getByLabelText('Identifier'), {target: {value: 'https://new-api.example.com'}});
+
+    await waitFor(() => {
+      expect(screen.getByTestId('unsaved-changes-bar')).toBeInTheDocument();
+    });
+  });
+
+  it('includes the edited identifier when Save is clicked from the unsaved changes bar', async () => {
+    renderWithProviders(<ResourceServerEditPage />);
+
+    fireEvent.click(screen.getByRole('tab', {name: 'Advanced Settings'}));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('advanced-tab')).toBeInTheDocument();
+    });
+
+    fireEvent.change(screen.getByLabelText('Identifier'), {target: {value: 'https://new-api.example.com'}});
+
+    await waitFor(() => {
+      expect(screen.getByTestId('unsaved-changes-bar')).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole('button', {name: 'Save'}));
+
+    expect(mockUpdateMutate).toHaveBeenCalledWith(
+      {
+        id: 'rs-1',
+        data: {
+          name: 'Dark Dodos Smash',
+          description: null,
+          identifier: 'https://new-api.example.com',
+          ouId: 'ou-1',
+        },
+      },
+      expect.any(Object),
+    );
+  });
+
+  it('does not save when the identifier is cleared', async () => {
+    renderWithProviders(<ResourceServerEditPage />);
+
+    fireEvent.click(screen.getByRole('tab', {name: 'Advanced Settings'}));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('advanced-tab')).toBeInTheDocument();
+    });
+
+    fireEvent.change(screen.getByLabelText('Identifier'), {target: {value: '   '}});
+
+    await waitFor(() => {
+      expect(screen.getByTestId('unsaved-changes-bar')).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole('button', {name: 'Save'}));
+
+    expect(mockUpdateMutate).not.toHaveBeenCalled();
+  });
+
+  it('renders the MCP-specific Danger Zone title for an MCP server', () => {
+    mockUseGetResourceServer.mockReturnValue({
+      data: mockMcpResourceServer,
+      isLoading: false,
+      error: null,
+      refetch: mockRefetch,
+    });
+
+    renderWithProviders(<ResourceServerEditPage />);
+
+    expect(screen.getByRole('heading', {name: 'Delete MCP server'})).toBeInTheDocument();
+  });
+
+  it('renders the MCP-specific Danger Zone description for an MCP server', () => {
+    mockUseGetResourceServer.mockReturnValue({
+      data: mockMcpResourceServer,
+      isLoading: false,
+      error: null,
+      refetch: mockRefetch,
+    });
+
+    renderWithProviders(<ResourceServerEditPage />);
+
+    expect(
+      screen.getByText('Permanently delete this MCP server and all associated data. This action cannot be undone.'),
+    ).toBeInTheDocument();
+  });
+
+  it('renders the MCP-specific delete button label for an MCP server', () => {
+    mockUseGetResourceServer.mockReturnValue({
+      data: mockMcpResourceServer,
+      isLoading: false,
+      error: null,
+      refetch: mockRefetch,
+    });
+
+    renderWithProviders(<ResourceServerEditPage />);
+
+    expect(screen.getByRole('button', {name: 'Delete MCP server'})).toBeInTheDocument();
+  });
+
+  it('shows the Set as default button when the server is not the default', () => {
+    renderWithProviders(<ResourceServerEditPage />);
+
+    expect(screen.getByRole('button', {name: 'Set as default'})).toBeInTheDocument();
+    expect(screen.queryByText('Default resource server')).not.toBeInTheDocument();
+  });
+
+  it('shows the Default resource server badge when the server is the default', () => {
+    mockUseGetDefaultResourceServer.mockReturnValue({
+      data: {readOnly: {}, writable: {}, merged: {resourceServerId: 'rs-1'}},
+    });
+
+    renderWithProviders(<ResourceServerEditPage />);
+
+    expect(screen.getByText('Default resource server')).toBeInTheDocument();
+    expect(screen.queryByRole('button', {name: 'Set as default'})).not.toBeInTheDocument();
+  });
+
+  it('renders neither the badge nor the action while the default config is loading', () => {
+    mockUseGetDefaultResourceServer.mockReturnValue({data: undefined, isLoading: true, error: null});
+
+    renderWithProviders(<ResourceServerEditPage />);
+
+    expect(screen.queryByRole('button', {name: 'Set as default'})).not.toBeInTheDocument();
+    expect(screen.queryByText('Default resource server')).not.toBeInTheDocument();
+  });
+
+  it('does not offer Set as default when the default is locked by declarative config', () => {
+    mockUseGetDefaultResourceServer.mockReturnValue({
+      data: {readOnly: {resourceServerId: 'rs-9'}, writable: {}, merged: {resourceServerId: 'rs-9'}},
+    });
+
+    renderWithProviders(<ResourceServerEditPage />);
+
+    expect(screen.queryByRole('button', {name: 'Set as default'})).not.toBeInTheDocument();
+    expect(screen.queryByText('Default resource server')).not.toBeInTheDocument();
+  });
+
+  it('shows the badge but no action for a locked default server', () => {
+    mockUseGetDefaultResourceServer.mockReturnValue({
+      data: {readOnly: {resourceServerId: 'rs-1'}, writable: {}, merged: {resourceServerId: 'rs-1'}},
+    });
+
+    renderWithProviders(<ResourceServerEditPage />);
+
+    expect(screen.getByText('Default resource server')).toBeInTheDocument();
+    expect(screen.queryByRole('button', {name: 'Set as default'})).not.toBeInTheDocument();
+  });
+
+  it('shows the name text field when the edit icon button is clicked', async () => {
+    renderWithProviders(<ResourceServerEditPage />);
+
+    const editButtons = screen.getAllByRole('button');
+    const nameEditButton = editButtons.find(
+      (btn) => btn.querySelector('svg') && btn.closest('div')?.textContent?.includes('Dark Dodos Smash'),
+    );
+
+    expect(nameEditButton).toBeDefined();
+    fireEvent.click(nameEditButton!);
+
+    await waitFor(() => {
+      expect(screen.getByDisplayValue('Dark Dodos Smash')).toBeInTheDocument();
+    });
+  });
+});

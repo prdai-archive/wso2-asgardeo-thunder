@@ -75,15 +75,18 @@
                             "resourceType": "ELEMENT",
                             "type": "ACTION",
                             "variant": "PRIMARY"
-                        },
-                        {
-                            "category": "DISPLAY",
-                            "id": "rich-text-signup",
-                            "resourceType": "ELEMENT",
-                            "type": "RICH_TEXT",
-                            "label": "<p class=\"rich-text-paragraph\"><span class=\"rich-text-pre-wrap\">Don't have an account? </span><a href=\"{{meta(application.sign_up_url)}}\" class=\"rich-text-link\"><span class=\"rich-text-pre-wrap\">Sign up</span></a></p>"
                         }
                     ]
+                },
+                {
+                    "action": {
+                        "ref": "action_signup"
+                    },
+                    "category": "DISPLAY",
+                    "id": "rich_text_signup",
+                    "resourceType": "ELEMENT",
+                    "type": "RICH_TEXT",
+                    "label": "<p data-component-ref=\"self-sign-up-link\" class=\"rich-text-paragraph\"><span class=\"rich-text-pre-wrap\">Don't have an account? </span><a href=\"#\" data-action-ref=\"action_signup\" class=\"rich-text-link\"><span class=\"rich-text-pre-wrap\">Sign up</span></a></p>"
                 }
             ]
         },
@@ -105,13 +108,19 @@
                 ],
                 "action": {
                     "ref": "action_001",
-                    "nextNode": "basic_auth"
+                    "nextNode": "credentials_auth"
+                }
+            },
+            {
+                "action": {
+                    "ref": "action_signup",
+                    "nextNode": "call_registration"
                 }
             }
         ]
     },
     {
-        "id": "basic_auth",
+        "id": "credentials_auth",
         "type": "TASK_EXECUTION",
         "layout": {
             "size": {
@@ -124,7 +133,7 @@
             }
         },
         "executor": {
-            "name": "BasicAuthExecutor",
+            "name": "CredentialsAuthExecutor",
             "inputs": [
                 {
                     "ref": "input_001",
@@ -158,10 +167,10 @@
         "executor": {
             "name": "AuthorizationExecutor"
         },
-        "onSuccess": "send_otp"
+        "onSuccess": "generate_otp"
     },
     {
-        "id": "send_otp",
+        "id": "generate_otp",
         "type": "TASK_EXECUTION",
         "layout": {
             "size": {
@@ -173,20 +182,39 @@
                 "y": 62
             }
         },
-        "properties": {
-            "senderId": "{{SENDER_ID}}"
-        },
         "executor": {
-            "name": "SMSOTPAuthExecutor",
-            "mode": "send",
+            "name": "OTPExecutor",
+            "mode": "generate",
             "inputs": [
                 {
-                    "ref": "otp_input_24ux",
-                    "type": "OTP_INPUT",
-                    "identifier": "otp",
-                    "required": false
+                    "ref": "input_mobile",
+                    "type": "PHONE_INPUT",
+                    "identifier": "mobileNumber",
+                    "required": true
                 }
             ]
+        },
+        "onSuccess": "sms_send"
+    },
+    {
+        "id": "sms_send",
+        "type": "TASK_EXECUTION",
+        "layout": {
+            "size": {
+                "width": 200,
+                "height": 113
+            },
+            "position": {
+                "x": 2392,
+                "y": 62
+            }
+        },
+        "properties": {
+            "senderId": "{{SENDER_ID}}",
+            "smsTemplate": "OTP"
+        },
+        "executor": {
+            "name": "SMSExecutor"
         },
         "onSuccess": "view_s2t2"
     },
@@ -203,11 +231,8 @@
                 "y": 62
             }
         },
-        "properties": {
-            "senderId": "{{SENDER_ID}}"
-        },
         "executor": {
-            "name": "SMSOTPAuthExecutor",
+            "name": "OTPExecutor",
             "mode": "verify",
             "inputs": [
                 {
@@ -237,6 +262,14 @@
             "name": "AuthAssertExecutor"
         },
         "onSuccess": "end"
+    },
+    {
+        "id": "call_registration",
+        "type": "CALL",
+        "flow": {
+            "ref": "01900000-0000-7000-8000-000000000064"
+        },
+        "onSuccess": "auth_assert"
     },
     {
         "id": "end",
@@ -340,7 +373,7 @@
                 ],
                 "action": {
                     "ref": "resend_6o42",
-                    "nextNode": "send_otp"
+                    "nextNode": "generate_otp"
                 }
             }
         ]

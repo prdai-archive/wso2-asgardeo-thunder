@@ -1,7 +1,8 @@
 ---
 title: Debugging
+docType: community
 description: Set up and debug the backend, frontend apps, and sample applications locally.
-sidebar_position: 6
+sidebar_position: 7
 hide_table_of_contents: false
 ---
 
@@ -39,7 +40,7 @@ This guide focuses on local development and debugging with SQLite for database s
 
 ### Optional
 
-- **[yq](https://github.com/mikefarah/yq)** — YAML parser for better config parsing
+- **[yq](https://github.com/mikefarah/yq)**: YAML parser for better config parsing
   ```bash
   brew install yq
   ```
@@ -48,19 +49,18 @@ This guide focuses on local development and debugging with SQLite for database s
 
 ### Step 1: Configure the Server
 
-Edit `backend/cmd/server/repository/conf/deployment.yaml` and add:
-
-**CORS allowed origins** (so the frontend development servers and sample app can talk to the backend):
+Add the frontend development origins to `backend/cmd/server/config/resources/server_configs/cors.yaml` so the apps can call the backend:
 
 ```yaml
-cors:
-  allowed_origins:
+name: cors
+value:
+  allowedOrigins:
     - "https://localhost:3000"
     - "https://localhost:5190"
     - "https://localhost:5191"
 ```
 
-**Gate client port** (so the backend knows where to redirect for auth):
+**Gate client port**: add this to `backend/cmd/server/deployment.yaml` (so the backend knows where to redirect for auth):
 
 ```yaml
 gate_client:
@@ -75,17 +75,15 @@ Open a terminal and switch to the <ProductName /> root directory:
 cd <repo-root>
 ```
 
-Run the backend with API security disabled:
+Seed the initial data (one-time only) with the in-process `bootstrap` subcommand.
+It creates the default resources directly through the service layer, so no running
+server or security bypass is required. The subcommand never invents an admin password
+on its own, so pass one explicitly with `--admin-password`:
 
 ```bash
-SKIP_SECURITY=true make run_backend
-```
-
-In a **new terminal**, seed data (one-time only):
-
-```bash
-API_BASE="https://localhost:8090" \
-  backend/cmd/server/bootstrap/01-default-resources.sh \
+PUBLIC_URL="https://localhost:8090" \
+  go run -C backend/cmd/server . bootstrap \
+  --admin-password "admin" \
   --console-redirect-uris "https://localhost:5191/console"
 ```
 
@@ -159,12 +157,46 @@ npm run dev
 
 | Database | Path |
 |----------|------|
-| User DB | `<repo-root>/backend/cmd/server/repository/database/userdb.db` |
-| Runtime DB | `<repo-root>/backend/cmd/server/repository/database/runtimedb.db` |
-| Config DB | `<repo-root>/backend/cmd/server/repository/database/configdb.db` |
+| Entity DB | `<repo-root>/backend/cmd/server/database/entitydb.db` |
+| Runtime-transient DB | `<repo-root>/backend/cmd/server/database/runtime_transient.db` |
+| Runtime-persistent DB | `<repo-root>/backend/cmd/server/database/runtime_persistent.db` |
+| Config DB | `<repo-root>/backend/cmd/server/database/configdb.db` |
 
 5. Click **Test Connection** to verify, then click **Finish**
-6. Repeat for the other two databases
+6. Repeat for the other three databases
+
+## Debug with Local SDK Changes
+
+When developing or testing against unreleased SDK changes, you can point the product frontend at a local build instead of the published npm packages.
+
+The JavaScript SDKs live in a separate repository. Clone it if you haven't already, then install dependencies:
+
+```bash
+git clone https://github.com/thunder-id/javascript-sdks
+cd javascript-sdks
+pnpm install
+```
+
+### Generate Local File Paths
+
+Run the `symlink` script to build the SDK packages and print the `file:` path entries to paste into the product:
+
+```bash
+pnpm symlink
+```
+
+The script outputs multiple blocks. Copy the `overrides` block.
+
+### Apply and Install
+
+Paste the copied `overrides` into `pnpm-workspace.yaml` at the repository root under `overrides:`, then run `pnpm install` from the repository root to link the local packages:
+
+```bash
+cd <repo-root>
+pnpm install
+```
+
+Restart the frontend dev server for the changes to take effect. To revert, remove the `overrides` entries and run `pnpm install` again.
 
 ## Sample Debug Scenario: User Creation
 
@@ -174,20 +206,20 @@ This walks through debugging the user creation flow from the UI to database stor
 
 In Chrome DevTools, open:
 
-- `features/users/api/useCreateUser.ts` — set a breakpoint at `const serverUrl: string = getServerUrl();`
+- `features/users/api/useCreateUser.ts`: set a breakpoint at `const serverUrl: string = getServerUrl();`
 
 ### 2. Set Backend Breakpoints
 
 In VS Code, open these files and set breakpoints:
 
-- `backend/internal/user/handler.go` — at the beginning of `HandleUserPostRequest`
-- `backend/internal/user/service.go` — at the beginning of `CreateUser`
-- `backend/internal/user/store.go` — at the beginning of `CreateUser`
+- `backend/internal/user/handler.go`: at the beginning of `HandleUserPostRequest`
+- `backend/internal/user/service.go`: at the beginning of `CreateUser`
+- `backend/internal/user/store.go`: at the beginning of `CreateUser`
 
 ### 3. Trigger the Flow
 
 1. Navigate to [https://localhost:5191/console](https://localhost:5191/console)
-2. Log in with the admin credentials configured during setup (default: `admin` / `admin`)
+2. Log in with the admin credentials from Step 2 (username `admin`, password `admin` if you used the example above)
 3. Go to **Users** section
 4. Click **Add User**
 5. Select **User Type: Person**
@@ -199,7 +231,7 @@ In VS Code, open these files and set breakpoints:
 
 ### 4. Debug the Flow
 
-- Chrome pauses at the frontend breakpoint — inspect variables and step through the API call
+- Chrome pauses at the frontend breakpoint: inspect variables and step through the API call
 - Once the API call is made, VS Code pauses at the backend breakpoints
 - Use the **Variables** panel to inspect request data
 - Step through the code (`F10` step over, `F11` step into, `F5` continue)
@@ -207,4 +239,4 @@ In VS Code, open these files and set breakpoints:
 
 ### 5. Verify in Database
 
-Open DBeaver and view the `User` table in the User DB to confirm the new user was created.
+Open DBeaver and view the `ENTITY` table in the Entity DB to confirm the new user was created.

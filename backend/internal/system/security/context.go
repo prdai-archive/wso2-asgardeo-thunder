@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2025, WSO2 LLC. (https://www.wso2.com).
+ * Copyright (c) 2025-2026, WSO2 LLC. (https://www.wso2.com).
  *
  * WSO2 LLC. licenses this file to you under the Apache License,
  * Version 2.0 (the "License"); you may not use this file except
@@ -28,20 +28,19 @@ const (
 	// securityContextKey is the context key for storing security context.
 	securityContextKey contextKey = "security_context"
 
-	// securitySkippedKey is the context key for marking that security enforcement was skipped.
-	securitySkippedKey contextKey = "security_skipped"
-
 	// runtimeContextKey is the context key for marking a context as an internal runtime caller.
 	runtimeContextKey contextKey = "runtime_context"
 )
 
 // SecurityContext holds immutable authenticated subject information.
 type SecurityContext struct {
-	subject     string
-	ouID        string
-	token       string
-	permissions []string
-	attributes  map[string]interface{}
+	subject       string
+	ouID          string
+	token         string
+	revocationID  string
+	tokenFamilyID string
+	permissions   []string
+	attributes    map[string]interface{}
 }
 
 // newSecurityContext creates a new immutable SecurityContext.
@@ -62,24 +61,6 @@ func withSecurityContext(ctx context.Context, authCtx *SecurityContext) context.
 		ctx = context.Background()
 	}
 	return context.WithValue(ctx, securityContextKey, authCtx)
-}
-
-// withSecuritySkipped marks the context to indicate that security enforcement was skipped.
-func withSecuritySkipped(ctx context.Context) context.Context {
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	return context.WithValue(ctx, securitySkippedKey, true)
-}
-
-// IsSecuritySkipped returns true if security enforcement was skipped for this context.
-// Consumers such as sysauthz use this to bypass authorization when SKIP_SECURITY is enabled.
-func IsSecuritySkipped(ctx context.Context) bool {
-	if ctx == nil {
-		return false
-	}
-	v, _ := ctx.Value(securitySkippedKey).(bool)
-	return v
 }
 
 // GetSubject retrieves the authenticated subject from the context.

@@ -19,7 +19,7 @@ docker compose up
 
 This will automatically:
 1. **Initialize** the database from the image
-2. **Run setup** — bootstraps default resources (admin user, sample apps, etc.)
+2. **Run setup** — bootstraps default resources (admin user, sample apps, etc.) and generates this deployment's own TLS, JWT signing, and encryption keys
 3. **Start the server** — ThunderID is ready to serve requests
 
 Once running, ThunderID is available at:
@@ -29,7 +29,10 @@ Once running, ThunderID is available at:
 | `https://localhost:8090` | ThunderID Server |
 | `https://localhost:8090/console` | ThunderID Console |
 
-> **Default credentials:** `admin` / `admin`
+> **Admin credentials:** the username is `admin`; the password is randomly generated during setup and printed to the console output of the `thunderid-setup` service. If you ran `docker compose up` in the foreground, look for the "Admin credentials" block in the terminal output. If you ran it detached (`-d`), retrieve it with:
+> ```bash
+> docker compose logs thunderid-setup
+> ```
 
 ---
 
@@ -40,10 +43,12 @@ The Compose file defines three services:
 | Service | Description |
 |---|---|
 | `thunderid-db-init` | One-shot container that copies the initial database files to a shared volume |
-| `thunderid-setup` | One-shot container that bootstraps default resources via `setup.sh` |
+| `thunderid-setup` | One-shot container that bootstraps default resources and generates this deployment's key material via `setup.sh` |
 | `thunderid` | The ThunderID server — starts after setup completes |
 
 The `thunderid-db-init` and `thunderid-setup` services run once and exit. Only `thunderid` stays running.
+
+The setup step generates unique TLS, JWT signing, and encryption keys into a shared `thunderid-certs` volume that the server reads. They are generated once and reused on later runs. `docker compose down` keeps them; `docker compose down -v` removes them, so the next start generates fresh keys (invalidating any previously issued tokens and encrypted data).
 
 ---
 
@@ -69,7 +74,7 @@ The Docker image bakes in default configuration files. You can override them wit
 
 | File in container | Purpose |
 |---|---|
-| `/opt/thunderid/repository/conf/deployment.yaml` | Backend server — bind address, public URL, CORS, Gate client redirect |
+| `/opt/thunderid/deployment.yaml` | Backend server — bind address, public URL, Gate client redirect |
 | `/opt/thunderid/apps/console/config.js` | Management Console frontend |
 | `/opt/thunderid/apps/gate/config.js` | Gate login app frontend |
 
@@ -93,15 +98,8 @@ server:
   port: <your-port>                              # e.g. 8090
   public_url: "https://<your-host>:<your-port>" # e.g. https://thunderid.local:8090
 
-gate_client:
-  hostname: "<your-host>"
-  port: <your-port>
-  scheme: "https"
-  path: "/gate"
-
-cors:
-  allowed_origins:
-    - "https://<your-host>:<your-port>"  # e.g. https://thunderid.local:8090
+# gate_client is optional and defaults to server.public_url.
+# Required only when Gate is hosted separately from the server.
 
 passkey:
   allowed_origins:
@@ -109,6 +107,15 @@ passkey:
 
 # Other configurations...
 ```
+
+> **CORS allowed origins** live in the server-config `cors` section, not in `deployment.yaml`. Add them to `config/resources/server_configs/cors.yaml`, or update them at runtime with `PUT /server-config/cors`:
+>
+> ```yaml
+> name: cors
+> value:
+>   allowedOrigins:
+>     - "https://<your-host>:<your-port>"  # e.g. https://thunderid.local:8090
+> ```
 
 #### `console-config.js`
 
@@ -122,6 +129,12 @@ window.__THUNDERID_RUNTIME_CONFIG__ = {
   server: {
     public_url: 'https://<your-host>:<your-port>', // e.g. https://thunderid.local:8090
   },
+  // Optional: only needed when Gate is hosted separately from the server. Used to build the
+  // OAuth redirect URI shown when configuring social/OIDC connections. Defaults to
+  // `${server.public_url}/gate/callback`.
+  // gate_client: {
+  //   public_url: 'https://<gate-host>:<gate-port>', // or hostname/port/scheme
+  // },
 };
 ```
 
@@ -148,7 +161,7 @@ services:
     # ...
     volumes:
       # ...
-      - ./deployment.yaml:/opt/thunderid/repository/conf/deployment.yaml:ro
+      - ./deployment.yaml:/opt/thunderid/deployment.yaml:ro
 
   thunderid:
     # ...
@@ -156,7 +169,7 @@ services:
       - "<your-port>:<your-port>"  # Update if changing the port, e.g. 9090:9090
     volumes:
       # ...
-      - ./deployment.yaml:/opt/thunderid/repository/conf/deployment.yaml:ro
+      - ./deployment.yaml:/opt/thunderid/deployment.yaml:ro
       - ./console-config.js:/opt/thunderid/apps/console/config.js:ro
       - ./gate-config.js:/opt/thunderid/apps/gate/config.js:ro
 ```
@@ -229,7 +242,7 @@ Your `deployment.yaml` contains an unrecognized field. Ensure the config schema 
 Make sure all three files are mounted correctly. A hard refresh (`Ctrl+Shift+R`) may be needed to clear the browser cache.
 
 **CORS errors in the browser**
-Ensure your full origin (host + port) is listed under `cors.allowed_origins` in `deployment.yaml`.
+Ensure your full origin (host + port) is listed in the server-config `cors` section. Add it to `config/resources/server_configs/cors.yaml`, or apply it at runtime with `PUT /server-config/cors`.
 
 **Connection refused on the new port**
 Ensure the `ports` mapping in `docker-compose.yml` matches the port set in `deployment.yaml`.

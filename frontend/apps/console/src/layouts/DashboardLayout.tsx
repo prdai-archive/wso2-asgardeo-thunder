@@ -16,9 +16,9 @@
  * under the License.
  */
 
-import {SignOutButton, User, useThunderID} from '@thunderid/react';
 import {useConfig} from '@thunderid/contexts';
 import {useLogger} from '@thunderid/logger/react';
+import {SignOutButton, User, useThunderID} from '@thunderid/react';
 import {
   AppShell,
   Box,
@@ -35,54 +35,101 @@ import {
 import {
   Bot,
   Building,
-  FileDown,
   Group,
   Home,
+  IdCard,
   Languages,
   Layers,
   LayoutGrid,
   Palette,
+  Server,
+  Settings,
   ShieldCheck,
+  SquareArrowRightEnter,
   UserRoundCog,
   UsersRound,
+  Wallet,
   Workflow,
 } from '@wso2/oxygen-ui-icons-react';
-import {useMemo, type ReactNode} from 'react';
+import {useEffect, useMemo, useState, type JSX, type ReactNode} from 'react';
 import {useTranslation} from 'react-i18next';
-import {Link as NavigateLink, Outlet, useNavigate} from 'react-router';
+import {Link as NavigateLink, Outlet, useLocation, useNavigate} from 'react-router';
+import RouteConfig from '../configs/RouteConfig';
 
-function ExportConfigButton(): ReactNode {
+const ICON_BUTTON_SX = {
+  minWidth: 40,
+  width: 40,
+  height: 40,
+  borderRadius: '50%',
+  px: 0,
+  '& .MuiButton-startIcon': {margin: 0},
+} as const;
+
+const FULL_BUTTON_SX = {
+  height: 40,
+  borderRadius: 40,
+  wordBreak: 'keep-all',
+  whiteSpace: 'nowrap',
+  px: 2,
+} as const;
+
+/** A sidebar navigation entry. A leaf has a `path`; a parent has `children`. */
+interface NavRoute {
+  id: string;
+  text: string;
+  icon: JSX.Element;
+  path?: string;
+  children?: NavRoute[];
+}
+
+interface NavCategory {
+  category?: string;
+  routes: NavRoute[];
+}
+
+function SidebarFooterButtons(): ReactNode {
   const {t} = useTranslation();
   const navigate = useNavigate();
   const {collapsed} = useSidebar();
 
+  const buttonSx = collapsed ? ICON_BUTTON_SX : FULL_BUTTON_SX;
+
   return (
-    <Box sx={{p: 1.5, display: 'flex', justifyContent: 'center'}}>
+    <Box
+      sx={{
+        p: 1.5,
+        display: 'flex',
+        flexDirection: collapsed ? 'column' : 'row',
+        justifyContent: 'center',
+        gap: 1,
+      }}
+    >
       <Button
         variant="outlined"
-        startIcon={<FileDown size={18} />}
-        onClick={() => void navigate('/export')}
-        sx={{
-          minWidth: collapsed ? 40 : 'auto',
-          width: collapsed ? 40 : 'auto',
-          height: 40,
-          borderRadius: collapsed ? '50%' : 40,
-          wordBreak: 'keep-all',
-          whiteSpace: 'nowrap',
-          px: collapsed ? 0 : 2,
-          '& .MuiButton-startIcon': {
-            margin: collapsed ? 0 : undefined,
-          },
-        }}
+        aria-label={t('navigation:pages.importExport', 'Import / Export')}
+        startIcon={<SquareArrowRightEnter size={18} />}
+        onClick={() => void navigate(RouteConfig.importExport.list())}
+        sx={buttonSx}
       >
-        {!collapsed && t('navigation:pages.export', 'Export Config')}
+        {!collapsed && t('navigation:pages.importExport', 'Import / Export')}
       </Button>
     </Box>
   );
 }
 
-export default function DashboardLayout(): ReactNode {
-  const {signIn, clearSession, discovery} = useThunderID();
+/**
+ * Props interface of {@link DashboardLayout}
+ */
+export interface DashboardLayoutProps {
+  /**
+   * Collapses the navigation sidebar to icon-only mode. Set by routes whose
+   * pages need the full screen width (e.g. the flow builder canvas).
+   */
+  collapseSidebar?: boolean;
+}
+
+export default function DashboardLayout({collapseSidebar = false}: DashboardLayoutProps): ReactNode {
+  const {clearSession, discovery} = useThunderID();
   const {isTrustedIssuerGenericOidc, getTrustedIssuerClientId, getClientUrl} = useConfig();
   const {t} = useTranslation();
   const logger = useLogger();
@@ -112,14 +159,17 @@ export default function DashboardLayout(): ReactNode {
       return;
     }
 
-    signOut()
-      .then(() => signIn())
-      .catch((error: unknown) => {
-        logger.error('Sign out/in failed', {error});
-      });
+    // Native ThunderID session: signOut() performs OIDC RP-Initiated Logout, the SDK's default
+    // behavior (no client config required). It clears the local session and redirects to ThunderID's
+    // end_session_endpoint, which confirms the sign-out, terminates the SSO session server-side, and
+    // returns to the console. It falls back to a local-only sign out when no end_session_endpoint is
+    // advertised.
+    signOut().catch((error: unknown) => {
+      logger.error('Sign out failed', {error});
+    });
   };
 
-  const appRoutes = useMemo(
+  const appRoutes: NavCategory[] = useMemo(
     () => [
       {
         routes: [
@@ -127,7 +177,7 @@ export default function DashboardLayout(): ReactNode {
             id: 'home',
             text: t('navigation:pages.home'),
             icon: <Home />,
-            path: '/home',
+            path: RouteConfig.home.list(),
           },
         ],
       },
@@ -138,7 +188,13 @@ export default function DashboardLayout(): ReactNode {
             id: 'applications',
             text: t('navigation:pages.applications'),
             icon: <LayoutGrid />,
-            path: '/applications',
+            path: RouteConfig.applications.list(),
+          },
+          {
+            id: 'resource-servers',
+            text: t('navigation:pages.resourceServers', 'Resource Servers'),
+            icon: <Server size={16} />,
+            path: RouteConfig.resourceServers.list(),
           },
         ],
       },
@@ -149,31 +205,31 @@ export default function DashboardLayout(): ReactNode {
             id: 'users',
             text: t('navigation:pages.users'),
             icon: <UsersRound />,
-            path: '/users',
+            path: RouteConfig.users.list(),
           },
           {
             id: 'agents',
             text: t('navigation:pages.agents', 'Agents'),
             icon: <Bot />,
-            path: '/agents',
+            path: RouteConfig.agents.list(),
           },
           {
             id: 'groups',
             text: t('navigation:pages.groups'),
             icon: <Group />,
-            path: '/groups',
+            path: RouteConfig.groups.list(),
           },
           {
             id: 'roles',
             text: t('navigation:pages.roles'),
             icon: <ShieldCheck />,
-            path: '/roles',
+            path: RouteConfig.roles.list(),
           },
           {
             id: 'user-types',
             text: t('navigation:pages.userTypes'),
             icon: <UserRoundCog />,
-            path: '/user-types',
+            path: RouteConfig.userTypes.list(),
           },
         ],
       },
@@ -184,19 +240,38 @@ export default function DashboardLayout(): ReactNode {
             id: 'organization-units',
             text: t('navigation:pages.organizationUnits'),
             icon: <Building />,
-            path: '/organization-units',
+            path: RouteConfig.organizationUnits.list(),
           },
           {
             id: 'flows',
             text: t('navigation:pages.flows'),
             icon: <Workflow />,
-            path: '/flows',
+            path: RouteConfig.flows.list(),
           },
           {
-            id: 'integrations',
-            text: t('navigation:pages.integrations'),
+            id: 'connections',
+            text: t('navigation:pages.connections'),
             icon: <Layers />,
-            path: '/integrations',
+            path: RouteConfig.connections.list(),
+          },
+          {
+            id: 'verifiable-credentials',
+            text: t('navigation:pages.verifiableCredentials'),
+            icon: <Wallet />,
+            children: [
+              {
+                id: 'credentials',
+                text: t('navigation:pages.credentials'),
+                icon: <IdCard />,
+                path: RouteConfig.verifiableCredentials.list(),
+              },
+              {
+                id: 'presentations',
+                text: t('navigation:pages.presentations'),
+                icon: <ShieldCheck />,
+                path: RouteConfig.verifiablePresentations.list(),
+              },
+            ],
           },
         ],
       },
@@ -207,19 +282,61 @@ export default function DashboardLayout(): ReactNode {
             id: 'design',
             text: t('navigation:pages.design', 'Design'),
             icon: <Palette size={16} />,
-            path: '/design',
+            path: RouteConfig.design.list(),
           },
           {
             id: 'translations',
             text: t('navigation:pages.translations'),
             icon: <Languages size={16} />,
-            path: '/translations',
+            path: RouteConfig.translations.list(),
+          },
+        ],
+      },
+      {
+        category: t('navigation:categories.system'),
+        routes: [
+          {
+            id: 'settings',
+            text: t('navigation:pages.settings'),
+            icon: <Settings size={16} />,
+            path: RouteConfig.settings.list(),
           },
         ],
       },
     ],
     [t],
   );
+
+  const {pathname} = useLocation();
+
+  // Resolve the active leaf item by the longest matching path prefix, so nested
+  // routes (e.g. /verifiable-credentials/create) still highlight their menu item.
+  const activeItem = useMemo((): string | undefined => {
+    const leaves = appRoutes.flatMap((group) => group.routes.flatMap((route) => route.children ?? [route]));
+    const match = leaves
+      .filter(
+        (route): route is NavRoute & {path: string} =>
+          route.path !== undefined && (pathname === route.path || pathname.startsWith(`${route.path}/`)),
+      )
+      .sort((a, b) => b.path.length - a.path.length)[0];
+    return match?.id;
+  }, [appRoutes, pathname]);
+
+  const [expandedMenus, setExpandedMenus] = useState<Record<string, boolean>>({});
+  const handleToggleExpand = (id: string): void => {
+    setExpandedMenus((prev) => ({...prev, [id]: !prev[id]}));
+  };
+
+  // Auto-expand a parent whose child is the active route.
+  useEffect(() => {
+    appRoutes.forEach((group) => {
+      group.routes.forEach((route) => {
+        if (route.children?.some((child) => child.id === activeItem)) {
+          setExpandedMenus((prev) => (prev[route.id] ? prev : {...prev, [route.id]: true}));
+        }
+      });
+    });
+  }, [appRoutes, activeItem]);
 
   return (
     <AppShell>
@@ -255,7 +372,7 @@ export default function DashboardLayout(): ReactNode {
                   <UserMenu.Item
                     label={t('common:userMenu.welcome')}
                     onClick={() => {
-                      void navigate('/welcome');
+                      void navigate(RouteConfig.welcome.root());
                     }}
                   />
                   <UserMenu.Divider />
@@ -272,22 +389,40 @@ export default function DashboardLayout(): ReactNode {
       </AppShell.Navbar>
 
       <AppShell.Sidebar>
-        <Sidebar>
+        <Sidebar
+          activeItem={activeItem}
+          expandedMenus={expandedMenus}
+          onToggleExpand={handleToggleExpand}
+          collapsed={collapseSidebar}
+        >
           <Sidebar.Nav>
             {appRoutes.map((categoryGroup) => (
               <Sidebar.Category key={categoryGroup.category}>
                 {categoryGroup.category && <Sidebar.CategoryLabel>{categoryGroup.category}</Sidebar.CategoryLabel>}
-                {categoryGroup.routes.map((route) => (
-                  <Sidebar.Item key={route.id} id={route.id} link={<NavigateLink to={route.path} />}>
-                    <Sidebar.ItemIcon>{route.icon}</Sidebar.ItemIcon>
-                    <Sidebar.ItemLabel>{route.text}</Sidebar.ItemLabel>
-                  </Sidebar.Item>
-                ))}
+                {categoryGroup.routes.map((route) =>
+                  route.children ? (
+                    <Sidebar.Item key={route.id} id={route.id}>
+                      <Sidebar.ItemIcon>{route.icon}</Sidebar.ItemIcon>
+                      <Sidebar.ItemLabel>{route.text}</Sidebar.ItemLabel>
+                      {route.children.map((child) => (
+                        <Sidebar.Item key={child.id} id={child.id} link={<NavigateLink to={child.path ?? ''} />}>
+                          <Sidebar.ItemIcon>{child.icon}</Sidebar.ItemIcon>
+                          <Sidebar.ItemLabel>{child.text}</Sidebar.ItemLabel>
+                        </Sidebar.Item>
+                      ))}
+                    </Sidebar.Item>
+                  ) : (
+                    <Sidebar.Item key={route.id} id={route.id} link={<NavigateLink to={route.path ?? ''} />}>
+                      <Sidebar.ItemIcon>{route.icon}</Sidebar.ItemIcon>
+                      <Sidebar.ItemLabel>{route.text}</Sidebar.ItemLabel>
+                    </Sidebar.Item>
+                  ),
+                )}
               </Sidebar.Category>
             ))}
           </Sidebar.Nav>
           <Sidebar.Footer>
-            <ExportConfigButton />
+            <SidebarFooterButtons />
           </Sidebar.Footer>
         </Sidebar>
       </AppShell.Sidebar>

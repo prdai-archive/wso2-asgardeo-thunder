@@ -59,6 +59,7 @@ export interface DocusaurusProductConfig {
     consoleUrl: string;
     samples: {
       wayfinderUrl: string;
+      wayfinderMailUrl: string;
     };
   };
 }
@@ -68,7 +69,7 @@ const DocusaurusProductConfig = {
     emoji: '⚡',
     name: 'ThunderID',
     description:
-      'ThunderID is a modern, open-source identity management service designed for teams building secure, customizable authentication experiences across applications, services, and AI agents.',
+      'Open Source Auth for Modern Apps and AI Agents',
     source: {
       github: {
         name: 'thunderid',
@@ -107,6 +108,7 @@ const DocusaurusProductConfig = {
     consoleUrl: 'https://localhost:8090/console',
     samples: {
       wayfinderUrl: 'http://localhost:5173',
+      wayfinderMailUrl: 'http://localhost:8788',
     },
   },
 };

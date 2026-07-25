@@ -24,10 +24,11 @@ import (
 	"fmt"
 	"strings"
 
+	tidcommon "github.com/thunder-id/thunderid/pkg/thunderidengine/common"
+
 	"github.com/thunder-id/thunderid/internal/entitytype/model"
 	serverconst "github.com/thunder-id/thunderid/internal/system/constants"
 	declarativeresource "github.com/thunder-id/thunderid/internal/system/declarative_resource"
-	"github.com/thunder-id/thunderid/internal/system/error/serviceerror"
 	"github.com/thunder-id/thunderid/internal/system/log"
 
 	"gopkg.in/yaml.v3"
@@ -65,7 +66,7 @@ func (e *entityTypeExporter) GetParameterizerType() string {
 
 // GetAllResourceIDs retrieves all user-category entity type IDs.
 // In composite mode, this excludes declarative (YAML-based) entity types.
-func (e *entityTypeExporter) GetAllResourceIDs(ctx context.Context) ([]string, *serviceerror.ServiceError) {
+func (e *entityTypeExporter) GetAllResourceIDs(ctx context.Context) ([]string, *tidcommon.ServiceError) {
 	response, err := e.service.GetEntityTypeList(ctx, TypeCategoryUser, serverconst.MaxPageSize, 0, false)
 	if err != nil {
 		return nil, err
@@ -81,7 +82,7 @@ func (e *entityTypeExporter) GetAllResourceIDs(ctx context.Context) ([]string, *
 
 // GetResourceByID retrieves a user-category entity type by its ID.
 func (e *entityTypeExporter) GetResourceByID(ctx context.Context, id string) (
-	interface{}, string, *serviceerror.ServiceError,
+	interface{}, string, *tidcommon.ServiceError,
 ) {
 	schema, err := e.service.GetEntityType(ctx, TypeCategoryUser, id, false)
 	if err != nil {
@@ -91,7 +92,7 @@ func (e *entityTypeExporter) GetResourceByID(ctx context.Context, id string) (
 }
 
 // ValidateResource validates a entity type resource.
-func (e *entityTypeExporter) ValidateResource(
+func (e *entityTypeExporter) ValidateResource(ctx context.Context,
 	resource interface{}, id string, logger *log.Logger,
 ) (string, *declarativeresource.ExportError) {
 	schema, ok := resource.(*EntityType)
@@ -99,7 +100,7 @@ func (e *entityTypeExporter) ValidateResource(
 		return "", declarativeresource.CreateTypeError(resourceTypeEntityType, id)
 	}
 
-	err := declarativeresource.ValidateResourceName(
+	err := declarativeresource.ValidateResourceName(ctx,
 		schema.Name, resourceTypeEntityType, id, "SCHEMA_VALIDATION_ERROR", logger,
 	)
 	if err != nil {
@@ -107,7 +108,7 @@ func (e *entityTypeExporter) ValidateResource(
 	}
 
 	if len(schema.Schema) == 0 {
-		logger.Warn("Entity type has no schema definition",
+		logger.Warn(ctx, "Entity type has no schema definition",
 			log.String("schemaID", id), log.String("name", schema.Name))
 	}
 
@@ -242,7 +243,7 @@ func validateEntityType(schemaDTO *EntityType) error {
 	}
 
 	if strings.TrimSpace(schemaDTO.OUID) == "" {
-		return fmt.Errorf("organization_unit_id or ou_handle is required for entity type '%s'", schemaDTO.Name)
+		return fmt.Errorf("ouId or ouHandle is required for entity type '%s'", schemaDTO.Name)
 	}
 
 	// Validate schema definition is present and valid.

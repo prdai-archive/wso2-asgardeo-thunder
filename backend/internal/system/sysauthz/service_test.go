@@ -24,18 +24,19 @@ import (
 	"strings"
 	"testing"
 
+	tidcommon "github.com/thunder-id/thunderid/pkg/thunderidengine/common"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/suite"
 
-	"github.com/thunder-id/thunderid/internal/system/error/serviceerror"
-	i18ncore "github.com/thunder-id/thunderid/internal/system/i18n/core"
+	"github.com/thunder-id/thunderid/internal/system/log"
 	"github.com/thunder-id/thunderid/internal/system/security"
 )
 
 // TestMain enables debug-level logging for the entire package test binary so that
 // every logger.IsDebugEnabled() branch in service.go is exercised.
 func TestMain(m *testing.M) {
-	_ = os.Setenv("LOG_LEVEL", "debug")
+	_ = log.GetLogger().SetLevel("debug")
 	security.InitSystemPermissions("")
 	os.Exit(m.Run())
 }
@@ -75,11 +76,6 @@ func buildCtxWithOU(permissions, ouID string) context.Context {
 	return security.WithSecurityContextTest(context.Background(), authCtx)
 }
 
-// buildSkipSecurityCtx returns a context with security enforcement skipped.
-func buildSkipSecurityCtx() context.Context {
-	return security.WithSkipSecurityTest(context.Background())
-}
-
 // buildRuntimeCtx returns a context marked as an internal runtime caller.
 func buildRuntimeCtx() context.Context {
 	return security.WithRuntimeContext(context.Background())
@@ -100,14 +96,7 @@ func (s *SystemAuthzTestSuite) TestIsActionAllowed() {
 		overridePolicy authorizationPolicy
 	}{
 		{
-			// Step 1: SKIP_SECURITY flag bypasses all checks.
-			name:        "SecuritySkipped_GrantsAccess",
-			ctx:         buildSkipSecurityCtx(),
-			action:      security.ActionReadUser,
-			wantAllowed: true,
-		},
-		{
-			// Step 2: Internal runtime caller is granted access without a subject.
+			// Step 1: Internal runtime caller is granted access without a subject.
 			name:        "RuntimeContext_GrantsAccess",
 			ctx:         buildRuntimeCtx(),
 			action:      security.ActionCreateOU,
@@ -272,9 +261,9 @@ func (s *SystemAuthzTestSuite) TestIsActionAllowed() {
 			wantAllowed: false,
 			wantErr:     true,
 			overridePolicy: &stubPolicy{
-				actionErr: &serviceerror.ServiceError{
+				actionErr: &tidcommon.ServiceError{
 					Code:  "ERR-001",
-					Error: i18ncore.I18nMessage{DefaultValue: "policy failure"},
+					Error: tidcommon.I18nMessage{DefaultValue: "policy failure"},
 				},
 			},
 		},
@@ -315,15 +304,7 @@ func (s *SystemAuthzTestSuite) TestGetAccessibleResources() {
 		overridePolicy authorizationPolicy
 	}{
 		{
-			// Step 1: SKIP_SECURITY flag → all resources accessible.
-			name:           "SecuritySkipped_AllAllowed",
-			ctx:            buildSkipSecurityCtx(),
-			action:         security.ActionListUsers,
-			resourceType:   security.ResourceTypeUser,
-			wantAllAllowed: true,
-		},
-		{
-			// Step 2: Internal runtime caller → all resources accessible.
+			// Step 1: Internal runtime caller → all resources accessible.
 			name:           "RuntimeContext_AllAllowed",
 			ctx:            buildRuntimeCtx(),
 			action:         security.ActionListUsers,
@@ -401,9 +382,9 @@ func (s *SystemAuthzTestSuite) TestGetAccessibleResources() {
 			wantErr:      true,
 			overridePolicy: &stubPolicy{
 				applicable: true,
-				resourceErr: &serviceerror.ServiceError{
+				resourceErr: &tidcommon.ServiceError{
 					Code:  "ERR-002",
-					Error: i18ncore.I18nMessage{DefaultValue: "resource policy error"},
+					Error: tidcommon.I18nMessage{DefaultValue: "resource policy error"},
 				},
 			},
 		},

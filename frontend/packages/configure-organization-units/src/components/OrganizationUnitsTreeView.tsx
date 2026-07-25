@@ -33,7 +33,7 @@ import {
   Avatar,
   Tooltip,
 } from '@wso2/oxygen-ui';
-import {Pencil, Plus, Trash2} from '@wso2/oxygen-ui-icons-react';
+import {Eye, Pencil, Plus, Trash2} from '@wso2/oxygen-ui-icons-react';
 import {useState, useCallback, useEffect, useRef, useMemo} from 'react';
 import type {ReactNode, MouseEvent, KeyboardEvent, SyntheticEvent, JSX} from 'react';
 import {useTranslation} from 'react-i18next';
@@ -45,6 +45,7 @@ import useGetOrganizationUnits from '../api/useGetOrganizationUnits';
 import OrganizationUnitQueryKeys from '../constants/organization-unit-query-keys';
 import OrganizationUnitTreeConstants from '../constants/organization-unit-tree-constants';
 import useOrganizationUnit from '../contexts/useOrganizationUnit';
+import useOrganizationUnitRoutes from '../hooks/useOrganizationUnitRoutes';
 import type {OrganizationUnit} from '../models/organization-unit';
 import type {OrganizationUnitTreeItem} from '../models/organization-unit-tree';
 import type {OrganizationUnitListResponse} from '../models/responses';
@@ -301,7 +302,12 @@ function CustomTreeItem(allProps: CustomTreeItemProps): JSX.Element {
             gap: 1.5,
           }}
         >
-          <ResourceAvatar value={itemData?.logoUrl} size={30} fallback="emoji:🏛️" />
+          <ResourceAvatar
+            variant="rounded"
+            value={itemData?.logoUrl}
+            size={30}
+            fallback={OrganizationUnitTreeConstants.DEFAULT_AVATAR}
+          />
           <Box sx={{flexGrow: 1, minWidth: 0}}>
             <Typography variant="body2" sx={{fontWeight: 500, lineHeight: 1.3}}>
               {labelStr}
@@ -312,47 +318,57 @@ function CustomTreeItem(allProps: CustomTreeItemProps): JSX.Element {
               </Typography>
             )}
           </Box>
-          <Tooltip title={addChildTooltip}>
-            <IconButton
-              size="small"
-              aria-label={addChildTooltip}
-              onClick={(e: MouseEvent<HTMLButtonElement>) => {
-                e.stopPropagation();
-                onAddChild?.(e as unknown as MouseEvent<HTMLElement>, {
-                  id: itemId,
-                  name: labelStr,
-                  handle: itemData?.handle ?? '',
-                });
-              }}
-            >
-              <Plus size={16} />
-            </IconButton>
-          </Tooltip>
-          <Tooltip title={editTooltip}>
-            <IconButton
-              size="small"
-              aria-label={editTooltip}
-              onClick={(e: MouseEvent<HTMLButtonElement>) => {
-                e.stopPropagation();
-                onEdit?.(e as unknown as MouseEvent<HTMLElement>, {id: itemId, name: labelStr});
-              }}
-            >
-              <Pencil size={16} />
-            </IconButton>
-          </Tooltip>
-          <Tooltip title={deleteTooltip}>
-            <IconButton
-              size="small"
-              color="error"
-              aria-label={deleteTooltip}
-              onClick={(e: MouseEvent<HTMLButtonElement>) => {
-                e.stopPropagation();
-                onDelete?.(e as unknown as MouseEvent<HTMLElement>, {id: itemId, name: labelStr});
-              }}
-            >
-              <Trash2 size={16} />
-            </IconButton>
-          </Tooltip>
+          {itemData?.isReadOnly ? (
+            <Tooltip title={t('common:status.readOnly', 'Read Only')}>
+              <IconButton size="small" disableRipple sx={{cursor: 'default'}}>
+                <Eye size={16} />
+              </IconButton>
+            </Tooltip>
+          ) : (
+            <>
+              <Tooltip title={addChildTooltip}>
+                <IconButton
+                  size="small"
+                  aria-label={addChildTooltip}
+                  onClick={(e: MouseEvent<HTMLButtonElement>) => {
+                    e.stopPropagation();
+                    onAddChild?.(e as unknown as MouseEvent<HTMLElement>, {
+                      id: itemId,
+                      name: labelStr,
+                      handle: itemData?.handle ?? '',
+                    });
+                  }}
+                >
+                  <Plus size={16} />
+                </IconButton>
+              </Tooltip>
+              <Tooltip title={editTooltip}>
+                <IconButton
+                  size="small"
+                  aria-label={editTooltip}
+                  onClick={(e: MouseEvent<HTMLButtonElement>) => {
+                    e.stopPropagation();
+                    onEdit?.(e as unknown as MouseEvent<HTMLElement>, {id: itemId, name: labelStr});
+                  }}
+                >
+                  <Pencil size={16} />
+                </IconButton>
+              </Tooltip>
+              <Tooltip title={deleteTooltip}>
+                <IconButton
+                  size="small"
+                  color="error"
+                  aria-label={deleteTooltip}
+                  onClick={(e: MouseEvent<HTMLButtonElement>) => {
+                    e.stopPropagation();
+                    onDelete?.(e as unknown as MouseEvent<HTMLElement>, {id: itemId, name: labelStr});
+                  }}
+                >
+                  <Trash2 size={16} />
+                </IconButton>
+              </Tooltip>
+            </>
+          )}
         </Box>
       }
     />
@@ -362,6 +378,7 @@ function CustomTreeItem(allProps: CustomTreeItemProps): JSX.Element {
 export default function OrganizationUnitsTreeView(): JSX.Element {
   const theme = useTheme();
   const navigate = useNavigate();
+  const routes = useOrganizationUnitRoutes();
   const {t} = useTranslation();
   const logger = useLogger('OrganizationUnitsTreeView');
   const {http} = useThunderID();
@@ -720,12 +737,12 @@ export default function OrganizationUnitsTreeView(): JSX.Element {
   const handleEditClick = useCallback(
     (_event: MouseEvent<HTMLElement>, ou: {id: string; name: string}): void => {
       (async (): Promise<void> => {
-        await navigate(`/organization-units/${ou.id}`);
+        await navigate(routes.detail(ou.id));
       })().catch((_error: unknown) => {
         logger.error('Failed to navigate to organization unit', {error: _error, ouId: ou.id});
       });
     },
-    [navigate, logger],
+    [navigate, routes, logger],
   );
 
   const handleDeleteClick = useCallback((_event: MouseEvent<HTMLElement>, ou: {id: string; name: string}): void => {
@@ -754,23 +771,23 @@ export default function OrganizationUnitsTreeView(): JSX.Element {
   const handleAddChildClick = useCallback(
     (_event: MouseEvent<HTMLElement>, ou: {id: string; name: string; handle: string}): void => {
       (async (): Promise<void> => {
-        await navigate('/organization-units/create', {
+        await navigate(routes.create(), {
           state: {parentId: ou.id, parentName: ou.name, parentHandle: ou.handle},
         });
       })().catch((_error: unknown) => {
         logger.error('Failed to navigate to create child organization unit', {error: _error, parentId: ou.id});
       });
     },
-    [navigate, logger],
+    [navigate, routes, logger],
   );
 
   const handleAddRootClick = useCallback((): void => {
     (async (): Promise<void> => {
-      await navigate('/organization-units/create');
+      await navigate(routes.create());
     })().catch((_error: unknown) => {
       logger.error('Failed to navigate to create organization unit page', {error: _error});
     });
-  }, [navigate, logger]);
+  }, [navigate, routes, logger]);
 
   const combinedLoadMoreLoadingItems = useMemo(() => {
     if (!rootLoadMoreLoading) return loadMoreLoadingItems;

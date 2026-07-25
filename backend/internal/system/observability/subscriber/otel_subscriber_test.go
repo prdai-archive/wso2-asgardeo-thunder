@@ -29,6 +29,8 @@ import (
 	"github.com/thunder-id/thunderid/internal/system/config"
 	"github.com/thunder-id/thunderid/internal/system/log"
 	"github.com/thunder-id/thunderid/internal/system/observability/event"
+	engineconfig "github.com/thunder-id/thunderid/pkg/thunderidengine/config"
+	"github.com/thunder-id/thunderid/pkg/thunderidengine/providers"
 
 	"go.opentelemetry.io/otel/attribute"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
@@ -181,13 +183,13 @@ func (suite *OTelSubscriberTestSuite) TestOnEvent_ValidEvent() {
 	sub := suite.setupTestSubscriber()
 	defer func() { _ = sub.Close() }()
 
-	testEvent := &event.Event{
+	testEvent := &providers.Event{
 		TraceID:   "trace-123",
 		EventID:   "event-123",
 		Type:      "test.event",
 		Timestamp: time.Now(),
 		Component: "TestComponent",
-		Status:    event.StatusSuccess,
+		Status:    providers.StatusSuccess,
 		Data: map[string]interface{}{
 			"key1": "value1",
 			"key2": 123,
@@ -202,13 +204,13 @@ func (suite *OTelSubscriberTestSuite) TestOnEvent_FailureEvent() {
 	sub := suite.setupTestSubscriber()
 	defer func() { _ = sub.Close() }()
 
-	testEvent := &event.Event{
+	testEvent := &providers.Event{
 		TraceID:   "trace-456",
 		EventID:   "event-456",
 		Type:      "test.failure",
 		Timestamp: time.Now(),
 		Component: "TestComponent",
-		Status:    event.StatusFailure,
+		Status:    providers.StatusFailure,
 		Data: map[string]interface{}{
 			event.DataKey.Error: "test error message",
 		},
@@ -222,13 +224,13 @@ func (suite *OTelSubscriberTestSuite) TestOnEvent_VariousDataTypes() {
 	sub := suite.setupTestSubscriber()
 	defer func() { _ = sub.Close() }()
 
-	testEvent := &event.Event{
+	testEvent := &providers.Event{
 		TraceID:   "trace-789",
 		EventID:   "event-789",
 		Type:      "test.datatypes",
 		Timestamp: time.Now(),
 		Component: "OAuth2Server",
-		Status:    event.StatusSuccess,
+		Status:    providers.StatusSuccess,
 		Data: map[string]interface{}{
 			"string":  "value",
 			"int":     42,
@@ -263,13 +265,13 @@ func (suite *OTelSubscriberTestSuite) TestOnEvent_WithSpanRecorder() {
 		logger:         logger,
 	}
 
-	testEvent := &event.Event{
+	testEvent := &providers.Event{
 		TraceID:   "trace-123",
 		EventID:   "event-123",
 		Type:      "test.event",
 		Timestamp: time.Now(),
 		Component: "TestComponent",
-		Status:    event.StatusSuccess,
+		Status:    providers.StatusSuccess,
 		Data: map[string]interface{}{
 			"test_key": "test_value",
 		},
@@ -591,7 +593,7 @@ func (suite *OTelSubscriberTestSuite) TestConvertDataToAttributes_MixedDataTypes
 
 func (suite *OTelSubscriberTestSuite) TestGetStringData_ValidString() {
 	sub := &OTelSubscriber{}
-	evt := &event.Event{
+	evt := &providers.Event{
 		Data: map[string]interface{}{
 			"key": "value",
 		},
@@ -603,7 +605,7 @@ func (suite *OTelSubscriberTestSuite) TestGetStringData_ValidString() {
 
 func (suite *OTelSubscriberTestSuite) TestGetStringData_MissingKey() {
 	sub := &OTelSubscriber{}
-	evt := &event.Event{
+	evt := &providers.Event{
 		Data: map[string]interface{}{},
 	}
 
@@ -613,7 +615,7 @@ func (suite *OTelSubscriberTestSuite) TestGetStringData_MissingKey() {
 
 func (suite *OTelSubscriberTestSuite) TestGetStringData_NonStringValue() {
 	sub := &OTelSubscriber{}
-	evt := &event.Event{
+	evt := &providers.Event{
 		Data: map[string]interface{}{
 			"number": 123,
 		},
@@ -656,13 +658,13 @@ func BenchmarkOTelSubscriber_OnEvent(b *testing.B) {
 	_ = sub.Initialize()
 	defer func() { _ = sub.Close() }()
 
-	testEvent := &event.Event{
+	testEvent := &providers.Event{
 		TraceID:   "trace-123",
 		EventID:   "event-123",
 		Type:      "benchmark.event",
 		Timestamp: time.Now(),
 		Component: "BenchmarkComponent",
-		Status:    event.StatusSuccess,
+		Status:    providers.StatusSuccess,
 		Data: map[string]interface{}{
 			"key1": "value1",
 			"key2": 123,
@@ -691,6 +693,106 @@ func BenchmarkOTelSubscriber_convertDataToAttributes(b *testing.B) {
 	}
 }
 
+// Test suite for extractErrorMessage
+
+func (suite *OTelSubscriberTestSuite) TestExtractErrorMessage_NoErrorKey() {
+	sub := &OTelSubscriber{}
+	evt := &providers.Event{
+		Data: map[string]interface{}{},
+	}
+
+	result := sub.extractErrorMessage(evt)
+	assert.Equal(suite.T(), "unknown error", result)
+}
+
+func (suite *OTelSubscriberTestSuite) TestExtractErrorMessage_PlainString() {
+	sub := &OTelSubscriber{}
+	evt := &providers.Event{
+		Data: map[string]interface{}{
+			event.DataKey.Error: "something went wrong",
+		},
+	}
+
+	result := sub.extractErrorMessage(evt)
+	assert.Equal(suite.T(), "something went wrong", result)
+}
+
+func (suite *OTelSubscriberTestSuite) TestExtractErrorMessage_FlowErrorMapWithDefaultValue() {
+	sub := &OTelSubscriber{}
+	evt := &providers.Event{
+		Data: map[string]interface{}{
+			event.DataKey.Error: map[string]interface{}{
+				"code": "FET-1008",
+				"message": map[string]interface{}{
+					"key":          "flows.executor.errors.invalid_otp",
+					"defaultValue": "Invalid OTP provided",
+				},
+			},
+		},
+	}
+
+	result := sub.extractErrorMessage(evt)
+	assert.Equal(suite.T(), "Invalid OTP provided", result)
+}
+
+func (suite *OTelSubscriberTestSuite) TestExtractErrorMessage_TokenErrorPlainMessageString() {
+	sub := &OTelSubscriber{}
+	evt := &providers.Event{
+		Data: map[string]interface{}{
+			event.DataKey.Error: map[string]interface{}{
+				"code":    "TOKEN-40001",
+				"message": "invalid grant",
+			},
+		},
+	}
+
+	result := sub.extractErrorMessage(evt)
+	assert.Equal(suite.T(), "invalid grant", result)
+}
+
+func (suite *OTelSubscriberTestSuite) TestExtractErrorMessage_MapWithoutMessageKey() {
+	sub := &OTelSubscriber{}
+	evt := &providers.Event{
+		Data: map[string]interface{}{
+			event.DataKey.Error: map[string]interface{}{
+				"code": "ERR-500",
+			},
+		},
+	}
+
+	result := sub.extractErrorMessage(evt)
+	assert.Equal(suite.T(), "unknown error", result)
+}
+
+func (suite *OTelSubscriberTestSuite) TestExtractErrorMessage_MapWithEmptyDefaultValue() {
+	sub := &OTelSubscriber{}
+	evt := &providers.Event{
+		Data: map[string]interface{}{
+			event.DataKey.Error: map[string]interface{}{
+				"message": map[string]interface{}{
+					"key":          "some.key",
+					"defaultValue": "",
+				},
+			},
+		},
+	}
+
+	result := sub.extractErrorMessage(evt)
+	assert.Equal(suite.T(), "unknown error", result)
+}
+
+func (suite *OTelSubscriberTestSuite) TestExtractErrorMessage_EmptyPlainString() {
+	sub := &OTelSubscriber{}
+	evt := &providers.Event{
+		Data: map[string]interface{}{
+			event.DataKey.Error: "",
+		},
+	}
+
+	result := sub.extractErrorMessage(evt)
+	assert.Equal(suite.T(), "unknown error", result)
+}
+
 // Helper functions for testing
 
 func setupTestConfig(t *testing.T) {
@@ -699,10 +801,10 @@ func setupTestConfig(t *testing.T) {
 
 	// Create a test config
 	testConfig := &config.Config{
-		Observability: config.ObservabilityConfig{
+		Observability: engineconfig.ObservabilityConfig{
 			Enabled: true,
-			Output: config.ObservabilityOutputConfig{
-				OpenTelemetry: config.ObservabilityOTelConfig{
+			Output: engineconfig.ObservabilityOutputConfig{
+				OpenTelemetry: engineconfig.ObservabilityOTelConfig{
 					Enabled:        false,
 					ExporterType:   "stdout",
 					ServiceName:    "test-service",
@@ -712,10 +814,10 @@ func setupTestConfig(t *testing.T) {
 					Insecure:       true,
 					Categories:     []string{},
 				},
-				File: config.ObservabilityFileConfig{
+				File: engineconfig.ObservabilityFileConfig{
 					Enabled: false,
 				},
-				Console: config.ObservabilityConsoleConfig{
+				Console: engineconfig.ObservabilityConsoleConfig{
 					Enabled: false,
 				},
 			},

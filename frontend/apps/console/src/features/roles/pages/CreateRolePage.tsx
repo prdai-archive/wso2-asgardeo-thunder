@@ -25,11 +25,11 @@ import {
   Button,
   IconButton,
   LinearProgress,
-  Breadcrumbs,
   Alert,
   Snackbar,
+  AppBreadcrumbs,
 } from '@wso2/oxygen-ui';
-import {X, ChevronRight} from '@wso2/oxygen-ui-icons-react';
+import {X} from '@wso2/oxygen-ui-icons-react';
 import {useState, useCallback, useMemo} from 'react';
 import type {JSX} from 'react';
 import {useTranslation} from 'react-i18next';
@@ -37,6 +37,7 @@ import {useNavigate} from 'react-router';
 import useCreateRole from '../api/useCreateRole';
 import ConfigureBasicInfo from '../components/create-role/ConfigureBasicInfo';
 import ConfigureOrganizationUnit from '../components/create-role/ConfigureOrganizationUnit';
+import ConfigurePermissions from '../components/create-role/ConfigurePermissions';
 import useRoleCreate from '../contexts/RoleCreate/useRoleCreate';
 import type {CreateRoleRequest} from '../models/requests';
 import {RoleCreateFlowStep} from '../models/role-create-flow';
@@ -47,7 +48,8 @@ export default function CreateRolePage(): JSX.Element {
   const logger = useLogger('CreateRolePage');
   const createRole = useCreateRole();
 
-  const {currentStep, setCurrentStep, name, setName, ouId, setOuId, error, setError} = useRoleCreate();
+  const {currentStep, setCurrentStep, name, setName, ouId, setOuId, error, setError, permissions, setPermissions} =
+    useRoleCreate();
 
   const {hasMultipleOUs, isLoading: isOuLoading, ouList} = useHasMultipleOUs();
 
@@ -57,6 +59,7 @@ export default function CreateRolePage(): JSX.Element {
   const [stepReady, setStepReady] = useState<Record<RoleCreateFlowStep, boolean>>({
     BASIC_INFO: false,
     ORGANIZATION_UNIT: false,
+    PERMISSIONS: true,
   });
 
   const activeSteps = useMemo((): RoleCreateFlowStep[] => {
@@ -64,6 +67,7 @@ export default function CreateRolePage(): JSX.Element {
     if (hasMultipleOUs) {
       base.push(RoleCreateFlowStep.ORGANIZATION_UNIT);
     }
+    base.push(RoleCreateFlowStep.PERMISSIONS);
     return base;
   }, [hasMultipleOUs]);
 
@@ -74,6 +78,7 @@ export default function CreateRolePage(): JSX.Element {
     if (hasMultipleOUs) {
       map.ORGANIZATION_UNIT = {label: t('roles:createWizard.steps.organizationUnit')};
     }
+    map.PERMISSIONS = {label: t('roles:createWizard.steps.permissions')};
     return map;
   }, [t, hasMultipleOUs]);
 
@@ -81,11 +86,7 @@ export default function CreateRolePage(): JSX.Element {
 
   const handleClose = (): void => {
     if (createRole.isPending) return;
-    (async (): Promise<void> => {
-      await navigate(listUrl);
-    })().catch((_error: unknown) => {
-      logger.error('Failed to navigate back to roles list', {error: _error});
-    });
+    void navigate(listUrl);
   };
 
   const handleStepReadyChange = useCallback((step: RoleCreateFlowStep, isReady: boolean): void => {
@@ -126,6 +127,7 @@ export default function CreateRolePage(): JSX.Element {
     const requestData: CreateRoleRequest = {
       name: name.trim(),
       ouId: selectedOuId,
+      ...(permissions.length > 0 ? {permissions} : {}),
     };
 
     try {
@@ -140,15 +142,12 @@ export default function CreateRolePage(): JSX.Element {
     switch (currentStep) {
       case RoleCreateFlowStep.BASIC_INFO:
         if (isOuLoading) return;
-        if (hasMultipleOUs) {
-          setCurrentStep(RoleCreateFlowStep.ORGANIZATION_UNIT);
-        } else {
-          handleSubmit().catch(() => {
-            /* noop */
-          });
-        }
+        setCurrentStep(hasMultipleOUs ? RoleCreateFlowStep.ORGANIZATION_UNIT : RoleCreateFlowStep.PERMISSIONS);
         break;
       case RoleCreateFlowStep.ORGANIZATION_UNIT:
+        setCurrentStep(RoleCreateFlowStep.PERMISSIONS);
+        break;
+      case RoleCreateFlowStep.PERMISSIONS:
         handleSubmit().catch(() => {
           /* noop */
         });
@@ -159,7 +158,9 @@ export default function CreateRolePage(): JSX.Element {
   };
 
   const handlePrevStep = (): void => {
-    if (currentStep === RoleCreateFlowStep.ORGANIZATION_UNIT) {
+    if (currentStep === RoleCreateFlowStep.PERMISSIONS) {
+      setCurrentStep(hasMultipleOUs ? RoleCreateFlowStep.ORGANIZATION_UNIT : RoleCreateFlowStep.BASIC_INFO);
+    } else if (currentStep === RoleCreateFlowStep.ORGANIZATION_UNIT) {
       setCurrentStep(RoleCreateFlowStep.BASIC_INFO);
     }
   };
@@ -176,6 +177,8 @@ export default function CreateRolePage(): JSX.Element {
             onReadyChange={handleOuStepReadyChange}
           />
         );
+      case RoleCreateFlowStep.PERMISSIONS:
+        return <ConfigurePermissions permissions={permissions} onPermissionsChange={setPermissions} />;
       default:
         return null;
     }
@@ -207,34 +210,13 @@ export default function CreateRolePage(): JSX.Element {
               >
                 <X size={24} />
               </IconButton>
-              <Breadcrumbs separator={<ChevronRight size={16} />} aria-label="breadcrumb">
-                {getBreadcrumbSteps().map((step, index, array) => {
-                  const isLast = index === array.length - 1;
-                  return isLast ? (
-                    <Typography key={step} variant="h5" color="text.primary">
-                      {steps[step]?.label}
-                    </Typography>
-                  ) : (
-                    <Typography
-                      key={step}
-                      variant="h5"
-                      color="inherit"
-                      role="button"
-                      tabIndex={0}
-                      onClick={() => setCurrentStep(step)}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter' || e.key === ' ') {
-                          e.preventDefault();
-                          setCurrentStep(step);
-                        }
-                      }}
-                      sx={{cursor: 'pointer', '&:hover': {textDecoration: 'underline'}}}
-                    >
-                      {steps[step]?.label}
-                    </Typography>
-                  );
-                })}
-              </Breadcrumbs>
+              <AppBreadcrumbs
+                items={getBreadcrumbSteps().map((step, index, array) => ({
+                  key: step,
+                  label: steps[step]?.label ?? step,
+                  onClick: index < array.length - 1 ? () => setCurrentStep(step) : undefined,
+                }))}
+              />
             </Stack>
           </Box>
 

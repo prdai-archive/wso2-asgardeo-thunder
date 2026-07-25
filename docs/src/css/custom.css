@@ -225,36 +225,8 @@ h5 {
   overflow: visible;
 }
 
-/* Copy page button wrapper — positioned at top-right of content area */
-.theme-doc-markdown.markdown .copy-page-btn-wrapper {
-  position: absolute;
-  top: -45px;
-  right: -2rem;
-  margin: 0;
-  display: inline-flex;
-  z-index: 10;
-}
-
-@media (max-width: 996px) {
-  .theme-doc-markdown.markdown .copy-page-btn-wrapper {
-    position: static;
-    top: auto;
-    right: auto;
-    margin: 0.4rem 0 0.8rem;
-    display: flex;
-    justify-content: flex-end;
-    width: 100%;
-    z-index: 4;
-  }
-}
 .docs-doc-id-index .theme-doc-markdown.markdown {
   max-width: none;
-}
-
-.docs-doc-id-sdks\/overview .theme-doc-markdown.markdown {
-  max-width: 1100px;
-  margin-left: auto;
-  margin-right: auto;
 }
 
 /* Constrain paragraph/list text for long-prose pages, let rich content break out */
@@ -270,6 +242,27 @@ h5 {
 .theme-doc-markdown.markdown [class*='quickstart'],
 .theme-doc-markdown.markdown [class*='card'] {
   max-width: 100%;
+}
+
+
+/* ── Code block title (filename tab) ──────────────────────────────────── */
+[class*='codeBlockTitle'] {
+  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
+  background: color-mix(in srgb, var(--ifm-color-primary) 5%, var(--ifm-color-emphasis-100));
+  border-bottom: 1px solid color-mix(in srgb, var(--ifm-color-primary) 15%, var(--ifm-color-emphasis-200));
+  color: var(--ifm-color-content-secondary);
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 0.78rem;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  padding: 0.45rem var(--ifm-pre-padding);
+}
+
+[data-theme='dark'] [class*='codeBlockTitle'] {
+  background: color-mix(in srgb, var(--ifm-color-primary) 8%, rgba(255, 255, 255, 0.04));
+  border-bottom-color: color-mix(in srgb, var(--ifm-color-primary) 20%, rgba(255, 255, 255, 0.06));
+  color: color-mix(in srgb, var(--ifm-color-primary) 40%, var(--ifm-color-emphasis-600));
 }
 
 /* ------------------------------ Inline code ---------------------------- */
@@ -461,7 +454,9 @@ html[data-page='home'][data-theme='dark'] .navbar .navbar__github--link::before 
   html[data-page^='thunder-docs-'] .navbar.navbar--fixed-top {
     padding-left: 1rem;
     padding-right: 1rem;
-    background: var(--oxygen-palette-background-paper);
+    /* Solid opaque background on mobile — no backdrop-filter available (Safari stacking bug) */
+    background: var(--ifm-navbar-background-color) !important;
+    border-bottom: 1px solid var(--oxygen-palette-divider) !important;
   }
 
   html[data-page^='thunder-docs-'] .navbar .navbar__brand {
@@ -782,21 +777,27 @@ html[data-page='home'][data-theme='dark'] .dropdown>.navbar__link:after {
   --ifm-col-width: 82%;
 }
 
-/* SDK overview page: constrained and centered column */
-.col:has(.sdks-overview-page) {
-  max-width: 1100px;
-  width: 100%;
-  margin-left: auto;
-  margin-right: auto;
-  float: none;
-}
-
 /* Widen the right-side TOC panel and pull it inward */
 .table-of-contents,
 [class*='tocCollapsible'],
 div[class*='tableOfContents'] {
   min-width: 220px;
   padding-left: 1rem;
+}
+
+/* When inside the snake wrapper, the sticky/scroll is handled by the wrapper */
+.toc-snake-root div[class*='tableOfContents'] {
+  max-height: unset !important;
+  overflow-y: unset !important;
+  padding-left: 0;
+  position: static !important;
+  top: unset !important;
+}
+
+/* Remove the default Docusaurus left border — replaced by the SVG snake */
+.toc-snake-root .table-of-contents__left-border,
+.toc-snake-root .table-of-contents {
+  border-left: none !important;
 }
 
 div[class*='col--3'],
@@ -821,54 +822,8 @@ aside.theme-doc-sidebar-container {
   margin-top: 2rem;
 }
 
-.theme-doc-sidebar-container .menu > .menu__list > .theme-doc-sidebar-item-link:first-child > .menu__link,
-.sidebar-doc-home > .menu__link {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  font-size: 0.95rem;
-  font-weight: 800;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  padding: 0.35rem 0.75rem 0.6rem 0.75rem;
-  color: var(--ifm-font-color-base);
-  background: none;
-  cursor: pointer;
-  user-select: none;
-}
-
-[data-theme='dark'] .theme-doc-sidebar-container .menu > .menu__list > .theme-doc-sidebar-item-link:first-child > .menu__link,
-[data-theme='dark'] .sidebar-doc-home > .menu__link {
-  color: #ffffff;
-}
-
-.theme-doc-sidebar-container .menu > .menu__list > .theme-doc-sidebar-item-link:first-child > .menu__link:hover,
-.sidebar-doc-home > .menu__link:hover {
-  background: none;
-  color: var(--ifm-color-primary);
-  text-decoration: none;
-}
-
-.theme-doc-sidebar-container .menu > .menu__list > .theme-doc-sidebar-item-link:first-child > .menu__link--active,
-.sidebar-doc-home > .menu__link--active {
-  background: none;
-  color: var(--ifm-color-primary);
-}
-
-.theme-doc-sidebar-container .menu > .menu__list > .theme-doc-sidebar-item-link:first-child > .menu__link::before,
-.sidebar-doc-home > .menu__link::before {
-  content: '';
-  display: block;
-  width: 17px;
-  height: 17px;
-  flex-shrink: 0;
-  background-color: var(--ifm-color-emphasis-700);
-  -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z'/%3E%3Cpolyline points='9 22 9 12 15 12 15 22'/%3E%3C/svg%3E");
-  mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z'/%3E%3Cpolyline points='9 22 9 12 15 12 15 22'/%3E%3C/svg%3E");
-  -webkit-mask-repeat: no-repeat;
-  mask-repeat: no-repeat;
-  -webkit-mask-size: contain;
-  mask-size: contain;
+.sidebar-doc-home {
+  display: none !important;
 }
 
 /* Spacing for HTML section header items */
@@ -880,6 +835,25 @@ aside.theme-doc-sidebar-container {
 /* First section after HOME still needs breathing room */
 .sidebar-html-section-header:first-child {
   margin-top: 1rem;
+}
+
+/* Tighter gap between Home and Getting Started */
+.sidebar-doc-home + .sidebar-html-section-header {
+  margin-top: 0.5rem;
+}
+
+/* Back to main site — subtle footer link at bottom of sidebar */
+.sidebar-back-to-home > .menu__link {
+  border-top: 1px solid var(--ifm-color-emphasis-200);
+  color: var(--ifm-color-content-secondary) !important;
+  font-size: 0.78rem;
+  margin-top: 1rem;
+  padding: 0.75rem var(--ifm-menu-link-padding-horizontal);
+}
+
+.sidebar-back-to-home > .menu__link:hover {
+  color: var(--ifm-color-primary) !important;
+  text-decoration: none;
 }
 
 /* Add bottom margin to the items list so space appears below last item too */
@@ -1182,9 +1156,63 @@ aside.theme-doc-sidebar-container {
 /* Scalar side bar item text transformation — removed: tags now use correct
    Title Case directly in the spec files, so no CSS override is needed. */
 
-/* Hide the introduction in side panel & content in Scalar since it's redundant with the content in the main page. */
-.apis-page .scalar-api-reference aside .group\/items > .group\/item:first-child {
+/* Hide the Introduction sidebar entry — identified by its stable data-sidebar-id slug, not by position. */
+.apis-page .scalar-api-reference aside [data-sidebar-id$="/description/introduction"] {
   display: none;
+}
+
+/* Indent tag items under their tag-group category headers with a connecting line */
+.apis-page [data-sidebar-id*="/tag-group/"] > ul {
+  margin-left: 0.1rem;
+  padding-left: 0.25rem;
+  margin-top: 0.5rem;
+  margin-bottom: 0.5rem;
+  gap: 0.25rem;
+}
+
+.apis-page [data-sidebar-id*="/tag-group/"] > ul > li > div > button {
+  padding: 0.45rem 0.75rem !important;
+  font-size: 0.875rem !important;
+  font-weight: 400 !important;
+  color: var(--ifm-color-emphasis-600) !important;
+  border-radius: 6px !important;
+  transition: color 0.15s, background 0.15s !important;
+}
+
+/* Category section header style */
+.apis-page [data-sidebar-id*="/tag-group/"] > div[aria-selected],
+.apis-page [data-sidebar-id$="/models"] > div > button {
+  display: flex !important;
+  align-items: center !important;
+  gap: 0.3rem !important;
+  font-weight: 800 !important;
+  font-size: 0.95rem !important;
+  text-transform: uppercase !important;
+  letter-spacing: 0.08em !important;
+  color: var(--ifm-font-color-base) !important;
+  padding: 0.75rem 0.875rem !important;
+  user-select: none !important;
+}
+
+/* Models has no spacer-before div — use margin-top to match section spacing */
+.apis-page [data-sidebar-id$="/models"] {
+  margin-top: 1rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--ifm-color-emphasis-100);
+}
+
+/* Category section icons — primary color, full opacity */
+.apis-page [data-sidebar-id*="/tag-group/"] > div[aria-selected] .apis-category-icon,
+.apis-page [data-sidebar-id$="/models"] .apis-category-icon {
+  opacity: 1;
+}
+
+/* Asymmetric section spacing: more above each header, tighter below */
+.apis-page [data-sidebar-id*="/tag-group/"] > div[class*="spacer-before"] {
+  height: 1.5rem !important;
+}
+.apis-page [data-sidebar-id*="/tag-group/"] > div[class*="spacer-after"] {
+  height: 0.25rem !important;
 }
 
 .apis-page .scalar-api-reference main .introduction-section {
@@ -1319,137 +1347,84 @@ aside.theme-doc-sidebar-container {
   }
 }
 
-/* ------------------------------ Copy Page Button ---------------------- */
-
-/* Button — translucent, glassmorphism */
-[class*='copyPageButton'] {
-  background: rgba(255, 255, 255, 0.08) !important;
-  border: 1px solid rgba(255, 255, 255, 0.18) !important;
-  border-radius: 10px !important;
-  color: #ffffff !important;
-  font-size: 0.88rem !important;
-  font-weight: 600 !important;
-  padding: 9px 18px !important;
-  margin-bottom: 0 !important;
-  gap: 8px !important;
-  backdrop-filter: blur(10px) !important;
-  -webkit-backdrop-filter: blur(10px) !important;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15), inset 0 1px 0 rgba(255, 255, 255, 0.12) !important;
-  transition: background 0.15s ease, box-shadow 0.15s ease, transform 0.1s ease, border-color 0.15s ease !important;
-}
-[class*='copyPageButton']:hover {
-  background: rgba(255, 255, 255, 0.14) !important;
-  border-color: rgba(255, 255, 255, 0.28) !important;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.15) !important;
-  transform: translateY(-1px) !important;
-}
-[class*='copyPageButton']:active {
-  transform: translateY(0) !important;
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.15) !important;
-}
-[class*='copyPageButton'] svg {
-  width: 15px !important;
-  height: 15px !important;
-  opacity: 0.85 !important;
-}
-[data-theme='light'] [class*='copyPageButton'] {
-  background: color-mix(in srgb, var(--ifm-color-primary) 10%, transparent) !important;
-  border-color: color-mix(in srgb, var(--ifm-color-primary) 30%, transparent) !important;
-  color: var(--ifm-color-primary-dark) !important;
-  box-shadow: 0 2px 8px color-mix(in srgb, var(--ifm-color-primary) 12%, transparent), inset 0 1px 0 rgba(255, 255, 255, 0.8) !important;
-}
-[data-theme='light'] [class*='copyPageButton']:hover {
-  background: color-mix(in srgb, var(--ifm-color-primary) 18%, transparent) !important;
-  border-color: color-mix(in srgb, var(--ifm-color-primary) 50%, transparent) !important;
-  box-shadow: 0 4px 14px color-mix(in srgb, var(--ifm-color-primary) 20%, transparent), inset 0 1px 0 rgba(255, 255, 255, 0.8) !important;
+/* Hidden sidebar items — registered for sidebar association but not shown */
+.sidebar-hidden-item {
+  display: none !important;
 }
 
-/* Dropdown panel — override fixed positioning to be relative to the button wrapper */
-[class*='copyPageDropdown'] {
-  min-width: 260px !important;
-  border: 1px solid var(--ifm-color-emphasis-200) !important;
-  border-radius: 10px !important;
-  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.2) !important;
-  overflow: hidden !important;
-}
-[data-theme='dark'] [class*='copyPageDropdown'] {
-  background: #0e1929 !important;
-  border-color: rgba(255, 255, 255, 0.08) !important;
-}
-[data-theme='light'] [class*='copyPageDropdown'] {
-  background: #ffffff !important;
-  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.1) !important;
+/* Coming soon placeholder — matches the technology quickstart items
+   (same icon box, gap, and text size), just muted with a "Soon" badge. */
+.sidebar-coming-soon {
+  align-items: center;
+  color: var(--ifm-color-content-secondary);
+  display: flex;
+  font-size: 0.875rem;
+  font-weight: 400;
+  gap: 1rem;
+  padding: 0.45rem 0.75rem;
 }
 
-/* Dropdown items */
-[class*='dropdownItem'] {
-  padding: 10px 14px !important;
-  gap: 12px !important;
-  border-bottom: none !important;
-  align-items: flex-start !important;
-}
-/* Divider between "View as Markdown" and "Open in ChatGPT" */
-[class*='dropdownItem']:nth-child(3) {
-  margin-top: 4px !important;
-  padding-top: 14px !important;
-  position: relative !important;
-}
-[class*='dropdownItem']:nth-child(3)::before {
-  content: '' !important;
-  position: absolute !important;
-  top: 0 !important;
-  left: 14px !important;
-  right: 14px !important;
-  height: 1px !important;
-  background: var(--ifm-color-emphasis-300) !important;
-}
-[data-theme='dark'] [class*='dropdownItem']:nth-child(3)::before {
-  background: rgba(255, 255, 255, 0.12) !important;
-}
-[class*='dropdownItem']:hover {
-  background: color-mix(in srgb, var(--ifm-color-primary) 8%, transparent) !important;
-}
-[class*='dropdownItem'] svg {
-  width: 16px !important;
-  height: 16px !important;
-  opacity: 0.65 !important;
-  margin-top: 2px !important;
-  flex-shrink: 0 !important;
-}
-[class*='itemTitle'] {
-  font-size: 0.82rem !important;
-  font-weight: 600 !important;
-  margin-bottom: 2px !important;
-  line-height: 1.3 !important;
-}
-[class*='itemDescription'] {
-  font-size: 0.73rem !important;
-  opacity: 0.65 !important;
-  line-height: 1.4 !important;
-  white-space: normal !important;
+.sidebar-coming-soon-badge {
+  background: var(--ifm-color-emphasis-200);
+  border-radius: 999px;
+  color: var(--ifm-color-content-secondary);
+  font-size: 0.6rem;
+  font-style: normal;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  margin-left: auto;
+  padding: 0.1rem 0.4rem;
+  text-transform: uppercase;
 }
 
+.sidebar-cs-icon {
+  align-items: center;
+  display: inline-flex;
+  filter: grayscale(1) opacity(0.75);
+  flex-shrink: 0;
+  height: 24px;
+  justify-content: center;
+  width: 24px;
+}
+
+.sidebar-cs-icon svg,
+.sidebar-cs-icon img {
+  height: 100%;
+  object-fit: contain;
+  width: 100%;
+}
+
+
+
+/* ─── Technology quickstart sidebar items ────────────────────────────────── */
+.sidebar-tech-label {
+  align-items: center;
+  display: inline-flex;
+  gap: 1rem;
+}
+
+.sidebar-tech-icon {
+  align-items: center;
+  display: inline-flex;
+  flex-shrink: 0;
+  height: 24px;
+  justify-content: center;
+  width: 24px;
+}
+
+.sidebar-tech-icon svg,
+.sidebar-tech-icon img {
+  height: 100%;
+  width: 100%;
+}
+
+/* Plugin docs article */
 .plugin-docs article {
   padding: 15px;
 }
 
-/* Prevent breadcrumb text from running under the button */
-nav.theme-doc-breadcrumbs {
-  padding-right: 175px;
-}
-
-/* Ensure copy dropdown positions against its trigger container */
-.theme-doc-markdown.markdown [class*='copyPageContainer'] {
-  position: relative;
-  display: inline-block;
-}
-
 @media (max-width: 996px) {
   /* Let breadcrumbs use full width and wrap on smaller screens */
-  nav.theme-doc-breadcrumbs {
-    padding-right: 0;
-  }
-
   nav.theme-doc-breadcrumbs .breadcrumbs {
     display: flex;
     flex-wrap: wrap;
@@ -1476,27 +1451,6 @@ nav.theme-doc-breadcrumbs {
     text-overflow: ellipsis;
     white-space: nowrap;
   }
-
-  /* Reflow copy page action below breadcrumb row to avoid overlap */
-  .theme-doc-markdown.markdown .copy-page-btn-wrapper {
-    position: static;
-    top: auto;
-    right: auto;
-    margin: 0.4rem 0 0.8rem;
-    display: flex;
-    justify-content: flex-end;
-    width: 100%;
-    z-index: 4;
-  }
-
-  /* Keep dropdown within viewport on mobile */
-  [class*='copyPageDropdown'] {
-    min-width: min(320px, calc(100vw - 1.5rem)) !important;
-    max-width: calc(100vw - 1.5rem) !important;
-    max-height: min(60vh, 420px) !important;
-    overflow: auto !important;
-    -webkit-overflow-scrolling: touch !important;
-  }
 }
 
 /* Hide breadcrumbs on the docs home page */
@@ -1505,6 +1459,13 @@ nav.theme-doc-breadcrumbs {
 }
 
 /* Increase space between main content and right sidebar TOC */
+/* Hide overview sections from TOC — these are visual blocks, not navigable content */
+li:has(> .table-of-contents__link[href="#what-you-will-learn"]),
+li:has(> .table-of-contents__link[href="#prerequisites"]) {
+  display: none;
+}
+
+
 .theme-doc-toc-desktop {
   padding-left: 0.75rem;
   margin-top: 2.7rem;
@@ -1516,475 +1477,6 @@ nav.theme-doc-breadcrumbs {
   padding-top: 0.08em;
   padding-bottom: 0.08em;
 }
-/* ------------------------------ Releases Page ---------------------- */
-
-.releases-page main {
-  background-attachment: var(--site-background-attachment);
-  background-image: var(--site-background);
-  background-blend-mode: var(--site-background-blend-mode);
-  min-width: 0;
-  overflow-x: hidden;
-}
-
-.releases-shell {
-  width: 100%;
-  max-width: 1200px;
-  min-width: 0;
-  margin: 0 auto;
-  padding: 4rem 1.5rem 5rem;
-}
-
-.releases-hero {
-  display: grid;
-  gap: 1.5rem;
-  margin-bottom: 4rem;
-}
-
-.releases-hero h1 {
-  margin: 0;
-  font-size: clamp(3rem, 7vw, 5.3rem);
-  line-height: 0.95;
-}
-
-.releases-hero p,
-.releases-status,
-.releases-release-header p,
-.releases-footer-note p {
-  color: var(--ifm-color-emphasis-700);
-}
-
-.releases-hero-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.75rem;
-}
-
-.releases-status {
-  margin: 0 0 2rem;
-}
-
-.releases-latest {
-  margin-bottom: 3rem;
-}
-
-.releases-release-toolbar {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-end;
-  gap: 1rem;
-  margin-bottom: 1rem;
-}
-
-.releases-version-picker {
-  display: grid;
-  gap: 0.45rem;
-  min-width: min(100%, 260px);
-}
-
-.releases-version-picker span {
-  font-size: 0.78rem;
-  font-weight: 700;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  color: var(--ifm-color-emphasis-600);
-}
-
-.releases-version-picker select {
-  width: 100%;
-  min-height: 2.9rem;
-  padding: 0.75rem 0.95rem;
-  border: 1px solid var(--ifm-color-emphasis-300);
-  border-radius: 0.95rem;
-  background: var(--oxygen-palette-background-paper);
-  color: var(--ifm-font-color-base);
-  font: inherit;
-}
-
-.releases-release-card {
-  width: 100%;
-  min-width: 0;
-  padding: 2rem;
-  border-radius: 1.8rem;
-  border: 1px solid var(--ifm-color-emphasis-200);
-  background: var(--oxygen-palette-background-paper);
-  backdrop-filter: blur(14px);
-  box-shadow: 0 18px 50px rgba(15, 23, 42, 0.08);
-}
-
-.releases-release-header {
-  display: flex;
-  justify-content: space-between;
-  gap: 1rem;
-}
-
-.releases-release-title-row {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 0.75rem;
-  margin-bottom: 0.5rem;
-}
-
-.releases-release-header h2 {
-  margin: 0;
-  font-size: 2.2rem;
-  line-height: 1.1;
-}
-
-.releases-release-badge {
-  display: inline-flex;
-  align-items: center;
-  padding: 0.28rem 0.65rem;
-  border-radius: 999px;
-  background: var(--ifm-hover-overlay);
-  color: var(--ifm-breadcrumb-color-active);
-  font-size: 0.78rem;
-  font-weight: 700;
-}
-
-.releases-section-block {
-  margin-top: 2rem;
-}
-
-.releases-download-feature {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 1.25rem;
-  align-items: center;
-  margin-bottom: 1rem;
-  padding: 1.35rem;
-  border-radius: 1.25rem;
-  border: 1px solid var(--ifm-color-emphasis-200);
-  background: var(--oxygen-palette-background-paper);
-}
-
-.releases-download-feature-copy {
-  display: grid;
-  gap: 0.65rem;
-  min-width: 0;
-}
-
-.releases-download-feature-kicker {
-  color: var(--ifm-color-primary);
-  font-size: 0.78rem;
-  font-weight: 700;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-}
-
-.releases-download-feature h3 {
-  margin: 0;
-  font-size: 1.5rem;
-}
-
-.releases-download-feature-meta {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.65rem 1rem;
-  min-width: 0;
-  overflow-wrap: anywhere;
-  color: var(--ifm-color-emphasis-600);
-  font-size: 0.9rem;
-}
-
-.releases-page .releases-download-primary,
-.download-card .releases-download-primary {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 0.75rem;
-  min-height: 2.9rem;
-  padding: 0.65rem 1rem;
-  border-radius: 999px;
-  background: var(--ifm-color-primary);
-  color: #fff !important;
-  font-size: 0.92rem;
-  font-weight: 700;
-  text-decoration: none !important;
-}
-
-.releases-page .releases-download-primary:hover,
-.download-card .releases-download-primary:hover {
-  background: var(--ifm-color-primary-dark);
-  color: #fff !important;
-  text-decoration: none !important;
-  transform: translateY(-2px);
-  box-shadow: 0 14px 30px rgb(var(--oxygen-palette-primary-mainChannel) / 0.35);
-}
-
-.download-card.download-card--compact .releases-download-feature {
-  padding: 1rem 1.1rem;
-  gap: 1rem;
-  border-radius: 1rem;
-}
-
-.download-card.download-card--compact .releases-download-feature h3 {
-  font-size: 1.15rem;
-}
-
-.download-card.download-card--compact .releases-download-feature-meta {
-  font-size: 0.82rem;
-  gap: 0.4rem 0.85rem;
-}
-
-.download-card.download-card--compact .releases-download-feature-kicker {
-  font-size: 0.7rem;
-}
-
-.download-card.download-card--compact .releases-download-primary {
-  min-height: 2.4rem;
-  padding: 0.45rem 0.85rem;
-  font-size: 0.82rem;
-}
-
-.download-card.download-card--compact .releases-download-icon {
-  width: 1.45rem;
-  height: 1.45rem;
-}
-
-.download-card.download-card--compact .releases-other-downloads-grid {
-  gap: 0.75rem;
-}
-
-.download-card.download-card--compact .releases-other-downloads-card {
-  padding: 0.75rem 0.85rem;
-  border-radius: 0.95rem;
-}
-
-.download-card.download-card--compact .releases-other-downloads-header h4 {
-  font-size: 1rem;
-}
-
-.download-card.download-card--compact .releases-other-downloads-architecture {
-  min-height: 2.85rem;
-  padding: 0.5rem 0.7rem;
-}
-
-.download-card.download-card--compact .releases-other-downloads-architecture-title {
-  font-size: 0.85rem;
-}
-
-.download-card__other {
-  margin-top: 1rem;
-}
-
-.download-card__other > summary {
-  cursor: pointer;
-  font-size: 0.9rem;
-  font-weight: 600;
-  color: var(--ifm-color-emphasis-700);
-  padding: 0.4rem 0;
-}
-
-.download-card__other[open] > summary {
-  margin-bottom: 0.75rem;
-}
-
-.releases-download-icon {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 1.8rem;
-  height: 1.8rem;
-  border-radius: 999px;
-  background: rgb(var(--oxygen-palette-primary-mainChannel) / 0.1);
-  color: var(--ifm-color-primary);
-}
-
-.releases-other-downloads-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-  gap: 1rem;
-}
-
-.releases-other-downloads-card {
-  padding: 0.95rem 1rem;
-  border-radius: 1.15rem;
-  border: 1px solid var(--ifm-color-emphasis-200);
-  background: var(--oxygen-palette-background-paper);
-}
-
-.releases-other-downloads-header {
-  display: flex;
-  align-items: center;
-  gap: 0.55rem;
-  margin-bottom: 0.75rem;
-}
-
-.releases-other-downloads-header h4 {
-  margin: 0;
-  font-size: 1.25rem;
-  font-weight: 600;
-  color: var(--ifm-color-emphasis-800);
-}
-
-.releases-other-downloads-os-icon {
-  display: inline-flex;
-  width: 1.3rem;
-  height: 1.3rem;
-  color: var(--ifm-color-emphasis-700);
-}
-
-.releases-other-downloads-architectures {
-  display: grid;
-  gap: 0.5rem;
-}
-
-.releases-other-downloads-architecture {
-  display: grid;
-  grid-template-columns: 1fr auto;
-  gap: 0.25rem 0.5rem;
-  align-items: center;
-  min-height: 3.7rem;
-  padding: 0.65rem 0.8rem;
-  border-radius: 0.85rem;
-  border: 1px solid var(--ifm-color-emphasis-200);
-  background: var(--oxygen-palette-background-acrylic);
-  color: inherit !important;
-  text-decoration: none !important;
-}
-
-.releases-other-downloads-architecture-title {
-  min-width: 0;
-  overflow-wrap: anywhere;
-  color: var(--ifm-color-emphasis-800);
-  font-size: 0.98rem;
-  font-weight: 600;
-}
-
-.releases-other-downloads-architecture-meta,
-.releases-other-downloads-architecture em {
-  color: var(--ifm-color-emphasis-600);
-  font-size: 0.82rem;
-}
-
-.releases-other-downloads-architecture em {
-  grid-column: 2 / 3;
-  grid-row: 1 / 3;
-  font-style: normal;
-  font-size: 0.68rem;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-}
-
-.releases-change-grid {
-  display: grid;
-  gap: 1.4rem;
-  margin-top: 2rem;
-}
-
-.releases-change-group h3 {
-  margin: 0 0 0.7rem;
-  font-size: 1.2rem;
-}
-
-.releases-change-group ul {
-  margin: 0;
-  border-left: 2px solid var(--ifm-color-primary);
-  padding-left: 1.35rem;
-}
-
-.releases-change-group li + li {
-  margin-top: 0.55rem;
-}
-
-.releases-change-group li {
-  font-size: 1rem;
-  font-weight: 400;
-  line-height: 1.6;
-  overflow-wrap: anywhere;
-}
-
-.releases-contributors-avatar-group {
-  display: flex;
-  justify-content: flex-end;
-  width: 100%;
-}
-
-.releases-contributors-avatar-group .MuiAvatar-root {
-  width: 2.75rem;
-  height: 2.75rem;
-  font-size: 1rem;
-  border: 2px solid #fff;
-  background: var(--ifm-color-primary);
-}
-
-.releases-contributor-avatar-link {
-  display: inline-flex;
-  border-radius: 999px;
-  line-height: 0;
-}
-
-.releases-contributor-avatar-link:hover {
-  transform: translateY(-2px);
-}
-
-.releases-footer-note {
-  padding-top: 1rem;
-}
-
-.releases-page .button--primary {
-  background-color: var(--ifm-color-primary);
-}
-
-.releases-page .button--primary:hover {
-  background-color: var(--ifm-color-primary-dark);
-}
-
-.releases-page .button--secondary {
-  background: var(--oxygen-palette-background-paper);
-  border-color: var(--ifm-color-emphasis-300);
-  color: var(--ifm-font-color-base);
-}
-
-.releases-page .button--secondary:hover {
-  background: var(--ifm-hover-overlay);
-  border-color: var(--ifm-color-emphasis-400);
-  color: var(--ifm-font-color-base);
-}
-
-[data-theme='dark'] .releases-release-card {
-  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.28);
-}
-
-[data-theme='dark'] .releases-contributors-avatar-group .MuiAvatar-root {
-  border-color: var(--ifm-background-surface-color);
-}
-
-
-@media (max-width: 996px) {
-  .releases-shell {
-    padding: 3rem 1rem 4rem;
-  }
-
-  .releases-change-grid {
-    grid-template-columns: 1fr;
-  }
-
-  .releases-download-feature {
-    grid-template-columns: 1fr;
-  }
-
-  .releases-release-toolbar {
-    align-items: stretch;
-    flex-direction: column;
-  }
-
-  .releases-page .releases-download-primary,
-  .download-card .releases-download-primary {
-    width: 100%;
-  }
-
-  .releases-release-header {
-    flex-direction: column;
-  }
-
-  .releases-release-header h2 {
-    font-size: 1.8rem;
-  }
-}
-
 /* ─── GettingStartedJourney component ──────────────────────────────────── */
 
 .gsj {
@@ -2536,127 +2028,6 @@ a.connect-card {
   animation: uc-enter-up 600ms cubic-bezier(0.16, 1, 0.3, 1) 200ms both;
 }
 
-.uc-card-1 {
-  animation: uc-enter-up 700ms cubic-bezier(0.16, 1, 0.3, 1) 300ms both;
-}
-
-.uc-card-2 {
-  animation: uc-enter-up 700ms cubic-bezier(0.16, 1, 0.3, 1) 420ms both;
-}
-
-.uc-card-3 {
-  animation: uc-enter-up 700ms cubic-bezier(0.16, 1, 0.3, 1) 540ms both;
-}
-
-.uc-card {
-  will-change: transform, box-shadow;
-}
-
-.uc-card:hover {
-  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.12) !important;
-  transform: translateY(-6px) scale(1.01);
-}
-
-.uc-tag-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.5rem;
-  margin: 1rem 0 1.2rem;
-}
-
-.uc-branch-grid {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: center;
-  gap: 1.25rem;
-  width: 100%;
-  max-width: 900px;
-}
-
-.uc-branch-card {
-  text-decoration: none;
-  color: inherit;
-  flex: 1 1 240px;
-  max-width: 290px;
-  min-width: 200px;
-  background: var(--ifm-background-surface);
-  border-radius: 14px;
-  box-shadow: 0 1px 6px rgba(0, 0, 0, 0.05);
-  padding: 1.75rem 1.5rem;
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  border: 1px solid var(--ifm-color-emphasis-200);
-  transition: box-shadow 0.2s, transform 0.2s;
-}
-
-.uc-branch-icon {
-  width: 48px;
-  height: 48px;
-  border-radius: 10px;
-  background: var(--uc-branch-icon-bg);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  margin-bottom: 1rem;
-  color: var(--uc-branch-accent);
-  flex-shrink: 0;
-}
-
-.uc-branch-category {
-  font-size: 0.68rem;
-  font-weight: 700;
-  color: var(--uc-branch-accent);
-  text-transform: uppercase;
-  letter-spacing: 0.09em;
-  margin-bottom: 0.35rem;
-}
-
-.uc-branch-title {
-  font-size: 1rem;
-  font-weight: 700;
-  margin-bottom: 0.5rem;
-  color: var(--ifm-font-color-base);
-  line-height: 1.3;
-}
-
-.uc-branch-description {
-  font-size: 0.875rem;
-  color: var(--ifm-color-emphasis-700);
-  margin-bottom: 0.875rem;
-  line-height: 1.6;
-}
-
-.uc-branch-when {
-  border-top: 1px solid var(--ifm-color-emphasis-200);
-  padding-top: 0.75rem;
-  margin-bottom: 1.25rem;
-  flex-grow: 1;
-}
-
-.uc-branch-when-label {
-  font-size: 0.7rem;
-  font-weight: 700;
-  color: var(--ifm-color-emphasis-500);
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  margin-bottom: 0.4rem;
-}
-
-.uc-branch-when-list {
-  margin: 0;
-  padding: 0 0 0 1rem;
-  list-style: disc;
-  font-size: 0.8rem;
-  color: var(--ifm-color-emphasis-700);
-  line-height: 1.6;
-}
-
-.uc-branch-link {
-  color: var(--uc-branch-accent);
-  font-weight: 600;
-  font-size: 0.85rem;
-}
 
 .uc-b2b-intro-panel {
   margin: 1.25rem 0 1.75rem;
@@ -3243,666 +2614,6 @@ a.connect-card {
   line-height: 1.45;
 }
 
-.uc-b2b-example {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 0.9rem;
-}
-
-.uc-b2b-example__col {
-  border: 1px solid var(--ifm-color-emphasis-200);
-  border-radius: 14px;
-  background: linear-gradient(180deg, color-mix(in srgb, var(--ifm-color-primary) 4%, transparent), var(--ifm-background-surface));
-  padding: 0.95rem;
-}
-
-.uc-b2b-example__col h3 {
-  margin: 0 0 0.5rem;
-  font-size: 0.95rem;
-}
-
-.uc-b2b-example__col p,
-.uc-b2b-example__col li {
-  font-size: 0.88rem;
-  line-height: 1.55;
-}
-
-.uc-b2b-example__col ul {
-  margin: 0;
-  padding-left: 1rem;
-}
-
-.uc-b2b-example__flow {
-  margin-top: 0.8rem;
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 0.5rem;
-}
-
-.uc-b2b-roadmap {
-  --uc-node-w: 8.7rem;
-  --uc-node-h: 5rem;
-  --uc-icon-size: 4.35rem;
-  --uc-gap-x: 0.9rem;
-  --uc-gap-y: 1rem;
-  margin: 1.1rem 0 1.45rem;
-  padding: 0.55rem 0.2rem;
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  grid-template-rows: auto auto repeat(5, minmax(0, 1fr));
-  gap: var(--uc-gap-y) var(--uc-gap-x);
-  justify-items: center;
-  align-items: center;
-  position: relative;
-  min-height: 50rem;
-}
-
-.uc-b2b-roadmap__path {
-  position: absolute;
-  inset: 0.65rem 0.35rem;
-  width: calc(100% - 0.7rem);
-  height: calc(100% - 1.3rem);
-  z-index: 0;
-  pointer-events: none;
-}
-
-.uc-b2b-roadmap__path path {
-  fill: none;
-  stroke: color-mix(in srgb, var(--ifm-color-primary) 44%, var(--ifm-color-emphasis-300));
-  stroke-width: 1.25;
-  stroke-dasharray: 3 4;
-  stroke-linecap: round;
-  opacity: 0.82;
-}
-
-.uc-b2b-roadmap__node {
-  width: var(--uc-node-w);
-  min-height: var(--uc-node-h);
-  border: none;
-  border-radius: 0;
-  background: transparent;
-  color: var(--ifm-font-color-base);
-  text-decoration: none;
-  font-size: 0.72rem;
-  font-weight: 700;
-  line-height: 1.15;
-  box-shadow: none;
-  transition: transform 160ms ease;
-  position: relative;
-  z-index: 1;
-  transform: none;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: flex-start;
-  gap: 0.5rem;
-  text-align: center;
-  padding: 0.2rem 0.2rem 0;
-}
-
-.uc-b2b-roadmap__node::after,
-.uc-b2b-roadmap__node::before {
-  content: '';
-  position: absolute;
-  display: none !important;
-  opacity: 0.9;
-  pointer-events: none;
-}
-
-/* Hierarchical layout: top node, then 4 label columns with stacked capabilities */
-.uc-b2b-roadmap__node:nth-child(2) { grid-column: 2 / span 2; grid-row: 1; }
-
-/* Category labels (children 3-6) */
-.uc-b2b-roadmap__category:nth-child(3) { grid-column: 1; grid-row: 2; }
-.uc-b2b-roadmap__category:nth-child(4) { grid-column: 2; grid-row: 2; }
-.uc-b2b-roadmap__category:nth-child(5) { grid-column: 3; grid-row: 2; }
-.uc-b2b-roadmap__category:nth-child(6) { grid-column: 4; grid-row: 2; }
-
-/* Identity & Access */
-.uc-b2b-roadmap__node:nth-child(7) { grid-column: 1; grid-row: 3; }
-.uc-b2b-roadmap__node:nth-child(8) { grid-column: 1; grid-row: 4; }
-.uc-b2b-roadmap__node:nth-child(9) { grid-column: 1; grid-row: 5; }
-.uc-b2b-roadmap__node:nth-child(10) { grid-column: 1; grid-row: 6; }
-
-/* Administration */
-.uc-b2b-roadmap__node:nth-child(11) { grid-column: 2; grid-row: 3; }
-.uc-b2b-roadmap__node:nth-child(12) { grid-column: 2; grid-row: 4; }
-
-/* Configuration */
-.uc-b2b-roadmap__node:nth-child(13) { grid-column: 3; grid-row: 3; }
-.uc-b2b-roadmap__node:nth-child(14) { grid-column: 3; grid-row: 4; }
-.uc-b2b-roadmap__node:nth-child(15) { grid-column: 3; grid-row: 5; }
-
-/* Operations */
-.uc-b2b-roadmap__node:nth-child(16) { grid-column: 4; grid-row: 3; }
-.uc-b2b-roadmap__node:nth-child(17) { grid-column: 4; grid-row: 4; }
-.uc-b2b-roadmap__node:nth-child(18) { grid-column: 4; grid-row: 5; }
-
-.uc-b2b-roadmap__node--primary {
-  transform: translateY(-0.1rem);
-}
-
-/* Category labels styling */
-.uc-b2b-roadmap__category {
-  position: relative;
-  z-index: 2;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  margin-top: 2.5rem;
-}
-
-.uc-b2b-roadmap__category-label {
-  font-size: 0.72rem;
-  font-weight: 800;
-  text-transform: uppercase;
-  letter-spacing: 0.09em;
-  color: color-mix(in srgb, var(--ifm-color-primary) 85%, var(--ifm-color-emphasis-600));
-  padding: 0.48rem 0.72rem;
-  background: linear-gradient(135deg, color-mix(in srgb, var(--ifm-color-primary) 8%, transparent), color-mix(in srgb, var(--ifm-color-primary) 5%, transparent));
-  border: 1px solid color-mix(in srgb, var(--ifm-color-primary) 25%, transparent);
-  border-radius: 0.4rem;
-  white-space: nowrap;
-  opacity: 0.92;
-  transition: all 200ms ease;
-}
-
-.uc-b2b-roadmap__category:hover .uc-b2b-roadmap__category-label {
-  opacity: 1;
-  color: color-mix(in srgb, var(--ifm-color-primary) 100%, var(--ifm-color-emphasis-600));
-  border-color: color-mix(in srgb, var(--ifm-color-primary) 45%, transparent);
-  background: linear-gradient(135deg, color-mix(in srgb, var(--ifm-color-primary) 12%, transparent), color-mix(in srgb, var(--ifm-color-primary) 8%, transparent));
-}
-
-.uc-b2b-roadmap__icon {
-  width: var(--uc-icon-size);
-  min-width: var(--uc-icon-size);
-  height: var(--uc-icon-size);
-  border-radius: 999px;
-  border: 1px solid color-mix(in srgb, var(--ifm-color-primary) 38%, var(--ifm-color-emphasis-300));
-  background: radial-gradient(80px 80px at 28% 18%, color-mix(in srgb, var(--ifm-color-primary) 24%, transparent), transparent),
-    linear-gradient(160deg, color-mix(in srgb, var(--ifm-color-primary) 72%, #091629), color-mix(in srgb, var(--ifm-color-primary) 44%, #030712));
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, #fff 24%, transparent), 0 8px 18px color-mix(in srgb, var(--ifm-color-primary) 24%, transparent);
-}
-
-.uc-b2b-roadmap__icon svg {
-  width: 1.75rem;
-  height: 1.75rem;
-  stroke: #fff;
-  fill: none;
-  stroke-width: 1.8;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-}
-
-.uc-b2b-roadmap__label {
-  display: block;
-  color: var(--ifm-font-color-base);
-  font-weight: 700;
-  font-size: 0.82rem;
-  line-height: 1.2;
-  max-width: 9.4rem;
-  letter-spacing: 0.01em;
-}
-
-.uc-b2b-roadmap__node:nth-child(n + 7) {
-  margin-top: 0.5rem;
-}
-
-.uc-b2b-roadmap__node:hover {
-  transform: translateY(-2px);
-  text-decoration: none;
-}
-
-.uc-b2b-roadmap__node:hover .uc-b2b-roadmap__icon {
-  border-color: color-mix(in srgb, #ffffff 56%, var(--ifm-color-primary));
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, #fff 32%, transparent), 0 12px 24px color-mix(in srgb, var(--ifm-color-primary) 34%, transparent);
-}
-
-.uc-b2b-roadmap__node:focus-visible {
-  outline: 2px solid color-mix(in srgb, var(--ifm-color-primary) 58%, white);
-  outline-offset: 2px;
-}
-
-@media (max-width: 900px) {
-  .uc-b2b-example {
-    grid-template-columns: 1fr;
-  }
-
-  .uc-b2b-roadmap {
-    --uc-node-w: 7.5rem;
-    --uc-node-h: 4.6rem;
-    --uc-icon-size: 3.6rem;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    grid-template-rows: none;
-    gap: 0.95rem 0.6rem;
-    min-height: auto;
-  }
-
-  .uc-b2b-roadmap__node {
-    width: var(--uc-node-w);
-    min-height: var(--uc-node-h);
-    grid-column: auto !important;
-    grid-row: auto !important;
-    transform: none;
-  }
-
-  .uc-b2b-roadmap__node::after {
-    display: none;
-  }
-
-  .uc-b2b-roadmap__node::before {
-    display: none;
-  }
-
-}
-
-@media (max-width: 640px) {
-  .uc-b2b-roadmap {
-    --uc-node-w: 6.9rem;
-    --uc-node-h: 4.2rem;
-    --uc-icon-size: 3.25rem;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    padding: 0.75rem;
-    gap: 0.8rem 0.45rem;
-  }
-
-  .uc-b2b-roadmap__node {
-    width: var(--uc-node-w);
-    min-height: var(--uc-node-h);
-    font-size: 0.66rem;
-  }
-
-  .uc-b2b-roadmap__icon {
-    width: var(--uc-icon-size);
-    min-width: var(--uc-icon-size);
-    height: var(--uc-icon-size);
-  }
-}
-
-/* B2C identity journey — simple clickable node row */
-.uc-b2c-roadmap {
-  --uc-node-w: 9rem;
-  --uc-node-h: 5rem;
-  --uc-icon-size: 4rem;
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: center;
-  align-items: flex-start;
-  gap: 1.25rem 1.4rem;
-  margin: 1.5rem 0 2rem;
-  padding: 0.5rem 0.2rem;
-}
-
-.uc-b2c-roadmap__node {
-  width: var(--uc-node-w);
-  min-height: var(--uc-node-h);
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: flex-start;
-  gap: 0.55rem;
-  text-align: center;
-  text-decoration: none;
-  color: var(--ifm-font-color-base);
-  font-weight: 700;
-  font-size: 0.82rem;
-  line-height: 1.2;
-  transition: transform 160ms ease;
-}
-
-.uc-b2c-roadmap__node:hover {
-  transform: translateY(-2px);
-  text-decoration: none;
-}
-
-.uc-b2c-roadmap__node:focus-visible {
-  outline: 2px solid color-mix(in srgb, var(--ifm-color-primary) 58%, white);
-  outline-offset: 4px;
-  border-radius: 6px;
-}
-
-.uc-b2c-roadmap__icon {
-  width: var(--uc-icon-size);
-  min-width: var(--uc-icon-size);
-  height: var(--uc-icon-size);
-  border-radius: 999px;
-  border: 1px solid color-mix(in srgb, var(--ifm-color-primary) 38%, var(--ifm-color-emphasis-300));
-  background: radial-gradient(80px 80px at 28% 18%, color-mix(in srgb, var(--ifm-color-primary) 24%, transparent), transparent),
-    linear-gradient(160deg, color-mix(in srgb, var(--ifm-color-primary) 72%, #091629), color-mix(in srgb, var(--ifm-color-primary) 44%, #030712));
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, #fff 24%, transparent), 0 8px 18px color-mix(in srgb, var(--ifm-color-primary) 24%, transparent);
-}
-
-.uc-b2c-roadmap__icon svg {
-  width: 1.75rem;
-  height: 1.75rem;
-  stroke: #fff;
-  fill: none;
-  stroke-width: 1.8;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-}
-
-.uc-b2c-roadmap__node:hover .uc-b2c-roadmap__icon {
-  border-color: color-mix(in srgb, #ffffff 56%, var(--ifm-color-primary));
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, #fff 32%, transparent), 0 12px 24px color-mix(in srgb, var(--ifm-color-primary) 34%, transparent);
-}
-
-.uc-b2c-roadmap__label {
-  display: block;
-  max-width: 9.4rem;
-}
-
-@media (max-width: 640px) {
-  .uc-b2c-roadmap {
-    --uc-node-w: 7.5rem;
-    --uc-node-h: 4.4rem;
-    --uc-icon-size: 3.4rem;
-    gap: 1rem 0.8rem;
-  }
-}
-
-/* Wayfinder organization — story diagram on B2C Try It Out overview */
-
-.uc-b2c-wayfinder-org,
-.uc-b2c-wayfinder-arch {
-  margin: 1.5rem 0 2.5rem;
-}
-
-.uc-b2c-wayfinder-org__svg,
-.uc-b2c-wayfinder-arch__svg {
-  width: 100%;
-  height: auto;
-  max-width: 960px;
-  display: block;
-  margin: 0 auto;
-  color: color-mix(in srgb, var(--ifm-color-primary) 60%, var(--ifm-color-emphasis-500));
-}
-
-.uc-b2c-wayfinder-org__svg text,
-.uc-b2c-wayfinder-arch__svg text {
-  fill: var(--ifm-font-color-base);
-  font-size: 12px;
-  font-family: var(--ifm-font-family-base);
-}
-
-.uc-b2c-wayfinder-org__header rect {
-  fill: color-mix(in srgb, var(--ifm-color-primary) 12%, var(--ifm-background-surface-color));
-  stroke: color-mix(in srgb, var(--ifm-color-primary) 55%, var(--ifm-color-emphasis-400));
-  stroke-width: 1.6;
-}
-
-.uc-b2c-wayfinder-org__header-title {
-  font-weight: 700;
-  font-size: 20px !important;
-}
-
-.uc-b2c-wayfinder-org__header-sub {
-  font-size: 12px !important;
-  fill: var(--ifm-color-emphasis-700) !important;
-}
-
-.uc-b2c-wayfinder-org__edges line {
-  stroke: color-mix(in srgb, var(--ifm-color-primary) 45%, var(--ifm-color-emphasis-400));
-  stroke-width: 1.4;
-}
-
-.uc-b2c-wayfinder-org__col rect {
-  fill: var(--ifm-background-surface-color);
-  stroke: var(--ifm-color-emphasis-300);
-  stroke-width: 1;
-}
-
-.uc-b2c-wayfinder-org__col-title {
-  font-weight: 700;
-  font-size: 16px !important;
-}
-
-.uc-b2c-wayfinder-org__col-sub {
-  font-size: 12px !important;
-  fill: var(--ifm-color-emphasis-700) !important;
-  font-style: italic;
-}
-
-.uc-b2c-wayfinder-org__divider {
-  stroke: var(--ifm-color-emphasis-200);
-  stroke-width: 1;
-}
-
-.uc-b2c-wayfinder-org__icon > circle {
-  fill: color-mix(in srgb, var(--ifm-color-primary) 16%, var(--ifm-background-color));
-  stroke: color-mix(in srgb, var(--ifm-color-primary) 55%, var(--ifm-color-emphasis-400));
-  stroke-width: 1.4;
-}
-
-.uc-b2c-wayfinder-org__icon--lead > circle {
-  fill: color-mix(in srgb, var(--ifm-color-primary) 28%, var(--ifm-background-color));
-  stroke: color-mix(in srgb, var(--ifm-color-primary) 70%, var(--ifm-color-emphasis-400));
-  stroke-width: 1.6;
-}
-
-.uc-b2c-wayfinder-person-glyph circle,
-.uc-b2c-wayfinder-person-glyph path {
-  fill: color-mix(in srgb, var(--ifm-color-primary) 90%, #fff);
-  stroke: none;
-}
-
-.uc-b2c-wayfinder-org__cast-name {
-  font-weight: 700;
-  font-size: 13px !important;
-}
-
-.uc-b2c-wayfinder-org__cast-role {
-  font-size: 11.5px !important;
-  fill: var(--ifm-color-emphasis-700) !important;
-}
-
-/* Wayfinder architecture — integration diagram on B2C Try It Out overview */
-
-.uc-b2c-wayfinder-arch__idp rect {
-  fill: color-mix(in srgb, var(--ifm-color-primary) 12%, var(--ifm-background-surface-color));
-  stroke: color-mix(in srgb, var(--ifm-color-primary) 55%, var(--ifm-color-emphasis-400));
-  stroke-width: 1.6;
-}
-
-.uc-b2c-wayfinder-arch__idp-title {
-  font-weight: 700;
-  font-size: 18px !important;
-}
-
-.uc-b2c-wayfinder-arch__app rect {
-  fill: var(--ifm-background-surface-color);
-  stroke: var(--ifm-color-emphasis-400);
-  stroke-width: 1.4;
-}
-
-.uc-b2c-wayfinder-arch__app-title {
-  font-weight: 700;
-  font-size: 16px !important;
-}
-
-.uc-b2c-wayfinder-arch__sub {
-  font-size: 12px !important;
-  fill: var(--ifm-color-emphasis-700) !important;
-}
-
-.uc-b2c-wayfinder-arch__detail {
-  font-size: 11.5px !important;
-  fill: var(--ifm-color-emphasis-600) !important;
-}
-
-.uc-b2c-wayfinder-arch__divider {
-  stroke: var(--ifm-color-emphasis-200);
-  stroke-width: 1;
-}
-
-.uc-b2c-wayfinder-arch__edges line {
-  stroke: color-mix(in srgb, var(--ifm-color-primary) 55%, var(--ifm-color-emphasis-400));
-  stroke-width: 1.4;
-}
-
-.uc-b2c-wayfinder-arch__edge-label {
-  font-size: 11.5px !important;
-  fill: var(--ifm-color-emphasis-700) !important;
-  font-style: italic;
-}
-
-.uc-b2c-wayfinder-arch__icon > circle {
-  fill: color-mix(in srgb, var(--ifm-color-primary) 16%, var(--ifm-background-color));
-  stroke: color-mix(in srgb, var(--ifm-color-primary) 55%, var(--ifm-color-emphasis-400));
-  stroke-width: 1.4;
-}
-
-.uc-b2c-wayfinder-arch__group-label {
-  font-weight: 700;
-  font-size: 12px !important;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  fill: var(--ifm-color-emphasis-700) !important;
-}
-
-.uc-b2c-wayfinder-arch__cast-name {
-  font-weight: 700;
-  font-size: 13px !important;
-}
-
-.uc-accordion {
-  margin-top: 1rem;
-}
-
-.uc-accordion-item {
-  border: 1px solid var(--ifm-color-emphasis-200);
-  border-radius: 11px;
-  background: color-mix(in srgb, var(--ifm-color-emphasis-100) 20%, transparent);
-  margin: 0 0 0.65rem;
-  overflow: hidden;
-}
-
-.uc-accordion-item summary {
-  cursor: pointer;
-  list-style: none;
-  font-weight: 700;
-  padding: 0.8rem 2.6rem 0.8rem 0.9rem;
-  position: relative;
-}
-
-.uc-accordion-item summary::marker,
-.uc-accordion-item summary::-webkit-details-marker {
-  display: none;
-}
-
-.uc-accordion-item summary::after {
-  content: '+';
-  position: absolute;
-  right: 0.9rem;
-  top: 50%;
-  transform: translateY(-50%);
-  color: var(--ifm-color-primary);
-  font-size: 1.05rem;
-  font-weight: 700;
-}
-
-.uc-accordion-item[open] summary::after {
-  content: '-';
-}
-
-.uc-accordion-content {
-  padding: 0 0.9rem 0.9rem;
-  animation: uc-fade-in 220ms ease;
-}
-
-.uc-accordion-content p {
-  margin: 0 0 0.45rem;
-}
-
-.uc-accordion-content ul {
-  margin: 0.45rem 0 0;
-}
-
-[data-theme='dark'] .uc-fact-card {
-  background: linear-gradient(
-    150deg,
-    color-mix(in srgb, var(--ifm-color-emphasis-300) 16%, transparent),
-    transparent
-  );
-  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.42);
-}
-
-[data-theme='dark'] .uc-stage-list li,
-[data-theme='dark'] .uc-cap-card,
-[data-theme='dark'] .uc-accordion-item {
-  background: color-mix(in srgb, var(--ifm-color-emphasis-300) 14%, transparent);
-}
-
-[data-theme='dark'] .uc-card:hover {
-  box-shadow:
-    0 16px 34px rgba(0, 0, 0, 0.55),
-    0 0 0 1px rgba(255, 255, 255, 0.08) !important;
-}
-
-@keyframes uc-enter-up {
-  from {
-    opacity: 0;
-    transform: translateY(6px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-@keyframes uc-enter-left {
-  from {
-    opacity: 0;
-    transform: translateX(-8px);
-  }
-  to {
-    opacity: 1;
-    transform: translateX(0);
-  }
-}
-
-@keyframes uc-fade-in {
-  from {
-    opacity: 0;
-  }
-  to {
-    opacity: 1;
-  }
-}
-
-@media (max-width: 996px) {
-  .uc-fact-grid,
-  .uc-cap-grid {
-    grid-template-columns: 1fr;
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .uc-root,
-  .uc-line,
-  .uc-card-1,
-  .uc-card-2,
-  .uc-card-3,
-  .uc-tag,
-  .uc-fact-card,
-  .uc-stage-list li,
-  .uc-accordion-content {
-    animation: none !important;
-  }
-
-  .uc-fact-card,
-  .uc-cap-card {
-    transition: none !important;
-  }
-}
 
 /* Styles for Connect Your Application page */
 .sdk-cards {
@@ -3932,58 +2643,36 @@ a.connect-card {
   margin-bottom: 1rem;
 }
 
+/* Scroll long Envoy guide snippets without oversized browser scrollbars. */
+.envoy-scroll-code {
+  max-height: 28rem;
+  overflow: auto;
+}
+
+.envoy-scroll-code,
+.envoy-scroll-code pre {
+  scrollbar-color: var(--ifm-color-emphasis-400) transparent;
+  scrollbar-width: thin;
+}
+
+.envoy-scroll-code::-webkit-scrollbar,
+.envoy-scroll-code pre::-webkit-scrollbar {
+  height: 4px;
+  width: 4px;
+}
+
+.envoy-scroll-code::-webkit-scrollbar-thumb,
+.envoy-scroll-code pre::-webkit-scrollbar-thumb {
+  background: var(--ifm-color-emphasis-400);
+  border-radius: 999px;
+}
+
+.envoy-scroll-code::-webkit-scrollbar-track,
+.envoy-scroll-code pre::-webkit-scrollbar-track {
+  background: transparent;
+}
+
 /* ─── Agent Identity Model Diagram ───────────────────────────────────────── */
-
-.aim {
-  margin: 2rem 0 2.5rem;
-  border: none;
-  padding: 0;
-}
-
-/* Scrollable wrapper so diagram doesn't break narrow viewports */
-.aim__scroll {
-  overflow-x: auto;
-  -webkit-overflow-scrolling: touch;
-}
-
-/* Five-column flex row: agent | left-conn | roles | right-conn | caps */
-.aim__layout {
-  display: flex;
-  align-items: stretch;
-  min-width: 640px;
-}
-
-/* ── Agent column ── */
-.aim__agent-col {
-  display: flex;
-  align-items: center;
-  flex-shrink: 0;
-}
-
-.aim__agent-node {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 0.35rem;
-  padding: 1rem 1.25rem;
-  border-radius: 14px;
-  border: 2px solid var(--ifm-color-primary);
-  background: color-mix(in srgb, var(--ifm-color-primary) 8%, transparent);
-  color: var(--ifm-color-primary);
-}
-
-.aim__agent-icon {
-  width: 28px;
-  height: 28px;
-  stroke: var(--ifm-color-primary);
-}
-
-.aim__agent-name {
-  font-size: 0.85rem;
-  font-weight: 800;
-  letter-spacing: -0.01em;
-  white-space: nowrap;
-}
 
 /* ── Connector SVGs ── */
 .aim__conn {
@@ -4000,86 +2689,10 @@ a.connect-card {
   fill: var(--ifm-color-emphasis-300);
 }
 
-/* ── Role cards column ── */
-.aim__roles-col {
-  flex: 0 0 200px;
-  display: flex;
-  flex-direction: column;
-  gap: 15px;
-  padding: 6px 0;
-}
-
-.aim__role {
-  flex: 0 0 76px;
-  border-radius: 10px;
-  border: 1px solid var(--ifm-color-emphasis-200);
-  padding: 0.5rem 0.75rem;
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  gap: 0.2rem;
-  background: var(--ifm-background-surface);
-}
-
-.aim__role-badge {
-  font-size: 0.63rem;
-  font-weight: 800;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-
-.aim__role--subject .aim__role-badge { color: var(--ifm-color-primary); }
-.aim__role--client .aim__role-badge  { color: #b45309; }
-.aim__role--resource .aim__role-badge { color: #6d28d9; }
-
-[data-theme='dark'] .aim__role--client .aim__role-badge  { color: #fbbf24; }
-[data-theme='dark'] .aim__role--resource .aim__role-badge { color: #a78bfa; }
-
-.aim__role-connects {
-  font-size: 0.83rem;
-  font-weight: 700;
-  color: var(--ifm-font-color-base);
-}
-
-.aim__role-desc {
-  font-size: 0.72rem;
-  color: var(--ifm-color-emphasis-600);
-}
-
-/* ── Capability cards column ── */
-.aim__caps-col {
-  flex: 1;
-  min-width: 150px;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
-.aim__cap {
-  flex: 0 0 60px;
-  display: flex;
-  align-items: center;
-  gap: 0.6rem;
-  border-radius: 10px;
-  border: 1px solid var(--ifm-color-emphasis-200);
-  padding: 0 0.85rem;
-  text-decoration: none;
-  color: var(--ifm-font-color-base);
-  background: var(--ifm-background-surface);
-  transition: border-color 0.15s, background 0.15s, color 0.15s;
-}
-
-.aim__cap:hover {
-  border-color: var(--ifm-color-primary);
-  background: color-mix(in srgb, var(--ifm-color-primary) 6%, transparent);
-  color: var(--ifm-color-primary);
-  text-decoration: none;
-}
-
-.aim__cap-icon {
-  display: flex;
-  align-items: center;
-  flex-shrink: 0;
+.aim__agent-icon {
+  width: 28px;
+  height: 28px;
+  stroke: var(--ifm-color-primary);
 }
 
 .aim__cap-icon svg {
@@ -4093,492 +2706,8 @@ a.connect-card {
   stroke: var(--ifm-color-primary);
 }
 
-.aim__cap-title {
-  font-size: 0.83rem;
-  font-weight: 700;
-  flex: 1;
-}
-
-.aim__cap-arrow {
-  font-size: 0.8rem;
-  opacity: 0.4;
-  transition: opacity 0.15s, transform 0.15s;
-  display: inline-block;
-}
-
-.aim__cap:hover .aim__cap-arrow {
-  opacity: 1;
-  transform: translateX(2px);
-}
-
 
 /* ── Deployment Path ────────────────────────────────────────────────────── */
-
-@keyframes dp-fade-up {
-  from { opacity: 0; transform: translateY(18px); }
-  to   { opacity: 1; transform: translateY(0); }
-}
-
-@keyframes dp-line-draw {
-  from { transform: scaleX(0); }
-  to   { transform: scaleX(1); }
-}
-
-/* Wrapper */
-.dp-wrap {
-  margin: 2rem 0 3.5rem;
-}
-
-/* ── Header ── */
-.dp-header {
-  margin-bottom: 2.5rem;
-  animation: dp-fade-up 700ms cubic-bezier(0.16, 1, 0.3, 1) 0ms both;
-}
-
-.dp-header-kicker {
-  font-size: 0.7rem;
-  font-weight: 800;
-  text-transform: uppercase;
-  letter-spacing: 0.13em;
-  color: var(--ifm-color-primary);
-  margin-bottom: 0.5rem;
-}
-
-.dp-header-title {
-  font-size: 2rem;
-  font-weight: 800;
-  letter-spacing: -0.03em;
-  color: var(--ifm-font-color-base);
-  line-height: 1.15;
-  margin: 0 0 0.55rem;
-}
-
-.dp-header-sub {
-  font-size: 1rem;
-  color: var(--ifm-color-emphasis-600);
-  line-height: 1.65;
-  max-width: 540px;
-  margin: 0;
-}
-
-/* ── Route strip ── */
-.dp-route {
-  margin-bottom: 2rem;
-  margin-left: 0;
-  margin-right: -2rem;
-  animation: dp-fade-up 600ms cubic-bezier(0.16, 1, 0.3, 1) 120ms both;
-}
-
-.dp-route-axis {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 1rem;
-  padding-left: 0;
-  padding-right: 2rem;
-}
-
-.dp-axis-left,
-.dp-axis-right {
-  display: flex;
-  align-items: center;
-  gap: 0.3rem;
-  font-size: 0.68rem;
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  color: var(--ifm-color-emphasis-500);
-}
-
-.dp-axis-center {
-  font-size: 0.62rem;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.1em;
-  color: var(--ifm-color-emphasis-400);
-}
-
-/* The track band */
-.dp-route-stops {
-  position: relative;
-  isolation: isolate;
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 1rem;
-}
-
-/* Gradient line — from center of col-1 circle to center of col-3 circle */
-.dp-route-stops::before {
-  content: '';
-  position: absolute;
-  top: 30px; /* half of circle height (60px) */
-  left: calc((100% - 2rem) / 6 + 30px);  /* col-1 center + circle radius */
-  right: calc((100% - 2rem) / 6 + 30px); /* col-3 center + circle radius (mirrored) */
-  height: 3px;
-  border-radius: 2px;
-  background: linear-gradient(90deg, #0ea5e9 0%, #326CE5 50%, #8b5cf6 100%);
-  transform: scaleX(0);
-  transform-origin: left center;
-  animation: dp-line-draw 900ms cubic-bezier(0.16, 1, 0.3, 1) 250ms both;
-  z-index: -1;
-}
-
-.dp-route-stop {
-  position: relative;
-  z-index: 1;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 0.55rem;
-  padding-block: 0.25rem;
-}
-
-.dp-route-node {
-  width: 60px;
-  height: 60px;
-  border-radius: 50%;
-  background: var(--ifm-background-surface-color);
-  border: 2.5px solid var(--dp-accent);
-  box-shadow: 0 0 0 6px var(--dp-icon-bg);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--dp-accent);
-  transition: transform 0.2s;
-  position: relative;
-  z-index: 1;
-}
-
-.dp-route-node img {
-  height: 30px;
-  max-width: 30px;
-  object-fit: contain;
-  width: 30px;
-}
-
-[data-theme='dark'] .dp-openchoreo-logo {
-  filter: brightness(0) invert(1);
-  opacity: 0.9;
-}
-
-.dp-route-stop-label {
-  font-size: 0.72rem;
-  font-weight: 700;
-  color: var(--dp-accent);
-  letter-spacing: 0.02em;
-}
-
-
-/* ── Column cards (3-up grid) ── */
-.dp-list {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 1rem;
-  align-items: stretch;
-  /* Extend right for extra width; left aligns with article content edge */
-  margin-left: 0;
-  margin-right: -2rem;
-}
-
-.dp-row-card {
-  display: flex;
-  flex-direction: column;
-  border-radius: 14px;
-  border: 1px solid var(--ifm-color-emphasis-200);
-  background: var(--ifm-background-surface-color);
-  padding: 2rem 2rem 1.75rem;
-  text-decoration: none !important;
-  color: inherit;
-  position: relative;
-  overflow: hidden;
-  transition: border-color 220ms ease, box-shadow 220ms ease, transform 220ms ease;
-}
-
-.dp-row-card::before {
-  content: '';
-  position: absolute;
-  inset: 0 0 auto 0;
-  height: 3px;
-  background: var(--dp-accent);
-  border-radius: 14px 14px 0 0;
-  opacity: 0.7;
-}
-
-.dp-row-card:hover {
-  border-color: var(--dp-accent);
-  box-shadow: 0 0 0 1px var(--dp-accent), 0 10px 36px rgba(0, 0, 0, 0.18);
-  transform: translateY(-3px);
-  text-decoration: none !important;
-  color: inherit;
-}
-
-.dp-row-card.dp-featured {
-  border-color: var(--dp-accent);
-  box-shadow: 0 0 0 1px var(--dp-accent), 0 6px 28px color-mix(in srgb, var(--dp-accent) 20%, transparent);
-}
-
-.dp-row-card.dp-featured::before {
-  opacity: 1;
-}
-
-/* Card animation delays */
-.dp-row-1 { animation: dp-fade-up 700ms cubic-bezier(0.16, 1, 0.3, 1) 450ms both; }
-.dp-row-2 { animation: dp-fade-up 700ms cubic-bezier(0.16, 1, 0.3, 1) 570ms both; }
-.dp-row-3 { animation: dp-fade-up 700ms cubic-bezier(0.16, 1, 0.3, 1) 690ms both; }
-
-/* Step label */
-.dp-rc-step {
-  font-size: 0.72rem;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.1em;
-  color: var(--dp-accent);
-  opacity: 0.85;
-  margin-bottom: 0.85rem;
-  min-height: 2.2rem;
-  display: flex;
-  align-items: flex-start;
-}
-
-/* Title */
-.dp-rc-title {
-  font-size: 1.9rem;
-  font-weight: 800;
-  letter-spacing: -0.035em;
-  color: var(--ifm-font-color-base);
-  line-height: 1.05;
-  margin-bottom: 0.5rem;
-}
-
-/* Result tagline */
-.dp-rc-result {
-  font-size: 0.82rem;
-  color: var(--ifm-color-emphasis-600);
-  line-height: 1.5;
-  margin-bottom: 1.4rem;
-  font-style: italic;
-}
-
-/* Setup time badge */
-.dp-setup-badge {
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
-  background: var(--dp-icon-bg);
-  border-radius: 9px;
-  padding: 0.7rem 1rem;
-  margin-bottom: 1.35rem;
-}
-
-.dp-setup-badge-icon {
-  color: var(--dp-accent);
-  flex-shrink: 0;
-  display: flex;
-  align-items: center;
-}
-
-.dp-setup-label {
-  font-size: 0.56rem;
-  font-weight: 800;
-  text-transform: uppercase;
-  letter-spacing: 0.1em;
-  color: var(--ifm-color-emphasis-500);
-  margin-bottom: 0.1rem;
-}
-
-.dp-setup-value {
-  font-size: 0.88rem;
-  font-weight: 700;
-  color: var(--dp-accent);
-  line-height: 1.2;
-}
-
-/* Feature list */
-.dp-feature-list {
-  list-style: none;
-  margin: 0 0 1.35rem;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 0.85rem;
-}
-
-.dp-feature-item {
-  display: flex;
-  align-items: flex-start;
-  gap: 0.5rem;
-  font-size: 0.82rem;
-  line-height: 1.5;
-}
-
-.dp-feat-check { color: var(--ifm-color-emphasis-800); }
-.dp-feat-miss  { color: var(--ifm-color-emphasis-400); }
-
-.dp-feat-icon {
-  display: flex;
-  align-items: center;
-  flex-shrink: 0;
-  margin-top: 3px;
-}
-
-.dp-feat-check .dp-feat-icon { color: #22c55e; }
-.dp-feat-miss  .dp-feat-icon { color: var(--ifm-color-emphasis-400); }
-
-/* CTA button */
-.dp-rc-cta {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  white-space: nowrap;
-  padding: 0.7rem 1.25rem;
-  border-radius: 8px;
-  font-size: 0.82rem;
-  font-weight: 700;
-  letter-spacing: 0.01em;
-  border: 1.5px solid var(--dp-accent);
-  color: var(--dp-accent) !important;
-  background: transparent;
-  transition: background 180ms ease, color 180ms ease, transform 180ms ease;
-}
-
-.dp-row-card.dp-featured .dp-rc-cta {
-  background: var(--dp-accent);
-  color: #fff !important;
-  border-color: transparent;
-  box-shadow: 0 2px 10px color-mix(in srgb, var(--dp-accent) 35%, transparent);
-}
-
-.dp-row-card:hover .dp-rc-cta {
-  background: var(--dp-accent);
-  color: #fff !important;
-  border-color: transparent;
-  transform: translateY(-1px);
-}
-
-/* ── Responsive ── */
-@media (max-width: 960px) {
-  .dp-list {
-    grid-template-columns: 1fr;
-    max-width: 480px;
-    margin-inline: auto;
-  }
-}
-
-@media (max-width: 680px) {
-  .dp-route-stops { display: none; }
-  .dp-route-axis  { display: none; }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .dp-header,
-  .dp-route,
-  .dp-row-1,
-  .dp-row-2,
-  .dp-row-3 {
-    animation: none !important;
-  }
-
-  .dp-route-stops::before {
-    animation: none !important;
-    transform: translateY(-50%) scaleX(1);
-  }
-
-  .dp-row-card {
-    transition: none !important;
-  }
-}
-
-/* ── Card description ── */
-.dp-rc-desc {
-  font-size: 0.8rem;
-  color: var(--ifm-color-emphasis-700);
-  margin: 0 0 0.75rem;
-  line-height: 1.45;
-}
-
-/* ── Card-level choose-if block ── */
-.dp-card-choose {
-  border-top: 1px solid var(--ifm-color-emphasis-200);
-  padding-top: 1.25rem;
-  margin: auto 0 1.5rem;
-  min-height: 8.5rem;
-}
-
-.dp-card-choose-label {
-  font-size: 0.7rem;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: var(--ifm-color-emphasis-500);
-  margin-bottom: 0.4rem;
-}
-
-.dp-card-choose-text {
-  font-size: 0.8rem;
-  color: var(--ifm-color-emphasis-700);
-  line-height: 1.6;
-  margin: 0;
-}
-
-/* ── Section title ── */
-.dp-section-title {
-  font-size: 1rem;
-  font-weight: 600;
-  color: var(--ifm-color-emphasis-900);
-  margin: 0 0 1rem;
-}
-
-/* ── Choose your path ── */
-.dp-choose {
-  margin-top: 2.5rem;
-}
-
-.dp-choose-grid {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 1rem;
-}
-
-.dp-choose-item {
-  padding: 1rem 1.1rem;
-  border-radius: 10px;
-  border: 1px solid var(--ifm-color-emphasis-200);
-  border-top: 3px solid var(--dp-accent);
-}
-
-.dp-choose-title {
-  font-size: 0.8rem;
-  font-weight: 600;
-  color: var(--dp-accent);
-  margin-bottom: 0.45rem;
-  letter-spacing: 0.01em;
-}
-
-.dp-choose-body {
-  font-size: 0.8rem;
-  color: var(--ifm-color-emphasis-700);
-  margin: 0;
-  line-height: 1.5;
-}
-
-/* ── Production recommendation note ── */
-.dp-prod-note {
-  margin-top: 2rem;
-  padding: 0.75rem 1rem;
-  border-radius: 8px;
-  background: var(--ifm-color-emphasis-100);
-  border-left: 3px solid var(--ifm-color-warning-dark);
-  font-size: 0.82rem;
-  color: var(--ifm-color-emphasis-800);
-  line-height: 1.5;
-}
-
-[data-theme='dark'] .dp-prod-note {
-  background: rgba(255, 255, 255, 0.04);
-}
-
-[data-theme='dark'] .dp-row-card {
-  background: transparent;
-}
 
 /* ── K8s Architecture Diagram ───────────────────────────────────────────── */
 
@@ -4932,104 +3061,6 @@ a.connect-card {
   fill: var(--ifm-color-emphasis-800);
 }
 
-/* ── Sequence diagrams (integration-models) ── */
-
-.seq-diagram {
-  margin: 1.5rem 0;
-  padding: 1.25rem 1.5rem;
-  background: var(--ifm-color-emphasis-100);
-  border: 1px solid var(--ifm-color-emphasis-200);
-  border-radius: 12px;
-  overflow-x: auto;
-}
-
-[data-theme='dark'] .seq-diagram {
-  background: rgba(255, 255, 255, 0.03);
-  border-color: var(--ifm-color-emphasis-200);
-}
-
-.seq-diagram svg {
-  min-width: 480px;
-}
-
-.seq-actor {
-  fill: var(--ifm-color-primary);
-  stroke: none;
-}
-
-.seq-actor-label {
-  fill: #fff;
-  font-size: 12.5px;
-  font-weight: 600;
-  letter-spacing: 0.02em;
-}
-
-.seq-lifeline {
-  stroke: var(--ifm-color-emphasis-300);
-  stroke-width: 1;
-  stroke-dasharray: 6 4;
-}
-
-[data-theme='dark'] .seq-lifeline {
-  stroke: var(--ifm-color-emphasis-400);
-}
-
-.seq-message {
-  stroke: var(--ifm-color-emphasis-500);
-  stroke-width: 1.5;
-  fill: none;
-}
-
-[data-theme='dark'] .seq-message {
-  stroke: var(--ifm-color-emphasis-600);
-}
-
-.seq-arrowhead {
-  fill: var(--ifm-color-emphasis-500);
-}
-
-[data-theme='dark'] .seq-arrowhead {
-  fill: var(--ifm-color-emphasis-600);
-}
-
-.seq-message-label {
-  fill: var(--ifm-font-color-base);
-  font-size: 14px;
-  font-weight: 600;
-}
-
-.seq-message-sublabel {
-  fill: var(--ifm-color-emphasis-600);
-  font-size: 13.5px;
-  font-weight: 400;
-}
-
-[data-theme='dark'] .seq-message-sublabel {
-  fill: var(--ifm-color-emphasis-700);
-}
-
-.seq-note-bg {
-  fill: color-mix(in srgb, var(--ifm-color-primary) 8%, var(--ifm-background-color));
-  stroke: color-mix(in srgb, var(--ifm-color-primary) 35%, var(--ifm-color-emphasis-200));
-  stroke-width: 1;
-  stroke-dasharray: 4 2;
-}
-
-[data-theme='dark'] .seq-note-bg {
-  fill: color-mix(in srgb, var(--ifm-color-primary) 10%, var(--ifm-color-emphasis-100));
-  stroke: color-mix(in srgb, var(--ifm-color-primary) 40%, var(--ifm-color-emphasis-300));
-}
-
-.seq-note {
-  fill: color-mix(in srgb, var(--ifm-color-primary) 80%, var(--ifm-font-color-base));
-  font-size: 11px;
-  font-style: italic;
-}
-
-[data-theme='dark'] .seq-note {
-  fill: color-mix(in srgb, var(--ifm-color-primary) 70%, var(--ifm-color-emphasis-900));
-}
-
 /* ── Prerequisites table ── */
 .dp-prereqs {
   margin-top: 2.5rem;
@@ -5121,200 +3152,532 @@ a.connect-card {
   .dp-next-grid   { grid-template-columns: 1fr; }
 }
 
-/* Wayfinder organization — story diagram on AI Agents Try It Out overview */
+/* ── Sequence Diagrams ── */
 
-.uc-agent-wayfinder-org,
-.uc-agent-wayfinder-arch {
-  margin: 1.5rem 0 2.5rem;
+.seq-diagram {
+  margin: 1.5rem 0;
+  overflow-x: auto;
 }
 
-.uc-agent-wayfinder-org__svg,
-.uc-agent-wayfinder-arch__svg {
-  width: 100%;
-  height: auto;
-  max-width: 960px;
-  display: block;
-  margin: 0 auto;
-  color: color-mix(in srgb, var(--ifm-color-primary) 60%, var(--ifm-color-emphasis-500));
+.seq-actor {
+  fill: color-mix(in srgb, var(--ifm-color-primary) 10%, transparent);
+  stroke: var(--ifm-color-primary);
+  stroke-width: 1.5;
 }
 
-.uc-agent-wayfinder-org__svg text,
-.uc-agent-wayfinder-arch__svg text {
+.seq-actor-label {
   fill: var(--ifm-font-color-base);
-  font-size: 12px;
-  font-family: var(--ifm-font-family-base);
+  font-size: 13px;
+  font-weight: 600;
 }
 
-.uc-agent-wayfinder-org__header rect {
-  fill: color-mix(in srgb, var(--ifm-color-primary) 12%, var(--ifm-background-surface-color));
-  stroke: color-mix(in srgb, var(--ifm-color-primary) 55%, var(--ifm-color-emphasis-400));
-  stroke-width: 1.6;
-}
-
-.uc-agent-wayfinder-org__header-title {
-  font-weight: 700;
-  font-size: 20px !important;
-}
-
-.uc-agent-wayfinder-org__header-sub {
-  font-size: 12px !important;
-  fill: var(--ifm-color-emphasis-700) !important;
-}
-
-.uc-agent-wayfinder-org__edges line {
-  stroke: color-mix(in srgb, var(--ifm-color-primary) 45%, var(--ifm-color-emphasis-400));
-  stroke-width: 1.4;
-}
-
-.uc-agent-wayfinder-org__col rect {
-  fill: var(--ifm-background-surface-color);
+.seq-lifeline {
   stroke: var(--ifm-color-emphasis-300);
   stroke-width: 1;
+  stroke-dasharray: 5 4;
 }
 
-.uc-agent-wayfinder-org__col--agent rect {
-  fill: color-mix(in srgb, var(--ifm-color-primary) 6%, var(--ifm-background-surface-color));
-  stroke: color-mix(in srgb, var(--ifm-color-primary) 35%, var(--ifm-color-emphasis-300));
-  stroke-width: 1.2;
-}
-
-.uc-agent-wayfinder-org__col-title {
-  font-weight: 700;
-  font-size: 16px !important;
-}
-
-.uc-agent-wayfinder-org__col-sub {
-  font-size: 12px !important;
-  fill: var(--ifm-color-emphasis-700) !important;
-  font-style: italic;
-}
-
-.uc-agent-wayfinder-org__divider {
-  stroke: var(--ifm-color-emphasis-200);
-  stroke-width: 1;
-}
-
-.uc-agent-wayfinder-org__icon > circle {
-  fill: color-mix(in srgb, var(--ifm-color-primary) 16%, var(--ifm-background-color));
-  stroke: color-mix(in srgb, var(--ifm-color-primary) 55%, var(--ifm-color-emphasis-400));
-  stroke-width: 1.4;
-}
-
-.uc-agent-wayfinder-org__icon--agent > circle {
-  fill: color-mix(in srgb, var(--ifm-color-primary) 28%, var(--ifm-background-color));
-  stroke: color-mix(in srgb, var(--ifm-color-primary) 70%, var(--ifm-color-emphasis-400));
-  stroke-width: 1.6;
-}
-
-.uc-agent-wayfinder-person-glyph circle,
-.uc-agent-wayfinder-person-glyph path {
-  fill: color-mix(in srgb, var(--ifm-color-primary) 90%, #fff);
-  stroke: none;
-}
-
-.uc-agent-wayfinder-agent-glyph rect,
-.uc-agent-wayfinder-agent-glyph circle {
-  fill: color-mix(in srgb, var(--ifm-color-primary) 90%, #fff);
-  stroke: none;
-}
-
-.uc-agent-wayfinder-agent-glyph line {
-  stroke: color-mix(in srgb, var(--ifm-color-primary) 90%, #fff);
-  stroke-width: 1.6;
-  stroke-linecap: round;
+.seq-message {
+  stroke: var(--ifm-color-emphasis-600);
+  stroke-width: 1.5;
   fill: none;
 }
 
-.uc-agent-wayfinder-org__cast-name {
-  font-weight: 700;
-  font-size: 13px !important;
+.seq-arrowhead {
+  fill: var(--ifm-color-emphasis-600);
 }
 
-.uc-agent-wayfinder-org__cast-role {
-  font-size: 11.5px !important;
-  fill: var(--ifm-color-emphasis-700) !important;
+.seq-message-label {
+  fill: var(--ifm-font-color-base);
+  font-size: 12px;
+  font-weight: 500;
 }
 
-.uc-agent-wayfinder-org__cast-detail {
-  font-size: 11px !important;
-  fill: var(--ifm-color-emphasis-600) !important;
-  font-style: italic;
+.seq-message-sublabel {
+  fill: var(--ifm-color-emphasis-600);
+  font-size: 11px;
 }
 
-/* Wayfinder architecture — integration diagram on AI Agents Try It Out overview */
-
-.uc-agent-wayfinder-arch__idp rect {
-  fill: color-mix(in srgb, var(--ifm-color-primary) 12%, var(--ifm-background-surface-color));
-  stroke: color-mix(in srgb, var(--ifm-color-primary) 55%, var(--ifm-color-emphasis-400));
-  stroke-width: 1.6;
+.seq-note-bg {
+  fill: color-mix(in srgb, var(--ifm-color-primary) 8%, transparent);
+  stroke: color-mix(in srgb, var(--ifm-color-primary) 30%, transparent);
+  stroke-width: 1;
 }
 
-.uc-agent-wayfinder-arch__idp-title {
-  font-weight: 700;
-  font-size: 18px !important;
+.seq-note {
+  fill: var(--ifm-font-color-base);
+  font-size: 11px;
 }
 
-.uc-agent-wayfinder-arch__app rect,
-.uc-agent-wayfinder-arch__svc rect {
-  fill: var(--ifm-background-surface-color);
+[data-theme='dark'] .seq-actor {
+  fill: color-mix(in srgb, var(--ifm-color-primary) 18%, transparent);
+}
+
+[data-theme='dark'] .seq-lifeline {
   stroke: var(--ifm-color-emphasis-400);
-  stroke-width: 1.4;
 }
 
-.uc-agent-wayfinder-arch__svc--agent rect {
-  fill: color-mix(in srgb, var(--ifm-color-primary) 6%, var(--ifm-background-surface-color));
-  stroke: color-mix(in srgb, var(--ifm-color-primary) 45%, var(--ifm-color-emphasis-400));
-  stroke-width: 1.4;
+[data-theme='dark'] .seq-message,
+[data-theme='dark'] .seq-arrowhead {
+  stroke: var(--ifm-color-emphasis-500);
+  fill: var(--ifm-color-emphasis-500);
 }
 
-.uc-agent-wayfinder-arch__app-title {
-  font-weight: 700;
-  font-size: 16px !important;
+[data-theme='dark'] .seq-message-sublabel {
+  fill: var(--ifm-color-emphasis-500);
 }
 
-.uc-agent-wayfinder-arch__sub {
-  font-size: 12px !important;
-  fill: var(--ifm-color-emphasis-700) !important;
+
+
+
+
+/* Fix DocSearch sidepanel not appearing in production build.
+   The default transform is overridden by a conflicting style — !important ensures
+   the panel becomes visible when opened. */
+.DocSearch-Sidepanel-Container.floating.is-open,
+.DocSearch-Sidepanel-Container.inline.is-open {
+  opacity: 1;
+  transform: none !important;
 }
 
-.uc-agent-wayfinder-arch__detail {
-  font-size: 11.5px !important;
-  fill: var(--ifm-color-emphasis-600) !important;
+/* On mobile the Ask AI sidepanel opens as a full-screen overlay, but DocSearch's
+   inline mode still sets an inline margin-right on the app root to reserve space
+   for it. On a phone-width viewport that margin (~360px) squeezes the page into a
+   sliver, collapsing the content into a single vertical column that persists after
+   the panel is closed. Cancel the reserved space at this breakpoint so the page
+   keeps its full width behind the overlay. */
+@media screen and (max-width: 768px) {
+  #__docusaurus:has(~ .DocSearch-Sidepanel-Container) {
+    margin-right: 0 !important;
+  }
 }
 
-.uc-agent-wayfinder-arch__divider {
-  stroke: var(--ifm-color-emphasis-200);
-  stroke-width: 1;
+/* ------------------------------ OneTrust Cookie Consent ---------------------- */
+/* OneTrust (CookiePro) injects its banner and preference-center modal outside the
+   React tree with inline styles, so we override it here rather than via sx/styled(). */
+
+/* Note: --oxygen-palette-background-paper is intentionally translucent
+   (used for frosted-glass panels with backdrop-filter elsewhere on the site).
+   OneTrust's own markup has no backdrop-filter, so using it here makes the
+   card see-through — use the opaque background-default instead. */
+#onetrust-consent-sdk #onetrust-banner-sdk,
+#onetrust-consent-sdk #onetrust-pc-sdk,
+#onetrust-consent-sdk #ot-sdk-cookie-policy {
+  background-color: var(--oxygen-palette-background-default) !important;
+  color: var(--oxygen-palette-text-primary) !important;
+  border-color: var(--oxygen-palette-divider) !important;
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.16) !important;
+  opacity: 1 !important;
 }
 
-.uc-agent-wayfinder-arch__edges line,
-.uc-agent-wayfinder-arch__edges polyline {
-  stroke: color-mix(in srgb, var(--ifm-color-primary) 55%, var(--ifm-color-emphasis-400));
-  stroke-width: 1.4;
-  fill: none;
+/* Match the rounded-card language used elsewhere on the site (admonitions,
+   code blocks, cards) instead of OneTrust's sharp default corners. */
+#onetrust-consent-sdk #onetrust-pc-sdk {
+  border-radius: 16px !important;
+  overflow: hidden;
 }
 
-.uc-agent-wayfinder-arch__edge-label {
-  font-size: 11.5px !important;
-  fill: var(--ifm-color-emphasis-700) !important;
-  font-style: italic;
+#onetrust-consent-sdk .ot-pc-header {
+  border-radius: 16px 16px 0 0 !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: space-between !important;
 }
 
-.uc-agent-wayfinder-arch__icon > circle {
-  fill: color-mix(in srgb, var(--ifm-color-primary) 16%, var(--ifm-background-color));
-  stroke: color-mix(in srgb, var(--ifm-color-primary) 55%, var(--ifm-color-emphasis-400));
-  stroke-width: 1.4;
+#onetrust-consent-sdk .ot-pc-footer {
+  border-radius: 0 0 16px 16px !important;
 }
 
-.uc-agent-wayfinder-arch__group-label {
-  font-weight: 700;
-  font-size: 12px !important;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  fill: var(--ifm-color-emphasis-700) !important;
+/* Headings inject real h2/h3 tags, but OneTrust's own ID-scoped font-family
+   rule outranks the site's global h1-h5 selector — restate it here. Category
+   row labels (.ot-cat-header, an h4) are body copy, not a heading, and keep
+   the base font — see the dedicated rule further down. */
+#onetrust-consent-sdk #ot-pc-title,
+#onetrust-consent-sdk #ot-category-title {
+  font-family: 'Plus Jakarta Sans', ui-sans-serif, system-ui, sans-serif !important;
+  font-weight: 700 !important;
 }
 
-.uc-agent-wayfinder-arch__cast-name {
-  font-weight: 700;
-  font-size: 13px !important;
+#onetrust-consent-sdk .ot-pc-footer,
+#onetrust-consent-sdk .ot-pc-footer-logo {
+  background-color: var(--oxygen-palette-background-default) !important;
+}
+
+/* "Powered by OneTrust" is a fixed-color CDN image, not text — mute it in
+   line with the design's low-emphasis footer branding, and invert it in dark
+   mode so it stays legible instead of showing dark-on-dark. */
+#onetrust-consent-sdk .ot-pc-footer-logo img {
+  opacity: 0.5;
+}
+
+[data-theme='dark'] #onetrust-consent-sdk .ot-pc-footer-logo img {
+  filter: invert(1);
+}
+
+/* ---- Bottom cookie banner: a frosted glass bar with a glowing accent line,
+   rather than the flat opaque strip used for the modal. ---- */
+#onetrust-consent-sdk #onetrust-banner-sdk {
+  padding: 1.5rem 2rem !important;
+  background-color: color-mix(in srgb, var(--oxygen-palette-background-default) 94%, transparent) !important;
+  -webkit-backdrop-filter: blur(24px);
+  backdrop-filter: blur(24px);
+  border-top: none !important;
+  box-shadow: 0 -8px 40px rgba(0, 0, 0, 0.12) !important;
+}
+
+[data-theme='dark'] #onetrust-consent-sdk #onetrust-banner-sdk {
+  box-shadow: 0 -8px 40px rgba(0, 0, 0, 0.4) !important;
+}
+
+#onetrust-consent-sdk #onetrust-banner-sdk::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    color-mix(in srgb, var(--oxygen-palette-primary-main) 50%, transparent) 30%,
+    color-mix(in srgb, var(--oxygen-palette-primary-main) 50%, transparent) 70%,
+    transparent
+  );
+}
+
+#onetrust-consent-sdk #onetrust-policy-text {
+  line-height: 1.6;
+}
+
+#onetrust-consent-sdk #onetrust-button-group-parent {
+  display: flex;
+  align-items: center;
+}
+
+#onetrust-consent-sdk #onetrust-button-group {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+
+/* OneTrust's banner uses a 12-column float grid (.ot-sdk-eight / .ot-sdk-three)
+   that doesn't reflow at narrow widths, leaving text and buttons squeezed
+   side-by-side. Below tablet, drop the button group to its own row; below
+   mobile, stack each button full-width. */
+@media (max-width: 1024px) {
+  #onetrust-consent-sdk #onetrust-banner-sdk {
+    padding: 1.25rem 1.25rem !important;
+  }
+
+  #onetrust-consent-sdk #onetrust-banner-sdk .ot-sdk-row {
+    display: flex !important;
+    flex-direction: column !important;
+    align-items: stretch !important;
+  }
+
+  #onetrust-consent-sdk #onetrust-group-container,
+  #onetrust-consent-sdk #onetrust-button-group-parent {
+    width: 100% !important;
+    max-width: 100% !important;
+    float: none !important;
+  }
+
+  #onetrust-consent-sdk #onetrust-policy {
+    margin-bottom: 1rem;
+  }
+
+  #onetrust-consent-sdk #onetrust-button-group-parent {
+    justify-content: center !important;
+  }
+
+  #onetrust-consent-sdk #onetrust-button-group {
+    width: 100%;
+    justify-content: center;
+  }
+}
+
+@media (max-width: 600px) {
+  #onetrust-consent-sdk #onetrust-button-group {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  #onetrust-consent-sdk .cookie-setting-link,
+  #onetrust-consent-sdk #onetrust-reject-all-handler,
+  #onetrust-consent-sdk #onetrust-accept-btn-handler {
+    width: 100%;
+    text-align: center;
+  }
+}
+
+/* Pill-shaped, matching the site's actual CTA buttons (e.g. hero "Get Started").
+   Scoped to the named action buttons only — the accordion header buttons are
+   invisible full-row hit targets and must not get padding/radius applied. */
+#onetrust-consent-sdk #onetrust-banner-sdk button,
+#onetrust-consent-sdk #onetrust-accept-btn-handler,
+#onetrust-consent-sdk #accept-recommended-btn-handler,
+#onetrust-consent-sdk #onetrust-reject-all-handler,
+#onetrust-consent-sdk .ot-pc-refuse-all-handler,
+#onetrust-consent-sdk .save-preference-btn-handler,
+#onetrust-consent-sdk .cookie-setting-link {
+  border-radius: 999px !important;
+  padding: 0.6rem 1.5rem !important;
+  font-weight: 600 !important;
+  font-size: 0.85rem !important;
+  text-transform: none !important;
+  text-decoration: none !important;
+  transition: background-color 0.15s ease, border-color 0.15s ease, filter 0.15s ease, opacity 0.15s ease, color 0.15s ease;
+}
+
+/* In the banner, "Cookie settings" and "Necessary cookies only" are both
+   plain text links (matching the hero's "Learn More →" treatment) — only
+   "Accept all cookies" is a filled pill. The modal's footer buttons keep
+   their bordered-pill/solid treatment (handled separately below). */
+#onetrust-consent-sdk .cookie-setting-link,
+#onetrust-consent-sdk #onetrust-reject-all-handler {
+  border-radius: 999px !important;
+  background-color: transparent !important;
+  border: none !important;
+  font-weight: 500 !important;
+  color: var(--oxygen-palette-text-secondary) !important;
+}
+
+/* Hover just darkens the text, matching the hero "Learn More" link — no
+   background. The filled pill only appears on keyboard focus (selected). */
+#onetrust-consent-sdk .cookie-setting-link:hover,
+#onetrust-consent-sdk #onetrust-reject-all-handler:hover {
+  background-color: transparent !important;
+  color: var(--oxygen-palette-text-primary) !important;
+}
+
+#onetrust-consent-sdk .cookie-setting-link:focus-visible,
+#onetrust-consent-sdk #onetrust-reject-all-handler:focus-visible {
+  outline: none !important;
+  background-color: color-mix(in srgb, var(--oxygen-palette-text-primary) 8%, transparent) !important;
+  color: var(--oxygen-palette-text-primary) !important;
+}
+
+/* The banner's primary CTA gets the design's gradient + glow treatment; the
+   modal's flat "Allow All" / "Confirm My Choices" buttons stay solid. */
+#onetrust-consent-sdk #onetrust-accept-btn-handler {
+  background: linear-gradient(135deg, var(--oxygen-palette-primary-main), var(--oxygen-palette-primary-dark)) !important;
+  border-color: transparent !important;
+  box-shadow: 0 2px 12px color-mix(in srgb, var(--oxygen-palette-primary-main) 35%, transparent) !important;
+}
+
+#onetrust-consent-sdk #onetrust-accept-btn-handler:hover,
+#onetrust-consent-sdk #accept-recommended-btn-handler:hover,
+#onetrust-consent-sdk .save-preference-btn-handler:hover {
+  filter: brightness(0.92);
+}
+
+/* Replace the default browser focus rectangle with a themed ring. */
+#onetrust-consent-sdk #onetrust-banner-sdk button:focus-visible,
+#onetrust-consent-sdk .cookie-setting-link:focus-visible {
+  outline: none !important;
+  box-shadow: 0 0 0 2px var(--oxygen-palette-primary-main) !important;
+}
+
+/* The CDN-hosted logo image isn't legible on a dark background. Swap it for
+   the site's own logo assets, which already have a dark-theme variant. */
+#onetrust-consent-sdk .ot-pc-logo img {
+  display: none !important;
+}
+
+#onetrust-consent-sdk .ot-pc-logo {
+  background-image: url('/assets/images/logo.svg');
+  background-repeat: no-repeat;
+  background-position: left center;
+  background-size: contain;
+  min-height: 32px;
+}
+
+[data-theme='dark'] #onetrust-consent-sdk .ot-pc-logo {
+  background-image: url('/assets/images/logo-inverted.svg');
+}
+
+#onetrust-consent-sdk #ot-pc-desc,
+#onetrust-consent-sdk .ot-cat-item h3,
+#onetrust-consent-sdk #ot-pc-title,
+#onetrust-consent-sdk #ot-lst-title h3,
+#onetrust-consent-sdk #ot-category-title {
+  color: var(--oxygen-palette-text-primary) !important;
+}
+
+/* Category row labels use the base body font, weighted by whether the
+   category is user-toggleable ("Strictly Necessary" is emphasized full-
+   color/weight; the others sit a tier down until interacted with). */
+#onetrust-consent-sdk .ot-cat-header {
+  color: var(--oxygen-palette-text-secondary) !important;
+  font-weight: 500 !important;
+}
+
+#onetrust-consent-sdk .ot-always-active-group .ot-cat-header {
+  color: var(--oxygen-palette-text-primary) !important;
+  font-weight: 600 !important;
+}
+
+#onetrust-consent-sdk .ot-always-active {
+  color: var(--oxygen-palette-primary-main) !important;
+}
+
+/* Category descriptions sit a tier below the main policy copy. */
+#onetrust-consent-sdk .ot-acc-grpdesc {
+  color: var(--oxygen-palette-text-disabled) !important;
+}
+
+/* Match the site's secondary-body-copy style (MuiTypography secondary
+   variant: text-secondary color, 0.875rem, 1.7 line-height). */
+#onetrust-consent-sdk #onetrust-policy-text,
+#onetrust-consent-sdk #onetrust-policy-text * {
+  color: var(--oxygen-palette-text-secondary) !important;
+  font: var(--oxygen-font-body1) !important;
+}
+
+#onetrust-consent-sdk .ot-cookie-policy-link,
+#onetrust-consent-sdk .privacy-notice-link {
+  color: var(--oxygen-palette-primary-main) !important;
+}
+
+#onetrust-consent-sdk #onetrust-accept-btn-handler,
+#onetrust-consent-sdk #accept-recommended-btn-handler {
+  background-color: var(--oxygen-palette-primary-main) !important;
+  border-color: var(--oxygen-palette-primary-main) !important;
+  color: var(--oxygen-palette-primary-contrastText, #fff) !important;
+}
+
+/* Note: #onetrust-pc-btn-handler ("Cookie settings") and the banner's
+   #onetrust-reject-all-handler are deliberately excluded here — both are
+   styled as plain text links further up. This rule is for the MODAL's
+   footer "Necessary Cookies Only" button only, which keeps a bordered pill. */
+#onetrust-consent-sdk .ot-pc-refuse-all-handler {
+  background-color: transparent !important;
+  border: 1px solid var(--oxygen-palette-divider) !important;
+  color: var(--oxygen-palette-text-primary) !important;
+}
+
+/* #ot-pc-content carries tabindex="-1" purely for programmatic scroll focus
+   management, not as a real interactive target — suppress the resulting
+   visible focus ring. */
+#onetrust-consent-sdk #ot-pc-content:focus,
+#onetrust-consent-sdk #ot-pc-content:focus-visible {
+  outline: none !important;
+}
+
+#onetrust-consent-sdk .save-preference-btn-handler {
+  background-color: var(--oxygen-palette-primary-main) !important;
+  border-color: var(--oxygen-palette-primary-main) !important;
+  color: var(--oxygen-palette-primary-contrastText, #fff) !important;
+}
+
+#onetrust-consent-sdk .ot-acc-hdr,
+#onetrust-consent-sdk #ot-pc-content,
+#onetrust-consent-sdk .ot-pc-footer,
+#onetrust-consent-sdk .ot-pc-header {
+  border-color: var(--oxygen-palette-divider) !important;
+}
+
+/* Each cookie category is its own rounded, bordered card (header + expanded
+   description together), per the design — rather than flat rows separated
+   only by a divider line. */
+#onetrust-consent-sdk .ot-accordion-layout {
+  border: 1px solid var(--oxygen-palette-divider) !important;
+  border-radius: 10px !important;
+  overflow: hidden;
+  margin-bottom: 0.75rem !important;
+  background-color: color-mix(in srgb, var(--oxygen-palette-divider) 6%, transparent) !important;
+}
+
+#onetrust-consent-sdk .ot-accordion-layout:last-child {
+  margin-bottom: 0 !important;
+}
+
+/* The accordion detail panel (cookie category description) keeps its own
+   opaque white background by default, which OneTrust never themes. Make it
+   transparent so it shares the parent .ot-accordion-layout card's tinted
+   background instead of showing a separate block underneath. */
+#onetrust-consent-sdk .ot-acc-grpcntr,
+#onetrust-consent-sdk .ot-acc-txt {
+  background-color: transparent !important;
+}
+
+
+/* The visible pill fill is .ot-switch-nob (it covers the whole track); its
+   :before pseudo is the small white knob. .ot-switch itself sits underneath
+   and isn't visible, so it must be themed here instead. OneTrust's own
+   checked-state rule on .ot-switch-nob also carries !important at equal
+   specificity and loads after ours, so the redundant class/attribute
+   selectors below are there purely to outrank it. */
+#onetrust-consent-sdk .ot-tgl .ot-switch .ot-switch-nob {
+  background-color: var(--oxygen-palette-divider) !important;
+}
+
+#onetrust-consent-sdk .ot-tgl input.category-switch-handler[type='checkbox']:checked ~ .ot-switch .ot-switch-nob {
+  background-color: var(--oxygen-palette-primary-main) !important;
+}
+
+/* The checkbox driving the switch is visually hidden but still sized to match
+   it, so the browser's default focus outline renders as a rectangle around
+   the switch. Suppress it there and show a themed ring on the switch instead. */
+#onetrust-consent-sdk .ot-tgl input {
+  outline: none !important;
+}
+
+#onetrust-consent-sdk .ot-tgl input:focus-visible ~ .ot-switch {
+  box-shadow: 0 0 0 2px var(--oxygen-palette-primary-main) !important;
+}
+
+#onetrust-consent-sdk #ot-search-cntr input,
+#onetrust-consent-sdk #vendor-search-handler {
+  background-color: var(--oxygen-palette-background-default) !important;
+  color: var(--oxygen-palette-text-primary) !important;
+  border-color: var(--oxygen-palette-divider) !important;
+}
+
+/* Replace the CDN close icon (a fixed-color image needing a dark-mode invert
+   hack) with a self-contained masked icon button matching the design. */
+#onetrust-consent-sdk #close-pc-btn-handler {
+  background-image: none !important;
+  width: 28px !important;
+  height: 28px !important;
+  margin-top: 0.5rem;
+  margin-right: 0.75rem;
+  border-radius: 8px !important;
+  border: none !important;
+  background-color: color-mix(in srgb, var(--oxygen-palette-divider) 20%, transparent) !important;
+  position: relative;
+  outline: none !important;
+  transition: background-color 0.15s ease;
+}
+
+#onetrust-consent-sdk #close-pc-btn-handler:focus-visible {
+  outline: none !important;
+  box-shadow: 0 0 0 2px var(--oxygen-palette-primary-main) !important;
+}
+
+#onetrust-consent-sdk #close-pc-btn-handler::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  width: 14px;
+  height: 14px;
+  background-color: var(--oxygen-palette-text-secondary);
+  mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round'%3E%3Cpath d='M18 6L6 18M6 6l12 12'/%3E%3C/svg%3E");
+  mask-repeat: no-repeat;
+  mask-position: center;
+  mask-size: contain;
+  -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round'%3E%3Cpath d='M18 6L6 18M6 6l12 12'/%3E%3C/svg%3E");
+  -webkit-mask-repeat: no-repeat;
+  -webkit-mask-position: center;
+  -webkit-mask-size: contain;
+}
+
+#onetrust-consent-sdk #close-pc-btn-handler:hover {
+  background-color: color-mix(in srgb, var(--oxygen-palette-divider) 40%, transparent) !important;
+}
+
+#onetrust-consent-sdk #close-pc-btn-handler:hover::before {
+  background-color: var(--oxygen-palette-text-primary);
 }

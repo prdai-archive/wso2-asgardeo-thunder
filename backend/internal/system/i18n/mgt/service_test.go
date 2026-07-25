@@ -23,12 +23,13 @@ import (
 	"errors"
 	"testing"
 
+	tidcommon "github.com/thunder-id/thunderid/pkg/thunderidengine/common"
+
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/suite"
 
 	"github.com/thunder-id/thunderid/internal/system/config"
 	declarativeresource "github.com/thunder-id/thunderid/internal/system/declarative_resource"
-	"github.com/thunder-id/thunderid/internal/system/error/serviceerror"
 )
 
 const (
@@ -67,7 +68,7 @@ func (suite *I18nMgtServiceTestSuite) TestListLanguages_Success() {
 	expectedLangs := []string{"en-US", "fr-FR"}
 	suite.mockStore.On("GetDistinctLanguages").Return(expectedLangs, nil)
 
-	result, err := suite.service.ListLanguages()
+	result, err := suite.service.ListLanguages(context.Background())
 
 	suite.Nil(err)
 	suite.NotNil(result)
@@ -78,18 +79,18 @@ func (suite *I18nMgtServiceTestSuite) TestListLanguages_Success() {
 func (suite *I18nMgtServiceTestSuite) TestListLanguages_StoreError() {
 	suite.mockStore.On("GetDistinctLanguages").Return(nil, errors.New("db error"))
 
-	result, err := suite.service.ListLanguages()
+	result, err := suite.service.ListLanguages(context.Background())
 
 	suite.Nil(result)
 	suite.NotNil(err)
-	suite.Equal(serviceerror.InternalServerError.Code, err.Code)
+	suite.Equal(tidcommon.InternalServerError.Code, err.Code)
 }
 
 func (suite *I18nMgtServiceTestSuite) TestListLanguages_AddsSystemLanguage() {
 	// If store returns empty or doesn't have system language, it should be added
 	suite.mockStore.On("GetDistinctLanguages").Return([]string{"fr-FR"}, nil)
 
-	result, err := suite.service.ListLanguages()
+	result, err := suite.service.ListLanguages(context.Background())
 
 	suite.Nil(err)
 	suite.Contains(result, SystemLanguage)
@@ -108,7 +109,7 @@ func (suite *I18nMgtServiceTestSuite) TestResolveTranslationsForKey_Success_From
 
 	suite.mockStore.On("GetTranslationsByKey", "welcome", "common").Return(translationsMap, nil)
 
-	result, err := suite.service.ResolveTranslationsForKey("en-US", "common", "welcome")
+	result, err := suite.service.ResolveTranslationsForKey(context.Background(), "en-US", "common", "welcome")
 
 	suite.Nil(err)
 	suite.NotNil(result)
@@ -131,7 +132,7 @@ func (suite *I18nMgtServiceTestSuite) TestResolveTranslationsForKey_ValidationEr
 
 	for _, tc := range testCases {
 		suite.Run(tc.name, func() {
-			result, err := suite.service.ResolveTranslationsForKey(tc.lang, tc.namespace, tc.key)
+			result, err := suite.service.ResolveTranslationsForKey(context.Background(), tc.lang, tc.namespace, tc.key)
 			suite.Nil(result)
 			suite.NotNil(err)
 			suite.Equal(tc.errCode, err.Code)
@@ -142,7 +143,7 @@ func (suite *I18nMgtServiceTestSuite) TestResolveTranslationsForKey_ValidationEr
 func (suite *I18nMgtServiceTestSuite) TestResolveTranslationsForKey_NotFound() {
 	suite.mockStore.On("GetTranslationsByKey", "unknown", "common").Return((map[string]Translation)(nil), nil)
 
-	result, err := suite.service.ResolveTranslationsForKey("en-US", "common", "unknown")
+	result, err := suite.service.ResolveTranslationsForKey(context.Background(), "en-US", "common", "unknown")
 
 	suite.Nil(result)
 	suite.NotNil(err)
@@ -152,11 +153,11 @@ func (suite *I18nMgtServiceTestSuite) TestResolveTranslationsForKey_NotFound() {
 func (suite *I18nMgtServiceTestSuite) TestResolveTranslationsForKey_StoreError() {
 	suite.mockStore.On("GetTranslationsByKey", "welcome", "common").Return(nil, errors.New("db error"))
 
-	result, err := suite.service.ResolveTranslationsForKey("en-US", "common", "welcome")
+	result, err := suite.service.ResolveTranslationsForKey(context.Background(), "en-US", "common", "welcome")
 
 	suite.Nil(result)
 	suite.NotNil(err)
-	suite.Equal(serviceerror.InternalServerError.Code, err.Code)
+	suite.Equal(tidcommon.InternalServerError.Code, err.Code)
 }
 
 func (suite *I18nMgtServiceTestSuite) TestResolveTranslationsForKey_UsesSystemDefault_WhenKeyMissingInDB() {
@@ -166,7 +167,7 @@ func (suite *I18nMgtServiceTestSuite) TestResolveTranslationsForKey_UsesSystemDe
 	suite.mockStore.On("GetTranslationsByKey", key, SystemNamespace).Return(make(map[string]Translation), nil)
 
 	// Request en-US, expecting fallback to system default (en)
-	result, err := suite.service.ResolveTranslationsForKey("en-US", SystemNamespace, key)
+	result, err := suite.service.ResolveTranslationsForKey(context.Background(), "en-US", SystemNamespace, key)
 
 	suite.Nil(err)
 	suite.NotNil(result)
@@ -194,7 +195,7 @@ func (suite *I18nMgtServiceTestSuite) TestResolveTranslationsForKey_SystemDefaul
 	suite.mockStore.On("GetTranslationsByKey", key, SystemNamespace).Return(dbTranslations, nil)
 
 	// Request en-US, expecting fallback to system default (en)
-	result, err := suite.service.ResolveTranslationsForKey("en-US", SystemNamespace, key)
+	result, err := suite.service.ResolveTranslationsForKey(context.Background(), "en-US", SystemNamespace, key)
 
 	suite.Nil(err)
 	suite.NotNil(result)
@@ -220,7 +221,7 @@ func (suite *I18nMgtServiceTestSuite) TestResolveTranslationsForKey_UsesDBValue_
 	suite.mockStore.On("GetTranslationsByKey", key, SystemNamespace).Return(dbTranslations, nil)
 
 	// Request en-US, expecting fallback to system default (en)
-	result, err := suite.service.ResolveTranslationsForKey("en-US", SystemNamespace, key)
+	result, err := suite.service.ResolveTranslationsForKey(context.Background(), "en-US", SystemNamespace, key)
 
 	suite.Nil(err)
 	suite.NotNil(result)
@@ -234,7 +235,8 @@ func (suite *I18nMgtServiceTestSuite) TestResolveTranslationsForKey_UsesDBValue_
 func (suite *I18nMgtServiceTestSuite) TestSetTranslationOverrideForKey_Success() {
 	suite.mockStore.On("UpsertTranslation", mock.AnythingOfType("mgt.Translation")).Return(nil)
 
-	result, err := suite.service.SetTranslationOverrideForKey("en-US", "common", "welcome", "Hello")
+	result, err := suite.service.SetTranslationOverrideForKey(
+		context.Background(), "en-US", "common", "welcome", "Hello")
 
 	suite.Nil(err)
 	suite.NotNil(result)
@@ -243,30 +245,35 @@ func (suite *I18nMgtServiceTestSuite) TestSetTranslationOverrideForKey_Success()
 
 func (suite *I18nMgtServiceTestSuite) TestSetTranslationOverrideForKey_ValidationErrors() {
 	// Simple check for one validation case as others share logic
-	result, err := suite.service.SetTranslationOverrideForKey("", "ns", "key", "val")
+	result, err := suite.service.SetTranslationOverrideForKey(
+		context.Background(), "", "ns", "key", "val")
 	suite.Nil(result)
 	suite.NotNil(err)
 	suite.Equal(ErrorMissingLanguage.Code, err.Code)
 
 	// Invalid Lang
-	result, err = suite.service.SetTranslationOverrideForKey("invalid", "ns", "key", "val")
+	result, err = suite.service.SetTranslationOverrideForKey(
+		context.Background(), "invalid", "ns", "key", "val")
 	suite.Nil(result)
 	suite.NotNil(err)
 	suite.Equal(ErrorInvalidLanguage.Code, err.Code)
 
 	// Invalid Namespace
-	result, err = suite.service.SetTranslationOverrideForKey("en-US", "invalid!", "key", "val")
+	result, err = suite.service.SetTranslationOverrideForKey(
+		context.Background(), "en-US", "invalid!", "key", "val")
 	suite.Nil(result)
 	suite.NotNil(err)
 	suite.Equal(ErrorInvalidNamespace.Code, err.Code)
 
 	// Invalid Key
-	result, err = suite.service.SetTranslationOverrideForKey("en-US", "common", "invalid key!", "val")
+	result, err = suite.service.SetTranslationOverrideForKey(
+		context.Background(), "en-US", "common", "invalid key!", "val")
 	suite.Nil(result)
 	suite.NotNil(err)
 	suite.Equal(ErrorInvalidKey.Code, err.Code)
 
-	result, err = suite.service.SetTranslationOverrideForKey("en-US", "ns", "key", "")
+	result, err = suite.service.SetTranslationOverrideForKey(
+		context.Background(), "en-US", "ns", "key", "")
 	suite.Nil(result)
 	suite.NotNil(err)
 	suite.Equal(ErrorMissingValue.Code, err.Code)
@@ -275,11 +282,12 @@ func (suite *I18nMgtServiceTestSuite) TestSetTranslationOverrideForKey_Validatio
 func (suite *I18nMgtServiceTestSuite) TestSetTranslationOverrideForKey_StoreError() {
 	suite.mockStore.On("UpsertTranslation", mock.AnythingOfType("mgt.Translation")).Return(errors.New("db error"))
 
-	result, err := suite.service.SetTranslationOverrideForKey("en-US", "common", "welcome", "Hello")
+	result, err := suite.service.SetTranslationOverrideForKey(
+		context.Background(), "en-US", "common", "welcome", "Hello")
 
 	suite.Nil(result)
 	suite.NotNil(err)
-	suite.Equal(serviceerror.InternalServerError.Code, err.Code)
+	suite.Equal(tidcommon.InternalServerError.Code, err.Code)
 }
 
 func (suite *I18nMgtServiceTestSuite) TestSetTranslationOverrideForKey_Declarative() {
@@ -289,7 +297,8 @@ func (suite *I18nMgtServiceTestSuite) TestSetTranslationOverrideForKey_Declarati
 		config.GetServerRuntime().Config.DeclarativeResources.Enabled = false
 	}()
 
-	result, err := suite.service.SetTranslationOverrideForKey("en-US", "common", "welcome", "Hello")
+	result, err := suite.service.SetTranslationOverrideForKey(
+		context.Background(), "en-US", "common", "welcome", "Hello")
 
 	suite.Nil(result)
 	suite.NotNil(err)
@@ -300,25 +309,25 @@ func (suite *I18nMgtServiceTestSuite) TestSetTranslationOverrideForKey_Declarati
 func (suite *I18nMgtServiceTestSuite) TestClearTranslationOverrideForKey_Success() {
 	suite.mockStore.On("DeleteTranslation", "en-US", "welcome", "common").Return(nil)
 
-	err := suite.service.ClearTranslationOverrideForKey("en-US", "common", "welcome")
+	err := suite.service.ClearTranslationOverrideForKey(context.Background(), "en-US", "common", "welcome")
 
 	suite.Nil(err)
 }
 
 func (suite *I18nMgtServiceTestSuite) TestClearTranslationOverrideForKey_ValidationErrors() {
-	err := suite.service.ClearTranslationOverrideForKey("", "ns", "key")
+	err := suite.service.ClearTranslationOverrideForKey(context.Background(), "", "ns", "key")
 	suite.NotNil(err)
 	suite.Equal(ErrorMissingLanguage.Code, err.Code)
 
-	err = suite.service.ClearTranslationOverrideForKey("invalid", "ns", "key")
+	err = suite.service.ClearTranslationOverrideForKey(context.Background(), "invalid", "ns", "key")
 	suite.NotNil(err)
 	suite.Equal(ErrorInvalidLanguage.Code, err.Code)
 
-	err = suite.service.ClearTranslationOverrideForKey("en-US", "invalid!", "key")
+	err = suite.service.ClearTranslationOverrideForKey(context.Background(), "en-US", "invalid!", "key")
 	suite.NotNil(err)
 	suite.Equal(ErrorInvalidNamespace.Code, err.Code)
 
-	err = suite.service.ClearTranslationOverrideForKey("en-US", "ns", "invalid key!")
+	err = suite.service.ClearTranslationOverrideForKey(context.Background(), "en-US", "ns", "invalid key!")
 	suite.NotNil(err)
 	suite.Equal(ErrorInvalidKey.Code, err.Code)
 }
@@ -326,10 +335,10 @@ func (suite *I18nMgtServiceTestSuite) TestClearTranslationOverrideForKey_Validat
 func (suite *I18nMgtServiceTestSuite) TestClearTranslationOverrideForKey_StoreError() {
 	suite.mockStore.On("DeleteTranslation", "en-US", "welcome", "common").Return(errors.New("db error"))
 
-	err := suite.service.ClearTranslationOverrideForKey("en-US", "common", "welcome")
+	err := suite.service.ClearTranslationOverrideForKey(context.Background(), "en-US", "common", "welcome")
 
 	suite.NotNil(err)
-	suite.Equal(serviceerror.InternalServerError.Code, err.Code)
+	suite.Equal(tidcommon.InternalServerError.Code, err.Code)
 }
 
 func (suite *I18nMgtServiceTestSuite) TestClearTranslationOverrideForKey_Declarative() {
@@ -339,7 +348,7 @@ func (suite *I18nMgtServiceTestSuite) TestClearTranslationOverrideForKey_Declara
 		config.GetServerRuntime().Config.DeclarativeResources.Enabled = false
 	}()
 
-	err := suite.service.ClearTranslationOverrideForKey("en-US", "common", "welcome")
+	err := suite.service.ClearTranslationOverrideForKey(context.Background(), "en-US", "common", "welcome")
 
 	suite.NotNil(err)
 	suite.Equal(declarativeresource.ErrorDeclarativeResourceDeleteOperation.Code, err.Code)
@@ -363,7 +372,7 @@ func (suite *I18nMgtServiceTestSuite) TestResolveTranslations_CustomNamespace_Su
 
 	suite.mockStore.On("GetTranslationsByNamespace", "console").Return(mockDataCorrect, nil)
 
-	result, err := suite.service.ResolveTranslations("en-US", "console")
+	result, err := suite.service.ResolveTranslations(context.Background(), "en-US", "console")
 
 	suite.Nil(err)
 	suite.NotNil(result)
@@ -372,7 +381,7 @@ func (suite *I18nMgtServiceTestSuite) TestResolveTranslations_CustomNamespace_Su
 }
 
 func (suite *I18nMgtServiceTestSuite) TestResolveTranslations_InvalidNamespace() {
-	result, err := suite.service.ResolveTranslations("en-US", "invalid!")
+	result, err := suite.service.ResolveTranslations(context.Background(), "en-US", "invalid!")
 
 	suite.Nil(result)
 	suite.NotNil(err)
@@ -382,11 +391,11 @@ func (suite *I18nMgtServiceTestSuite) TestResolveTranslations_InvalidNamespace()
 func (suite *I18nMgtServiceTestSuite) TestResolveTranslations_StoreError() {
 	suite.mockStore.On("GetTranslationsByNamespace", "console").Return(nil, errors.New("db error"))
 
-	result, err := suite.service.ResolveTranslations("en-US", "console")
+	result, err := suite.service.ResolveTranslations(context.Background(), "en-US", "console")
 
 	suite.Nil(result)
 	suite.NotNil(err)
-	suite.Equal(serviceerror.InternalServerError.Code, err.Code)
+	suite.Equal(tidcommon.InternalServerError.Code, err.Code)
 }
 
 func (suite *I18nMgtServiceTestSuite) TestResolveTranslations_UsesSystemDefaults_WhenKeyMissingInDB() {
@@ -397,7 +406,7 @@ func (suite *I18nMgtServiceTestSuite) TestResolveTranslations_UsesSystemDefaults
 	key := testErrKey
 	expectedDefaultValue := testErrVal
 
-	result, err := suite.service.ResolveTranslations("en-US", "system")
+	result, err := suite.service.ResolveTranslations(context.Background(), "en-US", "system")
 
 	suite.Nil(err)
 	suite.NotNil(result)
@@ -423,7 +432,7 @@ func (suite *I18nMgtServiceTestSuite) TestResolveTranslations_UsesSystemDefaults
 
 	suite.mockStore.On("GetTranslationsByNamespace", "system").Return(dbTranslations, nil)
 
-	result, err := suite.service.ResolveTranslations("en-US", "system")
+	result, err := suite.service.ResolveTranslations(context.Background(), "en-US", "system")
 
 	suite.Nil(err)
 	suite.NotNil(result)
@@ -448,7 +457,7 @@ func (suite *I18nMgtServiceTestSuite) TestResolveTranslations_UsesDBValue_WhenDB
 
 	suite.mockStore.On("GetTranslationsByNamespace", "system").Return(dbTranslations, nil)
 
-	result, err := suite.service.ResolveTranslations("en-US", "system")
+	result, err := suite.service.ResolveTranslations(context.Background(), "en-US", "system")
 
 	suite.Nil(err)
 	suite.NotNil(result)
@@ -461,7 +470,7 @@ func (suite *I18nMgtServiceTestSuite) TestResolveTranslations_DefaultsFallback()
 	suite.mockStore.On("GetTranslationsByNamespace", "system").
 		Return(make(map[string]map[string]Translation), nil)
 
-	result, err := suite.service.ResolveTranslations("fr-FR", "system")
+	result, err := suite.service.ResolveTranslations(context.Background(), "fr-FR", "system")
 
 	suite.Nil(err)
 	suite.NotNil(result)
@@ -483,7 +492,7 @@ func (suite *I18nMgtServiceTestSuite) TestResolveTranslations_MergeLogic() {
 
 	suite.mockStore.On("GetTranslationsByNamespace", "system").Return(dbTranslations, nil)
 
-	result, err := suite.service.ResolveTranslations("en-US", "system")
+	result, err := suite.service.ResolveTranslations(context.Background(), "en-US", "system")
 
 	suite.Nil(err)
 	suite.NotNil(result)
@@ -501,7 +510,7 @@ func (suite *I18nMgtServiceTestSuite) TestResolveTranslations_AllNamespaces() {
 
 	suite.mockStore.On("GetTranslations").Return(dbTranslations, nil)
 
-	result, err := suite.service.ResolveTranslations("en-US", "")
+	result, err := suite.service.ResolveTranslations(context.Background(), "en-US", "")
 
 	suite.Nil(err)
 	suite.NotNil(result)
@@ -512,11 +521,11 @@ func (suite *I18nMgtServiceTestSuite) TestResolveTranslations_AllNamespaces() {
 func (suite *I18nMgtServiceTestSuite) TestResolveTranslations_AllNamespaces_StoreError() {
 	suite.mockStore.On("GetTranslations").Return(nil, errors.New("db error"))
 
-	result, err := suite.service.ResolveTranslations("en-US", "")
+	result, err := suite.service.ResolveTranslations(context.Background(), "en-US", "")
 
 	suite.Nil(result)
 	suite.NotNil(err)
-	suite.Equal(serviceerror.InternalServerError.Code, err.Code)
+	suite.Equal(tidcommon.InternalServerError.Code, err.Code)
 }
 
 const testAppNamespace = "app-abc-123"
@@ -534,7 +543,7 @@ func (suite *I18nMgtServiceTestSuite) TestResolveTranslations_AppNamespace_Exact
 	}
 	suite.mockStore.On("GetTranslationsByNamespace", ns).Return(dbTranslations, nil)
 
-	result, err := suite.service.ResolveTranslations("fr", ns)
+	result, err := suite.service.ResolveTranslations(context.Background(), "fr", ns)
 
 	suite.Nil(err)
 	suite.NotNil(result)
@@ -554,7 +563,7 @@ func (suite *I18nMgtServiceTestSuite) TestResolveTranslations_AppNamespace_BestM
 	}
 	suite.mockStore.On("GetTranslationsByNamespace", ns).Return(dbTranslations, nil)
 
-	result, err := suite.service.ResolveTranslations("en", ns)
+	result, err := suite.service.ResolveTranslations(context.Background(), "en", ns)
 
 	suite.Nil(err)
 	suite.NotNil(result)
@@ -573,7 +582,7 @@ func (suite *I18nMgtServiceTestSuite) TestResolveTranslations_SystemNamespace_St
 	suite.mockStore.On("GetTranslationsByNamespace", SystemNamespace).Return(dbTranslations, nil)
 
 	// Request "en-US" — no en-US stored, but system defaults fill it in.
-	result, err := suite.service.ResolveTranslations("en-US", SystemNamespace)
+	result, err := suite.service.ResolveTranslations(context.Background(), "en-US", SystemNamespace)
 
 	suite.Nil(err)
 	suite.NotNil(result)
@@ -593,7 +602,7 @@ func (suite *I18nMgtServiceTestSuite) TestResolveTranslationsForKey_AppNamespace
 		"fr": {Key: key, Namespace: ns, Language: "fr", Value: "Mon Application"},
 	}, nil)
 
-	result, err := suite.service.ResolveTranslationsForKey("fr", ns, key)
+	result, err := suite.service.ResolveTranslationsForKey(context.Background(), "fr", ns, key)
 
 	suite.Nil(err)
 	suite.NotNil(result)
@@ -611,7 +620,7 @@ func (suite *I18nMgtServiceTestSuite) TestResolveTranslationsForKey_AppNamespace
 		"fr": {Key: key, Namespace: ns, Language: "fr", Value: "Mon Application"},
 	}, nil)
 
-	result, err := suite.service.ResolveTranslationsForKey("en", ns, key)
+	result, err := suite.service.ResolveTranslationsForKey(context.Background(), "en", ns, key)
 
 	suite.Nil(err)
 	suite.NotNil(result)
@@ -681,7 +690,7 @@ func (suite *I18nMgtServiceTestSuite) TestSetTranslationOverrides_Success() {
 
 	suite.mockStore.On("UpsertTranslationsByLanguage", "en-US", mock.AnythingOfType("[]mgt.Translation")).Return(nil)
 
-	result, err := suite.service.SetTranslationOverrides("en-US", translations)
+	result, err := suite.service.SetTranslationOverrides(context.Background(), "en-US", translations)
 
 	suite.Nil(err)
 	suite.NotNil(result)
@@ -690,7 +699,7 @@ func (suite *I18nMgtServiceTestSuite) TestSetTranslationOverrides_Success() {
 
 func (suite *I18nMgtServiceTestSuite) TestSetTranslationOverrides_Empty() {
 	translations := map[string]map[string]string{}
-	result, err := suite.service.SetTranslationOverrides("en-US", translations)
+	result, err := suite.service.SetTranslationOverrides(context.Background(), "en-US", translations)
 	suite.Nil(result)
 	suite.NotNil(err)
 	suite.Equal(ErrorEmptyTranslations.Code, err.Code)
@@ -701,7 +710,7 @@ func (suite *I18nMgtServiceTestSuite) TestSetTranslationOverrides_ValidationErro
 	translations1 := map[string]map[string]string{
 		"invalid!": {"k": "v"},
 	}
-	result, err := suite.service.SetTranslationOverrides("en-US", translations1)
+	result, err := suite.service.SetTranslationOverrides(context.Background(), "en-US", translations1)
 	suite.Nil(result)
 	suite.NotNil(err)
 	suite.Equal(ErrorInvalidNamespace.Code, err.Code)
@@ -710,7 +719,7 @@ func (suite *I18nMgtServiceTestSuite) TestSetTranslationOverrides_ValidationErro
 	translations2 := map[string]map[string]string{
 		"console": {"invalid key!": "v"},
 	}
-	result, err = suite.service.SetTranslationOverrides("en-US", translations2)
+	result, err = suite.service.SetTranslationOverrides(context.Background(), "en-US", translations2)
 	suite.Nil(result)
 	suite.NotNil(err)
 	suite.Equal(ErrorInvalidKey.Code, err.Code)
@@ -719,7 +728,7 @@ func (suite *I18nMgtServiceTestSuite) TestSetTranslationOverrides_ValidationErro
 	translations3 := map[string]map[string]string{
 		"console": {"key": ""},
 	}
-	result, err = suite.service.SetTranslationOverrides("en-US", translations3)
+	result, err = suite.service.SetTranslationOverrides(context.Background(), "en-US", translations3)
 	suite.Nil(result)
 	suite.NotNil(err)
 	suite.Equal(ErrorMissingValue.Code, err.Code)
@@ -732,10 +741,10 @@ func (suite *I18nMgtServiceTestSuite) TestSetTranslationOverrides_StoreError() {
 	suite.mockStore.On("UpsertTranslationsByLanguage", "en-US", mock.AnythingOfType("[]mgt.Translation")).
 		Return(errors.New("db error"))
 
-	result, err := suite.service.SetTranslationOverrides("en-US", translations)
+	result, err := suite.service.SetTranslationOverrides(context.Background(), "en-US", translations)
 	suite.Nil(result)
 	suite.NotNil(err)
-	suite.Equal(serviceerror.InternalServerError.Code, err.Code)
+	suite.Equal(tidcommon.InternalServerError.Code, err.Code)
 }
 
 func (suite *I18nMgtServiceTestSuite) TestSetTranslationOverrides_Declarative() {
@@ -749,7 +758,7 @@ func (suite *I18nMgtServiceTestSuite) TestSetTranslationOverrides_Declarative() 
 		"console": {"k": "v"},
 	}
 
-	result, err := suite.service.SetTranslationOverrides("en-US", translations)
+	result, err := suite.service.SetTranslationOverrides(context.Background(), "en-US", translations)
 
 	suite.Nil(result)
 	suite.NotNil(err)
@@ -760,7 +769,7 @@ func (suite *I18nMgtServiceTestSuite) TestSetTranslationOverrides_Declarative() 
 func (suite *I18nMgtServiceTestSuite) TestClearTranslationOverrides_Success() {
 	suite.mockStore.On("DeleteTranslationsByLanguage", "en-US").Return(nil)
 
-	err := suite.service.ClearTranslationOverrides("en-US")
+	err := suite.service.ClearTranslationOverrides(context.Background(), "en-US")
 
 	suite.Nil(err)
 }
@@ -768,18 +777,18 @@ func (suite *I18nMgtServiceTestSuite) TestClearTranslationOverrides_Success() {
 func (suite *I18nMgtServiceTestSuite) TestClearTranslationOverrides_StoreError() {
 	suite.mockStore.On("DeleteTranslationsByLanguage", "en-US").Return(errors.New("db error"))
 
-	err := suite.service.ClearTranslationOverrides("en-US")
+	err := suite.service.ClearTranslationOverrides(context.Background(), "en-US")
 
 	suite.NotNil(err)
-	suite.Equal(serviceerror.InternalServerError.Code, err.Code)
+	suite.Equal(tidcommon.InternalServerError.Code, err.Code)
 }
 
 func (suite *I18nMgtServiceTestSuite) TestClearTranslationOverrides_ValidationErrors() {
-	err := suite.service.ClearTranslationOverrides("")
+	err := suite.service.ClearTranslationOverrides(context.Background(), "")
 	suite.NotNil(err)
 	suite.Equal(ErrorMissingLanguage.Code, err.Code)
 
-	err = suite.service.ClearTranslationOverrides("invalid")
+	err = suite.service.ClearTranslationOverrides(context.Background(), "invalid")
 	suite.NotNil(err)
 	suite.Equal(ErrorInvalidLanguage.Code, err.Code)
 }
@@ -791,7 +800,7 @@ func (suite *I18nMgtServiceTestSuite) TestClearTranslationOverrides_Declarative(
 		config.GetServerRuntime().Config.DeclarativeResources.Enabled = false
 	}()
 
-	err := suite.service.ClearTranslationOverrides("en-US")
+	err := suite.service.ClearTranslationOverrides(context.Background(), "en-US")
 
 	suite.NotNil(err)
 	suite.Equal(declarativeresource.ErrorDeclarativeResourceDeleteOperation.Code, err.Code)
@@ -800,7 +809,7 @@ func (suite *I18nMgtServiceTestSuite) TestClearTranslationOverrides_Declarative(
 // GetTranslationsByNamespace Tests
 
 func (suite *I18nMgtServiceTestSuite) TestGetTranslationsByNamespace_InvalidNamespace() {
-	result, err := suite.service.GetTranslationsByNamespace("invalid!")
+	result, err := suite.service.GetTranslationsByNamespace(context.Background(), "invalid!")
 
 	suite.Nil(result)
 	suite.NotNil(err)
@@ -811,11 +820,11 @@ func (suite *I18nMgtServiceTestSuite) TestGetTranslationsByNamespace_StoreError(
 	suite.mockStore.On("GetTranslationsByNamespace", "app-test").
 		Return(nil, errors.New("db error"))
 
-	result, err := suite.service.GetTranslationsByNamespace("app-test")
+	result, err := suite.service.GetTranslationsByNamespace(context.Background(), "app-test")
 
 	suite.Nil(result)
 	suite.NotNil(err)
-	suite.Equal(serviceerror.InternalServerError.Code, err.Code)
+	suite.Equal(tidcommon.InternalServerError.Code, err.Code)
 }
 
 func (suite *I18nMgtServiceTestSuite) TestGetTranslationsByNamespace_Success() {
@@ -831,7 +840,7 @@ func (suite *I18nMgtServiceTestSuite) TestGetTranslationsByNamespace_Success() {
 	}
 	suite.mockStore.On("GetTranslationsByNamespace", ns).Return(dbData, nil)
 
-	result, err := suite.service.GetTranslationsByNamespace(ns)
+	result, err := suite.service.GetTranslationsByNamespace(context.Background(), ns)
 
 	suite.Nil(err)
 	suite.NotNil(result)
@@ -853,7 +862,7 @@ func (suite *I18nMgtServiceTestSuite) TestGetTranslationsByNamespace_SkipsMalfor
 	}
 	suite.mockStore.On("GetTranslationsByNamespace", ns).Return(dbData, nil)
 
-	result, err := suite.service.GetTranslationsByNamespace(ns)
+	result, err := suite.service.GetTranslationsByNamespace(context.Background(), ns)
 
 	suite.Nil(err)
 	suite.NotNil(result)
@@ -878,7 +887,7 @@ func (suite *I18nMgtServiceTestSuite) TestDeleteTranslationsByNamespace_StoreErr
 	err := suite.service.DeleteTranslationsByNamespace(context.Background(), "app-test")
 
 	suite.NotNil(err)
-	suite.Equal(serviceerror.InternalServerError.Code, err.Code)
+	suite.Equal(tidcommon.InternalServerError.Code, err.Code)
 }
 
 func (suite *I18nMgtServiceTestSuite) TestDeleteTranslationsByNamespace_Success() {
@@ -912,7 +921,7 @@ func (suite *I18nMgtServiceTestSuite) TestDeleteTranslationsByKey_StoreError() {
 	err := suite.service.DeleteTranslationsByKey(context.Background(), "custom", "app.test-id.name")
 
 	suite.NotNil(err)
-	suite.Equal(serviceerror.InternalServerError.Code, err.Code)
+	suite.Equal(tidcommon.InternalServerError.Code, err.Code)
 }
 
 func (suite *I18nMgtServiceTestSuite) TestDeleteTranslationsByKey_Success() {

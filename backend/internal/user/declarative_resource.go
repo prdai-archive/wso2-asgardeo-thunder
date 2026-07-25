@@ -25,6 +25,9 @@ import (
 	"fmt"
 	"strings"
 
+	tidcommon "github.com/thunder-id/thunderid/pkg/thunderidengine/common"
+	"github.com/thunder-id/thunderid/pkg/thunderidengine/providers"
+
 	"gopkg.in/yaml.v3"
 
 	"github.com/thunder-id/thunderid/internal/entity"
@@ -32,7 +35,6 @@ import (
 	serverconst "github.com/thunder-id/thunderid/internal/system/constants"
 	"github.com/thunder-id/thunderid/internal/system/cryptolib"
 	declarativeresource "github.com/thunder-id/thunderid/internal/system/declarative_resource"
-	"github.com/thunder-id/thunderid/internal/system/error/serviceerror"
 	"github.com/thunder-id/thunderid/internal/system/log"
 )
 
@@ -64,7 +66,7 @@ func (e *userExporter) GetParameterizerType() string {
 
 // GetAllResourceIDs retrieves all user IDs from the database store.
 // In composite mode, this excludes declarative (YAML-based) users.
-func (e *userExporter) GetAllResourceIDs(ctx context.Context) ([]string, *serviceerror.ServiceError) {
+func (e *userExporter) GetAllResourceIDs(ctx context.Context) ([]string, *tidcommon.ServiceError) {
 	offset := 0
 	limit := serverconst.MaxPageSize
 	ids := []string{}
@@ -82,7 +84,7 @@ func (e *userExporter) GetAllResourceIDs(ctx context.Context) ([]string, *servic
 					ids = append(ids, user.ID)
 					continue
 				}
-				return nil, &serviceerror.InternalServerError
+				return nil, &tidcommon.InternalServerError
 			}
 			if !isDeclarative {
 				ids = append(ids, user.ID)
@@ -102,7 +104,7 @@ func (e *userExporter) GetAllResourceIDs(ctx context.Context) ([]string, *servic
 
 // GetResourceByID retrieves a user by its ID.
 func (e *userExporter) GetResourceByID(
-	ctx context.Context, id string) (interface{}, string, *serviceerror.ServiceError) {
+	ctx context.Context, id string) (interface{}, string, *tidcommon.ServiceError) {
 	user, err := e.service.GetUser(ctx, id, false)
 	if err != nil {
 		return nil, "", err
@@ -143,7 +145,7 @@ func (e *userExporter) GetResourceByID(
 }
 
 // ValidateResource validates a user resource.
-func (e *userExporter) ValidateResource(
+func (e *userExporter) ValidateResource(ctx context.Context,
 	resource interface{}, id string, logger *log.Logger,
 ) (string, *declarativeresource.ExportError) {
 	user, ok := resource.(*userDeclarativeResource)
@@ -158,7 +160,7 @@ func (e *userExporter) ValidateResource(
 	}
 
 	if username == "" {
-		logger.Warn("USER_VALIDATION_ERROR: Missing username",
+		logger.Warn(ctx, "USER_VALIDATION_ERROR: Missing username",
 			log.MaskedString(log.LoggerKeyUserID, id))
 		return "", &declarativeresource.ExportError{
 			ResourceType: resourceTypeUser,
@@ -186,7 +188,7 @@ func (e *userExporter) GetResourceRules() *declarativeresource.ResourceRules {
 func makeUserDeclarativeConfig(userService UserServiceInterface) entity.DeclarativeLoaderConfig {
 	return entity.DeclarativeLoaderConfig{
 		Directory: "users",
-		Category:  entity.EntityCategoryUser,
+		Category:  providers.EntityCategoryUser,
 		Parser:    makeUserParser(userService),
 		Validator: makeUserValidator(),
 	}
@@ -196,8 +198,8 @@ func makeUserDeclarativeConfig(userService UserServiceInterface) entity.Declarat
 // When userService is non-nil, ou_handle is resolved to ou_id before producing the entity.
 func makeUserParser(
 	userService UserServiceInterface,
-) func(data []byte) (*entity.Entity, json.RawMessage, json.RawMessage, error) {
-	return func(data []byte) (*entity.Entity, json.RawMessage, json.RawMessage, error) {
+) func(data []byte) (*providers.Entity, json.RawMessage, json.RawMessage, error) {
+	return func(data []byte) (*providers.Entity, json.RawMessage, json.RawMessage, error) {
 		user, creds, err := parseToUser(data)
 		if err != nil {
 			return nil, nil, nil, err
@@ -221,8 +223,8 @@ func makeUserParser(
 }
 
 // makeUserValidator creates a validator callback for declarative user resources.
-func makeUserValidator() func(e *entity.Entity, svc entity.EntityServiceInterface) error {
-	return func(e *entity.Entity, svc entity.EntityServiceInterface) error {
+func makeUserValidator() func(e *providers.Entity, svc entity.EntityServiceInterface) error {
+	return func(e *providers.Entity, svc entity.EntityServiceInterface) error {
 		if e.ID == "" {
 			return fmt.Errorf("user ID is required")
 		}
@@ -230,7 +232,7 @@ func makeUserValidator() func(e *entity.Entity, svc entity.EntityServiceInterfac
 			return fmt.Errorf("user type is required")
 		}
 		if e.OUID == "" {
-			return fmt.Errorf("ou_id or ou_handle is required for user '%s'", e.ID)
+			return fmt.Errorf("ouId or ouHandle is required for user '%s'", e.ID)
 		}
 		if len(e.Attributes) == 0 {
 			return fmt.Errorf("user attributes are required")
@@ -262,8 +264,8 @@ func makeUserValidator() func(e *entity.Entity, svc entity.EntityServiceInterfac
 type userDeclarativeResource struct {
 	ID          string                 `yaml:"id"`
 	Type        string                 `yaml:"type"`
-	OUID        string                 `yaml:"ou_id,omitempty"`
-	OUHandle    string                 `yaml:"ou_handle,omitempty"`
+	OUID        string                 `yaml:"ouId,omitempty"`
+	OUHandle    string                 `yaml:"ouHandle,omitempty"`
 	Attributes  map[string]interface{} `yaml:"attributes"`
 	Credentials map[string]interface{} `yaml:"credentials,omitempty"` // Flexible format for YAML
 }

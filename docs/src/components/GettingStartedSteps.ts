@@ -26,51 +26,37 @@ export function createGettingStartedSteps(productName: string): JourneyStep[] {
   return [
     {
       label: `Run ${productName}`,
-      href: '/docs/next/guides/getting-started/get-thunderid',
-      docIds: ['guides/getting-started/get-thunderid'],
+      href: '/docs/next/getting-started/get-thunderid',
+      docIds: ['getting-started/get-thunderid'],
     },
     {
       label: 'Register an app',
-      href: '/docs/next/guides/getting-started/register-an-application',
-      docIds: ['guides/getting-started/register-an-application'],
+      href: '/docs/next/getting-started/register-an-application',
+      docIds: ['getting-started/register-an-application'],
     },
     {
       label: 'Build a flow',
-      href: '/docs/next/guides/getting-started/build-a-flow',
-      docIds: ['guides/getting-started/build-a-flow'],
+      href: '/docs/next/getting-started/build-a-flow',
+      docIds: ['getting-started/build-a-flow'],
     },
     {
       label: 'Connect your app',
-      href: '/docs/next/guides/getting-started/connect-your-application',
+      href: '/docs/next/getting-started/connect-your-application',
       docIds: [
-        'guides/getting-started/connect-your-application/index',
-        'guides/getting-started/connect-your-application/react',
-        'guides/getting-started/connect-your-application/vue',
-        'guides/getting-started/connect-your-application/browser',
-        'guides/getting-started/connect-your-application/express',
-        'guides/getting-started/connect-your-application/nuxt',
-        'guides/getting-started/connect-your-application/node',
-        'guides/getting-started/connect-your-application/nextjs',
+        'getting-started/connect-your-application/index',
+        'getting-started/connect-your-application/react',
+        'getting-started/connect-your-application/vue',
+        'getting-started/connect-your-application/browser',
+        'getting-started/connect-your-application/express',
+        'getting-started/connect-your-application/nuxt',
+        'getting-started/connect-your-application/node',
+        'getting-started/connect-your-application/nextjs',
       ],
     },
   ];
 }
 
-const STEP_DOC_IDS: string[][] = [
-  ['guides/getting-started/get-thunderid'],
-  ['guides/getting-started/register-an-application'],
-  ['guides/getting-started/build-a-flow'],
-  [
-    'guides/getting-started/connect-your-application/index',
-    'guides/getting-started/connect-your-application/react',
-    'guides/getting-started/connect-your-application/vue',
-    'guides/getting-started/connect-your-application/browser',
-    'guides/getting-started/connect-your-application/express',
-    'guides/getting-started/connect-your-application/nuxt',
-    'guides/getting-started/connect-your-application/node',
-    'guides/getting-started/connect-your-application/nextjs',
-  ],
-];
+const STEP_DOC_IDS: string[][] = [];
 
 export function getGettingStartedStepIndex(docId?: string): number | null {
   if (!docId) {

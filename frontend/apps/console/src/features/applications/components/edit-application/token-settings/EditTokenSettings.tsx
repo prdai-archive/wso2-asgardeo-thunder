@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2025, WSO2 LLC. (https://www.wso2.com).
+ * Copyright (c) 2025-2026, WSO2 LLC. (https://www.wso2.com).
  *
  * WSO2 LLC. licenses this file to you under the Apache License,
  * Version 2.0 (the "License"); you may not use this file except
@@ -17,6 +17,8 @@
  */
 
 import {zodResolver} from '@hookform/resolvers/zod';
+import type {PropertyDefinition, ApiUserType} from '@thunderid/configure-user-types';
+import {useGetUserTypes} from '@thunderid/configure-user-types';
 import {useConfig} from '@thunderid/contexts';
 import {useLogger} from '@thunderid/logger';
 import {useThunderID} from '@thunderid/react';
@@ -28,10 +30,8 @@ import {z} from 'zod';
 import ScopeSection from './ScopeSection';
 import TokenUserAttributesSection from './TokenUserAttributesSection';
 import TokenValidationSection from './TokenValidationSection';
-import type {PropertyDefinition, ApiUserType} from '../../../../user-types/types/user-types';
 import type {Application} from '../../../models/application';
 import type {OAuth2Config, ScopeClaims} from '../../../models/oauth';
-import useGetUserTypes from '@/features/user-types/api/useGetUserTypes';
 
 /**
  * Props for the {@link EditTokenSettings} component.
@@ -56,6 +56,16 @@ interface EditTokenSettingsProps {
    * Singular noun used to refer to the entity in user-visible copy (default: 'application').
    */
   entityLabel?: string;
+  /**
+   * Whether to show the "User Info Endpoint" tab (OAuth mode only). Defaults to true;
+   * agents don't expose a userinfo endpoint of their own, so they pass false.
+   */
+  showUserInfoTab?: boolean;
+  /**
+   * Whether the access token preview should include the RFC 8693 `act` (actor) claim.
+   * Defaults to false (applications); agents pass true.
+   */
+  showActorClaim?: boolean;
 }
 
 const createTokenConfigSchema = (t: (key: string) => string) => {
@@ -122,6 +132,8 @@ export default function EditTokenSettings({
   onFieldChange,
   onValidationChange = undefined,
   entityLabel = 'application',
+  showUserInfoTab = true,
+  showActorClaim = false,
 }: EditTokenSettingsProps) {
   const logger = useLogger('EditTokenSettings');
   const {t} = useTranslation();
@@ -171,7 +183,7 @@ export default function EditTokenSettings({
     mode: 'onChange',
     defaultValues: {
       validityPeriod: oauth2Config?.token?.validityPeriod ?? application.assertion?.validityPeriod ?? 3600,
-      accessTokenValidity: oauth2Config?.token?.accessToken?.validityPeriod ?? 3600,
+      accessTokenValidity: oauth2Config?.token?.accessToken?.userConfig?.validityPeriod ?? 3600,
       idTokenValidity: oauth2Config?.token?.idToken?.validityPeriod ?? 3600,
       refreshTokenValidity: oauth2Config?.token?.refreshToken?.validityPeriod ?? 86400,
     },
@@ -216,7 +228,7 @@ export default function EditTokenSettings({
         const config = oauth2ConfigRef.current;
 
         // Check if values have actually changed
-        const currentAccessValidity = config?.token?.accessToken?.validityPeriod;
+        const currentAccessValidity = config?.token?.accessToken?.userConfig?.validityPeriod;
         const currentIdValidity = config?.token?.idToken?.validityPeriod;
         const currentRefreshValidity = config?.token?.refreshToken?.validityPeriod;
 
@@ -234,7 +246,10 @@ export default function EditTokenSettings({
             ...config?.token,
             accessToken: {
               ...config?.token?.accessToken,
-              validityPeriod: accessTokenValidity,
+              userConfig: {
+                ...config?.token?.accessToken?.userConfig,
+                validityPeriod: accessTokenValidity,
+              },
             },
             idToken: {
               ...config?.token?.idToken,
@@ -347,7 +362,7 @@ export default function EditTokenSettings({
   }, [isOAuthMode, oauth2Config, application]);
 
   const currentAccessTokenAttributes = useMemo(
-    () => oauth2Config?.token?.accessToken?.userAttributes ?? [],
+    () => oauth2Config?.token?.accessToken?.userConfig?.attributes ?? [],
     [oauth2Config],
   );
 
@@ -359,16 +374,23 @@ export default function EditTokenSettings({
     return oauth2Config.userInfo?.userAttributes ?? oauth2Config.token?.idToken?.userAttributes ?? [];
   }, [isOAuthMode, oauth2Config]);
 
-  const isUserInfoCustomAttributes = useMemo(() => {
+  const derivedIsCustom = useMemo(() => {
     if (!isOAuthMode || !oauth2Config?.userInfo) return false;
-
     const userInfoAttrs = oauth2Config.userInfo.userAttributes ?? [];
     const idTokenAttrs = oauth2Config.token?.idToken?.userAttributes ?? [];
-
     return !areAttributesEqual(userInfoAttrs, idTokenAttrs);
   }, [isOAuthMode, oauth2Config]);
 
+  const [isUserInfoCustomAttributes, setIsUserInfoCustomAttributes] = useState(derivedIsCustom);
+
+  // Sync local toggle state when the derived value changes due to external config updates
+  useEffect(() => {
+    setIsUserInfoCustomAttributes(derivedIsCustom);
+  }, [derivedIsCustom]);
+
   const handleToggleUserInfo = (checked: boolean) => {
+    setIsUserInfoCustomAttributes(checked);
+
     if (!checked && activeTokenType === 'userinfo') {
       setPendingAdditionsByToken((prev) => ({...prev, userinfo: new Set()}));
       setPendingRemovalsByToken((prev) => ({...prev, userinfo: new Set()}));
@@ -377,10 +399,11 @@ export default function EditTokenSettings({
 
     if (checked) {
       // When enabling, start with ID token attributes if current UserInfo attrs are empty/undefined
-      if (!oauth2Config?.userInfo) {
+      if (!oauth2Config?.userInfo?.userAttributes?.length) {
         const updatedConfig = {
           ...oauth2Config,
           userInfo: {
+            ...oauth2Config?.userInfo,
             userAttributes: [...currentIdTokenAttributes],
           },
         };
@@ -394,9 +417,14 @@ export default function EditTokenSettings({
         onFieldChange('inboundAuthConfig', updatedInboundAuth);
       }
     } else if (oauth2Config) {
-      // When disabling, remove userInfo from config to use fallback
-      // eslint-disable-next-line @typescript-eslint/no-unused-vars
-      const {userInfo: _, ...updatedConfig} = oauth2Config;
+      // When disabling custom mode, sync userInfo attributes with ID token attributes
+      const updatedConfig = {
+        ...oauth2Config,
+        userInfo: {
+          ...oauth2Config.userInfo,
+          userAttributes: [...currentIdTokenAttributes],
+        },
+      };
 
       const updatedInboundAuth = application.inboundAuthConfig?.map((config) => {
         if (config.type === 'oauth2') {
@@ -429,6 +457,46 @@ export default function EditTokenSettings({
         return {...config, config: updatedConfig};
       }
 
+      return config;
+    });
+    onFieldChange('inboundAuthConfig', updatedInboundAuth);
+  };
+
+  const handleIdTokenConfigChange = (field: string, value: string) => {
+    const updatedConfig = {
+      ...oauth2Config,
+      token: {
+        ...oauth2Config?.token,
+        idToken: {
+          ...oauth2Config?.token?.idToken,
+          userAttributes: oauth2Config?.token?.idToken?.userAttributes ?? [],
+          validityPeriod: oauth2Config?.token?.idToken?.validityPeriod ?? 3600,
+          [field]: value,
+        },
+      },
+    };
+    const updatedInboundAuth = application.inboundAuthConfig?.map((config) => {
+      if (config.type === 'oauth2') {
+        return {...config, config: updatedConfig};
+      }
+      return config;
+    });
+    onFieldChange('inboundAuthConfig', updatedInboundAuth);
+  };
+
+  const handleUserInfoConfigChange = (field: string, value: string) => {
+    const updatedConfig = {
+      ...oauth2Config,
+      userInfo: {
+        ...oauth2Config?.userInfo,
+        userAttributes: oauth2Config?.userInfo?.userAttributes ?? oauth2Config?.token?.idToken?.userAttributes ?? [],
+        [field]: value,
+      },
+    };
+    const updatedInboundAuth = application.inboundAuthConfig?.map((config) => {
+      if (config.type === 'oauth2') {
+        return {...config, config: updatedConfig};
+      }
       return config;
     });
     onFieldChange('inboundAuthConfig', updatedInboundAuth);
@@ -519,7 +587,8 @@ export default function EditTokenSettings({
       let updatedConfig = {...oauth2Config};
 
       const defaultTokenConfig = {validityPeriod: 3600, userAttributes: [] as string[]};
-      const currentAccessToken = updatedConfig.token?.accessToken ?? defaultTokenConfig;
+      const defaultAccessToken = {userConfig: {validityPeriod: 3600, attributes: [] as string[]}};
+      const currentAccessToken = updatedConfig.token?.accessToken ?? defaultAccessToken;
       const currentIdToken = updatedConfig.token?.idToken ?? defaultTokenConfig;
 
       if (scope === 'access') {
@@ -527,7 +596,10 @@ export default function EditTokenSettings({
           ...updatedConfig,
           token: {
             ...updatedConfig.token,
-            accessToken: {...currentAccessToken, userAttributes: nextAttrs},
+            accessToken: {
+              ...currentAccessToken,
+              userConfig: {...currentAccessToken.userConfig, attributes: nextAttrs},
+            },
             idToken: currentIdToken,
           },
         };
@@ -544,6 +616,7 @@ export default function EditTokenSettings({
         updatedConfig = {
           ...updatedConfig,
           userInfo: {
+            ...updatedConfig.userInfo,
             userAttributes: nextAttrs,
           },
         };
@@ -647,6 +720,18 @@ export default function EditTokenSettings({
             highlightedAttributes={visibleHighlightedAttributes}
             onAttributeClick={handleAttributeClick}
             entityLabel={entityLabel}
+            showUserInfoTab={showUserInfoTab}
+            showActorClaim={showActorClaim}
+            disabled={application.isReadOnly}
+            idTokenResponseType={oauth2Config?.token?.idToken?.responseType}
+            idTokenEncryptionAlg={oauth2Config?.token?.idToken?.encryptionAlg}
+            idTokenEncryptionEnc={oauth2Config?.token?.idToken?.encryptionEnc}
+            onIdTokenConfigChange={handleIdTokenConfigChange}
+            userInfoResponseType={oauth2Config?.userInfo?.responseType}
+            userInfoSigningAlg={oauth2Config?.userInfo?.signingAlg}
+            userInfoEncryptionAlg={oauth2Config?.userInfo?.encryptionAlg}
+            userInfoEncryptionEnc={oauth2Config?.userInfo?.encryptionEnc}
+            onUserInfoConfigChange={handleUserInfoConfigChange}
           />
 
           {/* Scopes & Attribute Mapping */}
@@ -658,10 +743,16 @@ export default function EditTokenSettings({
             onScopesChange={handleScopesChange}
             onScopeClaimsChange={handleScopeClaimsChange}
             entityLabel={entityLabel}
+            disabled={application.isReadOnly}
           />
 
           {/* Merged Token Validation (Access Token / ID Token tabs) */}
-          <TokenValidationSection control={control} errors={errors} tokenType="oauth" />
+          <TokenValidationSection
+            control={control}
+            errors={errors}
+            tokenType="oauth"
+            disabled={application.isReadOnly}
+          />
         </>
       ) : (
         <>
@@ -675,10 +766,16 @@ export default function EditTokenSettings({
             highlightedAttributes={visibleHighlightedAttributes}
             onAttributeClick={handleAttributeClick}
             entityLabel={entityLabel}
+            disabled={application.isReadOnly}
           />
 
           {/* Token Validation */}
-          <TokenValidationSection control={control} errors={errors} tokenType="shared" />
+          <TokenValidationSection
+            control={control}
+            errors={errors}
+            tokenType="shared"
+            disabled={application.isReadOnly}
+          />
         </>
       )}
     </Stack>

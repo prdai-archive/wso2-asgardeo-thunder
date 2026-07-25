@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2025, WSO2 LLC. (https://www.wso2.com).
+ * Copyright (c) 2025-2026, WSO2 LLC. (https://www.wso2.com).
  *
  * WSO2 LLC. licenses this file to you under the Apache License,
  * Version 2.0 (the "License"); you may not use this file except
@@ -26,10 +26,14 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	engineconfig "github.com/thunder-id/thunderid/pkg/thunderidengine/config"
+	"github.com/thunder-id/thunderid/pkg/thunderidengine/providers"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/suite"
 
+	oauthconfig "github.com/thunder-id/thunderid/internal/oauth/config"
 	"github.com/thunder-id/thunderid/internal/oauth/oauth2/constants"
 	"github.com/thunder-id/thunderid/internal/system/config"
 	"github.com/thunder-id/thunderid/internal/system/cryptolib"
@@ -42,6 +46,15 @@ type DiscoveryTestSuite struct {
 	cryptoMock       *cryptomock.RuntimeCryptoProviderMock
 	discoveryService DiscoveryServiceInterface
 	handler          discoveryHandlerInterface
+	oauthCfg         oauthconfig.Config
+}
+
+func oauthCfgFromServerConfig(cfg *config.Config) oauthconfig.Config {
+	return oauthconfig.Config{
+		BaseURL: config.GetServerURL(&cfg.Server),
+		JWT:     cfg.JWT,
+		OAuth:   cfg.OAuth,
+	}
 }
 
 func TestDiscoverySuite(t *testing.T) {
@@ -50,36 +63,40 @@ func TestDiscoverySuite(t *testing.T) {
 
 func (suite *DiscoveryTestSuite) SetupTest() {
 	testConfig := &config.Config{
-		Server: config.ServerConfig{
+		Server: engineconfig.ServerConfig{
 			Hostname: "localhost",
 			Port:     8080,
 			HTTPOnly: false,
 		},
-		JWT: config.JWTConfig{
+		JWT: engineconfig.JWTConfig{
 			Issuer:         "https://auth.example.com",
 			ValidityPeriod: 3600,
 		},
-		OAuth: config.OAuthConfig{
-			DPoP: config.DPoPConfig{
+		OAuth: engineconfig.OAuthConfig{
+			DPoP: engineconfig.DPoPConfig{
 				Required:     false,
 				IatWindow:    60,
 				Leeway:       5,
 				AllowedAlgs:  []string{"ES256", "PS256", "ES384", "ES512", "EdDSA", "RS256"},
 				MaxJTILength: 256,
 			},
-			AuthClass: config.AuthClassConfig{
+			AuthClass: engineconfig.AuthClassConfig{
 				Amrs: []string{"PWD", "OTP"},
 				AcrAMR: map[string][]string{
 					"urn:thunder:acr:password":       {"PWD"},
 					"urn:thunder:acr:generated-code": {"OTP"},
 				},
 			},
+			DCR:             engineconfig.DCRConfig{Enabled: boolPtr(true)},
+			TokenRevocation: engineconfig.OAuthTokenRevocationConfig{Enabled: true},
+			Logout:          engineconfig.LogoutConfig{Enabled: true},
 		},
 	}
 	_ = config.InitializeServerRuntime("test", testConfig)
 
+	suite.oauthCfg = oauthCfgFromServerConfig(testConfig)
 	suite.cryptoMock = cryptomock.NewRuntimeCryptoProviderMock(suite.T())
-	suite.discoveryService = newDiscoveryService(suite.cryptoMock)
+	suite.discoveryService = newDiscoveryService(suite.cryptoMock, suite.oauthCfg)
 	suite.handler = newDiscoveryHandler(suite.discoveryService)
 }
 
@@ -105,10 +122,12 @@ func (suite *DiscoveryTestSuite) TestOAuth2AuthorizationServerMetadata() {
 	assert.NotEmpty(suite.T(), metadata.JWKSUri)
 	assert.NotEmpty(suite.T(), metadata.RegistrationEndpoint)
 	assert.NotEmpty(suite.T(), metadata.IntrospectionEndpoint)
-	assert.NotEmpty(suite.T(), metadata.UserInfoEndpoint)
+	assert.NotEmpty(suite.T(), metadata.RevocationEndpoint)
 
-	// Verify only implemented endpoints are present
-	assert.Empty(suite.T(), metadata.RevocationEndpoint) // Not implemented
+	body, err := json.Marshal(metadata)
+	assert.NoError(suite.T(), err)
+	assert.NotContains(suite.T(), string(body), "userinfo_endpoint")
+	assert.NotContains(suite.T(), string(body), "scopes_supported")
 
 	// Verify only implemented grant types are present
 	assert.Contains(suite.T(), metadata.GrantTypesSupported, "authorization_code")
@@ -122,6 +141,16 @@ func (suite *DiscoveryTestSuite) TestOAuth2AuthorizationServerMetadata() {
 
 	// Verify RFC 9207 advertisement
 	assert.True(suite.T(), metadata.AuthorizationResponseIssParameterSupported)
+}
+
+func (suite *DiscoveryTestSuite) TestCIBAMetadataAdvertised() {
+	metadata := suite.discoveryService.GetOAuth2AuthorizationServerMetadata(context.Background())
+
+	assert.Contains(suite.T(), metadata.GrantTypesSupported, string(providers.GrantTypeCIBA))
+	assert.NotEmpty(suite.T(), metadata.BackchannelAuthenticationEndpoint)
+	assert.Contains(suite.T(), metadata.BackchannelAuthenticationEndpoint, constants.OAuth2BackchannelAuthEndpoint)
+	assert.Equal(suite.T(), []string{"poll"}, metadata.BackchannelTokenDeliveryModesSupported)
+	assert.False(suite.T(), metadata.BackchannelUserCodeParameterSupported)
 }
 
 func (suite *DiscoveryTestSuite) TestOIDCDiscovery() {
@@ -143,6 +172,10 @@ func (suite *DiscoveryTestSuite) TestOIDCDiscovery() {
 	assert.NotEmpty(suite.T(), metadata.SubjectTypesSupported)
 	assert.NotEmpty(suite.T(), metadata.ClaimsSupported)
 	assert.NotEmpty(suite.T(), metadata.IDTokenSigningAlgValuesSupported)
+	assert.NotEmpty(suite.T(), metadata.UserInfoEndpoint)
+	assert.NotEmpty(suite.T(), metadata.ScopesSupported)
+	assert.Contains(suite.T(), metadata.ScopesSupported, "openid")
+	assert.NotEmpty(suite.T(), metadata.EndSessionEndpoint)
 
 	// Verify OIDC-specific fields
 	assert.Contains(suite.T(), metadata.SubjectTypesSupported, constants.SubjectTypePublic)
@@ -177,13 +210,13 @@ func (suite *DiscoveryTestSuite) TestDPoPSigningAlgValuesAdvertised() {
 func (suite *DiscoveryTestSuite) TestDPoPSigningAlgValuesOmittedWhenUnconfigured() {
 	config.ResetServerRuntime()
 	testConfig := &config.Config{
-		Server: config.ServerConfig{Hostname: "localhost", Port: 8080},
-		JWT:    config.JWTConfig{Issuer: "https://auth.example.com"},
+		Server: engineconfig.ServerConfig{Hostname: "localhost", Port: 8080},
+		JWT:    engineconfig.JWTConfig{Issuer: "https://auth.example.com"},
 	}
 	_ = config.InitializeServerRuntime("test", testConfig)
 	defer config.ResetServerRuntime()
 
-	svc := newDiscoveryService(suite.cryptoMock)
+	svc := newDiscoveryService(suite.cryptoMock, oauthCfgFromServerConfig(testConfig))
 	oauth2Meta := svc.GetOAuth2AuthorizationServerMetadata(context.Background())
 	assert.Nil(suite.T(), oauth2Meta.DPoPSigningAlgValuesSupported)
 
@@ -192,53 +225,79 @@ func (suite *DiscoveryTestSuite) TestDPoPSigningAlgValuesOmittedWhenUnconfigured
 	assert.NotContains(suite.T(), string(body), "dpop_signing_alg_values_supported")
 }
 
+func (suite *DiscoveryTestSuite) TestDCRRevocationLogoutEndpointsOmittedWhenDisabled() {
+	config.ResetServerRuntime()
+	testConfig := &config.Config{
+		Server: engineconfig.ServerConfig{Hostname: "localhost", Port: 8080},
+		JWT:    engineconfig.JWTConfig{Issuer: "https://auth.example.com"},
+	}
+	_ = config.InitializeServerRuntime("test", testConfig)
+	defer config.ResetServerRuntime()
+
+	svc := newDiscoveryService(suite.cryptoMock, oauthCfgFromServerConfig(testConfig))
+	oauth2Meta := svc.GetOAuth2AuthorizationServerMetadata(context.Background())
+	assert.Empty(suite.T(), oauth2Meta.RegistrationEndpoint)
+	assert.Empty(suite.T(), oauth2Meta.RevocationEndpoint)
+
+	suite.cryptoMock.EXPECT().GetPublicKeys(mock.Anything, kmprovider.PublicKeyFilter{}).
+		Return([]kmprovider.PublicKeyInfo{{KeyID: "k1", Algorithm: cryptolib.AlgorithmRS256}}, nil)
+	oidcMeta, err := svc.GetOIDCMetadata(context.Background())
+	assert.NoError(suite.T(), err)
+	assert.Empty(suite.T(), oidcMeta.EndSessionEndpoint)
+
+	body, err := json.Marshal(oauth2Meta)
+	assert.NoError(suite.T(), err)
+	assert.NotContains(suite.T(), string(body), "registration_endpoint")
+	assert.NotContains(suite.T(), string(body), "revocation_endpoint")
+}
+
 // TestGrantTypeIsValid tests the GrantType.IsValid() method
 // This is a standalone test for constants - doesn't require discovery service setup
 func TestGrantTypeIsValid(t *testing.T) {
 	// Test valid grant types
-	assert.True(t, constants.GrantTypeAuthorizationCode.IsValid())
-	assert.True(t, constants.GrantTypeClientCredentials.IsValid())
-	assert.True(t, constants.GrantTypeRefreshToken.IsValid())
+	assert.True(t, providers.GrantTypeAuthorizationCode.IsValid())
+	assert.True(t, providers.GrantTypeClientCredentials.IsValid())
+	assert.True(t, providers.GrantTypeRefreshToken.IsValid())
 
 	// Test invalid grant types
-	assert.False(t, constants.GrantType("invalid").IsValid())
-	assert.False(t, constants.GrantType("password").IsValid())
-	assert.False(t, constants.GrantType("").IsValid())
-	assert.False(t, constants.GrantType("implicit").IsValid())
+	assert.False(t, providers.GrantType("invalid").IsValid())
+	assert.False(t, providers.GrantType("password").IsValid())
+	assert.False(t, providers.GrantType("").IsValid())
+	assert.False(t, providers.GrantType("implicit").IsValid())
 }
 
 // TestResponseTypeIsValid tests the ResponseType.IsValid() method
 // This is a standalone test for constants - doesn't require discovery service setup
 func TestResponseTypeIsValid(t *testing.T) {
 	// Test valid response types
-	assert.True(t, constants.ResponseTypeCode.IsValid())
+	assert.True(t, providers.ResponseTypeCode.IsValid())
 
 	// Test invalid response types
-	assert.False(t, constants.ResponseType("invalid").IsValid())
-	assert.False(t, constants.ResponseType("token").IsValid())
-	assert.False(t, constants.ResponseType("id_token").IsValid())
-	assert.False(t, constants.ResponseType("").IsValid())
+	assert.False(t, providers.ResponseType("invalid").IsValid())
+	assert.False(t, providers.ResponseType("token").IsValid())
+	assert.False(t, providers.ResponseType("id_token").IsValid())
+	assert.False(t, providers.ResponseType("").IsValid())
 }
 
 // TestTokenEndpointAuthMethodIsValid tests the TokenEndpointAuthMethod.IsValid() method
 // This is a standalone test for constants - doesn't require discovery service setup
 func TestTokenEndpointAuthMethodIsValid(t *testing.T) {
 	// Test valid authentication methods
-	assert.True(t, constants.TokenEndpointAuthMethodClientSecretBasic.IsValid())
-	assert.True(t, constants.TokenEndpointAuthMethodClientSecretPost.IsValid())
-	assert.True(t, constants.TokenEndpointAuthMethodNone.IsValid())
-	assert.True(t, constants.TokenEndpointAuthMethodPrivateKeyJWT.IsValid())
+	assert.True(t, providers.TokenEndpointAuthMethodClientSecretBasic.IsValid())
+	assert.True(t, providers.TokenEndpointAuthMethodClientSecretPost.IsValid())
+	assert.True(t, providers.TokenEndpointAuthMethodNone.IsValid())
+	assert.True(t, providers.TokenEndpointAuthMethodPrivateKeyJWT.IsValid())
 
 	// Test invalid authentication methods
-	assert.False(t, constants.TokenEndpointAuthMethod("invalid").IsValid())
-	assert.False(t, constants.TokenEndpointAuthMethod("client_secret_jwt").IsValid())
-	assert.False(t, constants.TokenEndpointAuthMethod("").IsValid())
+	assert.False(t, providers.TokenEndpointAuthMethod("invalid").IsValid())
+	assert.False(t, providers.TokenEndpointAuthMethod("client_secret_jwt").IsValid())
+	assert.False(t, providers.TokenEndpointAuthMethod("").IsValid())
 }
 
 // TestGetSupportedResponseTypes tests the GetSupportedResponseTypes function
 // This is a standalone test for constants - doesn't require discovery service setup
 func TestGetSupportedResponseTypes(t *testing.T) {
-	supported := constants.GetSupportedResponseTypes()
+	supported := constants.GetSupportedResponseTypes(oauthconfig.Config{})
 
 	assert.NotNil(t, supported)
 	assert.Equal(t, 1, len(supported))
@@ -246,25 +305,41 @@ func TestGetSupportedResponseTypes(t *testing.T) {
 	assert.Equal(t, []string{"code"}, supported)
 }
 
+func TestGetSupportedResponseTypes_ConfiguredAllowList(t *testing.T) {
+	cfg := oauthconfig.Config{
+		OAuth: engineconfig.OAuthConfig{AllowedResponseTypes: []string{"code"}},
+	}
+	assert.Equal(t, []string{"code"}, constants.GetSupportedResponseTypes(cfg))
+}
+
 // TestGetSupportedGrantTypes tests the GetSupportedGrantTypes function
 // This is a standalone test for constants - doesn't require discovery service setup
 func TestGetSupportedGrantTypes(t *testing.T) {
-	supported := constants.GetSupportedGrantTypes()
+	supported := constants.GetSupportedGrantTypes(oauthconfig.Config{})
 
 	assert.NotNil(t, supported)
-	assert.Equal(t, 4, len(supported))
+	assert.Equal(t, 6, len(supported))
 	assert.Contains(t, supported, "authorization_code")
 	assert.Contains(t, supported, "client_credentials")
 	assert.Contains(t, supported, "refresh_token")
 	assert.Contains(t, supported, "urn:ietf:params:oauth:grant-type:token-exchange")
+	assert.Contains(t, supported, "urn:openid:params:grant-type:ciba")
+	assert.Contains(t, supported, "urn:ietf:params:oauth:grant-type:jwt-bearer")
 	assert.NotContains(t, supported, "password")
 	assert.NotContains(t, supported, "implicit")
+}
+
+func TestGetSupportedGrantTypes_ConfiguredAllowList(t *testing.T) {
+	cfg := oauthconfig.Config{
+		OAuth: engineconfig.OAuthConfig{AllowedGrantTypes: []string{"client_credentials", "refresh_token"}},
+	}
+	assert.Equal(t, []string{"client_credentials", "refresh_token"}, constants.GetSupportedGrantTypes(cfg))
 }
 
 // TestGetSupportedTokenEndpointAuthMethods tests the GetSupportedTokenEndpointAuthMethods function
 // This is a standalone test for constants - doesn't require discovery service setup
 func TestGetSupportedTokenEndpointAuthMethods(t *testing.T) {
-	supported := constants.GetSupportedTokenEndpointAuthMethods()
+	supported := constants.GetSupportedTokenEndpointAuthMethods(oauthconfig.Config{})
 
 	assert.NotNil(t, supported)
 	assert.Equal(t, 4, len(supported))
@@ -273,6 +348,13 @@ func TestGetSupportedTokenEndpointAuthMethods(t *testing.T) {
 	assert.Contains(t, supported, "none")
 	assert.Contains(t, supported, "private_key_jwt")
 	assert.NotContains(t, supported, "client_secret_jwt")
+}
+
+func TestGetSupportedTokenEndpointAuthMethods_ConfiguredAllowList(t *testing.T) {
+	cfg := oauthconfig.Config{
+		OAuth: engineconfig.OAuthConfig{AllowedAuthMethods: []string{"client_secret_basic"}},
+	}
+	assert.Equal(t, []string{"client_secret_basic"}, constants.GetSupportedTokenEndpointAuthMethods(cfg))
 }
 
 // TestGetSupportedSubjectTypes tests the GetSupportedSubjectTypes function
@@ -306,7 +388,7 @@ func (suite *DiscoveryTestSuite) TestInitialize() {
 		Return([]kmprovider.PublicKeyInfo{{KeyID: "k1", Algorithm: cryptolib.AlgorithmRS256}}, nil)
 
 	mux := http.NewServeMux()
-	service := Initialize(mux, suite.cryptoMock)
+	service := Initialize(mux, suite.cryptoMock, suite.oauthCfg)
 
 	assert.NotNil(suite.T(), service)
 	assert.Implements(suite.T(), (*DiscoveryServiceInterface)(nil), service)
@@ -337,18 +419,18 @@ func (suite *DiscoveryTestSuite) TestInitialize() {
 func (suite *DiscoveryTestSuite) TestGetBaseURL_WithPublicHostname() {
 	config.ResetServerRuntime()
 	testConfig := &config.Config{
-		Server: config.ServerConfig{
+		Server: engineconfig.ServerConfig{
 			PublicURL: "https://public.thunder.io",
 			Hostname:  "localhost",
 			Port:      8080,
 		},
-		JWT: config.JWTConfig{
+		JWT: engineconfig.JWTConfig{
 			Issuer: "https://auth.example.com",
 		},
 	}
 	_ = config.InitializeServerRuntime("test", testConfig)
 
-	service := newDiscoveryService(suite.cryptoMock)
+	service := newDiscoveryService(suite.cryptoMock, oauthCfgFromServerConfig(testConfig))
 	metadata := service.GetOAuth2AuthorizationServerMetadata(context.Background())
 	assert.Contains(suite.T(), metadata.AuthorizationEndpoint, "public.thunder.io")
 	config.ResetServerRuntime()
@@ -357,18 +439,18 @@ func (suite *DiscoveryTestSuite) TestGetBaseURL_WithPublicHostname() {
 func (suite *DiscoveryTestSuite) TestGetBaseURL_WithHTTPOnly() {
 	config.ResetServerRuntime()
 	testConfig := &config.Config{
-		Server: config.ServerConfig{
+		Server: engineconfig.ServerConfig{
 			Hostname: "localhost",
 			Port:     8080,
 			HTTPOnly: true,
 		},
-		JWT: config.JWTConfig{
+		JWT: engineconfig.JWTConfig{
 			Issuer: "https://auth.example.com",
 		},
 	}
 	_ = config.InitializeServerRuntime("test", testConfig)
 
-	service := newDiscoveryService(suite.cryptoMock)
+	service := newDiscoveryService(suite.cryptoMock, oauthCfgFromServerConfig(testConfig))
 	metadata := service.GetOAuth2AuthorizationServerMetadata(context.Background())
 	assert.Contains(suite.T(), metadata.AuthorizationEndpoint, "http://")
 	config.ResetServerRuntime()
@@ -382,7 +464,7 @@ func (suite *DiscoveryTestSuite) TestOIDCDiscovery_MultipleKeyAlgorithms() {
 			{KeyID: "k2", Algorithm: cryptolib.AlgorithmES256},
 			{KeyID: "k3", Algorithm: cryptolib.AlgorithmEdDSA},
 		}, nil)
-	svc := newDiscoveryService(cryptoMock)
+	svc := newDiscoveryService(cryptoMock, suite.oauthCfg)
 	meta, err := svc.GetOIDCMetadata(context.Background())
 	assert.NoError(suite.T(), err)
 	algs := meta.IDTokenSigningAlgValuesSupported
@@ -400,7 +482,7 @@ func (suite *DiscoveryTestSuite) TestOIDCDiscovery_DeduplicatesAlgorithms() {
 			{KeyID: "k1", Algorithm: cryptolib.AlgorithmRS256},
 			{KeyID: "k2", Algorithm: cryptolib.AlgorithmRS256},
 		}, nil)
-	svc := newDiscoveryService(cryptoMock)
+	svc := newDiscoveryService(cryptoMock, suite.oauthCfg)
 	meta, err := svc.GetOIDCMetadata(context.Background())
 	assert.NoError(suite.T(), err)
 	algs := meta.IDTokenSigningAlgValuesSupported
@@ -408,3 +490,5 @@ func (suite *DiscoveryTestSuite) TestOIDCDiscovery_DeduplicatesAlgorithms() {
 	assert.Equal(suite.T(), 1, len(algs))
 	assert.Contains(suite.T(), algs, "RS256")
 }
+
+func boolPtr(b bool) *bool { return &b }

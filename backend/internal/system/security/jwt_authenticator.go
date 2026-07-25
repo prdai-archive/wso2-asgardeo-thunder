@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2025, WSO2 LLC. (https://www.wso2.com).
+ * Copyright (c) 2025-2026, WSO2 LLC. (https://www.wso2.com).
  *
  * WSO2 LLC. licenses this file to you under the Apache License,
  * Version 2.0 (the "License"); you may not use this file except
@@ -28,6 +28,15 @@ import (
 	"github.com/thunder-id/thunderid/internal/system/jose/jwt"
 	"github.com/thunder-id/thunderid/internal/system/utils"
 )
+
+// claimJTI is the JWT ID claim (RFC 7519 §4.1.7); its value is recorded as the token's revocation
+// identifier for the enforcement step.
+const claimJTI = "jti"
+
+// claimTokenFamilyID is the token family id claim (tfid); its value lets the enforcement step reject a
+// token whose whole authorization grant has been revoked. It is defined here (not imported from the
+// OAuth package) to keep the security layer decoupled from OAuth internals.
+const claimTokenFamilyID = "tfid"
 
 // jwtAuthenticator handles authentication and authorization using JWT Bearer tokens.
 type jwtAuthenticator struct {
@@ -86,8 +95,12 @@ func (h *jwtAuthenticator) Authenticate(r *http.Request) (*SecurityContext, erro
 	// Step 5: Extract scopes from JWT claims
 	scopes := extractScopes(attributes)
 
-	// Create immutable SecurityContext
-	return newSecurityContext(subject, ouID, token, scopes, attributes), nil
+	// Create immutable SecurityContext. The jti claim is recorded as the revocation identifier for
+	// the enforcement step; it may be empty.
+	securityCtx := newSecurityContext(subject, ouID, token, scopes, attributes)
+	securityCtx.revocationID = extractAttribute(attributes, claimJTI)
+	securityCtx.tokenFamilyID = extractAttribute(attributes, claimTokenFamilyID)
+	return securityCtx, nil
 }
 
 // verifyToken verifies the bearer token by routing on its iss claim against
@@ -100,7 +113,7 @@ func (h *jwtAuthenticator) verifyToken(ctx context.Context, token string) error 
 	iss := extractIssuer(token)
 	switch {
 	case trustedIssuer.IsConfigured() && iss == trustedIssuer.Issuer:
-		if !h.verifyFederatedToken(token) {
+		if !h.verifyFederatedToken(ctx, token) {
 			return errInvalidToken
 		}
 	case iss == config.GetServerRuntime().Config.JWT.Issuer:
@@ -119,7 +132,7 @@ func (h *jwtAuthenticator) verifyToken(ctx context.Context, token string) error 
 //   - aud: matches this server's own identifier (the resource server)
 //   - signature: verified via the auth server's JWKS endpoint
 //   - required_claims: each configured claim must match the expected value
-func (h *jwtAuthenticator) verifyFederatedToken(token string) (verified bool) {
+func (h *jwtAuthenticator) verifyFederatedToken(ctx context.Context, token string) (verified bool) {
 	trustedIssuer := config.GetServerRuntime().Config.Server.SecurityConfig.TrustedIssuer
 	if !trustedIssuer.IsConfigured() {
 		return false
@@ -136,7 +149,7 @@ func (h *jwtAuthenticator) verifyFederatedToken(token string) (verified bool) {
 	}
 
 	// VerifyJWTWithJWKS validates signature, aud (resource server identity), iss, and time claims.
-	if svcErr := h.jwtService.VerifyJWTWithJWKS(
+	if svcErr := h.jwtService.VerifyJWTWithJWKS(ctx,
 		token, trustedIssuer.JWKSURL, trustedIssuer.Audience, trustedIssuer.Issuer,
 	); svcErr != nil {
 		return false

@@ -20,10 +20,12 @@
 package dcr
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 
 	"github.com/thunder-id/thunderid/internal/application"
+	oauthconfig "github.com/thunder-id/thunderid/internal/oauth/config"
 	"github.com/thunder-id/thunderid/internal/ou"
 	"github.com/thunder-id/thunderid/internal/system/database/provider"
 	i18nmgt "github.com/thunder-id/thunderid/internal/system/i18n/mgt"
@@ -37,16 +39,19 @@ func Initialize(
 	appService application.ApplicationServiceInterface,
 	ouService ou.OrganizationUnitServiceInterface,
 	i18nService i18nmgt.I18nServiceInterface,
+	cfg oauthconfig.Config,
 ) error {
-	// Fetch runtime transactioner for OAuth services.
-	transactioner, err := provider.GetDBProvider().GetRuntimeDBTransactioner()
+	// Fetch runtime transient transactioner for OAuth services.
+	transactioner, err := provider.GetDBProvider().GetRuntimeTransientDBTransactioner()
 	if err != nil {
-		wrappedErr := fmt.Errorf("failed to get runtime DB transactioner for DCR: %w", err)
-		log.GetLogger().Error("Failed to initialize DCR service", log.Error(wrappedErr))
+		wrappedErr := fmt.Errorf("failed to get runtime transient DB transactioner for DCR: %w", err)
+		// Service initialization runs during application startup, outside any request.
+		log.GetLogger().Error(context.Background(),
+			"Failed to initialize DCR service", log.Error(wrappedErr))
 		return wrappedErr
 	}
 	dcrService := newDCRService(appService, ouService, i18nService, transactioner)
-	dcrHandler := newDCRHandler(dcrService)
+	dcrHandler := newDCRHandler(dcrService, cfg)
 	registerRoutes(mux, dcrHandler)
 	return nil
 }

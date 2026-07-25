@@ -23,14 +23,14 @@ import (
 	"encoding/json"
 	"testing"
 
+	tidcommon "github.com/thunder-id/thunderid/pkg/thunderidengine/common"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/suite"
 
 	"github.com/thunder-id/thunderid/internal/entitytype"
 	declarativeresource "github.com/thunder-id/thunderid/internal/system/declarative_resource"
-	"github.com/thunder-id/thunderid/internal/system/error/serviceerror"
-	"github.com/thunder-id/thunderid/internal/system/i18n/core"
 	"github.com/thunder-id/thunderid/internal/system/log"
 	"github.com/thunder-id/thunderid/tests/mocks/entitytypemock"
 )
@@ -86,9 +86,9 @@ func (s *EntityTypeExporterTestSuite) TestGetAllResourceIDs_Success() {
 }
 
 func (s *EntityTypeExporterTestSuite) TestGetAllResourceIDs_Error() {
-	expectedError := &serviceerror.ServiceError{
+	expectedError := &tidcommon.ServiceError{
 		Code: "ERR_CODE",
-		Error: core.I18nMessage{
+		Error: tidcommon.I18nMessage{
 			Key:          "error.entitytypeexporter.test_error",
 			DefaultValue: "test error",
 		},
@@ -137,9 +137,9 @@ func (s *EntityTypeExporterTestSuite) TestGetResourceByID_Success() {
 }
 
 func (s *EntityTypeExporterTestSuite) TestGetResourceByID_Error() {
-	expectedError := &serviceerror.ServiceError{
+	expectedError := &tidcommon.ServiceError{
 		Code: "ERR_CODE",
-		Error: core.I18nMessage{
+		Error: tidcommon.I18nMessage{
 			Key:          "error.entitytypeexporter.test_error",
 			DefaultValue: "test error",
 		},
@@ -163,7 +163,7 @@ func (s *EntityTypeExporterTestSuite) TestValidateResource_Success() {
 		Schema: json.RawMessage(`{"field": "value"}`),
 	}
 
-	name, err := s.exporter.ValidateResource(schema, "schema1", s.logger)
+	name, err := s.exporter.ValidateResource(context.Background(), schema, "schema1", s.logger)
 
 	assert.Nil(s.T(), err)
 	assert.Equal(s.T(), "Valid Schema", name)
@@ -172,7 +172,7 @@ func (s *EntityTypeExporterTestSuite) TestValidateResource_Success() {
 func (s *EntityTypeExporterTestSuite) TestValidateResource_InvalidType() {
 	invalidResource := "not a schema"
 
-	name, err := s.exporter.ValidateResource(invalidResource, "schema1", s.logger)
+	name, err := s.exporter.ValidateResource(context.Background(), invalidResource, "schema1", s.logger)
 
 	assert.Empty(s.T(), name)
 	assert.NotNil(s.T(), err)
@@ -187,7 +187,7 @@ func (s *EntityTypeExporterTestSuite) TestValidateResource_EmptyName() {
 		Name: "",
 	}
 
-	name, err := s.exporter.ValidateResource(schema, "schema1", s.logger)
+	name, err := s.exporter.ValidateResource(context.Background(), schema, "schema1", s.logger)
 
 	assert.Empty(s.T(), name)
 	assert.NotNil(s.T(), err)
@@ -204,7 +204,7 @@ func (s *EntityTypeExporterTestSuite) TestValidateResource_NoSchema() {
 		Schema: json.RawMessage(`{}`),
 	}
 
-	name, err := s.exporter.ValidateResource(schema, "schema1", s.logger)
+	name, err := s.exporter.ValidateResource(context.Background(), schema, "schema1", s.logger)
 
 	// Should still succeed but log a warning
 	assert.Nil(s.T(), err)

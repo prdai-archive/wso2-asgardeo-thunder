@@ -22,11 +22,14 @@ package notification
 import (
 	"context"
 	"errors"
+	"fmt"
+
+	tidcommon "github.com/thunder-id/thunderid/pkg/thunderidengine/common"
 
 	"github.com/thunder-id/thunderid/internal/notification/common"
 	declarativeresource "github.com/thunder-id/thunderid/internal/system/declarative_resource"
-	"github.com/thunder-id/thunderid/internal/system/error/serviceerror"
 	"github.com/thunder-id/thunderid/internal/system/log"
+	"github.com/thunder-id/thunderid/internal/system/resourcedependency"
 	"github.com/thunder-id/thunderid/internal/system/transaction"
 	sysutils "github.com/thunder-id/thunderid/internal/system/utils"
 )
@@ -34,20 +37,24 @@ import (
 // NotificationSenderMgtSvcInterface defines the interface for managing notification senders.
 type NotificationSenderMgtSvcInterface interface {
 	CreateSender(ctx context.Context, sender common.NotificationSenderDTO) (*common.NotificationSenderDTO,
-		*serviceerror.ServiceError)
-	ListSenders(ctx context.Context) ([]common.NotificationSenderDTO, *serviceerror.ServiceError)
-	GetSender(ctx context.Context, id string) (*common.NotificationSenderDTO, *serviceerror.ServiceError)
-	GetSenderByName(ctx context.Context, name string) (*common.NotificationSenderDTO, *serviceerror.ServiceError)
+		*tidcommon.ServiceError)
+	ListSenders(ctx context.Context) ([]common.NotificationSenderDTO, *tidcommon.ServiceError)
+	ListSendersByType(ctx context.Context, senderType common.NotificationSenderType) ([]common.NotificationSenderDTO,
+		*tidcommon.ServiceError)
+	GetSender(ctx context.Context, id string) (*common.NotificationSenderDTO, *tidcommon.ServiceError)
+	GetSenderByName(ctx context.Context, name string) (*common.NotificationSenderDTO, *tidcommon.ServiceError)
 	UpdateSender(ctx context.Context, id string, sender common.NotificationSenderDTO) (*common.NotificationSenderDTO,
-		*serviceerror.ServiceError)
-	DeleteSender(ctx context.Context, id string) *serviceerror.ServiceError
+		*tidcommon.ServiceError)
+	DeleteSender(ctx context.Context, id string) *tidcommon.ServiceError
+	SetDependencyRegistry(r resourcedependency.Registry)
 }
 
 // notificationSenderMgtService implements the NotificationSenderMgtSvcInterface.
 type notificationSenderMgtService struct {
-	notificationStore notificationStoreInterface
-	transactioner     transaction.Transactioner
-	uuidGenerator     func() (string, error)
+	notificationStore  notificationStoreInterface
+	transactioner      transaction.Transactioner
+	dependencyRegistry resourcedependency.Registry
+	uuidGenerator      func() (string, error)
 }
 
 // newNotificationSenderMgtService returns a new instance of NotificationSenderMgtSvcInterface.
@@ -63,9 +70,9 @@ func newNotificationSenderMgtService(
 // CreateSender creates a new notification sender.
 func (s *notificationSenderMgtService) CreateSender(
 	ctx context.Context, sender common.NotificationSenderDTO) (
-	*common.NotificationSenderDTO, *serviceerror.ServiceError) {
+	*common.NotificationSenderDTO, *tidcommon.ServiceError) {
 	logger := log.GetLogger().With(log.String(log.LoggerKeyComponentName, "NotificationSenderMgtService"))
-	logger.Debug("Creating notification sender", log.String("name", sender.Name))
+	logger.Debug(ctx, "Creating notification sender", log.String("name", sender.Name))
 
 	if err := declarativeresource.CheckDeclarativeCreate(); err != nil {
 		return nil, err
@@ -75,16 +82,18 @@ func (s *notificationSenderMgtService) CreateSender(
 		return nil, err
 	}
 
+	applyDefaultSenderProperties(&sender)
+
 	if sender.ID == "" {
 		id, err := s.uuidGenerator()
 		if err != nil {
-			logger.Error("Failed to generate UUID", log.Error(err))
-			return nil, &serviceerror.InternalServerError
+			logger.Error(ctx, "Failed to generate UUID", log.Error(err))
+			return nil, &tidcommon.InternalServerError
 		}
 		sender.ID = id
 	}
 
-	var svcErr *serviceerror.ServiceError
+	var svcErr *tidcommon.ServiceError
 	transactErr := s.transactioner.Transact(ctx, func(txCtx context.Context) error {
 		// Check if sender with same name already exists
 		senderRetv, err := s.notificationStore.getSenderByName(txCtx, sender.Name)
@@ -92,7 +101,7 @@ func (s *notificationSenderMgtService) CreateSender(
 			return err
 		}
 		if senderRetv != nil {
-			logger.Debug("Notification sender already exists", log.String("name", sender.Name),
+			logger.Debug(ctx, "Notification sender already exists", log.String("name", sender.Name),
 				log.String("id", senderRetv.ID))
 			svcErr = &ErrorDuplicateSenderName
 			return errors.New("sender already exists")
@@ -110,8 +119,9 @@ func (s *notificationSenderMgtService) CreateSender(
 		return nil, svcErr
 	}
 	if transactErr != nil {
-		logger.Error("Failed to create notification sender", log.Error(transactErr), log.String("name", sender.Name))
-		return nil, &serviceerror.InternalServerError
+		logger.Error(ctx, "Failed to create notification sender",
+			log.Error(transactErr), log.String("name", sender.Name))
+		return nil, &tidcommon.InternalServerError
 	}
 
 	return &common.NotificationSenderDTO{
@@ -126,14 +136,31 @@ func (s *notificationSenderMgtService) CreateSender(
 
 // ListSenders retrieves all notification senders.
 func (s *notificationSenderMgtService) ListSenders(ctx context.Context) ([]common.NotificationSenderDTO,
-	*serviceerror.ServiceError) {
+	*tidcommon.ServiceError) {
 	logger := log.GetLogger().With(log.String(log.LoggerKeyComponentName, "NotificationSenderMgtService"))
-	logger.Debug("Listing all notification senders")
+	logger.Debug(ctx, "Listing all notification senders")
 
 	senders, err := s.notificationStore.listSenders(ctx)
 	if err != nil {
-		logger.Error("Failed to list notification senders", log.Error(err))
-		return nil, &serviceerror.InternalServerError
+		logger.Error(ctx, "Failed to list notification senders", log.Error(err))
+		return nil, &tidcommon.InternalServerError
+	}
+
+	return senders, nil
+}
+
+// ListSendersByType retrieves all notification senders of the given type (e.g. only
+// message/SMS senders, excluding email senders).
+func (s *notificationSenderMgtService) ListSendersByType(
+	ctx context.Context, senderType common.NotificationSenderType,
+) ([]common.NotificationSenderDTO, *tidcommon.ServiceError) {
+	logger := log.GetLogger().With(log.String(log.LoggerKeyComponentName, "NotificationSenderMgtService"))
+	logger.Debug(ctx, "Listing notification senders by type", log.String("type", string(senderType)))
+
+	senders, err := s.notificationStore.listSendersByType(ctx, senderType)
+	if err != nil {
+		logger.Error(ctx, "Failed to list notification senders by type", log.Error(err))
+		return nil, &tidcommon.InternalServerError
 	}
 
 	return senders, nil
@@ -141,9 +168,9 @@ func (s *notificationSenderMgtService) ListSenders(ctx context.Context) ([]commo
 
 // GetSender retrieves a notification sender by ID.
 func (s *notificationSenderMgtService) GetSender(ctx context.Context, id string) (*common.NotificationSenderDTO,
-	*serviceerror.ServiceError) {
+	*tidcommon.ServiceError) {
 	logger := log.GetLogger().With(log.String(log.LoggerKeyComponentName, "NotificationSenderMgtService"))
-	logger.Debug("Retrieving notification sender", log.String("id", id))
+	logger.Debug(ctx, "Retrieving notification sender", log.String("id", id))
 
 	if id == "" {
 		return nil, &ErrorInvalidSenderID
@@ -151,8 +178,8 @@ func (s *notificationSenderMgtService) GetSender(ctx context.Context, id string)
 
 	sender, err := s.notificationStore.getSenderByID(ctx, id)
 	if err != nil {
-		logger.Error("Failed to retrieve notification sender", log.String("id", id), log.Error(err))
-		return nil, &serviceerror.InternalServerError
+		logger.Error(ctx, "Failed to retrieve notification sender", log.String("id", id), log.Error(err))
+		return nil, &tidcommon.InternalServerError
 	}
 
 	if sender == nil {
@@ -164,9 +191,9 @@ func (s *notificationSenderMgtService) GetSender(ctx context.Context, id string)
 
 // GetSenderByName retrieves a notification sender by name.
 func (s *notificationSenderMgtService) GetSenderByName(ctx context.Context, name string) (*common.NotificationSenderDTO,
-	*serviceerror.ServiceError) {
+	*tidcommon.ServiceError) {
 	logger := log.GetLogger().With(log.String(log.LoggerKeyComponentName, "NotificationSenderMgtService"))
-	logger.Debug("Retrieving notification sender by name", log.String("name", name))
+	logger.Debug(ctx, "Retrieving notification sender by name", log.String("name", name))
 
 	if name == "" {
 		return nil, &ErrorInvalidSenderName
@@ -174,8 +201,8 @@ func (s *notificationSenderMgtService) GetSenderByName(ctx context.Context, name
 
 	sender, err := s.notificationStore.getSenderByName(ctx, name)
 	if err != nil {
-		logger.Error("Failed to retrieve notification sender", log.String("name", name), log.Error(err))
-		return nil, &serviceerror.InternalServerError
+		logger.Error(ctx, "Failed to retrieve notification sender", log.String("name", name), log.Error(err))
+		return nil, &tidcommon.InternalServerError
 	}
 
 	if sender == nil {
@@ -187,9 +214,9 @@ func (s *notificationSenderMgtService) GetSenderByName(ctx context.Context, name
 
 // UpdateSender updates an existing notification sender
 func (s *notificationSenderMgtService) UpdateSender(ctx context.Context, id string,
-	sender common.NotificationSenderDTO) (*common.NotificationSenderDTO, *serviceerror.ServiceError) {
+	sender common.NotificationSenderDTO) (*common.NotificationSenderDTO, *tidcommon.ServiceError) {
 	logger := log.GetLogger().With(log.String(log.LoggerKeyComponentName, "NotificationSenderMgtService"))
-	logger.Debug("Updating notification sender", log.String("id", id), log.String("name", sender.Name))
+	logger.Debug(ctx, "Updating notification sender", log.String("id", id), log.String("name", sender.Name))
 
 	if err := declarativeresource.CheckDeclarativeUpdate(); err != nil {
 		return nil, err
@@ -202,7 +229,9 @@ func (s *notificationSenderMgtService) UpdateSender(ctx context.Context, id stri
 		return nil, err
 	}
 
-	var svcErr *serviceerror.ServiceError
+	applyDefaultSenderProperties(&sender)
+
+	var svcErr *tidcommon.ServiceError
 	transactErr := s.transactioner.Transact(ctx, func(txCtx context.Context) error {
 		// Check if sender exists
 		senderRetv, err := s.notificationStore.getSenderByID(txCtx, id)
@@ -210,7 +239,7 @@ func (s *notificationSenderMgtService) UpdateSender(ctx context.Context, id stri
 			return err
 		}
 		if senderRetv == nil {
-			logger.Debug("Notification sender not found", log.String("id", id))
+			logger.Debug(ctx, "Notification sender not found", log.String("id", id))
 			svcErr = &ErrorSenderNotFound
 			return errors.New("sender not found")
 		}
@@ -222,7 +251,7 @@ func (s *notificationSenderMgtService) UpdateSender(ctx context.Context, id stri
 				return err
 			}
 			if senderWithUpdatedName != nil && senderWithUpdatedName.ID != id {
-				logger.Debug("Another sender with the same name already exists",
+				logger.Debug(ctx, "Another sender with the same name already exists",
 					log.String("name", sender.Name), log.String("existingID", senderWithUpdatedName.ID))
 				svcErr = &ErrorDuplicateSenderName
 				return errors.New("duplicate name")
@@ -231,7 +260,7 @@ func (s *notificationSenderMgtService) UpdateSender(ctx context.Context, id stri
 
 		// Ensure the type is not changed
 		if sender.Type != senderRetv.Type {
-			logger.Debug("Attempting to change sender type", log.String("id", id),
+			logger.Debug(ctx, "Attempting to change sender type", log.String("id", id),
 				log.String("originalType", string(senderRetv.Type)), log.String("newType", string(sender.Type)))
 			svcErr = &ErrorSenderTypeUpdateNotAllowed
 			return errors.New("cannot change type")
@@ -249,8 +278,9 @@ func (s *notificationSenderMgtService) UpdateSender(ctx context.Context, id stri
 		return nil, svcErr
 	}
 	if transactErr != nil {
-		logger.Error("Failed to update notification sender", log.Error(transactErr), log.String("id", id))
-		return nil, &serviceerror.InternalServerError
+		logger.Error(ctx, "Failed to update notification sender",
+			log.Error(transactErr), log.String("id", id))
+		return nil, &tidcommon.InternalServerError
 	}
 
 	return &common.NotificationSenderDTO{
@@ -264,9 +294,9 @@ func (s *notificationSenderMgtService) UpdateSender(ctx context.Context, id stri
 }
 
 // DeleteSender deletes a notification sender
-func (s *notificationSenderMgtService) DeleteSender(ctx context.Context, id string) *serviceerror.ServiceError {
+func (s *notificationSenderMgtService) DeleteSender(ctx context.Context, id string) *tidcommon.ServiceError {
 	logger := log.GetLogger().With(log.String(log.LoggerKeyComponentName, "NotificationSenderMgtService"))
-	logger.Debug("Deleting notification sender", log.String("id", id))
+	logger.Debug(ctx, "Deleting notification sender", log.String("id", id))
 
 	if err := declarativeresource.CheckDeclarativeDelete(); err != nil {
 		return err
@@ -274,6 +304,11 @@ func (s *notificationSenderMgtService) DeleteSender(ctx context.Context, id stri
 
 	if id == "" {
 		return &ErrorInvalidSenderID
+	}
+
+	// Refuse deletion while other resources block it (e.g. flows that reference the sender).
+	if svcErr := s.ensureNoBlockingDependencies(ctx, id, logger); svcErr != nil {
+		return svcErr
 	}
 
 	transactErr := s.transactioner.Transact(ctx, func(txCtx context.Context) error {
@@ -284,9 +319,56 @@ func (s *notificationSenderMgtService) DeleteSender(ctx context.Context, id stri
 	})
 
 	if transactErr != nil {
-		logger.Error("Failed to delete notification sender", log.Error(transactErr), log.String("id", id))
-		return &serviceerror.InternalServerError
+		logger.Error(ctx, "Failed to delete notification sender",
+			log.Error(transactErr), log.String("id", id))
+		return &tidcommon.InternalServerError
 	}
 
 	return nil
+}
+
+// SetDependencyRegistry injects the dependency registry. Called by servicemanager after the
+// provider services are initialized to avoid a cyclic import.
+func (s *notificationSenderMgtService) SetDependencyRegistry(r resourcedependency.Registry) {
+	s.dependencyRegistry = r
+}
+
+// ensureNoBlockingDependencies refuses deletion when other resources depend on the notification
+// sender in a way that forbids it (behaviorOnDelete == restrict), such as flows that reference it.
+// Because deletion is destructive, it fails closed: if dependency data cannot be determined, the
+// deletion is refused rather than allowed.
+func (s *notificationSenderMgtService) ensureNoBlockingDependencies(
+	ctx context.Context, id string, logger *log.Logger) *tidcommon.ServiceError {
+	if s.dependencyRegistry == nil {
+		logger.Error(ctx, "Dependency registry not set; refusing to delete notification sender",
+			log.String("id", id))
+		return &tidcommon.InternalServerError
+	}
+
+	deps, err := s.dependencyRegistry.GetDependencies(ctx, resourcedependency.ResourceTypeNotificationSender, id)
+	if err != nil {
+		logger.Error(ctx, "Failed to evaluate notification sender dependencies",
+			log.Error(err), log.String("id", id))
+		return &tidcommon.InternalServerError
+	}
+	// Fail closed: nil TotalResults means a provider failed to report, so usage is unknown.
+	if deps == nil || deps.TotalResults == nil {
+		logger.Error(ctx, "Notification sender dependency data unavailable; refusing to delete",
+			log.String("id", id))
+		return &tidcommon.InternalServerError
+	}
+
+	blocking := resourcedependency.BlockingUsages(deps)
+	if len(blocking) == 0 {
+		return nil
+	}
+
+	logger.Debug(ctx, "Notification sender has blocking dependencies; deletion refused",
+		log.String("id", id), log.Int("blockingCount", len(blocking)))
+	return tidcommon.CustomServiceError(ErrorSenderHasBlockingDependencies, tidcommon.I18nMessage{
+		Key: "error.notificationservice.sender_has_blocking_dependencies_description",
+		DefaultValue: fmt.Sprintf(
+			"The notification sender cannot be deleted because %s depend on it. Remove or reassign them first.",
+			resourcedependency.SummarizeBlockingUsages(blocking)),
+	})
 }

@@ -29,8 +29,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/thunder-id/thunderid/tests/integration/testutils"
 	"github.com/stretchr/testify/suite"
+	"github.com/thunder-id/thunderid/tests/integration/testutils"
 )
 
 const (
@@ -57,7 +57,7 @@ var (
 				Type: "oauth2",
 				OAuthAppConfig: &OAuthAppConfig{
 					ClientID:                "test_app_client",
-					ClientSecret:            "test_app_secret",
+					ClientSecret:            "test_flow_secret",
 					RedirectURIs:            []string{"http://localhost/testapp/callback"},
 					GrantTypes:              []string{"authorization_code", "client_credentials"},
 					ResponseTypes:           []string{"code"},
@@ -148,11 +148,11 @@ func (ts *ApplicationAPITestSuite) SetupSuite() {
 	appToUpdate.OUID = testOUID
 
 	// Get Flow IDs
-	defaultAuthFlowID, err = testutils.GetFlowIDByHandle("default-basic-flow", "AUTHENTICATION")
+	defaultAuthFlowID, err = testutils.GetFlowIDByHandle("default-flow", "AUTHENTICATION")
 	ts.Require().NoError(err, "Failed to get basic auth flow ID")
 	testApp.AuthFlowID = defaultAuthFlowID
 
-	defaultRegistrationFlowID, err = testutils.GetFlowIDByHandle("default-basic-flow", "REGISTRATION")
+	defaultRegistrationFlowID, err = testutils.GetFlowIDByHandle("default-flow", "REGISTRATION")
 	ts.Require().NoError(err, "Failed to get basic registration flow ID")
 	testApp.RegistrationFlowID = defaultRegistrationFlowID
 
@@ -625,6 +625,77 @@ func deleteApplication(appID string) error {
 	return nil
 }
 
+// updateApplication sends a PUT /applications/{id} request and returns any error.
+func updateApplication(appID string, app Application) error {
+	appJSON, err := json.Marshal(app)
+	if err != nil {
+		return fmt.Errorf("failed to marshal application for update: %w", err)
+	}
+
+	req, err := http.NewRequest(http.MethodPut, testServerURL+"/applications/"+appID, bytes.NewReader(appJSON))
+	if err != nil {
+		return fmt.Errorf("failed to create PUT request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	client := testutils.GetHTTPClient()
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to send PUT request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("expected status 200, got %d. Response: %s", resp.StatusCode, string(body))
+	}
+
+	return nil
+}
+
+// TestLoginConsentValidityPeriodPersisted verifies that a non-zero login consent validity period
+// set on application creation round-trips correctly on retrieval.
+func (ts *ApplicationAPITestSuite) TestLoginConsentValidityPeriodPersisted() {
+	app := Application{
+		OUID:               testOUID,
+		Name:               "Login Consent Validity Test App",
+		Description:        "App to test login_consent validity period persistence",
+		AuthFlowID:         defaultAuthFlowID,
+		RegistrationFlowID: defaultRegistrationFlowID,
+		LoginConsent: &LoginConsentConfig{
+			ValidityPeriod: 7200,
+		},
+		InboundAuthConfig: []InboundAuthConfig{
+			{
+				Type: "oauth2",
+				OAuthAppConfig: &OAuthAppConfig{
+					ClientID:                "login_consent_validity_test_client",
+					ClientSecret:            "login_consent_validity_test_secret",
+					RedirectURIs:            []string{"http://localhost/login-consent-validity/callback"},
+					GrantTypes:              []string{"authorization_code"},
+					ResponseTypes:           []string{"code"},
+					TokenEndpointAuthMethod: "client_secret_basic",
+				},
+			},
+		},
+	}
+
+	appID, err := createApplication(app)
+	ts.Require().NoError(err, "failed to create application with login_consent")
+	defer func() {
+		if err := deleteApplication(appID); err != nil {
+			ts.T().Logf("teardown: failed to delete application %s: %v", appID, err)
+		}
+	}()
+
+	retrieved, err := getApplicationByID(appID)
+	ts.Require().NoError(err, "failed to retrieve application")
+	ts.Require().NotNil(retrieved.LoginConsent, "login_consent should be present in response")
+	ts.Assert().Equal(int64(7200), retrieved.LoginConsent.ValidityPeriod,
+		"login_consent.validity_period should be 7200")
+}
+
 // TestApplicationCreationWithDefaults tests that applications created without grant_types, response_types, or token_endpoint_auth_method get proper defaults
 func (ts *ApplicationAPITestSuite) TestApplicationCreationWithDefaults() {
 	appWithDefaults := Application{
@@ -642,7 +713,7 @@ func (ts *ApplicationAPITestSuite) TestApplicationCreationWithDefaults() {
 				Type: "oauth2",
 				OAuthAppConfig: &OAuthAppConfig{
 					ClientID:     "defaults_app_client",
-					ClientSecret: "defaults_app_secret",
+					ClientSecret: "defaults_flow_secret",
 					RedirectURIs: []string{"http://localhost/defaults/callback"},
 					// Intentionally omitting GrantTypes, ResponseTypes, and TokenEndpointAuthMethod
 					PKCERequired: false,
@@ -713,7 +784,7 @@ func (ts *ApplicationAPITestSuite) TestApplicationCreationWithInvalidTokenEndpoi
 				Type: "oauth2",
 				OAuthAppConfig: &OAuthAppConfig{
 					ClientID:                "invalid_auth_app_client",
-					ClientSecret:            "invalid_auth_app_secret",
+					ClientSecret:            "invalid_auth_flow_secret",
 					RedirectURIs:            []string{"http://localhost/invalid/callback"},
 					GrantTypes:              []string{"authorization_code"},
 					ResponseTypes:           []string{"code"},
@@ -745,7 +816,7 @@ func (ts *ApplicationAPITestSuite) TestApplicationCreationWithInvalidTokenEndpoi
 				Type: "oauth2",
 				OAuthAppConfig: &OAuthAppConfig{
 					ClientID:                "empty_auth_app_client",
-					ClientSecret:            "empty_auth_app_secret",
+					ClientSecret:            "empty_auth_flow_secret",
 					RedirectURIs:            []string{"http://localhost/empty/callback"},
 					GrantTypes:              []string{"authorization_code"},
 					ResponseTypes:           []string{"code"},
@@ -759,7 +830,7 @@ func (ts *ApplicationAPITestSuite) TestApplicationCreationWithInvalidTokenEndpoi
 
 	appID, err := createApplication(appWithEmptyAuthMethod)
 	if err != nil {
-		ts.T().Fatalf("Failed to create application with empty token_endpoint_auth_method: %v", err)
+		ts.T().Fatalf("Failed to create application with empty tokenEndpointAuthMethod: %v", err)
 	}
 
 	req, err := http.NewRequest("GET", testServerURL+"/applications/"+appID, nil)
@@ -814,7 +885,7 @@ func (ts *ApplicationAPITestSuite) TestApplicationCreationWithPartialDefaults() 
 				Type: "oauth2",
 				OAuthAppConfig: &OAuthAppConfig{
 					ClientID:     "partial_app_client",
-					ClientSecret: "partial_app_secret",
+					ClientSecret: "partial_flow_secret",
 					RedirectURIs: []string{"http://localhost/partial/callback"},
 					// GrantTypes missing - should get default
 					ResponseTypes:           []string{"code"},     // Explicitly set
@@ -1040,88 +1111,60 @@ func (ts *ApplicationAPITestSuite) TestApplicationCreationWithPrivateKeyJWT() {
 	}
 }
 
-// TestApplicationWithJWKSURICertificate tests creating application with JWKS_URI certificate.
-func (ts *ApplicationAPITestSuite) TestApplicationWithJWKSURICertificate() {
+// TestCreateApplicationWithAttestation verifies that a mobile application's Google Play Integrity
+// attestation configuration round-trips (package name and signing digests are returned), while the
+// write-only service account credentials are never returned in responses.
+func (ts *ApplicationAPITestSuite) TestCreateApplicationWithAttestation() {
+	const testClientID = "attestation_test_oauth_client"
+
 	app := Application{
-		OUID:        testOUID,
-		Name:        "JWKS URI Certificate Test App",
-		Description: "Test application with JWKS_URI certificate",
-		URL:         "https://jwksuri.example.com",
+		OUID:                      testOUID,
+		Name:                      "Attestation Test App",
+		Description:               "Mobile app configured with Play Integrity attestation",
+		AuthFlowID:                defaultAuthFlowID,
+		RegistrationFlowID:        defaultRegistrationFlowID,
+		IsRegistrationFlowEnabled: false,
+		// Attestation is a client-level setting, configured at the top level of the application
+		// independent of the OAuth2 protocol config.
+		Attestation: &AttestationConfig{
+			Android: &AndroidAttestationConfig{
+				PackageName:               "com.example.myapp",
+				CertificateSha256Digests:  []string{"AA:BB:CC", "DD:EE:FF"},
+				ServiceAccountCredentials: `{"type":"service_account","project_id":"demo"}`,
+			},
+		},
 		InboundAuthConfig: []InboundAuthConfig{
 			{
 				Type: "oauth2",
 				OAuthAppConfig: &OAuthAppConfig{
-					RedirectURIs:            []string{"https://jwksuri.example.com/callback"},
+					ClientID:                testClientID,
+					RedirectURIs:            []string{"myapp://callback"},
 					GrantTypes:              []string{"authorization_code"},
 					ResponseTypes:           []string{"code"},
-					TokenEndpointAuthMethod: "client_secret_basic",
-					Scopes:                  []string{"openid", "profile", "email"},
+					TokenEndpointAuthMethod: "none",
+					PKCERequired:            true,
+					PublicClient:            true,
 				},
 			},
-		},
-		Certificate: &ApplicationCert{
-			Type:  "JWKS_URI",
-			Value: "https://jwksuri.example.com/.well-known/jwks.json",
 		},
 	}
 
 	appID, err := createApplication(app)
-	ts.Require().NoError(err)
+	ts.Require().NoError(err, "expected application creation to succeed")
 	ts.Require().NotEmpty(appID)
+	defer func() {
+		ts.Require().NoError(deleteApplication(appID), "expected application deletion to succeed")
+	}()
 
-	retrievedApp, err := getApplicationByID(appID)
-	ts.Require().NoError(err)
-	ts.Require().NotNil(retrievedApp.Certificate)
-	ts.Assert().Equal("JWKS_URI", retrievedApp.Certificate.Type)
-	ts.Assert().Equal("https://jwksuri.example.com/.well-known/jwks.json", retrievedApp.Certificate.Value)
-
-	err = deleteApplication(appID)
-	if err != nil {
-		ts.T().Logf("Failed to delete test application: %v", err)
-	}
-}
-
-// TestApplicationWithJWKSCertificate tests creating application with inline JWKS certificate.
-func (ts *ApplicationAPITestSuite) TestApplicationWithJWKSCertificate() {
-	jwksJSON := `{"keys":[{"kty":"RSA","use":"sig","kid":"test-key","n":"0vx7agoebGcQSuuPiLJXZptN9nndrQmbXEps2aiAFbWhM78LhWx4cbbfAAtVT86zwu1RK7aPFFxuhDR1L6tSoc_BJECPebWKRXjBZCiFV4n3oknjhMstn64tZ_2W-5JsGY4Hc5n9yBXArwl93lqt7_RN5w6Cf0h4QyQ5v-65YGjQR0_FDW2QvzqY368QQMicAtaSqzs8KJZgnYb9c7d0zgdAZHzu6qMQvRL5hajrn1n91CbOpbISD08qNLyrdkt-bFTWhAI4vMQFh6WeZu0fM4lFd2NcRwr3XPksINHaQ-G_xBniIqbw0Ls1jF44-csFCur-kEgU8awapJzKnqDKgw","e":"AQAB"}]}`
-
-	app := Application{
-		OUID:        testOUID,
-		Name:        "JWKS Inline Certificate Test App",
-		Description: "Test application with inline JWKS certificate",
-		URL:         "https://jwks.example.com",
-		InboundAuthConfig: []InboundAuthConfig{
-			{
-				Type: "oauth2",
-				OAuthAppConfig: &OAuthAppConfig{
-					RedirectURIs:            []string{"https://jwks.example.com/callback"},
-					GrantTypes:              []string{"authorization_code"},
-					ResponseTypes:           []string{"code"},
-					TokenEndpointAuthMethod: "client_secret_basic",
-					Scopes:                  []string{"openid", "profile"},
-				},
-			},
-		},
-		Certificate: &ApplicationCert{
-			Type:  "JWKS",
-			Value: jwksJSON,
-		},
-	}
-
-	appID, err := createApplication(app)
-	ts.Require().NoError(err)
-	ts.Require().NotEmpty(appID)
-
-	retrievedApp, err := getApplicationByID(appID)
-	ts.Require().NoError(err)
-	ts.Require().NotNil(retrievedApp.Certificate)
-	ts.Assert().Equal("JWKS", retrievedApp.Certificate.Type)
-	ts.Assert().Equal(jwksJSON, retrievedApp.Certificate.Value)
-
-	err = deleteApplication(appID)
-	if err != nil {
-		ts.T().Logf("Failed to delete test application: %v", err)
-	}
+	retrieved, err := getApplicationByID(appID)
+	ts.Require().NoError(err, "expected application retrieval to succeed")
+	ts.Require().NotNil(retrieved.Attestation, "attestation config should be returned")
+	ts.Require().NotNil(retrieved.Attestation.Android, "android attestation config should be returned")
+	ts.Assert().Equal("com.example.myapp", retrieved.Attestation.Android.PackageName)
+	ts.Assert().Equal([]string{"AA:BB:CC", "DD:EE:FF"}, retrieved.Attestation.Android.CertificateSha256Digests)
+	// The write-only service account credentials must never be returned.
+	ts.Assert().Empty(retrieved.Attestation.Android.ServiceAccountCredentials,
+		"service account credentials must not be returned in GET responses")
 }
 
 // TestCreateApplicationCertLifecycle verifies that a certificate created with an
@@ -1430,63 +1473,6 @@ func (ts *ApplicationAPITestSuite) TestApplicationEmptyScopesArray() {
 	}
 }
 
-// TestApplicationCertificateUpdate tests updating application certificate.
-func (ts *ApplicationAPITestSuite) TestApplicationCertificateUpdate() {
-	app := Application{
-		OUID:        testOUID,
-		Name:        "Certificate Update Test App",
-		Description: "Test certificate updates",
-		URL:         "https://certupdate.example.com",
-		Certificate: nil,
-		InboundAuthConfig: []InboundAuthConfig{
-			{
-				Type: "oauth2",
-				OAuthAppConfig: &OAuthAppConfig{
-					RedirectURIs:            []string{"https://certupdate.example.com/callback"},
-					GrantTypes:              []string{"authorization_code"},
-					ResponseTypes:           []string{"code"},
-					TokenEndpointAuthMethod: "client_secret_basic",
-					Scopes:                  []string{"openid"},
-				},
-			},
-		},
-	}
-
-	appID, err := createApplication(app)
-	ts.Require().NoError(err)
-	defer deleteApplication(appID)
-
-	// Update to add JWKS_URI certificate
-	app.Certificate = &ApplicationCert{
-		Type:  "JWKS_URI",
-		Value: "https://certupdate.example.com/.well-known/jwks.json",
-	}
-
-	appJSON, _ := json.Marshal(app)
-	req, _ := http.NewRequest("PUT", testServerURL+"/applications/"+appID, bytes.NewReader(appJSON))
-	req.Header.Set("Content-Type", "application/json")
-
-	client := testutils.GetHTTPClient()
-
-	resp, err := client.Do(req)
-	ts.Require().NoError(err)
-	defer resp.Body.Close()
-	ts.Assert().Equal(http.StatusOK, resp.StatusCode)
-
-	// Update to JWKS
-	app.Certificate = &ApplicationCert{
-		Type:  "JWKS",
-		Value: `{"keys":[{"kty":"RSA","use":"sig","kid":"test"}]}`,
-	}
-	appJSON, _ = json.Marshal(app)
-	req, _ = http.NewRequest("PUT", testServerURL+"/applications/"+appID, bytes.NewReader(appJSON))
-	req.Header.Set("Content-Type", "application/json")
-	resp, err = client.Do(req)
-	ts.Require().NoError(err)
-	defer resp.Body.Close()
-	ts.Assert().Equal(http.StatusOK, resp.StatusCode)
-}
-
 // TestOAuthAppCertificateUpdate tests updating OAuth app certificate.
 func (ts *ApplicationAPITestSuite) TestOAuthAppCertificateUpdate() {
 	app := Application{
@@ -1502,8 +1488,12 @@ func (ts *ApplicationAPITestSuite) TestOAuthAppCertificateUpdate() {
 					RedirectURIs:            []string{"https://oauthcertupdate.example.com/callback"},
 					GrantTypes:              []string{"authorization_code"},
 					ResponseTypes:           []string{"code"},
-					TokenEndpointAuthMethod: "client_secret_basic",
+					TokenEndpointAuthMethod: "private_key_jwt",
 					Scopes:                  []string{"openid"},
+					Certificate: &ApplicationCert{
+						Type:  "JWKS_URI",
+						Value: "https://oauthcertupdate.example.com/.well-known/jwks.json",
+					},
 				},
 			},
 		},
@@ -1513,10 +1503,9 @@ func (ts *ApplicationAPITestSuite) TestOAuthAppCertificateUpdate() {
 	ts.Require().NoError(err)
 	defer deleteApplication(appID)
 
-	// Update to add JWKS_URI certificate at application level
-	app.Certificate = &ApplicationCert{
-		Type:  "JWKS_URI",
-		Value: "https://oauthcertupdate.example.com/.well-known/jwks.json",
+	app.InboundAuthConfig[0].OAuthAppConfig.Certificate = &ApplicationCert{
+		Type:  "JWKS",
+		Value: `{"keys":[{"kty":"RSA","use":"sig","kid":"test"}]}`,
 	}
 
 	appJSON, _ := json.Marshal(app)
@@ -1529,84 +1518,15 @@ func (ts *ApplicationAPITestSuite) TestOAuthAppCertificateUpdate() {
 	ts.Require().NoError(err)
 	defer resp.Body.Close()
 	ts.Assert().Equal(http.StatusOK, resp.StatusCode)
-}
 
-// TestApplicationInvalidCertificateType tests invalid certificate type rejection.
-func (ts *ApplicationAPITestSuite) TestApplicationInvalidCertificateType() {
-	app := Application{
-		OUID:        testOUID,
-		Name:        "Invalid Cert Type Test",
-		Description: "Test invalid certificate type",
-		URL:         "https://invalidcert.example.com",
-		Certificate: &ApplicationCert{Type: "INVALID_TYPE", Value: "some-value"},
-		InboundAuthConfig: []InboundAuthConfig{
-			{
-				Type: "oauth2",
-				OAuthAppConfig: &OAuthAppConfig{
-					RedirectURIs:            []string{"https://invalidcert.example.com/callback"},
-					GrantTypes:              []string{"authorization_code"},
-					ResponseTypes:           []string{"code"},
-					TokenEndpointAuthMethod: "client_secret_basic",
-					Scopes:                  []string{"openid"},
-				},
-			},
-		},
-	}
-
-	_, err := createApplication(app)
-	ts.Assert().Error(err)
-}
-
-// TestApplicationInvalidJWKSURI tests invalid JWKS_URI rejection.
-func (ts *ApplicationAPITestSuite) TestApplicationInvalidJWKSURI() {
-	app := Application{
-		OUID:        testOUID,
-		Name:        "Invalid JWKS URI Test",
-		Description: "Test invalid JWKS URI",
-		URL:         "https://invalidjwksuri.example.com",
-		Certificate: &ApplicationCert{Type: "JWKS_URI", Value: "not-a-valid-uri"},
-		InboundAuthConfig: []InboundAuthConfig{
-			{
-				Type: "oauth2",
-				OAuthAppConfig: &OAuthAppConfig{
-					RedirectURIs:            []string{"https://invalidjwksuri.example.com/callback"},
-					GrantTypes:              []string{"authorization_code"},
-					ResponseTypes:           []string{"code"},
-					TokenEndpointAuthMethod: "client_secret_basic",
-					Scopes:                  []string{"openid"},
-				},
-			},
-		},
-	}
-
-	_, err := createApplication(app)
-	ts.Assert().Error(err)
-}
-
-// TestApplicationEmptyJWKS tests empty JWKS value rejection.
-func (ts *ApplicationAPITestSuite) TestApplicationEmptyJWKS() {
-	app := Application{
-		OUID:        testOUID,
-		Name:        "Empty JWKS Test",
-		Description: "Test empty JWKS",
-		URL:         "https://emptyjwks.example.com",
-		Certificate: &ApplicationCert{Type: "JWKS", Value: ""},
-		InboundAuthConfig: []InboundAuthConfig{
-			{
-				Type: "oauth2",
-				OAuthAppConfig: &OAuthAppConfig{
-					RedirectURIs:            []string{"https://emptyjwks.example.com/callback"},
-					GrantTypes:              []string{"authorization_code"},
-					ResponseTypes:           []string{"code"},
-					TokenEndpointAuthMethod: "client_secret_basic",
-					Scopes:                  []string{"openid"},
-				},
-			},
-		},
-	}
-
-	_, err := createApplication(app)
-	ts.Assert().Error(err)
+	updatedApp, err := getApplicationByID(appID)
+	ts.Require().NoError(err)
+	ts.Require().Len(updatedApp.InboundAuthConfig, 1)
+	oauthConfig := updatedApp.InboundAuthConfig[0].OAuthAppConfig
+	ts.Require().NotNil(oauthConfig)
+	ts.Require().NotNil(oauthConfig.Certificate)
+	ts.Assert().Equal("JWKS", oauthConfig.Certificate.Type)
+	ts.Assert().Equal(`{"keys":[{"kty":"RSA","use":"sig","kid":"test"}]}`, oauthConfig.Certificate.Value)
 }
 
 // TestApplicationPublicClientValidations tests public client configuration validations.
@@ -1706,8 +1626,10 @@ func (ts *ApplicationAPITestSuite) TestApplicationWithTokenConfiguration() {
 					Scopes:                  []string{"openid", "profile"},
 					Token: &OAuthTokenConfig{
 						AccessToken: &AccessTokenConfig{
-							ValidityPeriod: 3600,
-							UserAttributes: []string{"email", "username"},
+							UserConfig: &AccessTokenSubConfig{
+								ValidityPeriod: 3600,
+								Attributes:     []string{"email", "username"},
+							},
 						},
 						IDToken: &IDTokenConfig{
 							ValidityPeriod: 3600,
@@ -1733,7 +1655,7 @@ func (ts *ApplicationAPITestSuite) TestApplicationWithTokenConfiguration() {
 	ts.Require().NoError(err)
 	ts.Assert().NotNil(retrievedApp.InboundAuthConfig[0].OAuthAppConfig.Token)
 	ts.Assert().NotNil(retrievedApp.InboundAuthConfig[0].OAuthAppConfig.Token.AccessToken)
-	ts.Assert().Equal(int64(3600), retrievedApp.InboundAuthConfig[0].OAuthAppConfig.Token.AccessToken.ValidityPeriod)
+	ts.Assert().Equal(int64(3600), retrievedApp.InboundAuthConfig[0].OAuthAppConfig.Token.AccessToken.UserConfig.ValidityPeriod)
 }
 
 // TestApplicationWithIDTokenScopeClaims tests ID token scope claims configuration.
@@ -1802,7 +1724,9 @@ func (ts *ApplicationAPITestSuite) TestApplicationUpdateWithTokenConfigChanges()
 					Scopes:                  []string{"openid"},
 					Token: &OAuthTokenConfig{
 						AccessToken: &AccessTokenConfig{
-							ValidityPeriod: 1800,
+							UserConfig: &AccessTokenSubConfig{
+								ValidityPeriod: 1800,
+							},
 						},
 					},
 				},
@@ -1817,8 +1741,10 @@ func (ts *ApplicationAPITestSuite) TestApplicationUpdateWithTokenConfigChanges()
 	// Update with more complex token config
 	app.InboundAuthConfig[0].OAuthAppConfig.Token = &OAuthTokenConfig{
 		AccessToken: &AccessTokenConfig{
-			ValidityPeriod: 7200,
-			UserAttributes: []string{"email", "username", "role"},
+			UserConfig: &AccessTokenSubConfig{
+				ValidityPeriod: 7200,
+				Attributes:     []string{"email", "username", "role"},
+			},
 		},
 		IDToken: &IDTokenConfig{
 			ValidityPeriod: 3600,
@@ -1843,7 +1769,7 @@ func (ts *ApplicationAPITestSuite) TestApplicationUpdateWithTokenConfigChanges()
 	// Verify the updated config
 	retrievedApp, err := getApplicationByID(appID)
 	ts.Require().NoError(err)
-	ts.Assert().Equal(int64(7200), retrievedApp.InboundAuthConfig[0].OAuthAppConfig.Token.AccessToken.ValidityPeriod)
+	ts.Assert().Equal(int64(7200), retrievedApp.InboundAuthConfig[0].OAuthAppConfig.Token.AccessToken.UserConfig.ValidityPeriod)
 	ts.Assert().NotNil(retrievedApp.InboundAuthConfig[0].OAuthAppConfig.Token.IDToken)
 }
 
@@ -1974,10 +1900,6 @@ func (ts *ApplicationAPITestSuite) TestApplicationUpdateCompleteOAuthConfig() {
 		"openid", "profile", "email", "address", "phone",
 	}
 	app.InboundAuthConfig[0].OAuthAppConfig.PKCERequired = true
-	app.Certificate = &ApplicationCert{
-		Type:  "JWKS_URI",
-		Value: "https://completeoauth.example.com/.well-known/jwks.json",
-	}
 
 	appJSON, _ := json.Marshal(app)
 	req, _ := http.NewRequest("PUT", testServerURL+"/applications/"+appID, bytes.NewReader(appJSON))
@@ -2045,8 +1967,10 @@ func (ts *ApplicationAPITestSuite) TestApplicationWithOnlyAccessToken() {
 					Scopes:                  []string{"api.read", "api.write"},
 					Token: &OAuthTokenConfig{
 						AccessToken: &AccessTokenConfig{
-							ValidityPeriod: 7200,
-							UserAttributes: []string{"email", "username", "role", "department"},
+							UserConfig: &AccessTokenSubConfig{
+								ValidityPeriod: 7200,
+								Attributes:     []string{"email", "username", "role", "department"},
+							},
 						},
 						// No IDToken
 					},
@@ -2064,8 +1988,8 @@ func (ts *ApplicationAPITestSuite) TestApplicationWithOnlyAccessToken() {
 	ts.Require().NoError(err)
 	ts.Assert().NotNil(retrievedApp.InboundAuthConfig[0].OAuthAppConfig.Token)
 	ts.Assert().NotNil(retrievedApp.InboundAuthConfig[0].OAuthAppConfig.Token.AccessToken)
-	ts.Assert().Equal(int64(7200), retrievedApp.InboundAuthConfig[0].OAuthAppConfig.Token.AccessToken.ValidityPeriod)
-	ts.Assert().Len(retrievedApp.InboundAuthConfig[0].OAuthAppConfig.Token.AccessToken.UserAttributes, 4)
+	ts.Assert().Equal(int64(7200), retrievedApp.InboundAuthConfig[0].OAuthAppConfig.Token.AccessToken.UserConfig.ValidityPeriod)
+	ts.Assert().Len(retrievedApp.InboundAuthConfig[0].OAuthAppConfig.Token.AccessToken.UserConfig.Attributes, 4)
 }
 
 // TestApplicationWithOnlyIDToken tests creating application with only IDToken config.
@@ -2111,7 +2035,17 @@ func (ts *ApplicationAPITestSuite) TestApplicationWithOnlyIDToken() {
 	ts.Assert().NotNil(retrievedApp.InboundAuthConfig[0].OAuthAppConfig.Token)
 	ts.Assert().NotNil(retrievedApp.InboundAuthConfig[0].OAuthAppConfig.Token.IDToken)
 	ts.Assert().Equal(int64(3600), retrievedApp.InboundAuthConfig[0].OAuthAppConfig.Token.IDToken.ValidityPeriod)
-	ts.Assert().Len(retrievedApp.InboundAuthConfig[0].OAuthAppConfig.ScopeClaims, 2)
+	// The response returns the effective scope-claims mapping: the standard OIDC defaults with the
+	// app's stored overrides applied on top, so all six standard scopes are present. The overridden
+	// scopes carry the stored values; the rest carry the exact standard defaults.
+	scopeClaims := retrievedApp.InboundAuthConfig[0].OAuthAppConfig.ScopeClaims
+	ts.Assert().Len(scopeClaims, 6)
+	ts.Assert().Equal([]string{"name", "given_name", "family_name", "middle_name"}, scopeClaims["profile"])
+	ts.Assert().Equal([]string{"email", "email_verified"}, scopeClaims["email"])
+	ts.Assert().Equal([]string{"sub"}, scopeClaims["openid"])
+	ts.Assert().Equal([]string{"phone_number", "phone_number_verified"}, scopeClaims["phone"])
+	ts.Assert().Equal([]string{"address"}, scopeClaims["address"])
+	ts.Assert().Equal([]string{"roles"}, scopeClaims["roles"])
 }
 
 // TestApplicationWithBothTokenTypes tests creating application with both AccessToken and IDToken.
@@ -2133,8 +2067,10 @@ func (ts *ApplicationAPITestSuite) TestApplicationWithBothTokenTypes() {
 					Scopes:                  []string{"openid", "profile", "email"},
 					Token: &OAuthTokenConfig{
 						AccessToken: &AccessTokenConfig{
-							ValidityPeriod: 5400,
-							UserAttributes: []string{"email", "username"},
+							UserConfig: &AccessTokenSubConfig{
+								ValidityPeriod: 5400,
+								Attributes:     []string{"email", "username"},
+							},
 						},
 						IDToken: &IDTokenConfig{
 							ValidityPeriod: 3600,
@@ -2160,7 +2096,7 @@ func (ts *ApplicationAPITestSuite) TestApplicationWithBothTokenTypes() {
 	ts.Assert().NotNil(retrievedApp.InboundAuthConfig[0].OAuthAppConfig.Token)
 	ts.Assert().NotNil(retrievedApp.InboundAuthConfig[0].OAuthAppConfig.Token.AccessToken)
 	ts.Assert().NotNil(retrievedApp.InboundAuthConfig[0].OAuthAppConfig.Token.IDToken)
-	ts.Assert().Equal(int64(5400), retrievedApp.InboundAuthConfig[0].OAuthAppConfig.Token.AccessToken.ValidityPeriod)
+	ts.Assert().Equal(int64(5400), retrievedApp.InboundAuthConfig[0].OAuthAppConfig.Token.AccessToken.UserConfig.ValidityPeriod)
 	ts.Assert().Equal(int64(3600), retrievedApp.InboundAuthConfig[0].OAuthAppConfig.Token.IDToken.ValidityPeriod)
 }
 
@@ -2341,9 +2277,13 @@ func (ts *ApplicationAPITestSuite) TestApplicationWithComplexScopeClaims() {
 	retrievedApp, err := getApplicationByID(appID)
 	ts.Require().NoError(err)
 	ts.Assert().NotNil(retrievedApp.InboundAuthConfig[0].OAuthAppConfig.Token.IDToken)
-	ts.Assert().Len(retrievedApp.InboundAuthConfig[0].OAuthAppConfig.ScopeClaims, 5)
-	ts.Assert().Contains(retrievedApp.InboundAuthConfig[0].OAuthAppConfig.ScopeClaims, "profile")
-	ts.Assert().GreaterOrEqual(len(retrievedApp.InboundAuthConfig[0].OAuthAppConfig.ScopeClaims["profile"]), 10)
+	// The response returns the effective mapping: the six standard OIDC scopes (defaults with the
+	// app's overrides applied) plus the "custom" scope carried through.
+	scopeClaims := retrievedApp.InboundAuthConfig[0].OAuthAppConfig.ScopeClaims
+	ts.Assert().Len(scopeClaims, 7)
+	ts.Assert().Contains(scopeClaims, "profile")
+	ts.Assert().GreaterOrEqual(len(scopeClaims["profile"]), 10)
+	ts.Assert().Equal([]string{"organization", "department", "employee_id"}, scopeClaims["custom"])
 }
 
 // TestApplicationCertificateRollbackOnOAuthFail tests certificate rollback when OAuth creation fails.
@@ -2354,10 +2294,6 @@ func (ts *ApplicationAPITestSuite) TestApplicationCertificateRollbackOnOAuthFail
 		Name:        "Certificate Rollback Test",
 		Description: "Test certificate rollback on OAuth failure",
 		URL:         "https://rollback.example.com",
-		Certificate: &ApplicationCert{
-			Type:  "JWKS_URI",
-			Value: "https://rollback.example.com/.well-known/jwks.json",
-		},
 		InboundAuthConfig: []InboundAuthConfig{
 			{
 				Type: "oauth2",
@@ -2427,14 +2363,14 @@ func (ts *ApplicationAPITestSuite) TestApplicationWithOAuthCertificateEmptyJWKSU
 					RedirectURIs:            []string{"https://oauthemptyjwksuri.example.com/callback"},
 					GrantTypes:              []string{"authorization_code"},
 					ResponseTypes:           []string{"code"},
-					TokenEndpointAuthMethod: "client_secret_basic",
+					TokenEndpointAuthMethod: "private_key_jwt",
 					Scopes:                  []string{"openid"},
+					Certificate: &ApplicationCert{
+						Type:  "JWKS_URI",
+						Value: "",
+					},
 				},
 			},
-		},
-		Certificate: &ApplicationCert{
-			Type:  "JWKS_URI",
-			Value: "",
 		},
 	}
 
@@ -2623,8 +2559,10 @@ func (ts *ApplicationAPITestSuite) TestApplicationWithCompleteMetadata() {
 					Scopes:                  []string{"openid", "profile", "email"},
 					Token: &OAuthTokenConfig{
 						AccessToken: &AccessTokenConfig{
-							ValidityPeriod: 3600,
-							UserAttributes: []string{"sub", "email"},
+							UserConfig: &AccessTokenSubConfig{
+								ValidityPeriod: 3600,
+								Attributes:     []string{"sub", "email"},
+							},
 						},
 						IDToken: &IDTokenConfig{
 							ValidityPeriod: 3600,
@@ -2677,8 +2615,8 @@ func (ts *ApplicationAPITestSuite) TestApplicationWithCompleteMetadata() {
 
 	// Verify access token config
 	ts.Require().NotNil(retrievedApp.InboundAuthConfig[0].OAuthAppConfig.Token.AccessToken)
-	ts.Assert().Equal(int64(3600), retrievedApp.InboundAuthConfig[0].OAuthAppConfig.Token.AccessToken.ValidityPeriod)
-	ts.Assert().Equal([]string{"sub", "email"}, retrievedApp.InboundAuthConfig[0].OAuthAppConfig.Token.AccessToken.UserAttributes)
+	ts.Assert().Equal(int64(3600), retrievedApp.InboundAuthConfig[0].OAuthAppConfig.Token.AccessToken.UserConfig.ValidityPeriod)
+	ts.Assert().Equal([]string{"sub", "email"}, retrievedApp.InboundAuthConfig[0].OAuthAppConfig.Token.AccessToken.UserConfig.Attributes)
 
 	// Verify ID token config
 	ts.Require().NotNil(retrievedApp.InboundAuthConfig[0].OAuthAppConfig.Token.IDToken)
@@ -3698,13 +3636,15 @@ func (ts *ApplicationAPITestSuite) TestApplicationCreateWithDefaultAuthFlowID() 
 	ts.Assert().NotEmpty(retrievedApp.AuthFlowID)
 }
 
-// TestApplicationCreateWithoutRegistrationFlowID tests creating application without a registration
-// flow ID when auto-inference is disabled (default). The registration flow ID should remain empty.
+// TestApplicationCreateWithoutRegistrationFlowID tests creating an application without a
+// RegistrationFlowID when its AuthFlowID transitively references a registration flow. The server
+// must auto-fill RegistrationFlowID with the reachable target and force IsRegistrationFlowEnabled
+// to false.
 func (ts *ApplicationAPITestSuite) TestApplicationCreateWithoutRegistrationFlowID() {
 	app := Application{
 		OUID:                      testOUID,
 		Name:                      "No Registration Flow Test",
-		Description:               "Test that registration flow is not inferred when auto-inference is disabled",
+		Description:               "Test that registration flow is auto-filled from the referenced auth flow",
 		IsRegistrationFlowEnabled: true,
 		AuthFlowID:                defaultAuthFlowID,
 		Certificate:               nil,
@@ -3717,59 +3657,10 @@ func (ts *ApplicationAPITestSuite) TestApplicationCreateWithoutRegistrationFlowI
 	retrievedApp, err := getApplicationByID(appID)
 	ts.Require().NoError(err)
 
-	// Verify registration flow ID was not inferred (auto-inference is disabled by default)
-	ts.Assert().Empty(retrievedApp.RegistrationFlowID)
-}
-
-// TestApplicationUpdateRemoveCertificate tests updating application to remove certificate
-func (ts *ApplicationAPITestSuite) TestApplicationUpdateRemoveCertificate() {
-	// Create app with certificate
-	app := Application{
-		OUID:        testOUID,
-		Name:        "Remove Certificate Test",
-		Description: "Test removing certificate during update",
-		URL:         "https://removecert.example.com",
-		Certificate: &ApplicationCert{
-			Type:  "JWKS_URI",
-			Value: "https://removecert.example.com/.well-known/jwks.json",
-		},
-	}
-
-	appID, err := createApplication(app)
-	ts.Require().NoError(err)
-	defer deleteApplication(appID)
-
-	// Update to remove certificate
-	updateApp := Application{
-		OUID:        testOUID,
-		Name:        "Remove Certificate Test",
-		Description: "Updated description",
-		Certificate: nil, // Remove certificate
-	}
-
-	appJSON, err := json.Marshal(updateApp)
-	ts.Require().NoError(err)
-
-	reqBody := bytes.NewReader(appJSON)
-	req, err := http.NewRequest("PUT", testServerURL+"/applications/"+appID, reqBody)
-	ts.Require().NoError(err)
-	req.Header.Set("Content-Type", "application/json")
-
-	client := testutils.GetHTTPClient()
-
-	resp, err := client.Do(req)
-	ts.Require().NoError(err)
-	defer resp.Body.Close()
-
-	// Should succeed
-	ts.Assert().Equal(http.StatusOK, resp.StatusCode)
-
-	var updatedApp Application
-	err = json.NewDecoder(resp.Body).Decode(&updatedApp)
-	ts.Require().NoError(err)
-
-	// Verify certificate was removed
-	ts.Assert().Nil(updatedApp.Certificate)
+	ts.Assert().Equal(defaultRegistrationFlowID, retrievedApp.RegistrationFlowID,
+		"auto-fill must populate RegistrationFlowID from the auth flow's reachable target")
+	ts.Assert().False(retrievedApp.IsRegistrationFlowEnabled,
+		"auto-fill must force IsRegistrationFlowEnabled to false")
 }
 
 // TestApplicationCreateWithDuplicateClientID tests creating application with duplicate client ID
@@ -4272,7 +4163,7 @@ func (ts *ApplicationAPITestSuite) TestApplicationUpdateWithInvalidThemeAndLayou
 }
 
 // TestThemeAndLayoutCannotDeleteWhenAssociatedWithApplication tests that theme/layout cannot be deleted when associated with an application
-func (ts *ApplicationAPITestSuite) TestThemeAndLayoutCannotDeleteWhenAssociatedWithApplication() {
+func (ts *ApplicationAPITestSuite) TestThemeAndLayoutDeletableWhenAssociatedWithApplication() {
 	// Create a theme configuration
 	themePreferences := []byte(`{
 		"activeColorScheme": "dark",
@@ -4292,18 +4183,23 @@ func (ts *ApplicationAPITestSuite) TestThemeAndLayoutCannotDeleteWhenAssociatedW
 	ts.Require().NoError(err, "Failed to create theme for test")
 	defer deleteThemeForTest(themeID)
 
-	// Create application with theme ID
+	layoutID, err := createLayoutForTest([]byte(`{"structure": "grid"}`), "Layout for delete test")
+	ts.Require().NoError(err, "Failed to create layout for test")
+	defer deleteLayoutForTest(layoutID)
+
+	// Create application referencing the theme and layout
 	app := Application{
 		OUID:        testOUID,
-		Name:        "App Preventing Theme Delete",
-		Description: "Application that prevents theme deletion",
+		Name:        "App With Theme And Layout",
+		Description: "Application that references a theme and a layout",
 		ThemeID:     themeID,
+		LayoutID:    layoutID,
 		Certificate: nil,
 		InboundAuthConfig: []InboundAuthConfig{
 			{
 				Type: "oauth2",
 				OAuthAppConfig: &OAuthAppConfig{
-					RedirectURIs:            []string{"https://prevent-delete.example.com/callback"},
+					RedirectURIs:            []string{"https://theme-layout.example.com/callback"},
 					GrantTypes:              []string{"authorization_code"},
 					ResponseTypes:           []string{"code"},
 					TokenEndpointAuthMethod: "client_secret_basic",
@@ -4316,36 +4212,43 @@ func (ts *ApplicationAPITestSuite) TestThemeAndLayoutCannotDeleteWhenAssociatedW
 	ts.Require().NoError(err)
 	defer deleteApplication(appID)
 
-	// Try to delete the theme - should fail
-	req, err := http.NewRequest("DELETE", testServerURL+"/design/themes/"+themeID, nil)
-	ts.Require().NoError(err)
-
 	client := testutils.GetHTTPClient()
 
-	resp, err := client.Do(req)
+	// Deleting the theme while associated with an application succeeds; the application falls back
+	// to the default theme at read time.
+	themeReq, err := http.NewRequest("DELETE", testServerURL+"/design/themes/"+themeID, nil)
 	ts.Require().NoError(err)
-	defer resp.Body.Close()
-
-	ts.Assert().Equal(http.StatusConflict, resp.StatusCode)
-
-	bodyBytes, err := io.ReadAll(resp.Body)
+	themeResp, err := client.Do(themeReq)
 	ts.Require().NoError(err)
+	themeResp.Body.Close()
+	ts.Assert().Equal(http.StatusNoContent, themeResp.StatusCode)
 
-	var errResp map[string]interface{}
-	err = json.Unmarshal(bodyBytes, &errResp)
+	// Deleting the layout while associated with an application succeeds similarly.
+	layoutReq, err := http.NewRequest("DELETE", testServerURL+"/design/layouts/"+layoutID, nil)
 	ts.Require().NoError(err)
-	ts.Assert().Equal("THM-1004", errResp["code"])
-
-	// Delete the application first
-	err = deleteApplication(appID)
+	layoutResp, err := client.Do(layoutReq)
 	ts.Require().NoError(err)
+	layoutResp.Body.Close()
+	ts.Assert().Equal(http.StatusNoContent, layoutResp.StatusCode)
 
-	// Now the theme should be deletable
-	resp, err = client.Do(req)
+	// The theme and layout are gone.
+	themeGetReq, err := http.NewRequest("GET", testServerURL+"/design/themes/"+themeID, nil)
 	ts.Require().NoError(err)
-	defer resp.Body.Close()
+	themeGetResp, err := client.Do(themeGetReq)
+	ts.Require().NoError(err)
+	themeGetResp.Body.Close()
+	ts.Assert().Equal(http.StatusNotFound, themeGetResp.StatusCode)
 
-	ts.Assert().Equal(http.StatusNoContent, resp.StatusCode)
+	layoutGetReq, err := http.NewRequest("GET", testServerURL+"/design/layouts/"+layoutID, nil)
+	ts.Require().NoError(err)
+	layoutGetResp, err := client.Do(layoutGetReq)
+	ts.Require().NoError(err)
+	layoutGetResp.Body.Close()
+	ts.Assert().Equal(http.StatusNotFound, layoutGetResp.StatusCode)
+
+	// The application remains retrievable after its theme and layout are removed.
+	_, err = getApplicationByID(appID)
+	ts.Require().NoError(err)
 }
 
 // TestApplicationWithAllowedUserTypes tests creating an application with valid allowed_user_types

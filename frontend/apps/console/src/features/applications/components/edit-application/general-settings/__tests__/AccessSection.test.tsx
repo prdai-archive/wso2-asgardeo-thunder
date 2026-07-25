@@ -18,14 +18,14 @@
 
 import {render, screen, waitFor, fireEvent} from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import {useGetUserTypes} from '@thunderid/configure-user-types';
 import {describe, it, expect, vi, beforeEach} from 'vitest';
-import useGetUserTypes from '../../../../../user-types/api/useGetUserTypes';
 import type {Application} from '../../../../models/application';
 import type {OAuth2Config} from '../../../../models/oauth';
 import AccessSection from '../AccessSection';
 
 // Mock the useGetUserTypes hook
-vi.mock('../../../../../user-types/api/useGetUserTypes');
+vi.mock('@thunderid/configure-user-types');
 
 type MockedUseGetUserTypes = ReturnType<typeof useGetUserTypes>;
 
@@ -328,7 +328,8 @@ describe('AccessSection', () => {
         />,
       );
 
-      const addButton = screen.getByRole('button', {name: /Add URI/i});
+      // The redirect URIs "Add URI" button is the first (post-logout redirect URIs adds a second).
+      const addButton = screen.getAllByRole('button', {name: /Add URI/i})[0];
       await user.click(addButton);
 
       const inputs = screen.getAllByPlaceholderText('https://example.com/callback');
@@ -494,6 +495,83 @@ describe('AccessSection', () => {
       // Since URI is valid and non-empty, it should call updateRedirectUris
       await waitFor(() => {
         expect(mockOnFieldChange).toHaveBeenCalledWith('inboundAuthConfig', expect.any(Array));
+      });
+    });
+  });
+
+  describe('Validation Change Callback', () => {
+    it('should notify parent with no errors for a valid URL', async () => {
+      const mockOnValidationChange = vi.fn();
+      vi.mocked(useGetUserTypes).mockReturnValue({
+        data: mockUserTypes,
+        isLoading: false,
+      } as unknown as MockedUseGetUserTypes);
+
+      render(
+        <AccessSection
+          application={mockApplication}
+          editedApp={{}}
+          onFieldChange={mockOnFieldChange}
+          onValidationChange={mockOnValidationChange}
+        />,
+      );
+
+      await waitFor(() => {
+        expect(mockOnValidationChange).toHaveBeenCalledWith(false);
+      });
+    });
+
+    it('should notify parent with errors when the URL becomes invalid', async () => {
+      const user = userEvent.setup();
+      const mockOnValidationChange = vi.fn();
+      vi.mocked(useGetUserTypes).mockReturnValue({
+        data: mockUserTypes,
+        isLoading: false,
+      } as unknown as MockedUseGetUserTypes);
+
+      render(
+        <AccessSection
+          application={mockApplication}
+          editedApp={{}}
+          onFieldChange={mockOnFieldChange}
+          onValidationChange={mockOnValidationChange}
+        />,
+      );
+
+      const urlInput = screen.getByLabelText('Application URL');
+      await user.clear(urlInput);
+      await user.type(urlInput, 'invalid-url');
+
+      await waitFor(() => {
+        expect(mockOnValidationChange).toHaveBeenCalledWith(true);
+      });
+    });
+
+    it('should notify parent with errors when a redirect URI is invalid', async () => {
+      const user = userEvent.setup();
+      const mockOnValidationChange = vi.fn();
+      vi.mocked(useGetUserTypes).mockReturnValue({
+        data: mockUserTypes,
+        isLoading: false,
+      } as unknown as MockedUseGetUserTypes);
+
+      render(
+        <AccessSection
+          application={mockApplication}
+          editedApp={{}}
+          oauth2Config={mockOAuth2Config}
+          onFieldChange={mockOnFieldChange}
+          onValidationChange={mockOnValidationChange}
+        />,
+      );
+
+      const uriInput = screen.getByDisplayValue('https://example.com/callback');
+      await user.clear(uriInput);
+      await user.type(uriInput, 'not-a-valid-url');
+      await user.tab();
+
+      await waitFor(() => {
+        expect(mockOnValidationChange).toHaveBeenCalledWith(true);
       });
     });
   });
@@ -919,6 +997,210 @@ describe('AccessSection', () => {
       );
 
       expect(screen.getByDisplayValue('https://initial.com/callback')).toBeInTheDocument();
+    });
+  });
+
+  describe('Wildcard URI Validation', () => {
+    it('should accept wildcard URI in host', async () => {
+      const user = userEvent.setup();
+      vi.mocked(useGetUserTypes).mockReturnValue({
+        data: mockUserTypes,
+        isLoading: false,
+      } as unknown as MockedUseGetUserTypes);
+
+      const configWithWildcard = {
+        ...mockOAuth2Config,
+        redirectUris: ['https://example.com/callback'],
+      };
+
+      render(
+        <AccessSection
+          application={mockApplication}
+          editedApp={{}}
+          oauth2Config={configWithWildcard}
+          onFieldChange={mockOnFieldChange}
+        />,
+      );
+
+      const uriInput = screen.getByDisplayValue('https://example.com/callback');
+      await user.clear(uriInput);
+      await user.type(uriInput, 'https://*.example.com/callback');
+      await user.tab();
+
+      await waitFor(() => {
+        expect(mockOnFieldChange).toHaveBeenCalledWith('inboundAuthConfig', expect.any(Array));
+      });
+    });
+
+    it('should accept wildcard URI in path', async () => {
+      const user = userEvent.setup();
+      vi.mocked(useGetUserTypes).mockReturnValue({
+        data: mockUserTypes,
+        isLoading: false,
+      } as unknown as MockedUseGetUserTypes);
+
+      const configWithUri = {
+        ...mockOAuth2Config,
+        redirectUris: ['https://example.com/callback'],
+      };
+
+      render(
+        <AccessSection
+          application={mockApplication}
+          editedApp={{}}
+          oauth2Config={configWithUri}
+          onFieldChange={mockOnFieldChange}
+        />,
+      );
+
+      const uriInput = screen.getByDisplayValue('https://example.com/callback');
+      await user.clear(uriInput);
+      await user.type(uriInput, 'https://example.com/*/callback');
+      await user.tab();
+
+      await waitFor(() => {
+        expect(mockOnFieldChange).toHaveBeenCalledWith('inboundAuthConfig', expect.any(Array));
+      });
+    });
+
+    it('should accept wildcard URI with no path', async () => {
+      const user = userEvent.setup();
+      vi.mocked(useGetUserTypes).mockReturnValue({
+        data: mockUserTypes,
+        isLoading: false,
+      } as unknown as MockedUseGetUserTypes);
+
+      const configWithUri = {
+        ...mockOAuth2Config,
+        redirectUris: ['https://example.com/callback'],
+      };
+
+      render(
+        <AccessSection
+          application={mockApplication}
+          editedApp={{}}
+          oauth2Config={configWithUri}
+          onFieldChange={mockOnFieldChange}
+        />,
+      );
+
+      const uriInput = screen.getByDisplayValue('https://example.com/callback');
+      await user.clear(uriInput);
+      await user.type(uriInput, 'https://*.example.com');
+      await user.tab();
+
+      await waitFor(() => {
+        expect(mockOnFieldChange).toHaveBeenCalledWith('inboundAuthConfig', expect.any(Array));
+      });
+    });
+  });
+
+  describe('Read-Only State', () => {
+    const readOnlyApplication: Application = {
+      ...mockApplication,
+      isReadOnly: true,
+    } as Application;
+
+    it('should disable all inputs when application.isReadOnly is true', () => {
+      vi.mocked(useGetUserTypes).mockReturnValue({
+        data: mockUserTypes,
+        isLoading: false,
+      } as unknown as MockedUseGetUserTypes);
+
+      render(
+        <AccessSection
+          application={readOnlyApplication}
+          editedApp={{}}
+          oauth2Config={mockOAuth2Config}
+          onFieldChange={mockOnFieldChange}
+        />,
+      );
+
+      // Application URL input should be disabled
+      const urlInput = screen.getByLabelText('Application URL');
+      expect(urlInput).toBeDisabled();
+
+      // Redirect URI input should be disabled
+      const redirectUriInput = screen.getByDisplayValue('https://example.com/callback');
+      expect(redirectUriInput).toBeDisabled();
+
+      // Both "Add URI" buttons (redirect and post-logout redirect URIs) should be disabled
+      screen.getAllByRole('button', {name: /Add URI/i}).forEach((addButton) => {
+        expect(addButton).toBeDisabled();
+      });
+
+      // Delete button should be disabled
+      const deleteButton = screen.getByRole('button', {name: /delete/i});
+      expect(deleteButton).toBeDisabled();
+
+      // Allowed User Types autocomplete input should be disabled
+      const autocompleteInput = screen.getByLabelText('Allowed User Types');
+      expect(autocompleteInput).toBeDisabled();
+    });
+  });
+
+  describe('Post-Logout Redirect URIs', () => {
+    beforeEach(() => {
+      vi.mocked(useGetUserTypes).mockReturnValue({
+        data: mockUserTypes,
+        isLoading: false,
+      } as unknown as MockedUseGetUserTypes);
+    });
+
+    it('should render existing post-logout redirect URIs', () => {
+      const oauth2Config = {...mockOAuth2Config, postLogoutRedirectUris: ['https://example.com/after-signout']};
+      render(
+        <AccessSection
+          application={mockApplication}
+          editedApp={{}}
+          oauth2Config={oauth2Config as OAuth2Config}
+          onFieldChange={mockOnFieldChange}
+        />,
+      );
+
+      expect(screen.getByDisplayValue('https://example.com/after-signout')).toBeInTheDocument();
+    });
+
+    it('should add a new post-logout redirect URI row', async () => {
+      const user = userEvent.setup();
+      render(
+        <AccessSection
+          application={mockApplication}
+          editedApp={{}}
+          oauth2Config={mockOAuth2Config}
+          onFieldChange={mockOnFieldChange}
+        />,
+      );
+
+      // The post-logout "Add URI" button is the second one.
+      const addButtons = screen.getAllByRole('button', {name: /Add URI/i});
+      await user.click(addButtons[addButtons.length - 1]);
+
+      expect(screen.getAllByPlaceholderText('https://example.com/logged-out')).toHaveLength(1);
+    });
+
+    it('should commit postLogoutRedirectUris (with redirect URIs preserved) on blur', async () => {
+      const user = userEvent.setup();
+      const oauth2Config = {...mockOAuth2Config, postLogoutRedirectUris: ['']};
+      render(
+        <AccessSection
+          application={mockApplication}
+          editedApp={{}}
+          oauth2Config={oauth2Config as OAuth2Config}
+          onFieldChange={mockOnFieldChange}
+        />,
+      );
+
+      const input = screen.getByPlaceholderText('https://example.com/logged-out');
+      await user.type(input, 'https://example.com/after-signout');
+      await user.tab();
+
+      const call = mockOnFieldChange.mock.calls.find((c) => c[0] === 'inboundAuthConfig');
+      expect(call).toBeDefined();
+      const configs = call![1] as {type: string; config: {redirectUris: string[]; postLogoutRedirectUris: string[]}}[];
+      const oauth = configs.find((c) => c.type === 'oauth2')!;
+      expect(oauth.config.postLogoutRedirectUris).toEqual(['https://example.com/after-signout']);
+      expect(oauth.config.redirectUris).toEqual(['https://example.com/callback']);
     });
   });
 });

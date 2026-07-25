@@ -16,16 +16,15 @@
  * under the License.
  */
 
+import {Box} from '@wso2/oxygen-ui';
+import {Bot, Building2, Fingerprint} from '@wso2/oxygen-ui-icons-react';
 import React from 'react';
 
-import FingerprintIcon from './icons/FingerprintIcon';
-import KeypadIcon from './icons/KeypadIcon';
-import MagicLinkIcon from './icons/MagicLinkIcon';
 import UseCaseBranchCard from './UseCaseBranchCard';
 
 interface BranchCard {
   href: string;
-  animationClass: string;
+  animationDelay: number;
   icon: React.ReactNode;
   accentColor: string;
   iconBackground: string;
@@ -37,13 +36,13 @@ interface BranchCard {
 
 const cards: BranchCard[] = [
   {
-    href: '/docs/next/use-cases/b2c/customer-identity',
-    animationClass: 'uc-card-1',
-    icon: <FingerprintIcon size={26} />,
+    href: '/docs/next/use-cases/b2c/',
+    animationDelay: 300,
+    icon: <Fingerprint size={26} />,
     accentColor: '#3b82f6',
     iconBackground: 'rgba(59,130,246,0.10)',
     category: 'Consumer Apps',
-    title: 'B2C - Customer Identity',
+    title: 'B2C - Overview',
     description:
       'Frictionless sign-up and sign-in for consumer apps. Passkeys, social login, and step-up authentication.',
     bullets: [
@@ -54,8 +53,8 @@ const cards: BranchCard[] = [
   },
   {
     href: '/docs/next/use-cases/b2b/multi-tenant-saas',
-    animationClass: 'uc-card-2',
-    icon: <KeypadIcon size={26} />,
+    animationDelay: 420,
+    icon: <Building2 size={26} />,
     accentColor: '#10b981',
     iconBackground: 'rgba(16,185,129,0.10)',
     category: 'SaaS Apps',
@@ -70,8 +69,8 @@ const cards: BranchCard[] = [
   },
   {
     href: '/docs/next/use-cases/ai-agents/overview',
-    animationClass: 'uc-card-3',
-    icon: <MagicLinkIcon size={26} />,
+    animationDelay: 540,
+    icon: <Bot size={26} />,
     accentColor: '#8b5cf6',
     iconBackground: 'rgba(139,92,246,0.10)',
     category: 'AI & Automation',
@@ -88,12 +87,21 @@ const cards: BranchCard[] = [
 
 export default function UseCaseBranchCards() {
   return (
-    <div className="uc-branch-grid">
+    <Box
+      sx={{
+        display: 'flex',
+        flexWrap: 'wrap',
+        gap: '1.25rem',
+        justifyContent: 'center',
+        maxWidth: '900px',
+        width: '100%',
+      }}
+    >
       {cards.map((card) => (
         <UseCaseBranchCard
           key={card.href}
           href={card.href}
-          animationClass={card.animationClass}
+          animationDelay={card.animationDelay}
           icon={card.icon}
           accentColor={card.accentColor}
           iconBackground={card.iconBackground}
@@ -103,6 +111,6 @@ export default function UseCaseBranchCards() {
           bullets={card.bullets}
         />
       ))}
-    </div>
+    </Box>
   );
 }

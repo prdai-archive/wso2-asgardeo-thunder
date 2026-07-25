@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2025, WSO2 LLC. (https://www.wso2.com).
+ * Copyright (c) 2025-2026, WSO2 LLC. (https://www.wso2.com).
  *
  * WSO2 LLC. licenses this file to you under the Apache License,
  * Version 2.0 (the "License"); you may not use this file except
@@ -25,9 +25,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/suite"
 	"github.com/thunder-id/thunderid/tests/integration/flow/common"
 	"github.com/thunder-id/thunderid/tests/integration/testutils"
-	"github.com/stretchr/testify/suite"
 )
 
 var (
@@ -337,26 +337,6 @@ func (ts *GoogleRegistrationFlowTestSuite) SetupSuite() {
 				Value:    "openid email profile",
 				IsSecret: false,
 			},
-			{
-				Name:     "authorization_endpoint",
-				Value:    ts.mockGoogleServer.GetURL() + "/o/oauth2/v2/auth",
-				IsSecret: false,
-			},
-			{
-				Name:     "token_endpoint",
-				Value:    ts.mockGoogleServer.GetURL() + "/token",
-				IsSecret: false,
-			},
-			{
-				Name:     "userinfo_endpoint",
-				Value:    ts.mockGoogleServer.GetURL() + "/v1/userinfo",
-				IsSecret: false,
-			},
-			{
-				Name:     "jwks_endpoint",
-				Value:    ts.mockGoogleServer.GetURL() + "/oauth2/v3/certs",
-				IsSecret: false,
-			},
 		},
 	}
 
@@ -383,6 +363,12 @@ func (ts *GoogleRegistrationFlowTestSuite) SetupSuite() {
 	flowIDWithExisting, err := testutils.CreateFlow(googleRegistrationFlowWithExistingUser)
 	ts.Require().NoError(err, "Failed to create Google registration flow with existing user")
 	ts.config.CreatedFlowIDs = append(ts.config.CreatedFlowIDs, flowIDWithExisting)
+
+	// Create isolated auth flow to avoid cross-type reference validation with default auth flow.
+	isolatedAuthID, err := testutils.CreateIsolatedAuthFlow("google-registration-isolated-auth")
+	ts.Require().NoError(err, "Failed to create isolated auth flow")
+	ts.config.CreatedFlowIDs = append(ts.config.CreatedFlowIDs, isolatedAuthID)
+	googleRegTestApp.AuthFlowID = isolatedAuthID
 
 	// Create test application with the first flow
 	googleRegTestApp.OUID = googleRegTestOUID
@@ -670,7 +656,7 @@ func (ts *GoogleRegistrationFlowTestSuite) TestGoogleRegistrationFlowDuplicateUs
 	// Step 3: Verify registration failure due to duplicate user
 	ts.Require().Equal("ERROR", completeFlowStep2.FlowStatus, "Expected flow status to be ERROR for duplicate user")
 	ts.Require().Empty(completeFlowStep2.Assertion, "No JWT assertion should be returned for failed registration")
-	ts.Require().NotEmpty(completeFlowStep2.FailureReason, "Failure reason should be provided for duplicate user")
+	ts.Require().NotNil(completeFlowStep2.Error, "Error should be provided for duplicate user")
 }
 
 func (ts *GoogleRegistrationFlowTestSuite) TestGoogleRegistrationFlowWithExistingUserAllowed() {
@@ -742,7 +728,7 @@ func (ts *GoogleRegistrationFlowTestSuite) TestGoogleRegistrationFlowWithExistin
 	ts.Require().Equal("COMPLETE", completeFlowStep2.FlowStatus,
 		"Registration should complete successfully with existing user")
 	ts.Require().NotEmpty(completeFlowStep2.Assertion, "JWT assertion should be returned for existing user")
-	ts.Require().Empty(completeFlowStep2.FailureReason, "No failure reason should be present")
+	ts.Require().Nil(completeFlowStep2.Error, "No error should be present")
 
 	// Decode and validate JWT claims
 	jwtClaims, err := testutils.DecodeJWT(completeFlowStep2.Assertion)

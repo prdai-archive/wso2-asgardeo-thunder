@@ -31,6 +31,7 @@ import (
 	"github.com/thunder-id/thunderid/internal/system/config"
 	"github.com/thunder-id/thunderid/internal/system/cryptolib"
 	"github.com/thunder-id/thunderid/internal/system/transaction"
+	"github.com/thunder-id/thunderid/pkg/thunderidengine/providers"
 	"github.com/thunder-id/thunderid/tests/mocks/crypto/hashmock"
 )
 
@@ -53,7 +54,7 @@ func (s *DeclarativeResourceTestSuite) TearDownTest() {
 func (s *DeclarativeResourceTestSuite) TestLoadDeclarativeResources_MutableStore_Skipped() {
 	mockStore := newEntityStoreInterfaceMock(s.T())
 	mockSvc := newEntityServiceMock(s.T())
-	cfg := DeclarativeLoaderConfig{Directory: "users", Category: EntityCategoryUser}
+	cfg := DeclarativeLoaderConfig{Directory: "users", Category: providers.EntityCategoryUser}
 
 	err := loadDeclarativeResources(mockStore, mockSvc, cfg)
 	s.NoError(err)
@@ -61,7 +62,7 @@ func (s *DeclarativeResourceTestSuite) TestLoadDeclarativeResources_MutableStore
 
 func (s *DeclarativeResourceTestSuite) TestLoadDeclarativeResources_FileStore_EmptyDirectory() {
 	tmpDir := s.T().TempDir()
-	resourceDir := filepath.Join(tmpDir, "repository", "resources", "users")
+	resourceDir := filepath.Join(tmpDir, "config", "resources", "users")
 	s.Require().NoError(os.MkdirAll(resourceDir, 0750))
 
 	s.Require().NoError(config.InitializeServerRuntime(tmpDir, &config.Config{}))
@@ -71,9 +72,9 @@ func (s *DeclarativeResourceTestSuite) TestLoadDeclarativeResources_FileStore_Em
 
 	cfg := DeclarativeLoaderConfig{
 		Directory: "users",
-		Category:  EntityCategoryUser,
-		Parser: func(data []byte) (*Entity, json.RawMessage, json.RawMessage, error) {
-			return &Entity{ID: "test-id"}, nil, nil, nil
+		Category:  providers.EntityCategoryUser,
+		Parser: func(data []byte) (*providers.Entity, json.RawMessage, json.RawMessage, error) {
+			return &providers.Entity{ID: "test-id"}, nil, nil, nil
 		},
 	}
 
@@ -83,7 +84,7 @@ func (s *DeclarativeResourceTestSuite) TestLoadDeclarativeResources_FileStore_Em
 
 func (s *DeclarativeResourceTestSuite) TestLoadDeclarativeResources_CompositeStore_ExtractsFileStore() {
 	tmpDir := s.T().TempDir()
-	resourceDir := filepath.Join(tmpDir, "repository", "resources", "users")
+	resourceDir := filepath.Join(tmpDir, "config", "resources", "users")
 	s.Require().NoError(os.MkdirAll(resourceDir, 0750))
 	s.Require().NoError(config.InitializeServerRuntime(tmpDir, &config.Config{}))
 
@@ -94,9 +95,9 @@ func (s *DeclarativeResourceTestSuite) TestLoadDeclarativeResources_CompositeSto
 
 	cfg := DeclarativeLoaderConfig{
 		Directory: "users",
-		Category:  EntityCategoryUser,
-		Parser: func(data []byte) (*Entity, json.RawMessage, json.RawMessage, error) {
-			return &Entity{ID: "test-id"}, nil, nil, nil
+		Category:  providers.EntityCategoryUser,
+		Parser: func(data []byte) (*providers.Entity, json.RawMessage, json.RawMessage, error) {
+			return &providers.Entity{ID: "test-id"}, nil, nil, nil
 		},
 	}
 
@@ -110,18 +111,18 @@ func (s *DeclarativeResourceTestSuite) TestLoadDeclarativeResources_CompositeSto
 	compositeStore := newEntityCompositeStore(mockFileStore, mockDBStore)
 	mockSvc := newEntityServiceMock(s.T())
 
-	cfg := DeclarativeLoaderConfig{Directory: "users", Category: EntityCategoryUser}
+	cfg := DeclarativeLoaderConfig{Directory: "users", Category: providers.EntityCategoryUser}
 	err := loadDeclarativeResources(compositeStore, mockSvc, cfg)
 	s.NoError(err)
 }
 
 func (s *DeclarativeResourceTestSuite) TestLoadDeclarativeResources_WithValidator_Called() {
 	tmpDir := s.T().TempDir()
-	resourceDir := filepath.Join(tmpDir, "repository", "resources", "items")
+	resourceDir := filepath.Join(tmpDir, "config", "resources", "items")
 	s.Require().NoError(os.MkdirAll(resourceDir, 0750))
 
 	entityYAML := []byte(`id: "item-1"
-ou_id: "ou-1"
+ouId: "ou-1"
 type: "thing"
 category: "user"
 attributes: {}
@@ -135,17 +136,17 @@ attributes: {}
 	validatorCalled := false
 	cfg := DeclarativeLoaderConfig{
 		Directory: "items",
-		Category:  EntityCategoryUser,
-		Parser: func(data []byte) (*Entity, json.RawMessage, json.RawMessage, error) {
+		Category:  providers.EntityCategoryUser,
+		Parser: func(data []byte) (*providers.Entity, json.RawMessage, json.RawMessage, error) {
 			attrs, _ := json.Marshal(map[string]interface{}{})
-			return &Entity{ID: "item-1", Category: EntityCategoryUser, Type: "thing",
+			return &providers.Entity{ID: "item-1", Category: providers.EntityCategoryUser, Type: "thing",
 				OUID: "ou-1", Attributes: json.RawMessage(attrs)}, nil, nil, nil
 		},
-		Validator: func(e *Entity, svc EntityServiceInterface) error {
+		Validator: func(e *providers.Entity, svc EntityServiceInterface) error {
 			validatorCalled = true
 			return nil
 		},
-		IDExtractor: func(e *Entity) string {
+		IDExtractor: func(e *providers.Entity) string {
 			return e.ID
 		},
 	}
@@ -157,7 +158,7 @@ attributes: {}
 
 func (s *DeclarativeResourceTestSuite) TestLoadDeclarativeResources_ParserError() {
 	tmpDir := s.T().TempDir()
-	resourceDir := filepath.Join(tmpDir, "repository", "resources", "items")
+	resourceDir := filepath.Join(tmpDir, "config", "resources", "items")
 	s.Require().NoError(os.MkdirAll(resourceDir, 0750))
 	s.Require().NoError(os.WriteFile(filepath.Join(resourceDir, "bad.yaml"), []byte("id: x"), 0600))
 	s.Require().NoError(config.InitializeServerRuntime(tmpDir, &config.Config{}))
@@ -167,8 +168,8 @@ func (s *DeclarativeResourceTestSuite) TestLoadDeclarativeResources_ParserError(
 
 	cfg := DeclarativeLoaderConfig{
 		Directory: "items",
-		Category:  EntityCategoryUser,
-		Parser: func(data []byte) (*Entity, json.RawMessage, json.RawMessage, error) {
+		Category:  providers.EntityCategoryUser,
+		Parser: func(data []byte) (*providers.Entity, json.RawMessage, json.RawMessage, error) {
 			return nil, nil, nil, errors.New("parse failed")
 		},
 	}
@@ -179,7 +180,7 @@ func (s *DeclarativeResourceTestSuite) TestLoadDeclarativeResources_ParserError(
 
 func (s *DeclarativeResourceTestSuite) TestLoadDeclarativeResources_ValidatorError() {
 	tmpDir := s.T().TempDir()
-	resourceDir := filepath.Join(tmpDir, "repository", "resources", "items")
+	resourceDir := filepath.Join(tmpDir, "config", "resources", "items")
 	s.Require().NoError(os.MkdirAll(resourceDir, 0750))
 	s.Require().NoError(os.WriteFile(filepath.Join(resourceDir, "item.yaml"), []byte("id: x"), 0600))
 	s.Require().NoError(config.InitializeServerRuntime(tmpDir, &config.Config{}))
@@ -189,11 +190,11 @@ func (s *DeclarativeResourceTestSuite) TestLoadDeclarativeResources_ValidatorErr
 
 	cfg := DeclarativeLoaderConfig{
 		Directory: "items",
-		Category:  EntityCategoryUser,
-		Parser: func(data []byte) (*Entity, json.RawMessage, json.RawMessage, error) {
-			return &Entity{ID: "x"}, nil, nil, nil
+		Category:  providers.EntityCategoryUser,
+		Parser: func(data []byte) (*providers.Entity, json.RawMessage, json.RawMessage, error) {
+			return &providers.Entity{ID: "x"}, nil, nil, nil
 		},
-		Validator: func(e *Entity, svc EntityServiceInterface) error {
+		Validator: func(e *providers.Entity, svc EntityServiceInterface) error {
 			return errors.New("validation failed")
 		},
 	}
@@ -204,7 +205,7 @@ func (s *DeclarativeResourceTestSuite) TestLoadDeclarativeResources_ValidatorErr
 
 func (s *DeclarativeResourceTestSuite) TestLoadDeclarativeResources_HashesSystemCredentialsBeforeStoreWrite() {
 	tmpDir := s.T().TempDir()
-	resourceDir := filepath.Join(tmpDir, "repository", "resources", "applications")
+	resourceDir := filepath.Join(tmpDir, "config", "resources", "applications")
 	s.Require().NoError(os.MkdirAll(resourceDir, 0750))
 	s.Require().NoError(os.WriteFile(filepath.Join(resourceDir, "app.yaml"), []byte("id: x"), 0600))
 	s.Require().NoError(config.InitializeServerRuntime(tmpDir, &config.Config{}))
@@ -222,14 +223,17 @@ func (s *DeclarativeResourceTestSuite) TestLoadDeclarativeResources_HashesSystem
 
 	cfg := DeclarativeLoaderConfig{
 		Directory: "applications",
-		Category:  EntityCategoryApp,
-		Parser: func(data []byte) (*Entity, json.RawMessage, json.RawMessage, error) {
-			return &Entity{ID: "app-1", Category: EntityCategoryApp, Type: "application", State: EntityStateActive},
+		Category:  providers.EntityCategoryApp,
+		Parser: func(data []byte) (*providers.Entity, json.RawMessage, json.RawMessage, error) {
+			return &providers.Entity{
+					ID: "app-1", Category: providers.EntityCategoryApp,
+					Type: "application", State: providers.EntityStateActive,
+				},
 				nil,
 				json.RawMessage(`{"clientSecret":"plain-secret"}`),
 				nil
 		},
-		IDExtractor: func(e *Entity) string {
+		IDExtractor: func(e *providers.Entity) string {
 			return e.ID
 		},
 	}

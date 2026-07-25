@@ -21,13 +21,14 @@
 package requestvalidator
 
 import (
+	"net/url"
 	"slices"
 	"strings"
 
-	inboundmodel "github.com/thunder-id/thunderid/internal/inboundclient/model"
 	"github.com/thunder-id/thunderid/internal/oauth/oauth2/constants"
 	"github.com/thunder-id/thunderid/internal/oauth/oauth2/pkce"
 	"github.com/thunder-id/thunderid/internal/system/jose/jws"
+	"github.com/thunder-id/thunderid/pkg/thunderidengine/providers"
 )
 
 // ValidateAuthorizationRequestParams validates the common authorization request parameters
@@ -46,20 +47,21 @@ import (
 //
 // Returns (errorCode, errorDescription). Empty errorCode means validation passed.
 func ValidateAuthorizationRequestParams(
-	params map[string]string, oauthApp *inboundmodel.OAuthClient, dpopHeaderJkt string,
+	rawParams map[string][]string, oauthApp *providers.OAuthClient, dpopHeaderJkt string,
 ) (string, string) {
-	responseType := params[constants.RequestParamResponseType]
+	params := url.Values(rawParams)
+	responseType := params.Get(constants.RequestParamResponseType)
+	responseMode := params.Get(constants.RequestParamResponseMode)
 
 	// Validate the prompt parameter if present.
-	prompt, promptExists := params[constants.RequestParamPrompt]
-	if promptExists {
-		if errCode, errMsg := ValidatePromptParameter(prompt); errCode != "" {
+	if params.Has(constants.RequestParamPrompt) {
+		if errCode, errMsg := ValidatePromptParameter(params.Get(constants.RequestParamPrompt)); errCode != "" {
 			return errCode, errMsg
 		}
 	}
 
 	// Validate grant type is allowed.
-	if !oauthApp.IsAllowedGrantType(constants.GrantTypeAuthorizationCode) {
+	if !oauthApp.IsAllowedGrantType(providers.GrantTypeAuthorizationCode) {
 		return constants.ErrorUnauthorizedClient,
 			"Authorization code grant type is not allowed for the client"
 	}
@@ -71,11 +73,14 @@ func ValidateAuthorizationRequestParams(
 	if !oauthApp.IsAllowedResponseType(responseType) {
 		return constants.ErrorUnsupportedResponseType, "Unsupported response type"
 	}
+	if !constants.IsSupportedResponseMode(responseMode) {
+		return constants.ErrorInvalidRequest, "Unsupported response_mode parameter"
+	}
 
 	// Validate PKCE parameters.
-	if responseType == string(constants.ResponseTypeCode) {
-		codeChallenge := params[constants.RequestParamCodeChallenge]
-		codeChallengeMethod := params[constants.RequestParamCodeChallengeMethod]
+	if responseType == string(providers.ResponseTypeCode) {
+		codeChallenge := params.Get(constants.RequestParamCodeChallenge)
+		codeChallengeMethod := params.Get(constants.RequestParamCodeChallengeMethod)
 
 		if oauthApp.RequiresPKCE() && codeChallenge == "" {
 			return constants.ErrorInvalidRequest, "code_challenge is required for this application"
@@ -90,12 +95,12 @@ func ValidateAuthorizationRequestParams(
 	}
 
 	// Validate nonce length.
-	nonce := params[constants.RequestParamNonce]
+	nonce := params.Get(constants.RequestParamNonce)
 	if nonce != "" && len(nonce) > constants.MaxNonceLength {
 		return constants.ErrorInvalidRequest, "nonce exceeds maximum allowed length"
 	}
 
-	if dpopJktParam := params[constants.RequestParamDPoPJkt]; dpopJktParam != "" {
+	if dpopJktParam := params.Get(constants.RequestParamDPoPJkt); dpopJktParam != "" {
 		if !jws.IsValidJKT(dpopJktParam) {
 			return constants.ErrorInvalidRequest, "Invalid dpop_jkt parameter"
 		}
@@ -135,12 +140,7 @@ func ValidatePromptParameter(prompt string) (string, string) {
 			"User authentication is required"
 	}
 
-	// The server does not support consent or account selection prompts as of now.
-	if slices.Contains(values, constants.PromptConsent) {
-		return constants.ErrorConsentRequired,
-			"Consent is not supported"
-	}
-
+	// The server does not support account selection prompts as of now.
 	if slices.Contains(values, constants.PromptSelectAccount) {
 		return constants.ErrorAccountSelectionRequired,
 			"Account selection is not supported"

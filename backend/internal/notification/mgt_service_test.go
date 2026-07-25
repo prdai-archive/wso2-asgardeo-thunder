@@ -23,6 +23,10 @@ import (
 	"errors"
 	"testing"
 
+	engineconfig "github.com/thunder-id/thunderid/pkg/thunderidengine/config"
+
+	tidcommon "github.com/thunder-id/thunderid/pkg/thunderidengine/common"
+
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
@@ -30,9 +34,41 @@ import (
 	"github.com/thunder-id/thunderid/internal/notification/common"
 	"github.com/thunder-id/thunderid/internal/system/cmodels"
 	"github.com/thunder-id/thunderid/internal/system/config"
-	"github.com/thunder-id/thunderid/internal/system/error/serviceerror"
+	"github.com/thunder-id/thunderid/internal/system/resourcedependency"
 	sysutils "github.com/thunder-id/thunderid/internal/system/utils"
 )
+
+// stubDependencyRegistry is a minimal resourcedependency.Registry for tests.
+type stubDependencyRegistry struct {
+	resp *resourcedependency.DependenciesResponse
+	err  error
+}
+
+func (r *stubDependencyRegistry) RegisterProvider(resourcedependency.Provider) {}
+
+func (r *stubDependencyRegistry) GetDependencies(
+	context.Context, string, string) (*resourcedependency.DependenciesResponse, error) {
+	return r.resp, r.err
+}
+
+func (r *stubDependencyRegistry) CascadeDelete(context.Context, string, string) (int, error) {
+	return 0, nil
+}
+
+func (r *stubDependencyRegistry) ValidateReferenceUpdate(
+	context.Context, string, string) *tidcommon.ServiceError {
+	return nil
+}
+
+// newNoBlockingDepsRegistry returns a registry reporting confirmed-empty dependencies, so that
+// deletion is permitted by the blocking guard.
+func newNoBlockingDepsRegistry() *stubDependencyRegistry {
+	total := 0
+	return &stubDependencyRegistry{resp: &resourcedependency.DependenciesResponse{
+		TotalResults: &total,
+		Usages:       []resourcedependency.ResourceDependency{},
+	}}
+}
 
 const (
 	testSenderID          = "test-id"
@@ -54,7 +90,7 @@ func (suite *NotificationSenderMgtServiceTestSuite) SetupSuite() {
 	config.ResetServerRuntime()
 	testConfig := &config.Config{
 		Crypto: config.CryptoConfig{
-			Encryption: config.EncryptionConfig{
+			Encryption: engineconfig.EncryptionConfig{
 				Key: "0579f866ac7c9273580d0ff163fa01a7b2401a7ff3ddc3e3b14ae3136fa6025e",
 			},
 		},
@@ -72,9 +108,10 @@ func (suite *NotificationSenderMgtServiceTestSuite) TearDownSuite() {
 func (suite *NotificationSenderMgtServiceTestSuite) SetupTest() {
 	suite.mockStore = newNotificationStoreInterfaceMock(suite.T())
 	suite.service = &notificationSenderMgtService{
-		notificationStore: suite.mockStore,
-		transactioner:     &fakeTransactioner{},
-		uuidGenerator:     sysutils.GenerateUUIDv7,
+		notificationStore:  suite.mockStore,
+		transactioner:      &fakeTransactioner{},
+		dependencyRegistry: newNoBlockingDepsRegistry(),
+		uuidGenerator:      sysutils.GenerateUUIDv7,
 	}
 }
 
@@ -123,7 +160,7 @@ func (suite *NotificationSenderMgtServiceTestSuite) TestCreateSender_UUIDGenerat
 	result, err := svc.CreateSender(context.Background(), sender)
 	suite.Nil(result)
 	suite.NotNil(err)
-	suite.Equal(serviceerror.InternalServerError.Code, err.Code)
+	suite.Equal(tidcommon.InternalServerError.Code, err.Code)
 }
 
 func (suite *NotificationSenderMgtServiceTestSuite) TestCreateSender_WithFailures() {
@@ -153,7 +190,7 @@ func (suite *NotificationSenderMgtServiceTestSuite) TestCreateSender_WithFailure
 			setupMock: func(m *notificationStoreInterfaceMock, s common.NotificationSenderDTO) {
 				m.EXPECT().getSenderByName(mock.Anything, s.Name).Return(nil, errors.New("database error")).Once()
 			},
-			expectedErrCode: serviceerror.InternalServerError.Code,
+			expectedErrCode: tidcommon.InternalServerError.Code,
 		},
 		{
 			name: "StoreErrorOnCreate",
@@ -164,7 +201,7 @@ func (suite *NotificationSenderMgtServiceTestSuite) TestCreateSender_WithFailure
 				m.EXPECT().getSenderByName(mock.Anything, s.Name).Return(nil, nil).Once()
 				m.EXPECT().createSender(mock.Anything, mock.Anything).Return(errors.New("database error")).Once()
 			},
-			expectedErrCode: serviceerror.InternalServerError.Code,
+			expectedErrCode: tidcommon.InternalServerError.Code,
 		},
 		{
 			name: "InvalidName",
@@ -243,7 +280,30 @@ func (suite *NotificationSenderMgtServiceTestSuite) TestListSenders_StoreError()
 	result, err := suite.service.ListSenders(context.Background())
 	suite.Nil(result)
 	suite.NotNil(err)
-	suite.Equal(serviceerror.InternalServerError.Code, err.Code)
+	suite.Equal(tidcommon.InternalServerError.Code, err.Code)
+}
+
+func (suite *NotificationSenderMgtServiceTestSuite) TestListSendersByType() {
+	senders := []common.NotificationSenderDTO{suite.getValidTwilioSender()}
+	senders[0].ID = "id1"
+
+	suite.mockStore.EXPECT().listSendersByType(mock.Anything, common.NotificationSenderTypeMessage).
+		Return(senders, nil).Once()
+
+	result, err := suite.service.ListSendersByType(context.Background(), common.NotificationSenderTypeMessage)
+	suite.Nil(err)
+	suite.NotNil(result)
+	suite.Len(result, 1)
+}
+
+func (suite *NotificationSenderMgtServiceTestSuite) TestListSendersByType_StoreError() {
+	suite.mockStore.EXPECT().listSendersByType(mock.Anything, common.NotificationSenderTypeMessage).
+		Return(nil, errors.New("database error")).Once()
+
+	result, err := suite.service.ListSendersByType(context.Background(), common.NotificationSenderTypeMessage)
+	suite.Nil(result)
+	suite.NotNil(err)
+	suite.Equal(tidcommon.InternalServerError.Code, err.Code)
 }
 
 func (suite *NotificationSenderMgtServiceTestSuite) TestGetSender() {
@@ -280,7 +340,7 @@ func (suite *NotificationSenderMgtServiceTestSuite) TestGetSender_StoreError() {
 	result, err := suite.service.GetSender(context.Background(), testSenderID)
 	suite.Nil(result)
 	suite.NotNil(err)
-	suite.Equal(serviceerror.InternalServerError.Code, err.Code)
+	suite.Equal(tidcommon.InternalServerError.Code, err.Code)
 }
 
 // GetSenderByName Tests
@@ -359,7 +419,7 @@ func (suite *NotificationSenderMgtServiceTestSuite) TestGetSenderByName_WithFail
 			setup: func(m *notificationStoreInterfaceMock) {
 				m.EXPECT().getSenderByName(mock.Anything, "Test").Return(nil, errors.New("database error")).Once()
 			},
-			expectedErrCode: serviceerror.InternalServerError.Code,
+			expectedErrCode: tidcommon.InternalServerError.Code,
 		},
 	}
 
@@ -519,7 +579,7 @@ func (suite *NotificationSenderMgtServiceTestSuite) TestUpdateSender_WithFailure
 				m.EXPECT().getSenderByID(mock.Anything, testSenderID).Return(&existing, nil).Once()
 				m.EXPECT().updateSender(mock.Anything, testSenderID, s).Return(errors.New("database error")).Once()
 			},
-			expectedErrCode: serviceerror.InternalServerError.Code,
+			expectedErrCode: tidcommon.InternalServerError.Code,
 		},
 		{
 			name: "GetSenderByIDError",
@@ -529,7 +589,7 @@ func (suite *NotificationSenderMgtServiceTestSuite) TestUpdateSender_WithFailure
 			setupMock: func(m *notificationStoreInterfaceMock, s common.NotificationSenderDTO) {
 				m.EXPECT().getSenderByID(mock.Anything, testSenderID).Return(nil, errors.New("database error")).Once()
 			},
-			expectedErrCode: serviceerror.InternalServerError.Code,
+			expectedErrCode: tidcommon.InternalServerError.Code,
 		},
 		{
 			name: "GetSenderByNameError",
@@ -545,7 +605,7 @@ func (suite *NotificationSenderMgtServiceTestSuite) TestUpdateSender_WithFailure
 				m.EXPECT().getSenderByName(mock.Anything, testSenderUpdatedName).
 					Return(nil, errors.New("database error")).Once()
 			},
-			expectedErrCode: serviceerror.InternalServerError.Code,
+			expectedErrCode: tidcommon.InternalServerError.Code,
 		},
 		{
 			name: "InvalidValidation",
@@ -605,12 +665,58 @@ func (suite *NotificationSenderMgtServiceTestSuite) TestDeleteSender_EmptyID() {
 	suite.Equal(ErrorInvalidSenderID.Code, err.Code)
 }
 
+// TestDeleteSender_BlockedByFlow verifies deletion is refused when a flow references the sender.
+func (suite *NotificationSenderMgtServiceTestSuite) TestDeleteSender_BlockedByFlow() {
+	total := 1
+	suite.service.dependencyRegistry = &stubDependencyRegistry{resp: &resourcedependency.DependenciesResponse{
+		TotalResults: &total,
+		Count:        1,
+		Usages: []resourcedependency.ResourceDependency{
+			{ResourceType: resourcedependency.ResourceTypeFlow, ID: "flow-1",
+				DisplayName: "SMS OTP", BehaviorOnDelete: resourcedependency.BehaviorRestrict},
+		},
+	}}
+
+	err := suite.service.DeleteSender(context.Background(), testSenderID)
+
+	suite.NotNil(err)
+	suite.Equal(ErrorSenderHasBlockingDependencies.Code, err.Code)
+	suite.mockStore.AssertNotCalled(suite.T(), "deleteSender", mock.Anything, mock.Anything)
+}
+
+// TestDeleteSender_RefusedWhenDependenciesUnknown verifies deletion fails closed when a provider
+// fails to report dependency data.
+func (suite *NotificationSenderMgtServiceTestSuite) TestDeleteSender_RefusedWhenDependenciesUnknown() {
+	suite.service.dependencyRegistry = &stubDependencyRegistry{resp: &resourcedependency.DependenciesResponse{
+		TotalResults: nil,
+		Usages:       []resourcedependency.ResourceDependency{},
+	}}
+
+	err := suite.service.DeleteSender(context.Background(), testSenderID)
+
+	suite.NotNil(err)
+	suite.Equal(tidcommon.InternalServerError.Code, err.Code)
+	suite.mockStore.AssertNotCalled(suite.T(), "deleteSender", mock.Anything, mock.Anything)
+}
+
+// TestDeleteSender_RefusedWhenRegistryUnset verifies deletion fails closed when the dependency
+// registry was never wired in.
+func (suite *NotificationSenderMgtServiceTestSuite) TestDeleteSender_RefusedWhenRegistryUnset() {
+	suite.service.dependencyRegistry = nil
+
+	err := suite.service.DeleteSender(context.Background(), testSenderID)
+
+	suite.NotNil(err)
+	suite.Equal(tidcommon.InternalServerError.Code, err.Code)
+	suite.mockStore.AssertNotCalled(suite.T(), "deleteSender", mock.Anything, mock.Anything)
+}
+
 func (suite *NotificationSenderMgtServiceTestSuite) TestDeleteSender_StoreError() {
 	suite.mockStore.EXPECT().deleteSender(context.Background(), testSenderID).
 		Return(errors.New("database error")).Once()
 	err := suite.service.DeleteSender(context.Background(), testSenderID)
 	suite.NotNil(err)
-	suite.Equal(serviceerror.InternalServerError.Code, err.Code)
+	suite.Equal(tidcommon.InternalServerError.Code, err.Code)
 }
 
 // TestCreateSender_DeclarativeResourcesEnabled tests that CreateSender returns error when declarative resources enabled
@@ -683,6 +789,7 @@ func (suite *NotificationSenderMgtServiceTestSuite) getValidTwilioSender() commo
 			createTestProperty("account_sid", "AC00112233445566778899aabbccddeeff", true),
 			createTestProperty("auth_token", "test-auth-token", true),
 			createTestProperty("sender_id", "+15551234567", false),
+			createTestProperty(common.SenderPropertySupportedChannels, "sms", false),
 		},
 	}
 }
@@ -697,6 +804,7 @@ func (suite *NotificationSenderMgtServiceTestSuite) getValidVonageSender() commo
 			createTestProperty("api_key", "test-api-key", true),
 			createTestProperty("api_secret", "test-api-secret", true),
 			createTestProperty("sender_id", "TestSender", false),
+			createTestProperty(common.SenderPropertySupportedChannels, "sms", false),
 		},
 	}
 }

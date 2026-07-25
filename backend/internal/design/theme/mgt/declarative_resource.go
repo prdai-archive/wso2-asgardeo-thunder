@@ -24,8 +24,9 @@ import (
 	"fmt"
 	"strings"
 
+	tidcommon "github.com/thunder-id/thunderid/pkg/thunderidengine/common"
+
 	declarativeresource "github.com/thunder-id/thunderid/internal/system/declarative_resource"
-	"github.com/thunder-id/thunderid/internal/system/error/serviceerror"
 	"github.com/thunder-id/thunderid/internal/system/log"
 
 	"gopkg.in/yaml.v3"
@@ -58,13 +59,13 @@ func (e *themeExporter) GetParameterizerType() string {
 
 // GetAllResourceIDs retrieves all theme IDs from the database store.
 // In composite mode, this excludes declarative (YAML-based) themes.
-func (e *themeExporter) GetAllResourceIDs(ctx context.Context) ([]string, *serviceerror.ServiceError) {
+func (e *themeExporter) GetAllResourceIDs(ctx context.Context) ([]string, *tidcommon.ServiceError) {
 	const pageSize = 100
 	var allIDs []string
 	offset := 0
 
 	for {
-		themeList, err := e.service.GetThemeList(pageSize, offset)
+		themeList, err := e.service.GetThemeList(ctx, pageSize, offset)
 		if err != nil {
 			return nil, err
 		}
@@ -88,9 +89,9 @@ func (e *themeExporter) GetAllResourceIDs(ctx context.Context) ([]string, *servi
 
 // GetResourceByID retrieves a theme by its ID.
 func (e *themeExporter) GetResourceByID(ctx context.Context, id string) (
-	interface{}, string, *serviceerror.ServiceError,
+	interface{}, string, *tidcommon.ServiceError,
 ) {
-	theme, err := e.service.GetTheme(id)
+	theme, err := e.service.GetTheme(ctx, id)
 	if err != nil {
 		return nil, "", err
 	}
@@ -98,7 +99,7 @@ func (e *themeExporter) GetResourceByID(ctx context.Context, id string) (
 }
 
 // ValidateResource validates a theme resource.
-func (e *themeExporter) ValidateResource(
+func (e *themeExporter) ValidateResource(ctx context.Context,
 	resource interface{}, id string, logger *log.Logger,
 ) (string, *declarativeresource.ExportError) {
 	theme, ok := resource.(*Theme)
@@ -106,7 +107,7 @@ func (e *themeExporter) ValidateResource(
 		return "", declarativeresource.CreateTypeError(resourceTypeTheme, id)
 	}
 
-	err := declarativeresource.ValidateResourceName(
+	err := declarativeresource.ValidateResourceName(ctx,
 		theme.DisplayName, resourceTypeTheme, id, "THEME_VALIDATION_ERROR", logger,
 	)
 	if err != nil {
@@ -114,7 +115,7 @@ func (e *themeExporter) ValidateResource(
 	}
 
 	if len(theme.Theme) == 0 {
-		logger.Warn("Theme has no theme configuration",
+		logger.Warn(ctx, "Theme has no theme configuration",
 			log.String("themeID", id), log.String("displayName", theme.DisplayName))
 	}
 

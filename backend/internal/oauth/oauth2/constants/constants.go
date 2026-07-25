@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2025, WSO2 LLC. (https://www.wso2.com).
+ * Copyright (c) 2025-2026, WSO2 LLC. (https://www.wso2.com).
  *
  * WSO2 LLC. licenses this file to you under the Apache License,
  * Version 2.0 (the "License"); you may not use this file except
@@ -22,7 +22,9 @@ package constants
 import (
 	"errors"
 
+	oauthconfig "github.com/thunder-id/thunderid/internal/oauth/config"
 	"github.com/thunder-id/thunderid/internal/oauth/oauth2/model"
+	"github.com/thunder-id/thunderid/pkg/thunderidengine/providers"
 )
 
 // OAuth2 request parameters.
@@ -42,6 +44,7 @@ const (
 	RequestParamCodeChallengeMethod string = "code_challenge_method"
 	RequestParamRefreshToken        string = "refresh_token"
 	RequestParamResponseType        string = "response_type"
+	RequestParamResponseMode        string = "response_mode"
 	RequestParamState               string = "state"
 	RequestParamIss                 string = "iss"
 	RequestParamResource            string = "resource"
@@ -55,19 +58,38 @@ const (
 	RequestParamActorTokenType      string = "actor_token_type"
 	RequestParamRequestedTokenType  string = "requested_token_type"
 	RequestParamAudience            string = "audience"
+	RequestParamAssertion           string = "assertion"
 	RequestParamClaims              string = "claims"
 	RequestParamClaimsLocales       string = "claims_locales"
 	RequestParamNonce               string = "nonce"
 	RequestParamPrompt              string = "prompt"
 	RequestParamRequestURI          string = "request_uri"
 	RequestParamAcrValues           string = "acr_values"
+	RequestParamMaxAge              string = "max_age"
 	RequestParamDPoPJkt             string = "dpop_jkt"
+	RequestParamLoginHint           string = "login_hint"
+	RequestParamIDTokenHint         string = "id_token_hint"
+	RequestParamPostLogoutRedirect  string = "post_logout_redirect_uri"
+	RequestParamLoginHintToken      string = "login_hint_token" // #nosec G101
+	RequestParamBindingMessage      string = "binding_message"
+	RequestParamRequestedExpiry     string = "requested_expiry"
+	RequestParamAuthReqID           string = "auth_req_id"
 )
 
 // OAuth2 HTTP headers.
 const (
 	HeaderDPoP string = "DPoP"
 )
+
+// OAuth2 response modes.
+const (
+	ResponseModeQuery string = "query"
+)
+
+// IsSupportedResponseMode checks if the response mode is supported.
+func IsSupportedResponseMode(responseMode string) bool {
+	return responseMode == "" || responseMode == ResponseModeQuery
+}
 
 // OIDC prompt parameter values.
 const (
@@ -96,7 +118,6 @@ const (
 	ShowInsecureWarning   string = "showInsecureWarning"
 	AppID                 string = "applicationId"
 	ExecutionID           string = "executionId"
-	Assertion             string = "assertion"
 )
 
 // Oauth message types.
@@ -108,112 +129,26 @@ const (
 
 // OAuth2 endpoints.
 const (
-	OAuth2TokenEndpoint         string = "/oauth2/token" // #nosec G101
-	OAuth2AuthorizationEndpoint string = "/oauth2/authorize"
-	OAuth2IntrospectionEndpoint string = "/oauth2/introspect"
-	OAuth2RevokeEndpoint        string = "/oauth2/revoke"
-	OAuth2UserInfoEndpoint      string = "/oauth2/userinfo"
-	OAuth2JWKSEndpoint          string = "/oauth2/jwks"
-	OAuth2LogoutEndpoint        string = "/oauth2/logout"
-	OAuth2DCREndpoint           string = "/oauth2/dcr/register"
-	OAuth2PAREndpoint           string = "/oauth2/par"
+	OAuth2TokenEndpoint                   string = "/oauth2/token" // #nosec G101
+	OAuth2AuthorizationEndpoint           string = "/oauth2/authorize"
+	OAuth2IntrospectionEndpoint           string = "/oauth2/introspect"
+	OAuth2RevokeEndpoint                  string = "/oauth2/revoke"
+	OAuth2UserInfoEndpoint                string = "/oauth2/userinfo"
+	OAuth2JWKSEndpoint                    string = "/oauth2/jwks"
+	OAuth2LogoutEndpoint                  string = "/oauth2/logout"
+	OAuth2DCREndpoint                     string = "/oauth2/dcr/register"
+	OAuth2PAREndpoint                     string = "/oauth2/par"
+	OAuth2BackchannelAuthEndpoint         string = "/oauth2/bc-authorize"
+	OAuth2BackchannelAuthCallbackEndpoint string = "/oauth2/bc-authorize/callback"
 )
-
-// GrantType defines a type for OAuth2 grant types.
-type GrantType string
-
-const (
-	// GrantTypeAuthorizationCode represents the authorization code grant type.
-	GrantTypeAuthorizationCode GrantType = "authorization_code"
-	// GrantTypeClientCredentials represents the client credentials grant type.
-	GrantTypeClientCredentials GrantType = "client_credentials"
-	// GrantTypeRefreshToken represents the refresh token grant type.
-	GrantTypeRefreshToken GrantType = "refresh_token"
-	// GrantTypeTokenExchange represents the token exchange grant type.
-	GrantTypeTokenExchange GrantType = "urn:ietf:params:oauth:grant-type:token-exchange" //nolint:gosec
-)
-
-// supportedGrantTypes is the single source of truth for all supported grant types.
-var supportedGrantTypes = []GrantType{
-	GrantTypeAuthorizationCode,
-	GrantTypeClientCredentials,
-	GrantTypeRefreshToken,
-	GrantTypeTokenExchange,
-}
-
-// IsValid checks if the GrantType is valid.
-func (gt GrantType) IsValid() bool {
-	for _, valid := range supportedGrantTypes {
-		if gt == valid {
-			return true
-		}
-	}
-	return false
-}
-
-// ResponseType defines a type for OAuth2 response types.
-type ResponseType string
-
-const (
-	// ResponseTypeCode represents the authorization code response type.
-	ResponseTypeCode ResponseType = "code"
-	// ResponseTypeIDToken represents the id token response type.
-	ResponseTypeIDToken ResponseType = "id_token"
-)
-
-// supportedResponseTypes is the single source of truth for all supported response types.
-var supportedResponseTypes = []ResponseType{
-	ResponseTypeCode,
-}
-
-// IsValid checks if the ResponseType is valid.
-func (rt ResponseType) IsValid() bool {
-	for _, valid := range supportedResponseTypes {
-		if rt == valid {
-			return true
-		}
-	}
-	return false
-}
-
-// TokenEndpointAuthMethod defines a type for token endpoint authentication methods.
-type TokenEndpointAuthMethod string
-
-const (
-	// TokenEndpointAuthMethodClientSecretBasic represents the client secret basic authentication method.
-	TokenEndpointAuthMethodClientSecretBasic TokenEndpointAuthMethod = "client_secret_basic"
-	// TokenEndpointAuthMethodClientSecretPost represents the client secret post authentication method.
-	TokenEndpointAuthMethodClientSecretPost TokenEndpointAuthMethod = "client_secret_post"
-	// TokenEndpointAuthMethodPrivateKeyJWT represents the private key JWT authentication method.
-	// #nosec G101 - This is not a hardcoded credential, but a constant representing an authentication method.
-	TokenEndpointAuthMethodPrivateKeyJWT TokenEndpointAuthMethod = "private_key_jwt"
-	// TokenEndpointAuthMethodNone represents no authentication method.
-	TokenEndpointAuthMethodNone TokenEndpointAuthMethod = "none"
-)
-
-// supportedTokenEndpointAuthMethods is the single source of truth for all supported token endpoint
-// authentication methods.
-var supportedTokenEndpointAuthMethods = []TokenEndpointAuthMethod{
-	TokenEndpointAuthMethodClientSecretBasic,
-	TokenEndpointAuthMethodClientSecretPost,
-	TokenEndpointAuthMethodPrivateKeyJWT,
-	TokenEndpointAuthMethodNone,
-}
-
-// IsValid checks if the TokenEndpointAuthMethod is valid.
-func (tam TokenEndpointAuthMethod) IsValid() bool {
-	for _, valid := range supportedTokenEndpointAuthMethods {
-		if tam == valid {
-			return true
-		}
-	}
-	return false
-}
 
 // OAuth2 token types.
 const (
 	TokenTypeBearer = "Bearer"
 	TokenTypeDPoP   = "DPoP"
+	// TokenTypeNA is the token_type returned in an RFC 8693 response whose issued token is not an
+	// access token. It is used for the ID-JAG (Identity Assertion Authorization Grant) response.
+	TokenTypeNA = "N_A"
 )
 
 // TokenTypeIdentifier defines a type for RFC 8693 token type identifiers.
@@ -229,6 +164,10 @@ const (
 	TokenTypeIdentifierIDToken TokenTypeIdentifier = "urn:ietf:params:oauth:token-type:id_token"
 	//nolint:gosec // Token type identifier, not a credential
 	TokenTypeIdentifierJWT TokenTypeIdentifier = "urn:ietf:params:oauth:token-type:jwt"
+	// TokenTypeIdentifierIDJAG is the requested/issued token type for an Identity Assertion
+	// Authorization Grant (draft-ietf-oauth-identity-assertion-authz-grant).
+	//nolint:gosec // Token type identifier, not a credential
+	TokenTypeIdentifierIDJAG TokenTypeIdentifier = "urn:ietf:params:oauth:token-type:id-jag"
 )
 
 // supportedTokenTypeIdentifiers is the single source of truth for all supported token type identifiers.
@@ -237,6 +176,7 @@ var supportedTokenTypeIdentifiers = []TokenTypeIdentifier{
 	TokenTypeIdentifierRefreshToken,
 	TokenTypeIdentifierIDToken,
 	TokenTypeIdentifierJWT,
+	TokenTypeIdentifierIDJAG,
 }
 
 // IsValid checks if the TokenTypeIdentifier is valid.
@@ -259,12 +199,18 @@ const (
 	ErrorInvalidScope             string = "invalid_scope"
 	ErrorInvalidTarget            string = "invalid_target"
 	ErrorServerError              string = "server_error"
+	ErrorUnsupportedTokenType     string = "unsupported_token_type" //nolint:gosec // OAuth error code, not a credential
 	ErrorUnsupportedResponseType  string = "unsupported_response_type"
 	ErrorAccessDenied             string = "access_denied"
 	ErrorLoginRequired            string = "login_required"
 	ErrorConsentRequired          string = "consent_required"
 	ErrorAccountSelectionRequired string = "account_selection_required"
 	ErrorInvalidDPoPProof         string = "invalid_dpop_proof"
+	ErrorAuthorizationPending     string = "authorization_pending"
+	ErrorSlowDown                 string = "slow_down"
+	ErrorExpiredToken             string = "expired_token" // #nosec G101
+	ErrorUnknownUserID            string = "unknown_user_id"
+	ErrorInvalidBindingMessage    string = "invalid_binding_message"
 )
 
 // UnSupportedGrantTypeError is returned when an unsupported grant type is requested.
@@ -313,26 +259,59 @@ const (
 	ClaimSub      string = "sub"
 	ClaimIss      string = "iss"
 	ClaimAud      string = "aud"
+	ClaimAzp      string = "azp"
 	ClaimExp      string = "exp"
 	ClaimIat      string = "iat"
+	ClaimJTI      string = "jti"
 	ClaimAuthTime string = "auth_time"
 )
 
 // Custom JWT claim names.
 const (
-	ClaimUserType           string = "userType"
-	ClaimOUID               string = "ouId"
-	ClaimOUName             string = "ouName"
-	ClaimOUHandle           string = "ouHandle"
-	ClaimClaimsRequest      string = "claims_req"
-	ClaimClaimsLocales      string = "claims_locales"
-	ClaimCompletedAuthClass string = "completed_auth_class"
-	ClaimDPoPJkt            string = "dpop_jkt"
+	ClaimUserType string = "userType"
+	ClaimOUID     string = "ouId"
+	ClaimOUName   string = "ouName"
+	ClaimOUHandle string = "ouHandle"
+	// ClaimName and ClaimOwner carry an agent's system-attribute name/owner on its client token.
+	ClaimName                   string = "name"
+	ClaimOwner                  string = "owner"
+	ClaimClaimsRequest          string = "claims_req"
+	ClaimClaimsLocales          string = "claims_locales"
+	ClaimCompletedAuthClass     string = "completed_auth_class"
+	ClaimDPoPJkt                string = "dpop_jkt"
+	ClaimAuthorizedPermissions  string = "authorized_permissions"
+	ClaimAuthorizationRequestID string = "authorization_request_id"
+	ClaimClientID               string = "client_id"
+	// ClaimIDP identifies the source identity provider (by issuer) that authenticated the subject of a
+	// jwt-bearer-grant (ID-JAG) access token, so downstream consumers can distinguish a federated
+	// principal from a local one.
+	ClaimIDP string = "idp"
+	// ClaimTokenFamilyID identifies the token family (one authorization grant) a token belongs to.
+	// A single tfid is minted per grant during the login flow and rides every access and refresh
+	// token of that grant, unchanged across refresh rotation, so revocation can target a whole
+	// family at once. Revocation-only and not a client-managed identifier: it rides the token JWTs
+	// but is not part of any client-facing API.
+	ClaimTokenFamilyID string = "tfid"
 )
+
+// SurfaceableClientSystemClaims is the fixed set of entity system-attribute keys that may be
+// surfaced as client-token claims.
+var SurfaceableClientSystemClaims = map[string]bool{
+	ClaimName:  true,
+	ClaimOwner: true,
+}
 
 // OIDC subject types.
 const (
 	SubjectTypePublic string = "public"
+)
+
+// Token-exchange token family modes (oauth.token_exchange.token_family).
+const (
+	// TokenExchangeTokenFamilyNone issues an exchanged token with no token family id (independent).
+	TokenExchangeTokenFamilyNone string = "none"
+	// TokenExchangeTokenFamilyInherit copies the subject token's token family id onto the exchanged token.
+	TokenExchangeTokenFamilyInherit string = "inherit"
 )
 
 // User attribute constants.
@@ -361,28 +340,49 @@ const (
 	AttributeCacheTTLBufferSeconds = 60
 )
 
+const (
+	// CIBADefaultExpiresInSeconds is the default lifetime in seconds of a CIBA authentication request.
+	CIBADefaultExpiresInSeconds = 120
+	// CIBADefaultIntervalSeconds is the default minimum interval in seconds between CIBA token polls.
+	CIBADefaultIntervalSeconds = 5
+	// CIBAMaxExpiresInSeconds is the maximum lifetime in seconds a client may request via requested_expiry.
+	CIBAMaxExpiresInSeconds = 600
+)
+
 // GetSupportedResponseTypes returns all supported OAuth2 response types.
-func GetSupportedResponseTypes() []string {
-	result := make([]string, len(supportedResponseTypes))
-	for i, rt := range supportedResponseTypes {
+func GetSupportedResponseTypes(oauthConfig oauthconfig.Config) []string {
+	allowedResponseTypes := oauthConfig.OAuth.AllowedResponseTypes
+	if len(allowedResponseTypes) > 0 {
+		return allowedResponseTypes
+	}
+	result := make([]string, len(providers.SupportedResponseTypes))
+	for i, rt := range providers.SupportedResponseTypes {
 		result[i] = string(rt)
 	}
 	return result
 }
 
 // GetSupportedGrantTypes returns all supported OAuth2 grant types.
-func GetSupportedGrantTypes() []string {
-	result := make([]string, len(supportedGrantTypes))
-	for i, gt := range supportedGrantTypes {
+func GetSupportedGrantTypes(oauthConfig oauthconfig.Config) []string {
+	allowedGrantTypes := oauthConfig.OAuth.AllowedGrantTypes
+	if len(allowedGrantTypes) > 0 {
+		return allowedGrantTypes
+	}
+	result := make([]string, len(providers.SupportedGrantTypes))
+	for i, gt := range providers.SupportedGrantTypes {
 		result[i] = string(gt)
 	}
 	return result
 }
 
 // GetSupportedTokenEndpointAuthMethods returns all supported token endpoint authentication methods.
-func GetSupportedTokenEndpointAuthMethods() []string {
-	result := make([]string, len(supportedTokenEndpointAuthMethods))
-	for i, tam := range supportedTokenEndpointAuthMethods {
+func GetSupportedTokenEndpointAuthMethods(oauthConfig oauthconfig.Config) []string {
+	allowedAuthMethods := oauthConfig.OAuth.AllowedAuthMethods
+	if len(allowedAuthMethods) > 0 {
+		return allowedAuthMethods
+	}
+	result := make([]string, len(providers.SupportedTokenEndpointAuthMethods))
+	for i, tam := range providers.SupportedTokenEndpointAuthMethods {
 		result[i] = string(tam)
 	}
 	return result

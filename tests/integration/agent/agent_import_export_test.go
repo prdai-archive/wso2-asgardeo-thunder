@@ -117,11 +117,11 @@ func (s *AgentImportExportSuite) SetupSuite() {
 	})
 	s.Require().NoError(err, "failed to ensure default agent type exists")
 
-	authFlowID, err := testutils.GetFlowIDByHandle("default-basic-flow", "AUTHENTICATION")
+	authFlowID, err := testutils.GetFlowIDByHandle("default-flow", "AUTHENTICATION")
 	s.Require().NoError(err, "failed to get default auth flow ID")
 	s.authFlowID = authFlowID
 
-	regFlowID, err := testutils.GetFlowIDByHandle("default-basic-flow", "REGISTRATION")
+	regFlowID, err := testutils.GetFlowIDByHandle("default-flow", "REGISTRATION")
 	s.Require().NoError(err, "failed to get default registration flow ID")
 	s.registrationFlowID = regFlowID
 }
@@ -158,9 +158,9 @@ func (s *AgentImportExportSuite) TestExportImportRoundTrip_EntityOnlyAgent() {
 	s.Require().NotEmpty(exportResp.Resources, "expected exported YAML")
 	yamlContent := exportResp.Resources
 
-	s.Assert().Contains(yamlContent, "# resource_type: agent")
+	s.Assert().Contains(yamlContent, "resource_type: agent")
 	s.Assert().Contains(yamlContent, "id: "+createdID)
-	s.Assert().Contains(yamlContent, "ou_id: "+s.ouID)
+	s.Assert().Contains(yamlContent, "ouId: "+s.ouID)
 	s.Assert().Contains(yamlContent, "name: "+agentName)
 	s.Assert().Contains(yamlContent, "description: Round-trip entity-only agent")
 
@@ -223,7 +223,7 @@ func (s *AgentImportExportSuite) TestExportImportRoundTrip_AgentWithConfidential
 	s.Require().NoError(err)
 	yamlContent := exportResp.Resources
 
-	s.Assert().Contains(yamlContent, "# resource_type: agent")
+	s.Assert().Contains(yamlContent, "resource_type: agent")
 	// ClientID and ClientSecret are parameterized; the plaintext secret must not appear in YAML.
 	s.Assert().NotContains(yamlContent, clientSecret, "client secret must not appear in exported YAML")
 	s.Assert().Contains(yamlContent, "{{", "client_id should be a template variable")
@@ -235,8 +235,8 @@ func (s *AgentImportExportSuite) TestExportImportRoundTrip_AgentWithConfidential
 	}
 
 	vars := s.extractTemplateVariables(yamlContent, map[string]interface{}{
-		"client_id":     clientID,
-		"client_secret": clientSecret,
+		"clientId":     clientID,
+		"clientSecret": clientSecret,
 	})
 
 	s.Require().NoError(s.deleteAgent(createdID))
@@ -337,27 +337,27 @@ func (s *AgentImportExportSuite) TestExportImportRoundTrip_AgentWithAllFields() 
 	yamlContent := exportResp.Resources
 
 	// Assert every significant field appears in the exported YAML.
-	s.Assert().Contains(yamlContent, "# resource_type: agent")
+	s.Assert().Contains(yamlContent, "resource_type: agent")
 	s.Assert().Contains(yamlContent, "id: "+createdID)
-	s.Assert().Contains(yamlContent, "ou_id: "+s.ouID)
+	s.Assert().Contains(yamlContent, "ouId: "+s.ouID)
 	s.Assert().Contains(yamlContent, "name: "+agentName)
 	s.Assert().Contains(yamlContent, "description: Round-trip all-fields agent")
-	s.Assert().Contains(yamlContent, "auth_flow_id: "+s.authFlowID)
-	s.Assert().Contains(yamlContent, "registration_flow_id: "+s.registrationFlowID)
-	s.Assert().Contains(yamlContent, "is_registration_flow_enabled: true")
+	s.Assert().Contains(yamlContent, "authFlowId: "+s.authFlowID)
+	s.Assert().Contains(yamlContent, "registrationFlowId: "+s.registrationFlowID)
+	s.Assert().Contains(yamlContent, "isRegistrationFlowEnabled: true")
 	s.Assert().Contains(yamlContent, "attributes:")
 	s.Assert().Contains(yamlContent, "eng-team")
-	s.Assert().Contains(yamlContent, "inbound_auth_config:")
+	s.Assert().Contains(yamlContent, "inboundAuthConfig:")
 	s.Assert().Contains(yamlContent, "client_credentials")
-	s.Assert().Contains(yamlContent, "token_endpoint_auth_method: client_secret_basic")
+	s.Assert().Contains(yamlContent, "tokenEndpointAuthMethod: client_secret_basic")
 	s.Assert().NotContains(yamlContent, clientSecret, "client secret must not appear in exported YAML")
 	s.Assert().Contains(yamlContent, "{{", "client_id should be parameterized")
 
 	s.Require().NoError(s.deleteAgent(createdID))
 
 	vars := s.extractTemplateVariables(yamlContent, map[string]interface{}{
-		"client_id":     clientID,
-		"client_secret": clientSecret,
+		"clientId":     clientID,
+		"clientSecret": clientSecret,
 	})
 
 	importResp, err := s.importAgents(agentImportRequest{

@@ -66,8 +66,12 @@ describe('steps models', () => {
       expect(StepTypes.End).toBe('END');
     });
 
-    it('should have exactly 4 step types', () => {
-      expect(Object.keys(StepTypes)).toHaveLength(4);
+    it('should have Call type', () => {
+      expect(StepTypes.Call).toBe('CALL');
+    });
+
+    it('should have exactly 5 step types', () => {
+      expect(Object.keys(StepTypes)).toHaveLength(5);
     });
   });
 
@@ -94,6 +98,10 @@ describe('steps models', () => {
       expect(ExecutionTypes.GithubFederation).toBe('GithubOAuthExecutor');
     });
 
+    it('should have OpenID4VPVerify type', () => {
+      expect(ExecutionTypes.OpenID4VPVerify).toBe('OpenID4VPVerifyExecutor');
+    });
+
     it('should have OAuthExecutor type', () => {
       expect(ExecutionTypes.OAuthExecutor).toBe('OAuthExecutor');
     });
@@ -110,8 +118,8 @@ describe('steps models', () => {
       expect(ExecutionTypes.MagicLinkExecutor).toBe('MagicLinkExecutor');
     });
 
-    it('should have SMSOTPAuth type', () => {
-      expect(ExecutionTypes.SMSOTPAuth).toBe('SMSOTPAuthExecutor');
+    it('should have OTPExecutor type', () => {
+      expect(ExecutionTypes.OTPExecutor).toBe('OTPExecutor');
     });
 
     it('should have ConsentExecutor type', () => {
@@ -166,8 +174,28 @@ describe('steps models', () => {
       expect(ExecutionTypes.UserTypeResolver).toBe('UserTypeResolver');
     });
 
-    it('should have exactly 20 execution types', () => {
-      expect(Object.keys(ExecutionTypes)).toHaveLength(20);
+    it('should have SSOCheck type', () => {
+      expect(ExecutionTypes.SSOCheck).toBe('SSOCheckExecutor');
+    });
+
+    it('should have Session type', () => {
+      expect(ExecutionTypes.Session).toBe('SessionExecutor');
+    });
+
+    it('should have SessionSignOut type', () => {
+      expect(ExecutionTypes.SessionSignOut).toBe('SessionSignOutExecutor');
+    });
+
+    it('should have AuthAssert type', () => {
+      expect(ExecutionTypes.AuthAssert).toBe('AuthAssertExecutor');
+    });
+
+    it('should have Authorization type', () => {
+      expect(ExecutionTypes.Authorization).toBe('AuthorizationExecutor');
+    });
+
+    it('should have exactly 26 execution types', () => {
+      expect(Object.keys(ExecutionTypes)).toHaveLength(26);
     });
   });
 

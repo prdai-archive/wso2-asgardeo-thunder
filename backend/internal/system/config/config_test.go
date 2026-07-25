@@ -26,6 +26,9 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/suite"
+	yaml "gopkg.in/yaml.v3"
+
+	engineconfig "github.com/thunder-id/thunderid/pkg/thunderidengine/config"
 )
 
 type ConfigTestSuite struct {
@@ -100,6 +103,13 @@ func (suite *ConfigTestSuite) TestLoadConfigWithDefaults() {
       "renew_on_grant": false,
       "validity_period": 86400
     }
+  },
+  "notification": {
+    "otp": {
+      "length": 6,
+      "use_numeric_only": true,
+      "validity_period_seconds": 120
+    }
   }
 }`, cryptoPath)
 
@@ -146,6 +156,11 @@ database:
     type: "sqlite"
     sqlite:
       path: "{{.TestVar}}"
+notification:
+  otp:
+    length: 6
+    use_numeric_only: true
+    validity_period_seconds: 120
 `
 
 	tempDir := suite.T().TempDir()
@@ -163,6 +178,299 @@ database:
 	assert.Equal(suite.T(), 8090, config.Server.Port)
 	assert.Equal(suite.T(), false, config.Server.HTTPOnly) // Zero value for bool
 	assert.Equal(suite.T(), "mysql", config.Database.Config.SQLite.Path)
+}
+
+func (suite *ConfigTestSuite) TestLoadConfigGateClientDefaultsToServer() {
+	tempDir := suite.T().TempDir()
+
+	// gate_client omitted entirely: hostname/port/scheme derive from the server config.
+	userContent := `
+server:
+  hostname: "user-host"
+  port: 8095
+notification:
+  otp:
+    length: 6
+    use_numeric_only: true
+    validity_period_seconds: 120
+`
+	userFile := suite.createTempFile(tempDir, "user*.yaml", userContent)
+
+	config, err := LoadConfig(userFile, "", tempDir)
+	assert.NoError(suite.T(), err)
+	assert.NotNil(suite.T(), config)
+
+	assert.Equal(suite.T(), "user-host", config.GateClient.Hostname)
+	assert.Equal(suite.T(), 8095, config.GateClient.Port)
+	assert.Equal(suite.T(), "https", config.GateClient.Scheme)
+}
+
+func (suite *ConfigTestSuite) TestLoadConfigGateClientDefaultsToServerPublicURL() {
+	tempDir := suite.T().TempDir()
+
+	// gate_client omitted and server exposes a public_url: gate_client derives from the public_url.
+	userContent := `
+server:
+  hostname: "0.0.0.0"
+  port: 8090
+  public_url: "https://thunderid.local:9443"
+notification:
+  otp:
+    length: 6
+    use_numeric_only: true
+    validity_period_seconds: 120
+`
+	userFile := suite.createTempFile(tempDir, "user*.yaml", userContent)
+
+	config, err := LoadConfig(userFile, "", tempDir)
+	assert.NoError(suite.T(), err)
+	assert.NotNil(suite.T(), config)
+
+	assert.Equal(suite.T(), "thunderid.local", config.GateClient.Hostname)
+	assert.Equal(suite.T(), 9443, config.GateClient.Port)
+	assert.Equal(suite.T(), "https", config.GateClient.Scheme)
+}
+
+func (suite *ConfigTestSuite) TestLoadConfigGateClientDefaultsToServerPublicURLWithoutPort() {
+	tempDir := suite.T().TempDir()
+
+	// public_url without an explicit port: gate_client falls back to the scheme's default port.
+	userContent := `
+server:
+  hostname: "0.0.0.0"
+  port: 8090
+  public_url: "https://thunderid.local"
+notification:
+  otp:
+    length: 6
+    use_numeric_only: true
+    validity_period_seconds: 120
+`
+	userFile := suite.createTempFile(tempDir, "user*.yaml", userContent)
+
+	config, err := LoadConfig(userFile, "", tempDir)
+	assert.NoError(suite.T(), err)
+	assert.NotNil(suite.T(), config)
+
+	assert.Equal(suite.T(), "thunderid.local", config.GateClient.Hostname)
+	assert.Equal(suite.T(), 443, config.GateClient.Port)
+	assert.Equal(suite.T(), "https", config.GateClient.Scheme)
+}
+
+func (suite *ConfigTestSuite) TestLoadConfigGateClientPartialOverride() {
+	tempDir := suite.T().TempDir()
+
+	// Only gate_client.path is set: host/port/scheme still inherit from the server config.
+	userContent := `
+server:
+  hostname: "user-host"
+  port: 8095
+  http_only: true
+gate_client:
+  path: "/login"
+notification:
+  otp:
+    length: 6
+    use_numeric_only: true
+    validity_period_seconds: 120
+`
+	userFile := suite.createTempFile(tempDir, "user*.yaml", userContent)
+
+	config, err := LoadConfig(userFile, "", tempDir)
+	assert.NoError(suite.T(), err)
+	assert.NotNil(suite.T(), config)
+
+	assert.Equal(suite.T(), "user-host", config.GateClient.Hostname)
+	assert.Equal(suite.T(), 8095, config.GateClient.Port)
+	assert.Equal(suite.T(), "http", config.GateClient.Scheme)
+	assert.Equal(suite.T(), "/login", config.GateClient.Path)
+}
+
+func (suite *ConfigTestSuite) TestLoadConfigGateClientDefaultsToServerHTTPPublicURLWithoutPort() {
+	tempDir := suite.T().TempDir()
+
+	// http public_url without an explicit port: gate_client falls back to port 80.
+	userContent := `
+server:
+  hostname: "0.0.0.0"
+  port: 8090
+  public_url: "http://thunderid.local"
+notification:
+  otp:
+    length: 6
+    use_numeric_only: true
+    validity_period_seconds: 120
+`
+	userFile := suite.createTempFile(tempDir, "user*.yaml", userContent)
+
+	config, err := LoadConfig(userFile, "", tempDir)
+	assert.NoError(suite.T(), err)
+	assert.NotNil(suite.T(), config)
+
+	assert.Equal(suite.T(), "thunderid.local", config.GateClient.Hostname)
+	assert.Equal(suite.T(), 80, config.GateClient.Port)
+	assert.Equal(suite.T(), "http", config.GateClient.Scheme)
+}
+
+func (suite *ConfigTestSuite) TestLoadConfigGateClientUnspecifiedHostFails() {
+	tempDir := suite.T().TempDir()
+
+	// server binds to 0.0.0.0 with no public_url and no explicit gate_client host: the gate
+	// client would resolve to the unreachable bind address, so loading must fail.
+	userContent := `
+server:
+  hostname: "0.0.0.0"
+  port: 8090
+notification:
+  otp:
+    length: 6
+    use_numeric_only: true
+    validity_period_seconds: 120
+`
+	userFile := suite.createTempFile(tempDir, "user*.yaml", userContent)
+
+	config, err := LoadConfig(userFile, "", tempDir)
+	assert.Error(suite.T(), err)
+	assert.Nil(suite.T(), config)
+	assert.Contains(suite.T(), err.Error(), "unreachable")
+}
+
+func (suite *ConfigTestSuite) TestLoadConfigGateClientMalformedPublicURLFails() {
+	tempDir := suite.T().TempDir()
+
+	// gate_client derives from a malformed public_url (non-numeric port): parsing must fail loudly
+	// rather than silently leaving gate_client empty.
+	userContent := `
+server:
+  hostname: "0.0.0.0"
+  port: 8090
+  public_url: "https://thunderid.local:notaport"
+notification:
+  otp:
+    length: 6
+    use_numeric_only: true
+    validity_period_seconds: 120
+`
+	userFile := suite.createTempFile(tempDir, "user*.yaml", userContent)
+
+	config, err := LoadConfig(userFile, "", tempDir)
+	assert.Error(suite.T(), err)
+	assert.Nil(suite.T(), config)
+	assert.Contains(suite.T(), err.Error(), "failed to parse server URL")
+}
+
+func (suite *ConfigTestSuite) TestLoadConfigLogLevel() {
+	tempDir := suite.T().TempDir()
+
+	notification := `
+notification:
+  otp:
+    length: 6
+    use_numeric_only: true
+    validity_period_seconds: 120
+`
+
+	// A deployment.yaml with a log level should parse into cfg.Log.Level.
+	withLevel := suite.createTempFile(tempDir, "user*.yaml", "log:\n  level: \"debug\"\n"+notification)
+	config, err := LoadConfig(withLevel, "", tempDir)
+	assert.NoError(suite.T(), err)
+	assert.NotNil(suite.T(), config)
+	assert.Equal(suite.T(), "debug", config.Log.Level)
+
+	// Omitting the log section leaves the level empty.
+	withoutLevel := suite.createTempFile(tempDir, "user*.yaml", "server:\n  hostname: \"test\"\n"+notification)
+	config, err = LoadConfig(withoutLevel, "", tempDir)
+	assert.NoError(suite.T(), err)
+	assert.NotNil(suite.T(), config)
+	assert.Equal(suite.T(), "", config.Log.Level)
+}
+
+func (suite *ConfigTestSuite) TestLoadConfigLogOutput() {
+	tempDir := suite.T().TempDir()
+
+	notification := `
+notification:
+  otp:
+    length: 6
+    use_numeric_only: true
+    validity_period_seconds: 120
+`
+
+	logOutput := `
+log:
+  level: "info"
+  output:
+    console:
+      enabled: true
+    file:
+      enabled: true
+      path: "logs"
+      file_name: "thunderid.log"
+      format: "json"
+      rotation:
+        size:
+          enabled: true
+          max_size_mb: 0.5
+        time:
+          enabled: true
+          interval_days: 2
+        max_backups: 7
+        max_age_days: 14
+        compress: true
+`
+
+	userFile := suite.createTempFile(tempDir, "user*.yaml", logOutput+notification)
+	config, err := LoadConfig(userFile, "", tempDir)
+	assert.NoError(suite.T(), err)
+	assert.NotNil(suite.T(), config)
+
+	file := config.Log.Output.File
+	assert.Equal(suite.T(), boolPtr(true), config.Log.Output.Console.Enabled)
+	assert.Equal(suite.T(), boolPtr(true), file.Enabled)
+	assert.Equal(suite.T(), "logs", file.Path)
+	assert.Equal(suite.T(), "thunderid.log", file.FileName)
+	assert.Equal(suite.T(), "json", file.Format)
+	assert.Equal(suite.T(), boolPtr(true), file.Rotation.Size.Enabled)
+	assert.Equal(suite.T(), floatPtr(0.5), file.Rotation.Size.MaxSizeMB)
+	assert.Equal(suite.T(), boolPtr(true), file.Rotation.Time.Enabled)
+	assert.Equal(suite.T(), intPtr(2), file.Rotation.Time.IntervalDays)
+	assert.Equal(suite.T(), intPtr(7), file.Rotation.MaxBackups)
+	assert.Equal(suite.T(), intPtr(14), file.Rotation.MaxAgeDays)
+	assert.Equal(suite.T(), boolPtr(true), file.Rotation.Compress)
+
+	// Omitting the output block leaves the file toggle unset (nil), so the default
+	// from default.json is preserved on merge.
+	withoutOutput := suite.createTempFile(tempDir, "user*.yaml", "log:\n  level: \"info\"\n"+notification)
+	config, err = LoadConfig(withoutOutput, "", tempDir)
+	assert.NoError(suite.T(), err)
+	assert.NotNil(suite.T(), config)
+	assert.Nil(suite.T(), config.Log.Output.File.Enabled)
+}
+
+// TestLogConfigOverrideToZeroValues verifies the presence-based (pointer) merge:
+// a deployment.yaml value overrides a default.json default even when it is the
+// zero value (false / 0), while an omitted (nil) value keeps the default.
+func (suite *ConfigTestSuite) TestLogConfigOverrideToZeroValues() {
+	base := &Config{}
+	base.Log.Level = "info"
+	base.Log.Output.Console.Enabled = boolPtr(true)
+	base.Log.Output.File.Rotation.MaxBackups = intPtr(20)
+
+	user := &Config{}
+	user.Log.Output.Console.Enabled = boolPtr(false) // explicitly disable console
+	user.Log.Output.File.Rotation.MaxBackups = intPtr(0)
+
+	mergeConfigs(base, user)
+
+	assert.Equal(suite.T(), "info", base.Log.Level, "untouched default preserved")
+	assert.Equal(suite.T(), boolPtr(false), base.Log.Output.Console.Enabled, "false must override the true default")
+	assert.Equal(suite.T(), intPtr(0), base.Log.Output.File.Rotation.MaxBackups, "0 must override the non-zero default")
+
+	// An omitted (nil) user value keeps the base default.
+	base2 := &Config{}
+	base2.Log.Output.Console.Enabled = boolPtr(true)
+	mergeConfigs(base2, &Config{})
+	assert.Equal(suite.T(), boolPtr(true), base2.Log.Output.Console.Enabled, "nil override keeps the default")
 }
 
 func (suite *ConfigTestSuite) TestLoadConfigWithDefaults_ErrorCases() {
@@ -186,34 +494,34 @@ func (suite *ConfigTestSuite) TestLoadConfigWithDefaults_ErrorCases() {
 func (suite *ConfigTestSuite) TestMergeStructs() {
 	// Test merging complex nested structures
 	base := &Config{
-		Server: ServerConfig{
+		Server: engineconfig.ServerConfig{
 			Hostname: "base-host",
 			Port:     8080,
 			HTTPOnly: false,
 		},
-		GateClient: GateClientConfig{
+		GateClient: engineconfig.GateClientConfig{
 			Hostname:  "base-gate",
 			Port:      9080,
 			Scheme:    "http",
 			LoginPath: "/base-login",
 			ErrorPath: "/base-error",
 		},
-		JWT: JWTConfig{
+		JWT: engineconfig.JWTConfig{
 			Issuer:         "base-issuer",
 			ValidityPeriod: 3600,
 		},
-		OAuth: OAuthConfig{
-			RefreshToken: RefreshTokenConfig{
+		OAuth: engineconfig.OAuthConfig{
+			RefreshToken: engineconfig.RefreshTokenConfig{
 				RenewOnGrant:   false,
 				ValidityPeriod: 7200,
 			},
 		},
-		Cache: CacheConfig{
+		Cache: engineconfig.CacheConfig{
 			Disabled:        false,
 			Type:            "memory",
 			EvictionPolicy:  "LRU",
 			CleanupInterval: 60,
-			Properties: []CacheProperty{
+			Properties: []engineconfig.CacheProperty{
 				{Name: "base-cache", Size: 100, TTL: 300},
 			},
 		},
@@ -225,7 +533,7 @@ func (suite *ConfigTestSuite) TestMergeStructs() {
 					Port:     5432,
 				},
 			},
-			Runtime: DataSource{
+			RuntimeTransient: DataSource{
 				Type: "postgres",
 				Postgres: PostgresDataSource{
 					Hostname: "base-runtime-host",
@@ -236,27 +544,27 @@ func (suite *ConfigTestSuite) TestMergeStructs() {
 	}
 
 	user := &Config{
-		Server: ServerConfig{
+		Server: engineconfig.ServerConfig{
 			Hostname: "user-host", // Override
 			Port:     8090,        // Override
 			// HTTPOnly: false (zero value, should not override)
 		},
-		GateClient: GateClientConfig{
+		GateClient: engineconfig.GateClientConfig{
 			Hostname: "user-gate", // Override
 			// Other fields are zero values, should not override
 		},
-		JWT: JWTConfig{
+		JWT: engineconfig.JWTConfig{
 			Issuer: "user-issuer", // Override
 			// ValidityPeriod: 0 (zero value, should not override)
 		},
-		OAuth: OAuthConfig{
-			RefreshToken: RefreshTokenConfig{
+		OAuth: engineconfig.OAuthConfig{
+			RefreshToken: engineconfig.RefreshTokenConfig{
 				RenewOnGrant: true, // Override
 				// ValidityPeriod: 0 (zero value, should not override)
 			},
 		},
-		Cache: CacheConfig{
-			Properties: []CacheProperty{
+		Cache: engineconfig.CacheConfig{
+			Properties: []engineconfig.CacheProperty{
 				{Name: "user-cache", Size: 200, TTL: 600},
 			}, // Override slice
 		},
@@ -584,6 +892,11 @@ func (suite *ConfigTestSuite) TestLoadConfig_FileClosingErrors() {
 server:
   hostname: "test-host"
   port: 8080
+notification:
+  otp:
+    length: 6
+    use_numeric_only: true
+    validity_period_seconds: 120
 `
 
 	tempDir := suite.T().TempDir()
@@ -597,8 +910,8 @@ server:
 }
 
 func (suite *ConfigTestSuite) TestLoadConfig_SecurityValidation() {
-	// LoadConfig must surface validation errors from SecurityConfig.Validate, not just
-	// from individual fields. SecurityConfig.Validate has two error sources — its own
+	// LoadConfig must surface validation errors from engineconfig.SecurityConfig.Validate, not just
+	// from individual fields. engineconfig.SecurityConfig.Validate has two error sources — its own
 	// JWKSCacheTTL check and the delegated TrustedIssuer.Validate — and both must
 	// propagate out of LoadConfig. A positive case ensures a fully-valid security
 	// block loads end-to-end without false positives.
@@ -622,7 +935,7 @@ server:
 		},
 		{
 			// Trusted issuer is configured (issuer set) but jwks_url is missing —
-			// TrustedIssuer.Validate returns an error. SecurityConfig.Validate must
+			// TrustedIssuer.Validate returns an error. engineconfig.SecurityConfig.Validate must
 			// delegate to it, and LoadConfig must surface the error.
 			name: "TrustedIssuerMissingJWKSURL",
 			content: `
@@ -668,6 +981,11 @@ server:
       issuer: "https://auth.example.com"
       jwks_url: "https://auth.example.com/oauth2/jwks"
       audience: "https://thunder.example.com"
+notification:
+  otp:
+    length: 6
+    use_numeric_only: true
+    validity_period_seconds: 120
 `,
 			expectError: false,
 		},
@@ -713,6 +1031,25 @@ func (suite *ConfigTestSuite) TestLoadConfig_InvalidYAML() {
 	assert.Error(suite.T(), err)
 }
 
+func (suite *ConfigTestSuite) TestLoadConfig_NotificationValidation() {
+	tempDir := suite.T().TempDir()
+	userContent := `
+server:
+  hostname: "test-host"
+  port: 8080
+notification:
+  otp:
+    length: 3
+    validity_period_seconds: 120
+`
+	userFile := suite.createTempFile(tempDir, "notification-validation*.yaml", userContent)
+
+	cfg, err := LoadConfig(userFile, "", tempDir)
+	assert.Error(suite.T(), err)
+	assert.Nil(suite.T(), cfg)
+	assert.Contains(suite.T(), err.Error(), "notification.otp.length")
+}
+
 func (suite *ConfigTestSuite) TestLoadConfigWithDerivedIssuer() {
 	tempDir := suite.T().TempDir()
 
@@ -722,6 +1059,11 @@ server:
   hostname: "auth.example.com"
   port: 443
   http_only: false
+notification:
+  otp:
+    length: 6
+    use_numeric_only: true
+    validity_period_seconds: 120
 `
 	userFile1 := suite.createTempFile(tempDir, "user1*.yaml", userContent1)
 
@@ -736,6 +1078,11 @@ server:
   port: 443
 jwt:
   issuer: "custom-issuer"
+notification:
+  otp:
+    length: 6
+    use_numeric_only: true
+    validity_period_seconds: 120
 `
 	userFile2 := suite.createTempFile(tempDir, "user2*.yaml", userContent2)
 
@@ -749,6 +1096,11 @@ server:
   hostname: "internal-host"
   port: 8090
   public_url: "https://auth.public.com"
+notification:
+  otp:
+    length: 6
+    use_numeric_only: true
+    validity_period_seconds: 120
 `
 	userFile3 := suite.createTempFile(tempDir, "user3*.yaml", userContent3)
 
@@ -762,6 +1114,11 @@ server:
   hostname: "localhost"
   port: 8080
   http_only: true
+notification:
+  otp:
+    length: 6
+    use_numeric_only: true
+    validity_period_seconds: 120
 `
 	userFile4 := suite.createTempFile(tempDir, "user4*.yaml", userContent4)
 
@@ -777,6 +1134,11 @@ func (suite *ConfigTestSuite) TestLoadConfigWithDerivedPaths() {
 	userContent1 := `
 gate_client:
   path: "/app"
+notification:
+  otp:
+    length: 6
+    use_numeric_only: true
+    validity_period_seconds: 120
 `
 	userFile1 := suite.createTempFile(tempDir, "user1*.yaml", userContent1)
 
@@ -791,6 +1153,11 @@ gate_client:
 gate_client:
   path: "/app"
   login_path: "/custom/login"
+notification:
+  otp:
+    length: 6
+    use_numeric_only: true
+    validity_period_seconds: 120
 `
 	userFile2 := suite.createTempFile(tempDir, "user2*.yaml", userContent2)
 
@@ -805,6 +1172,11 @@ gate_client:
 gate_client:
   path: "/app"
   error_path: "/custom/error"
+notification:
+  otp:
+    length: 6
+    use_numeric_only: true
+    validity_period_seconds: 120
 `
 	userFile3 := suite.createTempFile(tempDir, "user3*.yaml", userContent3)
 
@@ -820,6 +1192,11 @@ gate_client:
   path: "/app"
   login_path: "/custom/login"
   error_path: "/custom/error"
+notification:
+  otp:
+    length: 6
+    use_numeric_only: true
+    validity_period_seconds: 120
 `
 	userFile4 := suite.createTempFile(tempDir, "user4*.yaml", userContent4)
 
@@ -833,6 +1210,13 @@ gate_client:
 	defaultContent := `{
   "gate_client": {
     "path": "/gate"
+  },
+  "notification": {
+    "otp": {
+      "length": 6,
+      "use_numeric_only": true,
+      "validity_period_seconds": 120
+    }
   }
 }`
 	defaultFile := suite.createTempFile(tempDir, "default*.json", defaultContent)
@@ -851,20 +1235,20 @@ gate_client:
 }
 
 func (suite *ConfigTestSuite) TestTrustedIssuerConfig_IsConfigured() {
-	assert.False(suite.T(), (&TrustedIssuerConfig{}).IsConfigured())
-	assert.False(suite.T(), (&TrustedIssuerConfig{
+	assert.False(suite.T(), (&engineconfig.TrustedIssuerConfig{}).IsConfigured())
+	assert.False(suite.T(), (&engineconfig.TrustedIssuerConfig{
 		JWKSURL:  "https://a/jwks",
 		Audience: "https://b",
 	}).IsConfigured(),
 		"jwks_url and audience without issuer should not activate the feature")
-	assert.True(suite.T(), (&TrustedIssuerConfig{Issuer: "https://a"}).IsConfigured())
+	assert.True(suite.T(), (&engineconfig.TrustedIssuerConfig{Issuer: "https://a"}).IsConfigured())
 }
 
 func (suite *ConfigTestSuite) TestTrustedIssuerConfig_Validate_NotConfigured() {
 	// Empty config — feature is off, no validation errors.
-	assert.NoError(suite.T(), (&TrustedIssuerConfig{}).Validate())
+	assert.NoError(suite.T(), (&engineconfig.TrustedIssuerConfig{}).Validate())
 	// jwks_url/audience set without issuer is also "not configured" and silently ignored.
-	cfg := &TrustedIssuerConfig{
+	cfg := &engineconfig.TrustedIssuerConfig{
 		JWKSURL:  "https://auth.example.com/jwks",
 		Audience: "https://thunder.example.com",
 	}
@@ -872,7 +1256,7 @@ func (suite *ConfigTestSuite) TestTrustedIssuerConfig_Validate_NotConfigured() {
 }
 
 func (suite *ConfigTestSuite) TestTrustedIssuerConfig_Validate_PartiallyConfigured_MissingJWKSURL() {
-	cfg := &TrustedIssuerConfig{
+	cfg := &engineconfig.TrustedIssuerConfig{
 		Issuer:   "https://auth.example.com",
 		Audience: "https://thunder.example.com",
 	}
@@ -882,7 +1266,7 @@ func (suite *ConfigTestSuite) TestTrustedIssuerConfig_Validate_PartiallyConfigur
 }
 
 func (suite *ConfigTestSuite) TestTrustedIssuerConfig_Validate_PartiallyConfigured_MissingAudience() {
-	cfg := &TrustedIssuerConfig{
+	cfg := &engineconfig.TrustedIssuerConfig{
 		Issuer:  "https://auth.example.com",
 		JWKSURL: "https://auth.example.com/jwks",
 	}
@@ -892,7 +1276,7 @@ func (suite *ConfigTestSuite) TestTrustedIssuerConfig_Validate_PartiallyConfigur
 }
 
 func (suite *ConfigTestSuite) TestTrustedIssuerConfig_Validate_HTTPS() {
-	cfg := &TrustedIssuerConfig{
+	cfg := &engineconfig.TrustedIssuerConfig{
 		Issuer:   "https://auth.example.com",
 		JWKSURL:  "https://auth.example.com/.well-known/jwks.json",
 		Audience: "https://thunder.example.com",
@@ -901,7 +1285,7 @@ func (suite *ConfigTestSuite) TestTrustedIssuerConfig_Validate_HTTPS() {
 }
 
 func (suite *ConfigTestSuite) TestTrustedIssuerConfig_Validate_HTTPRejected() {
-	cfg := &TrustedIssuerConfig{
+	cfg := &engineconfig.TrustedIssuerConfig{
 		Issuer:   "https://auth.example.com",
 		JWKSURL:  "http://auth.example.com/jwks",
 		Audience: "https://thunder.example.com",
@@ -918,7 +1302,7 @@ func (suite *ConfigTestSuite) TestTrustedIssuerConfig_Validate_HTTPLocalhostAllo
 		"http://[::1]:8090/oauth2/jwks",
 	}
 	for _, h := range hosts {
-		cfg := &TrustedIssuerConfig{
+		cfg := &engineconfig.TrustedIssuerConfig{
 			Issuer:   "https://auth.example.com",
 			JWKSURL:  h,
 			Audience: "https://thunder.example.com",
@@ -928,7 +1312,7 @@ func (suite *ConfigTestSuite) TestTrustedIssuerConfig_Validate_HTTPLocalhostAllo
 }
 
 func (suite *ConfigTestSuite) TestTrustedIssuerConfig_Validate_InvalidScheme() {
-	cfg := &TrustedIssuerConfig{
+	cfg := &engineconfig.TrustedIssuerConfig{
 		Issuer:   "https://auth.example.com",
 		JWKSURL:  "ftp://auth.example.com/jwks",
 		Audience: "https://thunder.example.com",
@@ -939,7 +1323,7 @@ func (suite *ConfigTestSuite) TestTrustedIssuerConfig_Validate_InvalidScheme() {
 }
 
 func (suite *ConfigTestSuite) TestTrustedIssuerConfig_Validate_InvalidURL() {
-	cfg := &TrustedIssuerConfig{
+	cfg := &engineconfig.TrustedIssuerConfig{
 		Issuer:   "https://auth.example.com",
 		JWKSURL:  "://bad-url",
 		Audience: "https://thunder.example.com",
@@ -949,7 +1333,7 @@ func (suite *ConfigTestSuite) TestTrustedIssuerConfig_Validate_InvalidURL() {
 }
 
 func (suite *ConfigTestSuite) TestSecurityConfig_Validate_NegativeJWKSCacheTTL() {
-	cfg := &SecurityConfig{
+	cfg := &engineconfig.SecurityConfig{
 		JWKSCacheTTL: -1,
 	}
 	err := cfg.Validate()
@@ -958,7 +1342,7 @@ func (suite *ConfigTestSuite) TestSecurityConfig_Validate_NegativeJWKSCacheTTL()
 }
 
 func (suite *ConfigTestSuite) TestSecurityConfig_Validate_ZeroJWKSCacheTTL() {
-	cfg := &SecurityConfig{
+	cfg := &engineconfig.SecurityConfig{
 		JWKSCacheTTL: 0,
 	}
 	err := cfg.Validate()
@@ -967,10 +1351,10 @@ func (suite *ConfigTestSuite) TestSecurityConfig_Validate_ZeroJWKSCacheTTL() {
 
 func (suite *ConfigTestSuite) TestSecurityConfig_Validate_DelegatesToTrustedIssuer() {
 	// A security config with a misconfigured trusted issuer must surface that error
-	// through SecurityConfig.Validate, since the parent is now the entry point.
-	cfg := &SecurityConfig{
+	// through engineconfig.SecurityConfig.Validate, since the parent is now the entry point.
+	cfg := &engineconfig.SecurityConfig{
 		JWKSCacheTTL: 300,
-		TrustedIssuer: TrustedIssuerConfig{
+		TrustedIssuer: engineconfig.TrustedIssuerConfig{
 			Issuer:   "https://auth.example.com",
 			JWKSURL:  "", // missing, should fail validation
 			Audience: "https://thunder.example.com",
@@ -995,12 +1379,12 @@ func (suite *ConfigTestSuite) createTempFile(dir, pattern, content string) strin
 }
 
 func (suite *ConfigTestSuite) TestAuthClassValidate_EmptyConfig() {
-	cfg := AuthClassConfig{}
+	cfg := engineconfig.AuthClassConfig{}
 	assert.NoError(suite.T(), cfg.Validate())
 }
 
 func (suite *ConfigTestSuite) TestAuthClassValidate_ValidMapping() {
-	cfg := AuthClassConfig{
+	cfg := engineconfig.AuthClassConfig{
 		Amrs: []string{"PWD", "OTP"},
 		AcrAMR: map[string][]string{
 			"urn:thunder:acr:password":       {"PWD"},
@@ -1012,7 +1396,7 @@ func (suite *ConfigTestSuite) TestAuthClassValidate_ValidMapping() {
 }
 
 func (suite *ConfigTestSuite) TestAuthClassValidate_EmptyAMRList() {
-	cfg := AuthClassConfig{
+	cfg := engineconfig.AuthClassConfig{
 		Amrs: []string{"PWD"},
 		AcrAMR: map[string][]string{
 			"urn:thunder:acr:password": {"PWD"},
@@ -1026,7 +1410,7 @@ func (suite *ConfigTestSuite) TestAuthClassValidate_EmptyAMRList() {
 }
 
 func (suite *ConfigTestSuite) TestAuthClassValidate_UnknownAMRKey() {
-	cfg := AuthClassConfig{
+	cfg := engineconfig.AuthClassConfig{
 		Amrs: []string{"PWD"},
 		AcrAMR: map[string][]string{
 			"urn:thunder:acr:password": {"PWD"},
@@ -1040,7 +1424,7 @@ func (suite *ConfigTestSuite) TestAuthClassValidate_UnknownAMRKey() {
 }
 
 func (suite *ConfigTestSuite) TestAuthClassValidate_NoAMRSection() {
-	cfg := AuthClassConfig{
+	cfg := engineconfig.AuthClassConfig{
 		AcrAMR: map[string][]string{
 			"urn:thunder:acr:password": {"PWD"},
 		},
@@ -1051,14 +1435,14 @@ func (suite *ConfigTestSuite) TestAuthClassValidate_NoAMRSection() {
 }
 
 func (suite *ConfigTestSuite) TestAuthClassValidate_AcrAMREmptyButAMRPresent() {
-	cfg := AuthClassConfig{
+	cfg := engineconfig.AuthClassConfig{
 		Amrs: []string{"PWD"},
 	}
 	assert.NoError(suite.T(), cfg.Validate())
 }
 
 func (suite *ConfigTestSuite) TestAuthClassValidate_EmptyACRKey() {
-	cfg := AuthClassConfig{
+	cfg := engineconfig.AuthClassConfig{
 		Amrs: []string{"PWD"},
 		AcrAMR: map[string][]string{
 			"": {"PWD"},
@@ -1070,7 +1454,7 @@ func (suite *ConfigTestSuite) TestAuthClassValidate_EmptyACRKey() {
 }
 
 func (suite *ConfigTestSuite) TestAuthClassValidate_EmptyAMREntry() {
-	cfg := AuthClassConfig{
+	cfg := engineconfig.AuthClassConfig{
 		Amrs: []string{"PWD", ""},
 	}
 	err := cfg.Validate()
@@ -1079,7 +1463,7 @@ func (suite *ConfigTestSuite) TestAuthClassValidate_EmptyAMREntry() {
 }
 
 func (suite *ConfigTestSuite) TestAuthClassValidate_EmptyAMRReference() {
-	cfg := AuthClassConfig{
+	cfg := engineconfig.AuthClassConfig{
 		Amrs: []string{"PWD"},
 		AcrAMR: map[string][]string{
 			"urn:thunder:acr:password": {"PWD", ""},
@@ -1088,4 +1472,63 @@ func (suite *ConfigTestSuite) TestAuthClassValidate_EmptyAMRReference() {
 	err := cfg.Validate()
 	assert.Error(suite.T(), err)
 	assert.Contains(suite.T(), err.Error(), "references an empty AMR key")
+}
+
+func (suite *ConfigTestSuite) TestFlowConfig_ExecutorsYAMLField() {
+	const yamlFragment = `
+flow:
+  max_version_history: 3
+  executors:
+    - CredentialsAuthExecutor
+    - InviteExecutor
+`
+	var cfg Config
+	err := yaml.Unmarshal([]byte(yamlFragment), &cfg)
+	suite.Require().NoError(err)
+	suite.Equal([]string{"CredentialsAuthExecutor", "InviteExecutor"}, cfg.Flow.Executors)
+	suite.Equal(3, cfg.Flow.MaxVersionHistory)
+}
+
+func (suite *ConfigTestSuite) TestOTPConfig_Validate_Defaults() {
+	cfg := &OTPConfig{
+		Length:                6,
+		UseNumericOnly:        true,
+		ValidityPeriodSeconds: 120,
+	}
+	assert.NoError(suite.T(), cfg.Validate())
+}
+
+func (suite *ConfigTestSuite) TestOTPConfig_Validate_LengthBelowMin() {
+	cfg := &OTPConfig{Length: 3, ValidityPeriodSeconds: 120}
+	err := cfg.Validate()
+	assert.Error(suite.T(), err)
+	assert.Contains(suite.T(), err.Error(), "notification.otp.length")
+}
+
+func (suite *ConfigTestSuite) TestOTPConfig_Validate_LengthAboveMax() {
+	cfg := &OTPConfig{Length: 11, ValidityPeriodSeconds: 120}
+	err := cfg.Validate()
+	assert.Error(suite.T(), err)
+	assert.Contains(suite.T(), err.Error(), "notification.otp.length")
+}
+
+func (suite *ConfigTestSuite) TestOTPConfig_Validate_ValidityBelowMin() {
+	cfg := &OTPConfig{Length: 6, ValidityPeriodSeconds: 29}
+	err := cfg.Validate()
+	assert.Error(suite.T(), err)
+	assert.Contains(suite.T(), err.Error(), "notification.otp.validity_period_seconds")
+}
+
+func (suite *ConfigTestSuite) TestOTPConfig_Validate_ValidityAboveMax() {
+	cfg := &OTPConfig{Length: 6, ValidityPeriodSeconds: 601}
+	err := cfg.Validate()
+	assert.Error(suite.T(), err)
+	assert.Contains(suite.T(), err.Error(), "notification.otp.validity_period_seconds")
+}
+
+func (suite *ConfigTestSuite) TestNotificationConfig_Validate_DelegatesToOTP() {
+	cfg := &NotificationConfig{OTP: OTPConfig{Length: 3, ValidityPeriodSeconds: 120}}
+	err := cfg.Validate()
+	assert.Error(suite.T(), err)
+	assert.Contains(suite.T(), err.Error(), "notification.otp.length")
 }

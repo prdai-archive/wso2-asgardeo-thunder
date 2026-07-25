@@ -1,26 +1,27 @@
 ---
 title: Middleware
+docType: reference
 displayed_sidebar: nextjsSdkSidebar
-description: Protect routes and refresh tokens with Next.js middleware
+description: Protect routes and refresh tokens automatically with Next.js Edge middleware using ThunderIDMiddleware.
 ---
 
 # Middleware
 
 The <ProductName /> Next.js SDK provides Edge Runtime-compatible middleware for automatic token refresh and route protection.
 
-## `thunderIDMiddleware()`
+## `thunderIDProxy()`
 
 Create a Next.js middleware that handles authentication concerns for every request.
 
 ```ts title="middleware.ts" showLineNumbers
 import {
-  thunderIDMiddleware,
+  thunderIDProxy,
   createRouteMatcher,
-} from '@thunderid/nextjs/middleware'
+} from '@thunderid/nextjs/server'
 
 const isProtectedRoute = createRouteMatcher(['/dashboard(.*)'])
 
-export default thunderIDMiddleware(async (thunderid, request) => {
+export default thunderIDProxy(async (thunderid, request) => {
   if (isProtectedRoute(request)) {
     await thunderid.protectRoute()
   }
@@ -36,9 +37,9 @@ export const config = {
 | Parameter | Type | Description |
 |-----------|------|-------------|
 | `handler` | `(thunderid, request) => Promise<void>` | Optional callback that receives the auth context and the request |
-| `options` | `ThunderIDMiddlewareOptions` | Optional configuration overrides |
+| `options` | `ThunderIDProxyOptions` | Optional configuration overrides |
 
-### Middleware Context
+### Proxy Context
 
 The `thunderid` object passed to your handler provides:
 
@@ -59,8 +60,8 @@ The `thunderid` object passed to your handler provides:
 
 Create a function that matches requests against a list of route patterns.
 
-```ts
-import { createRouteMatcher } from '@thunderid/nextjs/middleware'
+```typescript
+import { createRouteMatcher } from '@thunderid/nextjs/server'
 
 const isProtectedRoute = createRouteMatcher([
   '/dashboard(.*)',
@@ -92,9 +93,9 @@ The middleware automatically refreshes access tokens that are about to expire (w
 
 ```ts title="middleware.ts" showLineNumbers
 import {
-  thunderIDMiddleware,
+  thunderIDProxy,
   createRouteMatcher,
-} from '@thunderid/nextjs/middleware'
+} from '@thunderid/nextjs/server'
 
 const isProtectedRoute = createRouteMatcher([
   '/dashboard(.*)',
@@ -104,7 +105,7 @@ const isProtectedRoute = createRouteMatcher([
 
 const isAdminRoute = createRouteMatcher(['/admin(.*)'])
 
-export default thunderIDMiddleware(async (thunderid, request) => {
+export default thunderIDProxy(async (thunderid, request) => {
   if (isAdminRoute(request)) {
     await thunderid.protectRoute({ redirect: '/unauthorized' })
     return
@@ -123,9 +124,9 @@ export const config = {
 ### Access Session Data in Middleware
 
 ```ts title="middleware.ts" showLineNumbers
-import { thunderIDMiddleware } from '@thunderid/nextjs/middleware'
+import { thunderIDProxy } from '@thunderid/nextjs/server'
 
-export default thunderIDMiddleware(async (thunderid, request) => {
+export default thunderIDProxy(async (thunderid, request) => {
   const session = await thunderid.getSession()
 
   if (session) {

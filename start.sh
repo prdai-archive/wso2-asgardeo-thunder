@@ -24,9 +24,13 @@ BINARY_NAME="${PRODUCT_NAME_LOWERCASE}"
 BACKEND_PORT=${BACKEND_PORT:-8090}
 DEBUG_PORT=${DEBUG_PORT:-2345}
 DEBUG_MODE=${DEBUG_MODE:-false}
-WITH_CONSENT=${WITH_CONSENT:-true}
 RESOURCES_FILE=""
 ENV_FILE=""
+BOOTSTRAP_MODE=false
+BOOTSTRAP_AND_SERVE=false
+BOOTSTRAP_EXTRA_ARGS=()
+ADMIN_USERNAME_FLAG_SET=false
+ADMIN_PASSWORD_FLAG_SET=false
 
 # Parse command line arguments
 while [[ $# -gt 0 ]]; do
@@ -43,9 +47,43 @@ while [[ $# -gt 0 ]]; do
             BACKEND_PORT="$2"
             shift 2
             ;;
-        --without-consent)
-            WITH_CONSENT=false
+        --bootstrap)
+            # Run the in-process bootstrap one-shot (create default resources) instead
+            # of starting the long-running server, then exit.
+            BOOTSTRAP_MODE=true
             shift
+            ;;
+        --bootstrap-and-serve)
+            # Run the in-process bootstrap one-shot first, then start the long-running
+            # server (convenient for local/dev: seed once, then serve).
+            BOOTSTRAP_AND_SERVE=true
+            shift
+            ;;
+        --console-redirect-uris)
+            if [ $# -lt 2 ] || [ -z "$2" ]; then
+                echo "Error: --console-redirect-uris requires a value"
+                exit 1
+            fi
+            BOOTSTRAP_EXTRA_ARGS+=(--console-redirect-uris "$2")
+            shift 2
+            ;;
+        --admin-username)
+            if [ $# -lt 2 ] || [ -z "$2" ]; then
+                echo "Error: --admin-username requires a value"
+                exit 1
+            fi
+            BOOTSTRAP_EXTRA_ARGS+=(--admin-username "$2")
+            ADMIN_USERNAME_FLAG_SET=true
+            shift 2
+            ;;
+        --admin-password)
+            if [ $# -lt 2 ] || [ -z "$2" ]; then
+                echo "Error: --admin-password requires a value"
+                exit 1
+            fi
+            BOOTSTRAP_EXTRA_ARGS+=(--admin-password "$2")
+            ADMIN_PASSWORD_FLAG_SET=true
+            shift 2
             ;;
         --env)
             ENV_FILE="$2"
@@ -64,7 +102,12 @@ while [[ $# -gt 0 ]]; do
             echo "  --debug              Enable debug mode with remote debugging"
             echo "  --port PORT          Set application port (default: 8090)"
             echo "  --debug-port PORT    Set debug port (default: 2345)"
-            echo "  --without-consent    Disable the bundled consent server"
+            echo "  --bootstrap          Create default resources in-process, then exit (used by setup.sh)"
+            echo "  --bootstrap-and-serve Create default resources in-process, then start the server"
+            echo "  --admin-username VALUE  Username for the default admin user (--bootstrap-and-serve only)"
+            echo "                          Optional; falls back to ADMIN_USERNAME env var, then defaults to 'admin'"
+            echo "  --admin-password VALUE  Password for the default admin user (--bootstrap-and-serve only)"
+            echo "                          Falls back to ADMIN_PASSWORD env var; bootstrap fails if neither is set"
             echo "  --help               Show this help message"
             echo ""
             echo "First-Time Setup:"
@@ -77,7 +120,7 @@ while [[ $# -gt 0 ]]; do
             echo "Examples:"
             echo "  $0                                    Start server normally"
             echo "  $0 --debug                            Start in debug mode"
-            echo "  $0 --port 9090                        Start on custom port"
+            echo "  $0 --port 9095                        Start on custom port"
             echo "  $0 cloud.yml --env my.env             Start with exported resources and env"
             exit 0
             ;;
@@ -98,6 +141,14 @@ while [[ $# -gt 0 ]]; do
             ;;
     esac
 done
+
+# --admin-username/--admin-password only make sense when bootstrapping happens in this
+# invocation, and specifically only for --bootstrap-and-serve — --bootstrap is the
+# seed-only mode setup.sh drives internally via environment variables, not flags.
+if [[ "$ADMIN_USERNAME_FLAG_SET" == "true" || "$ADMIN_PASSWORD_FLAG_SET" == "true" ]] && [ "$BOOTSTRAP_AND_SERVE" != "true" ]; then
+    echo "Error: --admin-username/--admin-password are only valid together with --bootstrap-and-serve"
+    exit 1
+fi
 
 # Resolve relative paths to absolute before the working directory potentially changes.
 if [[ -n "$RESOURCES_FILE" && "$RESOURCES_FILE" != /* ]]; then
@@ -128,109 +179,50 @@ check_port() {
     fi
 }
 
-# Set up declarative resources from an exported resources file and optional env file.
-# Reads a multi-document YAML file and places each document into the appropriate
-# repository/resources/<type>/ directory, then exports variables from the env file.
-setup_declarative_resources() {
-    local script_dir
-    script_dir="$(cd "$(dirname "$0")" && pwd)"
-    local resources_base="$script_dir/repository/resources"
-
-    # Load and export env vars from the env file.
-    if [[ -n "$ENV_FILE" ]]; then
-        if [[ ! -f "$ENV_FILE" ]]; then
-            echo "Error: env file not found: $ENV_FILE"
-            exit 1
-        fi
-        echo "Loading environment from $ENV_FILE ..."
-        while IFS= read -r line || [[ -n "$line" ]]; do
-            [[ -z "$line" || "$line" == \#* ]] && continue
-            line="${line%$'\r'}"
-            if [[ "$line" =~ ^([A-Za-z_][A-Za-z0-9_]*)=(.*)$ ]]; then
-                key="${BASH_REMATCH[1]}"
-                value="${BASH_REMATCH[2]}"
-                if [[ "$value" == \[* ]]; then
-                    # JSON array — expand into KEY_0, KEY_1, ...
-                    idx=0
-                    _json_tmp=$(mktemp)
-                    if ! python3 -c "import json,sys; [print(x) for x in json.loads(sys.argv[1])]" "$value" > "$_json_tmp" 2>&1; then
-                        echo "Error: failed to parse JSON array for key '$key': $(cat "$_json_tmp")" >&2
-                        rm -f "$_json_tmp"
-                        exit 1
-                    fi
-                    while IFS= read -r elem; do
-                        export "${key}_${idx}=${elem}"
-                        ((idx++))
-                    done < "$_json_tmp"
-                    rm -f "$_json_tmp"
-                else
-                    export "${key}=${value}"
-                fi
-            fi
-        done < "$ENV_FILE"
-    fi
-
-    # Split the combined resources YAML and place each document in its type directory.
-    if [[ -n "$RESOURCES_FILE" ]]; then
-        if [[ ! -f "$RESOURCES_FILE" ]]; then
-            echo "Error: resources file not found: $RESOURCES_FILE"
-            exit 1
-        fi
-        echo "Setting up declarative resources from $RESOURCES_FILE ..."
-        DEC_BASE="$resources_base" awk '
-BEGIN {
-    doc = ""; filename = ""; resource_type = ""
-    base = ENVIRON["DEC_BASE"]
-    type_dir["application"]         = "applications"
-    type_dir["flow"]                = "flows"
-    type_dir["group"]               = "groups"
-    type_dir["identity_provider"]   = "identity_providers"
-    type_dir["layout"]              = "layouts"
-    type_dir["notification_sender"] = "notification_senders"
-    type_dir["organization_unit"]   = "organization_units"
-    type_dir["resource_server"]     = "resource_servers"
-    type_dir["role"]                = "roles"
-    type_dir["theme"]               = "themes"
-    type_dir["translation"]         = "translations"
-    type_dir["user"]                = "users"
-    type_dir["user_schema"]         = "user_schemas"
-}
-function flush(    dir, target, outfile) {
-    if (doc == "" || resource_type == "") {
-        doc = ""; filename = ""; resource_type = ""
+# Load and export env vars from the env file.
+load_env_file() {
+    if [[ -z "$ENV_FILE" ]]; then
         return
-    }
-    dir = (resource_type in type_dir) ? type_dir[resource_type] : resource_type "s"
-    target = base "/" dir
-    system("mkdir -p " target)
-    if (filename == "") filename = "resource.yaml"
-    outfile = target "/" filename
-    printf "%s", doc > outfile
-    close(outfile)
-    print "  Placed: " dir "/" filename > "/dev/stderr"
-    doc = ""; filename = ""; resource_type = ""
-}
-/^---[[:space:]]*$/ { flush(); next }
-/^# File:[[:space:]]*/ {
-    sub(/^# File:[[:space:]]*/, "")
-    filename = $0
-    next
-}
-/^# resource_type:[[:space:]]*/ {
-    sub(/^# resource_type:[[:space:]]*/, "")
-    resource_type = $0
-    next
-}
-{ doc = doc $0 "\n" }
-END { flush() }' "$RESOURCES_FILE"
-        echo "Declarative resources ready."
     fi
+    if [[ ! -f "$ENV_FILE" ]]; then
+        echo "Error: env file not found: $ENV_FILE"
+        exit 1
+    fi
+    echo "Loading environment from $ENV_FILE ..."
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        [[ -z "$line" || "$line" == \#* ]] && continue
+        line="${line%$'\r'}"
+        if [[ "$line" =~ ^([A-Za-z_][A-Za-z0-9_]*)=(.*)$ ]]; then
+            key="${BASH_REMATCH[1]}"
+            value="${BASH_REMATCH[2]}"
+            if [[ "$value" == \[* ]]; then
+                # JSON array — expand into KEY_0, KEY_1, ...
+                idx=0
+                _json_tmp=$(mktemp)
+                if ! python3 -c "import json,sys; [print(x) for x in json.loads(sys.argv[1])]" "$value" > "$_json_tmp" 2>&1; then
+                    echo "Error: failed to parse JSON array for key '$key': $(cat "$_json_tmp")" >&2
+                    rm -f "$_json_tmp"
+                    exit 1
+                fi
+                while IFS= read -r elem; do
+                    export "${key}_${idx}=${elem}"
+                    ((idx++))
+                done < "$_json_tmp"
+                rm -f "$_json_tmp"
+            else
+                export "${key}=${value}"
+            fi
+        fi
+    done < "$ENV_FILE"
 }
 
-# Check if ports are available
-check_port $BACKEND_PORT "${PRODUCT_NAME} server"
-if [ "$DEBUG_MODE" = "true" ]; then
-    check_port $DEBUG_PORT "Debug server"
+# Check if ports are available. The bootstrap one-shot does not bind the server
+# port, so the check is skipped in that mode.
+if [ "$BOOTSTRAP_MODE" != "true" ]; then
+    check_port "$BACKEND_PORT" "${PRODUCT_NAME} server"
+    if [ "$DEBUG_MODE" = "true" ]; then
+        check_port "$DEBUG_PORT" "Debug server"
+    fi
 fi
 
 # Check if Delve is available for debug mode
@@ -249,54 +241,34 @@ if [ "$DEBUG_MODE" = "true" ]; then
     fi
 fi
 
-# Set up declarative resources if a resources file or env file was provided.
-if [[ -n "$RESOURCES_FILE" || -n "$ENV_FILE" ]]; then
-    setup_declarative_resources
+# Load env vars before starting the binary so substitution works in resource files.
+if [[ -n "$ENV_FILE" ]]; then
+    load_env_file
 fi
 
 # Cleanup function
-CONSENT_PID=""
 SERVER_PID=""
 cleanup() {
     echo -e "\n🛑 Stopping server..."
     if [ -n "$SERVER_PID" ]; then
         kill $SERVER_PID 2>/dev/null || true
     fi
-    if [ -n "$CONSENT_PID" ]; then
-        pkill -P $CONSENT_PID 2>/dev/null || true
-        kill $CONSENT_PID 2>/dev/null || true
-    fi
 }
 trap cleanup SIGINT SIGTERM EXIT
 
-# Start consent server if enabled
-CONSENT_SERVER_PORT="${CONSENT_SERVER_PORT:-9090}"
-if [ "$WITH_CONSENT" = "true" ]; then
-    CONSENT_SCRIPT="$(dirname "$0")/consent/start.sh"
-    if [ ! -x "$CONSENT_SCRIPT" ]; then
-        echo "Error: Consent server is enabled but consent/start.sh is missing or not executable"
+# Bootstrap: create the default resources in-process. In --bootstrap mode this is the
+# only action (exit afterwards). In --bootstrap-and-serve mode it runs first and then
+# the long-running server is started below.
+if [ "$BOOTSTRAP_MODE" = "true" ] || [ "$BOOTSTRAP_AND_SERVE" = "true" ]; then
+    echo "⚡ Running ${PRODUCT_NAME} bootstrap ..."
+    if BACKEND_PORT=$BACKEND_PORT "./${BINARY_NAME}" bootstrap "${BOOTSTRAP_EXTRA_ARGS[@]}"; then
+        echo "✅ Bootstrap completed."
+    else
+        echo "❌ Bootstrap failed."
         exit 1
     fi
-    echo "Starting Consent Server..."
-    (cd "$(dirname "$0")/consent" && ./start.sh) &
-    CONSENT_PID=$!
-    CONSENT_TIMEOUT=30
-    CONSENT_ELAPSED=0
-    while [ $CONSENT_ELAPSED -lt $CONSENT_TIMEOUT ]; do
-        if ! kill -0 "$CONSENT_PID" 2>/dev/null; then
-            echo "Error: Consent server process exited unexpectedly"
-            exit 1
-        fi
-        if curl -s -f "http://localhost:${CONSENT_SERVER_PORT}/health/readiness" > /dev/null 2>&1; then
-            echo "Consent server is ready"
-            break
-        fi
-        sleep 1
-        CONSENT_ELAPSED=$((CONSENT_ELAPSED + 1))
-    done
-    if [ $CONSENT_ELAPSED -ge $CONSENT_TIMEOUT ]; then
-        echo "Error: Consent server failed to become ready within ${CONSENT_TIMEOUT}s"
-        exit 1
+    if [ "$BOOTSTRAP_MODE" = "true" ]; then
+        exit 0
     fi
 fi
 
@@ -311,12 +283,17 @@ if [ "$DEBUG_MODE" = "true" ]; then
     echo ""
 
     # Run debugger
-    dlv exec --listen=:$DEBUG_PORT --headless=true --api-version=2 --accept-multiclient --continue ./${BINARY_NAME} &
+    RESOURCES_ARGS=()
+    [[ -n "$RESOURCES_FILE" ]] && RESOURCES_ARGS=(-resources "$RESOURCES_FILE")
+    BACKEND_PORT=$BACKEND_PORT dlv exec "--listen=:${DEBUG_PORT}" --headless=true --api-version=2 --accept-multiclient --continue \
+        "./${BINARY_NAME}" -- "${RESOURCES_ARGS[@]}" &
     SERVER_PID=$!
 else
     echo "⚡ Starting ${PRODUCT_NAME} Server ..."
 
-    BACKEND_PORT=$BACKEND_PORT ./${BINARY_NAME} &
+    RESOURCES_ARGS=()
+    [[ -n "$RESOURCES_FILE" ]] && RESOURCES_ARGS=(-resources "$RESOURCES_FILE")
+    BACKEND_PORT=$BACKEND_PORT "./${BINARY_NAME}" "${RESOURCES_ARGS[@]}" &
     SERVER_PID=$!
 fi
 

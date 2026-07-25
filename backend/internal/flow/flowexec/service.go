@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2025, WSO2 LLC. (https://www.wso2.com).
+ * Copyright (c) 2025-2026, WSO2 LLC. (https://www.wso2.com).
  *
  * WSO2 LLC. licenses this file to you under the Apache License,
  * Version 2.0 (the "License"); you may not use this file except
@@ -22,90 +22,84 @@ package flowexec
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
+	"slices"
 
-	appmodel "github.com/thunder-id/thunderid/internal/application/model"
-	"github.com/thunder-id/thunderid/internal/entityprovider"
+	tidcommon "github.com/thunder-id/thunderid/pkg/thunderidengine/common"
+
+	"github.com/thunder-id/thunderid/internal/actorprovider"
+	authnprovidercm "github.com/thunder-id/thunderid/internal/authnprovider/common"
 	"github.com/thunder-id/thunderid/internal/flow/common"
-	flowmgt "github.com/thunder-id/thunderid/internal/flow/mgt"
-	"github.com/thunder-id/thunderid/internal/inboundclient"
-	inboundmodel "github.com/thunder-id/thunderid/internal/inboundclient/model"
-	"github.com/thunder-id/thunderid/internal/system/config"
+	flowconfig "github.com/thunder-id/thunderid/internal/flow/config"
+	"github.com/thunder-id/thunderid/internal/flow/core"
+	"github.com/thunder-id/thunderid/internal/flow/graphbuilder"
+	"github.com/thunder-id/thunderid/internal/flow/session"
 	sysContext "github.com/thunder-id/thunderid/internal/system/context"
 	"github.com/thunder-id/thunderid/internal/system/cryptolib"
-	"github.com/thunder-id/thunderid/internal/system/error/serviceerror"
 	kmprovider "github.com/thunder-id/thunderid/internal/system/kmprovider/common"
 	"github.com/thunder-id/thunderid/internal/system/log"
-	"github.com/thunder-id/thunderid/internal/system/observability"
 	"github.com/thunder-id/thunderid/internal/system/observability/event"
 	"github.com/thunder-id/thunderid/internal/system/transaction"
 	sysutils "github.com/thunder-id/thunderid/internal/system/utils"
-)
-
-// FlowExecServiceInterface defines the interface for flow orchestration and acts as the
-// entry point for flow execution
-type FlowExecServiceInterface interface {
-	Execute(ctx context.Context, appID, executionID, flowType string, verbose bool,
-		action string, inputs map[string]string, challengeToken string) (*FlowStep, *serviceerror.ServiceError)
-	InitiateFlow(ctx context.Context, initContext *FlowInitContext) (string, *serviceerror.ServiceError)
-}
-
-const (
-	defaultAuthFlowExpiry           int64 = 1800  // 30 minutes in seconds
-	defaultRegistrationFlowExpiry   int64 = 3600  // 60 minutes in seconds
-	defaultUserOnboardingFlowExpiry int64 = 86400 // 24 hours in seconds
-	defaultRecoveryFlowExpiry       int64 = 1800  // 30 minutes in seconds
+	"github.com/thunder-id/thunderid/pkg/thunderidengine/providers"
 )
 
 // flowExecService is the implementation of FlowExecServiceInterface
 type flowExecService struct {
-	flowEngine           flowEngineInterface
-	flowMgtService       flowmgt.FlowMgtServiceInterface
-	flowStore            flowStoreInterface
-	inboundClientService inboundclient.InboundClientServiceInterface
-	entityProvider       entityprovider.EntityProviderInterface
-	observabilitySvc     observability.ObservabilityServiceInterface
-	transactioner        transaction.Transactioner
-	cryptoSvc            kmprovider.RuntimeCryptoProvider
+	flowEngine          flowEngineInterface
+	flowProvider        providers.FlowProvider
+	graphBuilder        graphbuilder.GraphBuilderInterface
+	flowStore           flowStoreInterface
+	actorProvider       providers.ActorProvider
+	observabilitySvc    providers.ObservabilityProvider
+	transactioner       transaction.Transactioner
+	cryptoSvc           kmprovider.RuntimeCryptoProvider
+	attestationVerifier providers.AttestationProvider
+	cfg                 flowconfig.Config
 }
 
-func newFlowExecService(flowMgtService flowmgt.FlowMgtServiceInterface,
+// newFlowExecService creates a new instance of flowExecService with the provided dependencies.
+func newFlowExecService(flowProvider providers.FlowProvider,
 	flowStore flowStoreInterface, flowEngine flowEngineInterface,
-	inboundClientService inboundclient.InboundClientServiceInterface,
-	entityProvider entityprovider.EntityProviderInterface,
-	observabilitySvc observability.ObservabilityServiceInterface,
+	actorProvider providers.ActorProvider,
+	observabilitySvc providers.ObservabilityProvider,
 	transactioner transaction.Transactioner,
-	cryptoSvc kmprovider.RuntimeCryptoProvider) FlowExecServiceInterface {
+	cryptoSvc kmprovider.RuntimeCryptoProvider,
+	attestationVerifier providers.AttestationProvider,
+	graphBuilder graphbuilder.GraphBuilderInterface,
+	cfg flowconfig.Config) FlowExecServiceInterface {
 	return &flowExecService{
-		flowMgtService:       flowMgtService,
-		flowStore:            flowStore,
-		flowEngine:           flowEngine,
-		inboundClientService: inboundClientService,
-		entityProvider:       entityProvider,
-		observabilitySvc:     observabilitySvc,
-		transactioner:        transactioner,
-		cryptoSvc:            cryptoSvc,
+		flowProvider:        flowProvider,
+		flowStore:           flowStore,
+		flowEngine:          flowEngine,
+		actorProvider:       actorProvider,
+		observabilitySvc:    observabilitySvc,
+		transactioner:       transactioner,
+		cryptoSvc:           cryptoSvc,
+		attestationVerifier: attestationVerifier,
+		graphBuilder:        graphBuilder,
+		cfg:                 cfg,
 	}
 }
 
 // Execute executes a flow with the given data
 func (s *flowExecService) Execute(ctx context.Context,
 	appID, executionID, flowType string, verbose bool,
-	action string, inputs map[string]string, challengeToken string) (
-	*FlowStep, *serviceerror.ServiceError) {
+	action string, inputs map[string]string, challengeToken, flowSecret, attestationToken string) (
+	*FlowStep, *tidcommon.ServiceError) {
 	logger := log.GetLogger().With(log.String(log.LoggerKeyComponentName, "FlowExecService"))
 
 	// Get trace ID from context
 	traceID := sysContext.GetTraceID(ctx)
 
 	var engineCtx *EngineContext
-	var loadErr *serviceerror.ServiceError
+	var loadErr *tidcommon.ServiceError
 
 	if isNewFlow(executionID) {
-		engineCtx, loadErr = s.loadNewContext(ctx, appID, flowType, verbose, action, inputs, logger)
+		engineCtx, loadErr = s.loadNewContext(ctx, appID, flowType, verbose, action, inputs,
+			flowSecret, attestationToken, logger)
 		if loadErr != nil {
-			logger.Error("Failed to load new flow context",
+			logger.Error(ctx, "Failed to load new flow context",
 				log.String("appID", appID),
 				log.String("flowType", flowType),
 				log.String("error", loadErr.Error.DefaultValue))
@@ -116,43 +110,40 @@ func (s *flowExecService) Execute(ctx context.Context,
 					string(event.EventTypeFlowFailed),
 					event.ComponentFlowEngine,
 				).
-					WithStatus(event.StatusFailure).
+					WithStatus(providers.StatusFailure).
 					WithData(event.DataKey.EntityID, appID).
 					WithData(event.DataKey.FlowType, flowType).
-					WithData(event.DataKey.Error, loadErr.Error.DefaultValue).
-					WithData(event.DataKey.ErrorCode, loadErr.Code).
-					WithData(event.DataKey.ErrorType, string(loadErr.Type))
+					WithData(event.DataKey.Error, processServiceErrorForEventPublish(loadErr))
 
-				if loadErr.ErrorDescription.DefaultValue != "" {
-					evt.WithData(event.DataKey.Message, loadErr.ErrorDescription.DefaultValue)
-				}
-				s.observabilitySvc.PublishEvent(evt)
+				s.observabilitySvc.PublishEvent(ctx, evt)
 			}
 			return nil, loadErr
 		}
 	} else {
 		engineCtx, loadErr = s.loadPrevContext(ctx, executionID, action, inputs, logger)
 		if loadErr != nil {
-			logger.Error("Failed to load previous flow context",
+			logger.Error(ctx, "Failed to load previous flow context",
 				log.String(log.LoggerKeyExecutionID, executionID),
 				log.String("error", loadErr.Error.DefaultValue))
 			return nil, loadErr
 		}
-		// Set the incoming challenge token on the context so the engine can validate it
-		engineCtx.ChallengeTokenIn = challengeToken
+		setChallengeTokenInCtx(engineCtx, challengeToken)
 	}
 
 	// Set trace ID to engine context (request context is already set during context loading)
 	engineCtx.TraceID = traceID
 
+	// Resolve the inbound SSO handle for this flow from the request-scoped transport inputs.
+	applyInboundSSO(engineCtx, ctx)
+
 	flowStep, flowErr := s.flowEngine.Execute(engineCtx)
 
 	if flowErr != nil {
-		if !isNewFlow(executionID) && flowErr.Code != ErrorInvalidChallengeToken.Code {
+		if !isNewFlow(executionID) {
 			if removeErr := s.removeContext(ctx, engineCtx.ExecutionID, logger); removeErr != nil {
-				logger.Error("Failed to remove flow context after engine failure",
+				logger.Error(ctx, "Failed to remove flow context after engine failure",
 					log.String(log.LoggerKeyExecutionID, engineCtx.ExecutionID), log.Error(removeErr))
-				return nil, &serviceerror.InternalServerError
+				return nil, &tidcommon.InternalServerError
 			}
 		}
 		return nil, flowErr
@@ -161,23 +152,23 @@ func (s *flowExecService) Execute(ctx context.Context,
 	if isComplete(flowStep) {
 		if !isNewFlow(executionID) {
 			if removeErr := s.removeContext(ctx, engineCtx.ExecutionID, logger); removeErr != nil {
-				logger.Error("Failed to remove flow context after completion",
+				logger.Error(ctx, "Failed to remove flow context after completion",
 					log.String(log.LoggerKeyExecutionID, engineCtx.ExecutionID), log.Error(removeErr))
-				return nil, &serviceerror.InternalServerError
+				return nil, &tidcommon.InternalServerError
 			}
 		}
 	} else {
 		if isNewFlow(executionID) {
-			if storeErr := s.storeContext(ctx, engineCtx, logger); storeErr != nil {
-				logger.Error("Failed to store initial flow context",
+			if storeErr := s.storeContext(ctx, engineCtx, 0, logger); storeErr != nil {
+				logger.Error(ctx, "Failed to store initial flow context",
 					log.String(log.LoggerKeyExecutionID, engineCtx.ExecutionID), log.Error(storeErr))
-				return nil, &serviceerror.InternalServerError
+				return nil, &tidcommon.InternalServerError
 			}
 		} else {
 			if updateErr := s.updateContext(ctx, engineCtx, &flowStep, logger); updateErr != nil {
-				logger.Error("Failed to update flow context",
+				logger.Error(ctx, "Failed to update flow context",
 					log.String(log.LoggerKeyExecutionID, engineCtx.ExecutionID), log.Error(updateErr))
-				return nil, &serviceerror.InternalServerError
+				return nil, &tidcommon.InternalServerError
 			}
 		}
 	}
@@ -185,13 +176,35 @@ func (s *flowExecService) Execute(ctx context.Context,
 	return &flowStep, nil
 }
 
+// applyInboundSSO selects the SSO handle carried for this flow from the request-scoped
+// transport inputs and stashes it on the engine context for the SSO-Check node to consume.
+// It is a no-op when no inbound transport is present.
+func applyInboundSSO(engineCtx *EngineContext, ctx context.Context) {
+	if engineCtx == nil || engineCtx.Graph == nil {
+		return
+	}
+	inbound, ok := session.InboundFrom(ctx)
+	if !ok {
+		return
+	}
+	// ssoFlowID resolves the flow whose session this execution operates on — the running flow for
+	// login/SSO, or the login flow (SessionFlowID) for a sign-out flow — so the correct per-flow cookie
+	// is selected.
+	engineCtx.SSOHandleIn = inbound.HandleFor(ssoFlowID(engineCtx))
+}
+
 // initContext initializes a new flow context with the given details.
 func (s *flowExecService) loadNewContext(ctx context.Context, appID, flowTypeStr string, verbose bool,
-	action string, inputs map[string]string, logger *log.Logger) (
-	*EngineContext, *serviceerror.ServiceError) {
+	action string, inputs map[string]string, flowSecret, attestationToken string, logger *log.Logger) (
+	*EngineContext, *tidcommon.ServiceError) {
 	flowType, err := validateFlowType(flowTypeStr)
 	if err != nil {
 		return nil, err
+	}
+
+	if svcErr := s.checkDirectFlowInitiationAllowed(
+		ctx, appID, flowType, flowSecret, attestationToken, logger); svcErr != nil {
+		return nil, svcErr
 	}
 
 	engineCtx, err := s.initContext(ctx, appID, flowType, verbose, logger)
@@ -203,9 +216,136 @@ func (s *flowExecService) loadNewContext(ctx context.Context, appID, flowTypeStr
 	return engineCtx, nil
 }
 
+// checkDirectFlowInitiationAllowed governs which applications may initiate an authentication or
+// sign-out flow directly over HTTP, based on how the application is classified:
+//   - RedirectOnly — the application signs users in through a redirect-based protocol component
+//     (currently OAuth 2.0 authorization_code apps) and must have its flows initiated by that
+//     component, not via a direct HTTP call.
+//   - FlowSecret — a backend / server-side application (including embedded apps with no protocol
+//     profile) that must authenticate at flow initiation by presenting its Flow Secret.
+//   - Attestation — a mobile application that authenticates at flow initiation by presenting a valid
+//     platform attestation (e.g. a Google Play Integrity token) proving its binary identity.
+//
+// Sign-out is guarded like authentication so a native caller must prove its identity before ending a
+// session; a redirect-based app is pushed to the RP-initiated /oauth2/logout endpoint instead. Other
+// flow types (registration, recovery, user onboarding) are not restricted. The classification is
+// derived from neutral actor data resolved through the actor layer; credential verification
+// (Flow Secret or attestation) is the only check that remains here.
+func (s *flowExecService) checkDirectFlowInitiationAllowed(ctx context.Context, appID string,
+	flowType providers.FlowType, flowSecret, attestationToken string,
+	logger *log.Logger) *tidcommon.ServiceError {
+	if flowType != providers.FlowTypeAuthentication && flowType != providers.FlowTypeSignOut {
+		return nil
+	}
+	if appID == "" {
+		return nil
+	}
+
+	mode, attestationCfg, svcErr := s.resolveFlowInitiationMode(ctx, appID)
+	if svcErr != nil {
+		if svcErr.Code == actorprovider.ErrorActorNotFound.Code {
+			return &ErrorInvalidAppID
+		}
+		logger.Error(ctx, "Failed to resolve flow initiation mode for guard",
+			log.String("appID", appID))
+		return &tidcommon.InternalServerError
+	}
+
+	switch mode {
+	case flowInitiationNotPermitted:
+		return &ErrorDirectFlowInitiationNotPermitted
+	case flowInitiationFlowSecret:
+		if flowSecret == "" {
+			return &ErrorFlowSecretRequired
+		}
+		if authErr := s.actorProvider.AuthenticateActor(ctx,
+			map[string]interface{}{authnprovidercm.UserAttributeUserID: appID},
+			map[string]interface{}{fieldFlowSecret: flowSecret}); authErr != nil {
+			logger.Debug(ctx, "Backend application provided an invalid flow secret",
+				log.String("appID", appID))
+			return &ErrorFlowSecretInvalid
+		}
+		return nil
+	case flowInitiationAttestation:
+		return s.verifyAttestation(ctx, attestationCfg, attestationToken)
+	default:
+		logger.Error(ctx, "Unknown flow initiation mode for application",
+			log.String("appID", appID))
+		return &tidcommon.InternalServerError
+	}
+}
+
+// verifyAttestation validates the platform attestation token presented by a mobile application at
+// flow initiation. Decrypting the stored service account credentials, bounding the verification
+// call with a deadline, and calling the Play Integrity API are all handled by the attestation
+// provider.
+func (s *flowExecService) verifyAttestation(ctx context.Context,
+	attestationCfg *providers.AttestationConfig, attestationToken string) *tidcommon.ServiceError {
+	if attestationToken == "" {
+		return &ErrorAttestationRequired
+	}
+
+	verified, svcErr := s.attestationVerifier.Verify(ctx, attestationCfg, attestationToken)
+	if svcErr != nil {
+		return svcErr
+	}
+	if !verified {
+		return &ErrorAttestationInvalid
+	}
+	return nil
+}
+
+// resolveFlowInitiationMode derives how the given application is permitted to initiate a new
+// authentication flow, using neutral actor data resolved through the actor layer. A non-existent
+// application returns ErrorActorNotFound so the caller can distinguish an unknown app from a
+// backend app. The resolved OAuth profile (nil for embedded apps) is returned for downstream
+// credential checks.
+func (s *flowExecService) resolveFlowInitiationMode(
+	ctx context.Context, appID string,
+) (flowInitiationMode, *providers.AttestationConfig, *tidcommon.ServiceError) {
+	// The inbound client is protocol-agnostic and exists for every valid application. Platform
+	// attestation is a client-level binary-identity check, so it is resolved here first and takes
+	// precedence regardless of whether the application also has an OAuth2 protocol profile. An
+	// unknown application surfaces as ErrorActorNotFound so the caller can map it to an invalid app.
+	client, clientErr := s.actorProvider.GetInboundClientByID(ctx, appID)
+	if clientErr != nil {
+		return 0, nil, clientErr
+	}
+	if client.Attestation != nil && (client.Attestation.Android != nil || client.Attestation.Apple != nil) {
+		return flowInitiationAttestation, client.Attestation, nil
+	}
+
+	// No attestation configured: classify by protocol profile.
+	profile, svcErr := s.actorProvider.GetOAuthProfileByID(ctx, appID)
+	if svcErr != nil && svcErr.Code != actorprovider.ErrorActorNotFound.Code {
+		return 0, nil, svcErr
+	}
+
+	// No protocol profile means a server-side embedded app: it initiates flows directly by
+	// presenting its Flow Secret.
+	if profile == nil {
+		return flowInitiationFlowSecret, nil, nil
+	}
+
+	// A redirect-based (authorization_code) profile — public or confidential — must initiate flows
+	// through the protocol component, not via a direct HTTP call. A machine-to-machine app
+	// (client_credentials as its only grant) obtains tokens directly and does not run flows. Neither
+	// may initiate a flow directly.
+	if slices.Contains(profile.GrantTypes, string(providers.GrantTypeAuthorizationCode)) ||
+		isClientCredentialsOnly(profile.GrantTypes) {
+		return flowInitiationNotPermitted, nil, nil
+	}
+	return flowInitiationFlowSecret, nil, nil
+}
+
+// isClientCredentialsOnly reports whether client_credentials is the only configured grant type.
+func isClientCredentialsOnly(grantTypes []string) bool {
+	return len(grantTypes) == 1 && grantTypes[0] == string(providers.GrantTypeClientCredentials)
+}
+
 // initContext initializes a new flow context with the given details.
-func (s *flowExecService) initContext(ctx context.Context, appID string, flowType common.FlowType,
-	verbose bool, logger *log.Logger) (*EngineContext, *serviceerror.ServiceError) {
+func (s *flowExecService) initContext(ctx context.Context, appID string, flowType providers.FlowType,
+	verbose bool, logger *log.Logger) (*EngineContext, *tidcommon.ServiceError) {
 	graphID, svcErr := s.getFlowGraph(ctx, appID, flowType, logger)
 	if svcErr != nil {
 		return nil, svcErr
@@ -214,19 +354,31 @@ func (s *flowExecService) initContext(ctx context.Context, appID string, flowTyp
 	engineCtx := EngineContext{}
 	executionID, err := sysutils.GenerateUUIDv7()
 	if err != nil {
-		logger.Error("Failed to generate UUID", log.Error(err))
-		return nil, &serviceerror.InternalServerError
+		logger.Error(ctx, "Failed to generate UUID", log.Error(err))
+		return nil, &tidcommon.InternalServerError
 	}
 	engineCtx.ExecutionID = executionID
 
-	graph, svcErr := s.flowMgtService.GetGraph(ctx, graphID)
+	flow, svcErr := s.flowProvider.GetFlow(ctx, graphID)
 	if svcErr != nil {
-		logger.Error("Error retrieving flow graph from flow management service",
-			log.String("graphID", graphID), log.String("error", svcErr.Error.DefaultValue))
-		return nil, &serviceerror.InternalServerError
+		// The configured flow may have been deleted while still referenced by the
+		// application. For authentication flows, fall back to the default flow instead
+		// of failing the request.
+		flow, svcErr = s.fallbackToDefaultFlow(ctx, graphID, flowType, svcErr, logger)
+		if svcErr != nil {
+			return nil, svcErr
+		}
+		graphID = flow.ID
 	}
 
-	engineCtx.FlowType = graph.GetType()
+	engineCtx.FlowType = flow.FlowType
+	engineCtx.SSOFlowVersion = flow.ActiveVersion
+	graph, svcErr := s.graphBuilder.GetGraph(ctx, flow)
+	if svcErr != nil {
+		logger.Error(ctx, "Error retrieving graph from graph builder",
+			log.String("graphID", graphID), log.String("error", svcErr.Error.DefaultValue))
+		return nil, &tidcommon.InternalServerError
+	}
 	engineCtx.Graph = graph
 	engineCtx.Context = ctx
 	engineCtx.AppID = appID
@@ -240,16 +392,42 @@ func (s *flowExecService) initContext(ctx context.Context, appID string, flowTyp
 	return &engineCtx, nil
 }
 
+// fallbackToDefaultFlow attempts to recover from a failure to retrieve the configured flow.
+// If the flow was not found (e.g. it was deleted while still referenced by the application)
+// and the flow type is authentication, it falls back to the system default authentication
+// flow. Any other case surfaces an internal server error.
+func (s *flowExecService) fallbackToDefaultFlow(ctx context.Context, graphID string,
+	flowType providers.FlowType, origErr *tidcommon.ServiceError, logger *log.Logger) (
+	*providers.CompleteFlowDefinition, *tidcommon.ServiceError) {
+	if flowType != providers.FlowTypeAuthentication || origErr.Type != tidcommon.ClientErrorType {
+		logger.Error(ctx, "Error retrieving flow from flow provider",
+			log.String("graphID", graphID), log.String("error", origErr.Error.DefaultValue))
+		return nil, &tidcommon.InternalServerError
+	}
+
+	handle := s.cfg.Flow.DefaultAuthFlowHandle
+	logger.Warn(ctx, "Configured authentication flow not found; falling back to default flow",
+		log.String("graphID", graphID), log.String("defaultFlowHandle", handle))
+
+	flow, svcErr := s.flowProvider.GetFlowByHandle(ctx, handle, providers.FlowTypeAuthentication)
+	if svcErr != nil {
+		logger.Error(ctx, "Failed to retrieve default authentication flow",
+			log.String("defaultFlowHandle", handle), log.String("error", svcErr.Error.DefaultValue))
+		return nil, &tidcommon.InternalServerError
+	}
+	return flow, nil
+}
+
 // getFlowExpirySeconds returns the expiry time for a flow in seconds.
-func (s *flowExecService) getFlowExpirySeconds(flowType common.FlowType) int64 {
+func (s *flowExecService) getFlowExpirySeconds(flowType providers.FlowType) int64 {
 	switch flowType {
-	case common.FlowTypeAuthentication:
+	case providers.FlowTypeAuthentication:
 		return defaultAuthFlowExpiry
-	case common.FlowTypeRegistration:
+	case providers.FlowTypeRegistration:
 		return defaultRegistrationFlowExpiry
-	case common.FlowTypeUserOnboarding:
+	case providers.FlowTypeUserOnboarding:
 		return defaultUserOnboardingFlowExpiry
-	case common.FlowTypeRecovery:
+	case providers.FlowTypeRecovery:
 		return defaultRecoveryFlowExpiry
 	default:
 		// Fallback to auth flow expiry
@@ -259,7 +437,7 @@ func (s *flowExecService) getFlowExpirySeconds(flowType common.FlowType) int64 {
 
 // loadPrevContext retrieves the flow context from the store based on the given details.
 func (s *flowExecService) loadPrevContext(ctx context.Context, executionID, action string,
-	inputs map[string]string, logger *log.Logger) (*EngineContext, *serviceerror.ServiceError) {
+	inputs map[string]string, logger *log.Logger) (*EngineContext, *tidcommon.ServiceError) {
 	engineCtx, err := s.loadContextFromStore(ctx, executionID, logger)
 	if err != nil {
 		return nil, err
@@ -271,7 +449,7 @@ func (s *flowExecService) loadPrevContext(ctx context.Context, executionID, acti
 
 // loadContextFromStore retrieves the flow context from the store based on the given details.
 func (s *flowExecService) loadContextFromStore(ctx context.Context, executionID string, logger *log.Logger) (
-	*EngineContext, *serviceerror.ServiceError) {
+	*EngineContext, *tidcommon.ServiceError) {
 	if executionID == "" {
 		return nil, &ErrorInvalidExecutionID
 	}
@@ -283,24 +461,44 @@ func (s *flowExecService) loadContextFromStore(ctx context.Context, executionID 
 
 	graphID, err := dbModel.GetGraphID(ctx)
 	if err != nil {
-		logger.Error("Failed to extract graph ID from flow context",
+		logger.Error(ctx, "Failed to extract graph ID from flow context",
 			log.String(log.LoggerKeyExecutionID, executionID), log.Error(err))
-		return nil, &serviceerror.InternalServerError
+		return nil, &tidcommon.InternalServerError
 	}
 
-	graph, svcErr := s.flowMgtService.GetGraph(ctx, graphID)
+	flow, svcErr := s.flowProvider.GetFlow(ctx, graphID)
 	if svcErr != nil {
-		logger.Error("Error retrieving flow graph from flow management service",
+		logger.Error(ctx, "Error retrieving flow graph from flow provider",
 			log.String("graphID", graphID), log.String("error", svcErr.Error.DefaultValue))
-		return nil, &serviceerror.InternalServerError
+		return nil, &tidcommon.InternalServerError
 	}
 
-	engineContext, err := dbModel.ToEngineContext(ctx, graph)
-	if err != nil {
-		logger.Error("Failed to convert flow context from database format",
-			log.String(log.LoggerKeyExecutionID, executionID), log.Error(err))
-		return nil, &serviceerror.InternalServerError
+	graph, svcErr := s.graphBuilder.GetGraph(ctx, flow)
+	if svcErr != nil {
+		logger.Error(ctx, "Error retrieving graph from graph builder",
+			log.String("graphID", graphID), log.String("error", svcErr.Error.DefaultValue))
+		return nil, &tidcommon.InternalServerError
 	}
+
+	graphResolver := graphResolverFunc(func(rctx context.Context, flowID string) (core.GraphInterface, error) {
+		f, svcErr := s.flowProvider.GetFlow(rctx, flowID)
+		if svcErr != nil {
+			return nil, fmt.Errorf("failed to get flow %s: %s", flowID, svcErr.Error.DefaultValue)
+		}
+		g, svcErr := s.graphBuilder.GetGraph(rctx, f)
+		if svcErr != nil {
+			return nil, fmt.Errorf("failed to build graph for flow %s: %s", flowID, svcErr.Error.DefaultValue)
+		}
+		return g, nil
+	})
+
+	engineContext, err := dbModel.ToEngineContext(ctx, graph, graphResolver)
+	if err != nil {
+		logger.Error(ctx, "Failed to convert flow context from database format",
+			log.String(log.LoggerKeyExecutionID, executionID), log.Error(err))
+		return nil, &tidcommon.InternalServerError
+	}
+	engineContext.SSOFlowVersion = flow.ActiveVersion
 
 	// Set application context if required
 	if err := s.setApplicationToContext(&engineContext, logger); err != nil {
@@ -311,91 +509,33 @@ func (s *flowExecService) loadContextFromStore(ctx context.Context, executionID 
 }
 
 // setApplicationToContext loads the inbound-client / entity records for the flow's owning entity
-// and assembles a model.Application view onto engineCtx.Application. Entity-agnostic: works for
+// and assembles a providers.Application view onto engineCtx.Application. Entity-agnostic: works for
 // any entity (application, agent, ...) that has an inbound-client row.
 func (s *flowExecService) setApplicationToContext(engineCtx *EngineContext,
-	logger *log.Logger) *serviceerror.ServiceError {
+	logger *log.Logger) *tidcommon.ServiceError {
 	// Skip application loading for app-independent flows
-	if engineCtx.FlowType == common.FlowTypeUserOnboarding {
+	if engineCtx.FlowType == providers.FlowTypeUserOnboarding {
 		return nil
 	}
 
-	app, svcErr := s.buildFlowApplication(engineCtx.Context, engineCtx.AppID, logger)
+	app, svcErr := actorprovider.BuildApplication(engineCtx.Context, s.actorProvider, engineCtx.AppID)
 	if svcErr != nil {
+		if svcErr.Code == actorprovider.ErrorActorNotFound.Code {
+			return &ErrorInvalidAppID
+		}
+		logger.Error(engineCtx.Context, "Failed to build flow application",
+			log.String("appID", engineCtx.AppID), log.String("errorCode", svcErr.Code))
 		return svcErr
 	}
 	engineCtx.Application = *app
+
+	// A sign-out flow runs a different flow than the one that owns the SSO session. Carry the login
+	// (auth) flow id so the session is resolved, and its cookie cleared, under that flow rather than
+	// the running sign-out flow. Re-derived here on every context load, so it is never persisted.
+	if engineCtx.FlowType == providers.FlowTypeSignOut {
+		engineCtx.SessionFlowID = engineCtx.Application.AuthFlowID
+	}
 	return nil
-}
-
-// buildFlowApplication assembles the minimal model.Application view that downstream executors
-// read from engineCtx.Application. Only fields actually consumed by executors are populated:
-// Name, AllowedUserTypes, Assertion, LoginConsent, Metadata, and InboundAuthConfig (ClientID).
-func (s *flowExecService) buildFlowApplication(
-	ctx context.Context, appID string, logger *log.Logger,
-) (*appmodel.Application, *serviceerror.ServiceError) {
-	client, err := s.inboundClientService.GetInboundClientByEntityID(ctx, appID)
-	if err != nil {
-		if errors.Is(err, inboundclient.ErrInboundClientNotFound) {
-			return nil, &ErrorInvalidAppID
-		}
-		logger.Error("Server error while retrieving inbound client",
-			log.String("appID", appID), log.Error(err))
-		return nil, &serviceerror.InternalServerError
-	}
-	if client == nil {
-		return nil, &ErrorInvalidAppID
-	}
-
-	entity, epErr := s.entityProvider.GetEntity(appID)
-	if epErr != nil && epErr.Code != entityprovider.ErrorCodeEntityNotFound {
-		logger.Error("Failed to retrieve entity for flow context",
-			log.String("appID", appID), log.Error(epErr))
-		return nil, &serviceerror.InternalServerError
-	}
-
-	app := &appmodel.Application{
-		ID: client.ID,
-		InboundAuthProfile: inboundmodel.InboundAuthProfile{
-			Assertion:        client.Assertion,
-			LoginConsent:     client.LoginConsent,
-			AllowedUserTypes: client.AllowedUserTypes,
-		},
-	}
-
-	entityAttrs := readEntitySystemAttributes(entity)
-	if name, ok := entityAttrs["name"].(string); ok {
-		app.Name = name
-	}
-	if metadata, ok := client.Properties["metadata"].(map[string]interface{}); ok {
-		app.Metadata = metadata
-	}
-
-	if clientID, _ := entityAttrs["clientId"].(string); clientID != "" {
-		app.InboundAuthConfig = []inboundmodel.InboundAuthConfigWithSecret{
-			{
-				Type: inboundmodel.OAuthInboundAuthType,
-				OAuthConfig: &inboundmodel.OAuthConfigWithSecret{
-					ClientID: clientID,
-				},
-			},
-		}
-	}
-
-	return app, nil
-}
-
-// readEntitySystemAttributes returns the entity's system-attribute blob as a map, or an empty
-// map when the blob is missing or unparseable.
-func readEntitySystemAttributes(entity *entityprovider.Entity) map[string]interface{} {
-	if entity == nil || len(entity.SystemAttributes) == 0 {
-		return map[string]interface{}{}
-	}
-	var attrs map[string]interface{}
-	if err := json.Unmarshal(entity.SystemAttributes, &attrs); err != nil || attrs == nil {
-		return map[string]interface{}{}
-	}
-	return attrs
 }
 
 // removeContext removes the flow context from the store.
@@ -411,7 +551,7 @@ func (s *flowExecService) removeContext(ctx context.Context, executionID string,
 		return fmt.Errorf("failed to remove flow context from database: %w", txErr)
 	}
 
-	logger.Debug("Flow context removed successfully from database",
+	logger.Debug(ctx, "Flow context removed successfully from database",
 		log.String(log.LoggerKeyExecutionID, executionID))
 	return nil
 }
@@ -419,10 +559,10 @@ func (s *flowExecService) removeContext(ctx context.Context, executionID string,
 // updateContext updates the flow context in the store based on the flow step status.
 func (s *flowExecService) updateContext(ctx context.Context, engineCtx *EngineContext,
 	flowStep *FlowStep, logger *log.Logger) error {
-	if flowStep.Status == common.FlowStatusComplete {
+	if flowStep.Status == providers.FlowStatusComplete {
 		return s.removeContext(ctx, engineCtx.ExecutionID, logger)
 	} else {
-		logger.Debug("Flow execution is incomplete, updating the flow context",
+		logger.Debug(ctx, "Flow execution is incomplete, updating the flow context",
 			log.String(log.LoggerKeyExecutionID, engineCtx.ExecutionID))
 
 		if engineCtx.ExecutionID == "" {
@@ -441,7 +581,7 @@ func (s *flowExecService) updateContext(ctx context.Context, engineCtx *EngineCo
 			return fmt.Errorf("failed to update flow context in database: %w", txErr)
 		}
 
-		logger.Debug("Flow context updated successfully in database",
+		logger.Debug(ctx, "Flow context updated successfully in database",
 			log.String(log.LoggerKeyExecutionID, engineCtx.ExecutionID))
 		return nil
 	}
@@ -449,12 +589,14 @@ func (s *flowExecService) updateContext(ctx context.Context, engineCtx *EngineCo
 
 // storeContext stores the flow context in the store.
 func (s *flowExecService) storeContext(ctx context.Context, engineCtx *EngineContext,
-	logger *log.Logger) error {
+	expirySeconds int64, logger *log.Logger) error {
 	if engineCtx.ExecutionID == "" {
 		return fmt.Errorf("flow ID cannot be empty")
 	}
 
-	expirySeconds := s.getFlowExpirySeconds(engineCtx.FlowType)
+	if expirySeconds <= 0 {
+		expirySeconds = s.getFlowExpirySeconds(engineCtx.FlowType)
+	}
 
 	encryptedEngineCtx, err := s.encryptEngineContext(ctx, engineCtx)
 	if err != nil {
@@ -468,7 +610,7 @@ func (s *flowExecService) storeContext(ctx context.Context, engineCtx *EngineCon
 		return fmt.Errorf("failed to store flow context in database: %w", txErr)
 	}
 
-	logger.Debug("Flow context stored successfully in database",
+	logger.Debug(ctx, "Flow context stored successfully in database",
 		log.String(log.LoggerKeyExecutionID, engineCtx.ExecutionID))
 	return nil
 }
@@ -476,7 +618,8 @@ func (s *flowExecService) storeContext(ctx context.Context, engineCtx *EngineCon
 // encryptEngineContext serializes an EngineContext and encrypts the context field, returning
 // an EncryptedEngineContext ready to be handed to the store.
 func (s *flowExecService) encryptEngineContext(ctx context.Context, engineCtx *EngineContext) (*FlowContextDB, error) {
-	serialized, err := FromEngineContext(*engineCtx)
+	serialized := &FlowContextDB{}
+	err := serialized.FromEngineContext(*engineCtx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to serialize engine context: %w", err)
 	}
@@ -491,10 +634,10 @@ func (s *flowExecService) encryptEngineContext(ctx context.Context, engineCtx *E
 
 // getFlowGraph checks if the provided entity ID is valid and returns the associated flow ID.
 // Entity-agnostic: works for any entity (application, agent, ...) that has an inbound-client row.
-func (s *flowExecService) getFlowGraph(ctx context.Context, appID string, flowType common.FlowType,
-	logger *log.Logger) (string, *serviceerror.ServiceError) {
+func (s *flowExecService) getFlowGraph(ctx context.Context, appID string, flowType providers.FlowType,
+	logger *log.Logger) (string, *tidcommon.ServiceError) {
 	// Handle app-independent system flows
-	if flowType == common.FlowTypeUserOnboarding {
+	if flowType == providers.FlowTypeUserOnboarding {
 		return s.getSystemFlowGraph(ctx, flowType, logger)
 	}
 
@@ -502,56 +645,66 @@ func (s *flowExecService) getFlowGraph(ctx context.Context, appID string, flowTy
 		return "", &ErrorInvalidAppID
 	}
 
-	client, err := s.inboundClientService.GetInboundClientByEntityID(ctx, appID)
-	if err != nil {
-		if errors.Is(err, inboundclient.ErrInboundClientNotFound) {
+	client, svcErr := s.actorProvider.GetInboundClientByID(ctx, appID)
+	if svcErr != nil {
+		if svcErr.Code == actorprovider.ErrorActorNotFound.Code {
 			return "", &ErrorInvalidAppID
 		}
-		logger.Error("Server error while retrieving inbound client", log.String("appID", appID), log.Error(err))
-		return "", &serviceerror.InternalServerError
+		logger.Error(ctx, "Server error while retrieving inbound client",
+			log.String("appID", appID), log.String("error", svcErr.Error.DefaultValue))
+		return "", &tidcommon.InternalServerError
 	}
 	if client == nil {
 		return "", &ErrorInvalidAppID
 	}
 
-	if flowType == common.FlowTypeRegistration {
+	if flowType == providers.FlowTypeRegistration {
 		if !client.IsRegistrationFlowEnabled {
 			return "", &ErrorRegistrationFlowDisabled
 		} else if client.RegistrationFlowID == "" {
-			logger.Error("Registration flow is not configured for the entity",
+			logger.Error(ctx, "Registration flow is not configured for the entity",
 				log.String("appID", appID))
-			return "", &serviceerror.InternalServerError
+			return "", &tidcommon.InternalServerError
 		}
 		return client.RegistrationFlowID, nil
 	}
 
-	if flowType == common.FlowTypeRecovery {
+	if flowType == providers.FlowTypeRecovery {
 		if !client.IsRecoveryFlowEnabled {
 			return "", &ErrorRecoveryFlowDisabled
 		} else if client.RecoveryFlowID == "" {
-			logger.Error("Recovery flow is not configured for the application",
+			logger.Error(ctx, "Recovery flow is not configured for the application",
 				log.String("appID", appID))
-			return "", &serviceerror.InternalServerError
+			return "", &tidcommon.InternalServerError
 		}
 		return client.RecoveryFlowID, nil
 	}
 
+	if flowType == providers.FlowTypeSignOut {
+		if client.SignOutFlowID == "" {
+			logger.Error(ctx, "Sign-out flow is not configured for the application",
+				log.String("appID", appID))
+			return "", &tidcommon.InternalServerError
+		}
+		return client.SignOutFlowID, nil
+	}
+
 	// Default to authentication flow ID
 	if client.AuthFlowID == "" {
-		logger.Error("Authentication flow is not configured for the entity",
+		logger.Error(ctx, "Authentication flow is not configured for the entity",
 			log.String("appID", appID))
-		return "", &serviceerror.InternalServerError
+		return "", &tidcommon.InternalServerError
 	}
 
 	return client.AuthFlowID, nil
 }
 
 // validateFlowType validates the provided flow type string and returns the corresponding FlowType.
-func validateFlowType(flowTypeStr string) (common.FlowType, *serviceerror.ServiceError) {
-	switch common.FlowType(flowTypeStr) {
-	case common.FlowTypeAuthentication, common.FlowTypeRegistration, common.FlowTypeUserOnboarding,
-		common.FlowTypeRecovery:
-		return common.FlowType(flowTypeStr), nil
+func validateFlowType(flowTypeStr string) (providers.FlowType, *tidcommon.ServiceError) {
+	switch providers.FlowType(flowTypeStr) {
+	case providers.FlowTypeAuthentication, providers.FlowTypeRegistration, providers.FlowTypeUserOnboarding,
+		providers.FlowTypeRecovery, providers.FlowTypeSignOut:
+		return providers.FlowType(flowTypeStr), nil
 	default:
 		return "", &ErrorInvalidFlowType
 	}
@@ -563,19 +716,19 @@ func isNewFlow(executionID string) bool {
 }
 
 // getSystemFlowGraph retrieves the flow graph for system flows by handle.
-func (s *flowExecService) getSystemFlowGraph(ctx context.Context, flowType common.FlowType,
-	logger *log.Logger) (string, *serviceerror.ServiceError) {
+func (s *flowExecService) getSystemFlowGraph(ctx context.Context, flowType providers.FlowType,
+	logger *log.Logger) (string, *tidcommon.ServiceError) {
 	handle := ""
 	switch flowType {
-	case common.FlowTypeUserOnboarding:
-		handle = config.GetServerRuntime().Config.Flow.UserOnboardingFlowHandle
+	case providers.FlowTypeUserOnboarding:
+		handle = s.cfg.Flow.UserOnboardingFlowHandle
 	default:
 		return "", &ErrorInvalidFlowType
 	}
 
-	flow, err := s.flowMgtService.GetFlowByHandle(ctx, handle, flowType)
+	flow, err := s.flowProvider.GetFlowByHandle(ctx, handle, flowType)
 	if err != nil {
-		logger.Error("Failed to get system flow by handle",
+		logger.Error(ctx, "Failed to get system flow by handle",
 			log.String("handle", handle), log.String("flowType", string(flowType)))
 		return "", err
 	}
@@ -584,7 +737,7 @@ func (s *flowExecService) getSystemFlowGraph(ctx context.Context, flowType commo
 
 // isComplete checks if the flow step status indicates completion.
 func isComplete(step FlowStep) bool {
-	return step.Status == common.FlowStatusComplete
+	return step.Status == providers.FlowStatusComplete
 }
 
 // prepareContext prepares the flow context by merging any data.
@@ -600,6 +753,9 @@ func prepareContext(ctx *EngineContext, action string, inputs map[string]string)
 	if ctx.RuntimeData == nil {
 		ctx.RuntimeData = make(map[string]string)
 	}
+	if ctx.InterceptorSharedData == nil {
+		ctx.InterceptorSharedData = make(map[string]string)
+	}
 
 	// Set the action if provided
 	if action != "" {
@@ -607,10 +763,21 @@ func prepareContext(ctx *EngineContext, action string, inputs map[string]string)
 	}
 }
 
+// setChallengeTokenInCtx copies incoming request data from the engine context into the
+// interceptor shared data so that interceptors can access it during execution.
+func setChallengeTokenInCtx(ctx *EngineContext, challengeTokenIn string) {
+	if challengeTokenIn != "" {
+		if ctx.InterceptorSharedData == nil {
+			ctx.InterceptorSharedData = make(map[string]string)
+		}
+		ctx.InterceptorSharedData[common.InterceptorDataKeyChallengeTokenIn] = challengeTokenIn
+	}
+}
+
 // InitiateFlow initiates a new flow with the provided context and returns the flowID without executing the flow.
 // This allows external components to pre-initialize a flow with runtime data before actual execution begins.
 func (s *flowExecService) InitiateFlow(ctx context.Context,
-	initContext *FlowInitContext) (string, *serviceerror.ServiceError) {
+	initContext *FlowInitContext) (string, *tidcommon.ServiceError) {
 	logger := log.GetLogger().With(log.String(log.LoggerKeyComponentName, "FlowExecService"))
 
 	if initContext == nil || initContext.FlowType == "" {
@@ -624,7 +791,7 @@ func (s *flowExecService) InitiateFlow(ctx context.Context,
 	}
 
 	// Application ID is required for all flows except Invite Registration
-	if flowType != common.FlowTypeUserOnboarding && initContext.ApplicationID == "" {
+	if flowType != providers.FlowTypeUserOnboarding && initContext.ApplicationID == "" {
 		return "", &ErrorInvalidFlowInitContext
 	}
 
@@ -632,7 +799,7 @@ func (s *flowExecService) InitiateFlow(ctx context.Context,
 	// This uses verbose true to ensure step layouts are returned during execution
 	engineCtx, err := s.initContext(ctx, initContext.ApplicationID, flowType, true, logger)
 	if err != nil {
-		logger.Error("Failed to initialize flow context",
+		logger.Error(ctx, "Failed to initialize flow context",
 			log.String("appID", initContext.ApplicationID),
 			log.String("flowType", initContext.FlowType),
 			log.String("error", err.Error.DefaultValue))
@@ -641,32 +808,89 @@ func (s *flowExecService) InitiateFlow(ctx context.Context,
 
 	// Replace the RuntimeData with initContext RuntimeData
 	engineCtx.RuntimeData = initContext.RuntimeData
+	engineCtx.SetInitiatorRequest(initContext.InitiatorRequest)
 
 	// Store the context without executing the flow
-	if storeErr := s.storeContext(ctx, engineCtx, logger); storeErr != nil {
-		logger.Error("Failed to store initial flow context",
+	if storeErr := s.storeContext(ctx, engineCtx, 0, logger); storeErr != nil {
+		logger.Error(ctx, "Failed to store initial flow context",
 			log.String(log.LoggerKeyExecutionID, engineCtx.ExecutionID),
 			log.Error(storeErr))
-		return "", &serviceerror.InternalServerError
+		return "", &tidcommon.InternalServerError
 	}
 
-	logger.Debug("Flow initiated successfully", log.String(log.LoggerKeyExecutionID, engineCtx.ExecutionID))
+	logger.Debug(ctx, "Flow initiated successfully",
+		log.String(log.LoggerKeyExecutionID, engineCtx.ExecutionID))
 	return engineCtx.ExecutionID, nil
+}
+
+// InitiateAndExecute initializes a new flow with the provided context, sets runtime data and
+// initial user inputs, then executes the flow until a user input is required, an error occurs,
+// or the flow completes. Stores the flow context if the flow pauses and returns the FlowStep.
+// The caller uses FlowStep.ExecutionID to associate the flow with their session.
+//
+// InitialInputs are placed directly into UserInputs before execution so executor nodes that
+// read from ctx.UserInputs (e.g. the identifying executor) can resolve data without requiring
+// an interactive input step from the user.
+func (s *flowExecService) InitiateAndExecute(ctx context.Context,
+	initContext *FlowInitContext) (*FlowStep, *tidcommon.ServiceError) {
+	logger := log.GetLogger().With(log.String(log.LoggerKeyComponentName, "FlowExecService"))
+
+	if initContext == nil || initContext.FlowType == "" {
+		return nil, &ErrorInvalidFlowInitContext
+	}
+
+	flowType, err := validateFlowType(initContext.FlowType)
+	if err != nil {
+		return nil, err
+	}
+
+	if flowType != providers.FlowTypeUserOnboarding && initContext.ApplicationID == "" {
+		return nil, &ErrorInvalidFlowInitContext
+	}
+
+	engineCtx, err := s.initContext(ctx, initContext.ApplicationID, flowType, true, logger)
+	if err != nil {
+		logger.Error(ctx, "Failed to initialize flow context",
+			log.String("appID", initContext.ApplicationID),
+			log.String("flowType", initContext.FlowType),
+			log.String("error", err.Error.DefaultValue))
+		return nil, err
+	}
+
+	engineCtx.RuntimeData = initContext.RuntimeData
+	engineCtx.SetInitiatorRequest(initContext.InitiatorRequest)
+	prepareContext(engineCtx, "", initContext.InitialInputs)
+
+	flowStep, flowErr := s.flowEngine.Execute(engineCtx)
+	if flowErr != nil {
+		return nil, flowErr
+	}
+
+	if flowStep.Status == providers.FlowStatusIncomplete {
+		if storeErr := s.storeContext(ctx, engineCtx, initContext.ExpirySeconds, logger); storeErr != nil {
+			logger.Error(ctx, "Failed to store flow context after execution",
+				log.String(log.LoggerKeyExecutionID, engineCtx.ExecutionID),
+				log.Error(storeErr))
+			return nil, &tidcommon.InternalServerError
+		}
+	}
+
+	return &flowStep, nil
 }
 
 // getFlowContext retrieves the flow context from the store and decrypts it if needed.
 func (s *flowExecService) getFlowContext(ctx context.Context, executionID string, logger *log.Logger) (
-	*FlowContextDB, *serviceerror.ServiceError) {
+	*FlowContextDB, *tidcommon.ServiceError) {
 	if executionID == "" {
 		return nil, &ErrorInvalidExecutionID
 	}
 
 	dbModel, err := s.flowStore.GetFlowContext(ctx, executionID)
 	if err != nil {
-		logger.Error("Error retrieving flow context from store",
+		logger.Error(ctx, "Error retrieving flow context from store",
 			log.String(log.LoggerKeyExecutionID, executionID),
 			log.String("error", err.Error()))
-		return nil, &serviceerror.InternalServerError
+		return nil, &tidcommon.InternalServerError
 	}
 
 	if dbModel == nil {
@@ -677,9 +901,9 @@ func (s *flowExecService) getFlowContext(ctx context.Context, executionID string
 		decryptParams := cryptolib.AlgorithmParams{Algorithm: cryptolib.AlgorithmAESGCM}
 		decrypted, decryptErr := s.cryptoSvc.Decrypt(ctx, nil, decryptParams, []byte(dbModel.Context))
 		if decryptErr != nil {
-			logger.Error("Failed to decrypt flow context",
+			logger.Error(ctx, "Failed to decrypt flow context",
 				log.String(log.LoggerKeyExecutionID, executionID), log.Error(decryptErr))
-			return nil, &serviceerror.InternalServerError
+			return nil, &tidcommon.InternalServerError
 		}
 		dbModel.Context = string(decrypted)
 	}

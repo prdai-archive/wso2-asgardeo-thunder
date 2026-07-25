@@ -10,8 +10,7 @@ import (
 	mock "github.com/stretchr/testify/mock"
 	"github.com/thunder-id/thunderid/internal/authn/common"
 	"github.com/thunder-id/thunderid/internal/authn/oauth"
-	"github.com/thunder-id/thunderid/internal/entityprovider"
-	"github.com/thunder-id/thunderid/internal/system/error/serviceerror"
+	common0 "github.com/thunder-id/thunderid/pkg/thunderidengine/common"
 )
 
 // NewGoogleOIDCAuthnServiceInterfaceMock creates a new instance of GoogleOIDCAuthnServiceInterfaceMock. It also registers a testing interface on the mock and a cleanup function to assert the mocks expectations.
@@ -42,30 +41,30 @@ func (_m *GoogleOIDCAuthnServiceInterfaceMock) EXPECT() *GoogleOIDCAuthnServiceI
 }
 
 // Authenticate provides a mock function for the type GoogleOIDCAuthnServiceInterfaceMock
-func (_mock *GoogleOIDCAuthnServiceInterfaceMock) Authenticate(ctx context.Context, idpID string, code string) (*common.FederatedAuthResult, *serviceerror.ServiceError) {
-	ret := _mock.Called(ctx, idpID, code)
+func (_mock *GoogleOIDCAuthnServiceInterfaceMock) Authenticate(ctx context.Context, idpID string, authzData common.AuthorizationData) (*common.AuthnResult, *common0.ServiceError) {
+	ret := _mock.Called(ctx, idpID, authzData)
 
 	if len(ret) == 0 {
 		panic("no return value specified for Authenticate")
 	}
 
-	var r0 *common.FederatedAuthResult
-	var r1 *serviceerror.ServiceError
-	if returnFunc, ok := ret.Get(0).(func(context.Context, string, string) (*common.FederatedAuthResult, *serviceerror.ServiceError)); ok {
-		return returnFunc(ctx, idpID, code)
+	var r0 *common.AuthnResult
+	var r1 *common0.ServiceError
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string, common.AuthorizationData) (*common.AuthnResult, *common0.ServiceError)); ok {
+		return returnFunc(ctx, idpID, authzData)
 	}
-	if returnFunc, ok := ret.Get(0).(func(context.Context, string, string) *common.FederatedAuthResult); ok {
-		r0 = returnFunc(ctx, idpID, code)
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string, common.AuthorizationData) *common.AuthnResult); ok {
+		r0 = returnFunc(ctx, idpID, authzData)
 	} else {
 		if ret.Get(0) != nil {
-			r0 = ret.Get(0).(*common.FederatedAuthResult)
+			r0 = ret.Get(0).(*common.AuthnResult)
 		}
 	}
-	if returnFunc, ok := ret.Get(1).(func(context.Context, string, string) *serviceerror.ServiceError); ok {
-		r1 = returnFunc(ctx, idpID, code)
+	if returnFunc, ok := ret.Get(1).(func(context.Context, string, common.AuthorizationData) *common0.ServiceError); ok {
+		r1 = returnFunc(ctx, idpID, authzData)
 	} else {
 		if ret.Get(1) != nil {
-			r1 = ret.Get(1).(*serviceerror.ServiceError)
+			r1 = ret.Get(1).(*common0.ServiceError)
 		}
 	}
 	return r0, r1
@@ -79,12 +78,12 @@ type GoogleOIDCAuthnServiceInterfaceMock_Authenticate_Call struct {
 // Authenticate is a helper method to define mock.On call
 //   - ctx context.Context
 //   - idpID string
-//   - code string
-func (_e *GoogleOIDCAuthnServiceInterfaceMock_Expecter) Authenticate(ctx interface{}, idpID interface{}, code interface{}) *GoogleOIDCAuthnServiceInterfaceMock_Authenticate_Call {
-	return &GoogleOIDCAuthnServiceInterfaceMock_Authenticate_Call{Call: _e.mock.On("Authenticate", ctx, idpID, code)}
+//   - authzData common.AuthorizationData
+func (_e *GoogleOIDCAuthnServiceInterfaceMock_Expecter) Authenticate(ctx interface{}, idpID interface{}, authzData interface{}) *GoogleOIDCAuthnServiceInterfaceMock_Authenticate_Call {
+	return &GoogleOIDCAuthnServiceInterfaceMock_Authenticate_Call{Call: _e.mock.On("Authenticate", ctx, idpID, authzData)}
 }
 
-func (_c *GoogleOIDCAuthnServiceInterfaceMock_Authenticate_Call) Run(run func(ctx context.Context, idpID string, code string)) *GoogleOIDCAuthnServiceInterfaceMock_Authenticate_Call {
+func (_c *GoogleOIDCAuthnServiceInterfaceMock_Authenticate_Call) Run(run func(ctx context.Context, idpID string, authzData common.AuthorizationData)) *GoogleOIDCAuthnServiceInterfaceMock_Authenticate_Call {
 	_c.Call.Run(func(args mock.Arguments) {
 		var arg0 context.Context
 		if args[0] != nil {
@@ -94,9 +93,9 @@ func (_c *GoogleOIDCAuthnServiceInterfaceMock_Authenticate_Call) Run(run func(ct
 		if args[1] != nil {
 			arg1 = args[1].(string)
 		}
-		var arg2 string
+		var arg2 common.AuthorizationData
 		if args[2] != nil {
-			arg2 = args[2].(string)
+			arg2 = args[2].(common.AuthorizationData)
 		}
 		run(
 			arg0,
@@ -107,18 +106,18 @@ func (_c *GoogleOIDCAuthnServiceInterfaceMock_Authenticate_Call) Run(run func(ct
 	return _c
 }
 
-func (_c *GoogleOIDCAuthnServiceInterfaceMock_Authenticate_Call) Return(federatedAuthResult *common.FederatedAuthResult, serviceError *serviceerror.ServiceError) *GoogleOIDCAuthnServiceInterfaceMock_Authenticate_Call {
-	_c.Call.Return(federatedAuthResult, serviceError)
+func (_c *GoogleOIDCAuthnServiceInterfaceMock_Authenticate_Call) Return(authnResult *common.AuthnResult, serviceError *common0.ServiceError) *GoogleOIDCAuthnServiceInterfaceMock_Authenticate_Call {
+	_c.Call.Return(authnResult, serviceError)
 	return _c
 }
 
-func (_c *GoogleOIDCAuthnServiceInterfaceMock_Authenticate_Call) RunAndReturn(run func(ctx context.Context, idpID string, code string) (*common.FederatedAuthResult, *serviceerror.ServiceError)) *GoogleOIDCAuthnServiceInterfaceMock_Authenticate_Call {
+func (_c *GoogleOIDCAuthnServiceInterfaceMock_Authenticate_Call) RunAndReturn(run func(ctx context.Context, idpID string, authzData common.AuthorizationData) (*common.AuthnResult, *common0.ServiceError)) *GoogleOIDCAuthnServiceInterfaceMock_Authenticate_Call {
 	_c.Call.Return(run)
 	return _c
 }
 
 // BuildAuthorizeURL provides a mock function for the type GoogleOIDCAuthnServiceInterfaceMock
-func (_mock *GoogleOIDCAuthnServiceInterfaceMock) BuildAuthorizeURL(ctx context.Context, idpID string) (string, *serviceerror.ServiceError) {
+func (_mock *GoogleOIDCAuthnServiceInterfaceMock) BuildAuthorizeURL(ctx context.Context, idpID string) (string, map[string]string, *common0.ServiceError) {
 	ret := _mock.Called(ctx, idpID)
 
 	if len(ret) == 0 {
@@ -126,8 +125,9 @@ func (_mock *GoogleOIDCAuthnServiceInterfaceMock) BuildAuthorizeURL(ctx context.
 	}
 
 	var r0 string
-	var r1 *serviceerror.ServiceError
-	if returnFunc, ok := ret.Get(0).(func(context.Context, string) (string, *serviceerror.ServiceError)); ok {
+	var r1 map[string]string
+	var r2 *common0.ServiceError
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string) (string, map[string]string, *common0.ServiceError)); ok {
 		return returnFunc(ctx, idpID)
 	}
 	if returnFunc, ok := ret.Get(0).(func(context.Context, string) string); ok {
@@ -135,14 +135,21 @@ func (_mock *GoogleOIDCAuthnServiceInterfaceMock) BuildAuthorizeURL(ctx context.
 	} else {
 		r0 = ret.Get(0).(string)
 	}
-	if returnFunc, ok := ret.Get(1).(func(context.Context, string) *serviceerror.ServiceError); ok {
+	if returnFunc, ok := ret.Get(1).(func(context.Context, string) map[string]string); ok {
 		r1 = returnFunc(ctx, idpID)
 	} else {
 		if ret.Get(1) != nil {
-			r1 = ret.Get(1).(*serviceerror.ServiceError)
+			r1 = ret.Get(1).(map[string]string)
 		}
 	}
-	return r0, r1
+	if returnFunc, ok := ret.Get(2).(func(context.Context, string) *common0.ServiceError); ok {
+		r2 = returnFunc(ctx, idpID)
+	} else {
+		if ret.Get(2) != nil {
+			r2 = ret.Get(2).(*common0.ServiceError)
+		}
+	}
+	return r0, r1, r2
 }
 
 // GoogleOIDCAuthnServiceInterfaceMock_BuildAuthorizeURL_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'BuildAuthorizeURL'
@@ -175,18 +182,100 @@ func (_c *GoogleOIDCAuthnServiceInterfaceMock_BuildAuthorizeURL_Call) Run(run fu
 	return _c
 }
 
-func (_c *GoogleOIDCAuthnServiceInterfaceMock_BuildAuthorizeURL_Call) Return(s string, serviceError *serviceerror.ServiceError) *GoogleOIDCAuthnServiceInterfaceMock_BuildAuthorizeURL_Call {
-	_c.Call.Return(s, serviceError)
+func (_c *GoogleOIDCAuthnServiceInterfaceMock_BuildAuthorizeURL_Call) Return(s string, stringToString map[string]string, serviceError *common0.ServiceError) *GoogleOIDCAuthnServiceInterfaceMock_BuildAuthorizeURL_Call {
+	_c.Call.Return(s, stringToString, serviceError)
 	return _c
 }
 
-func (_c *GoogleOIDCAuthnServiceInterfaceMock_BuildAuthorizeURL_Call) RunAndReturn(run func(ctx context.Context, idpID string) (string, *serviceerror.ServiceError)) *GoogleOIDCAuthnServiceInterfaceMock_BuildAuthorizeURL_Call {
+func (_c *GoogleOIDCAuthnServiceInterfaceMock_BuildAuthorizeURL_Call) RunAndReturn(run func(ctx context.Context, idpID string) (string, map[string]string, *common0.ServiceError)) *GoogleOIDCAuthnServiceInterfaceMock_BuildAuthorizeURL_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// BuildFederatedAuthResult provides a mock function for the type GoogleOIDCAuthnServiceInterfaceMock
+func (_mock *GoogleOIDCAuthnServiceInterfaceMock) BuildFederatedAuthResult(ctx context.Context, idpID string, sub string, claims map[string]interface{}) (*common.AuthnResult, *common0.ServiceError) {
+	ret := _mock.Called(ctx, idpID, sub, claims)
+
+	if len(ret) == 0 {
+		panic("no return value specified for BuildFederatedAuthResult")
+	}
+
+	var r0 *common.AuthnResult
+	var r1 *common0.ServiceError
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string, string, map[string]interface{}) (*common.AuthnResult, *common0.ServiceError)); ok {
+		return returnFunc(ctx, idpID, sub, claims)
+	}
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string, string, map[string]interface{}) *common.AuthnResult); ok {
+		r0 = returnFunc(ctx, idpID, sub, claims)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(*common.AuthnResult)
+		}
+	}
+	if returnFunc, ok := ret.Get(1).(func(context.Context, string, string, map[string]interface{}) *common0.ServiceError); ok {
+		r1 = returnFunc(ctx, idpID, sub, claims)
+	} else {
+		if ret.Get(1) != nil {
+			r1 = ret.Get(1).(*common0.ServiceError)
+		}
+	}
+	return r0, r1
+}
+
+// GoogleOIDCAuthnServiceInterfaceMock_BuildFederatedAuthResult_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'BuildFederatedAuthResult'
+type GoogleOIDCAuthnServiceInterfaceMock_BuildFederatedAuthResult_Call struct {
+	*mock.Call
+}
+
+// BuildFederatedAuthResult is a helper method to define mock.On call
+//   - ctx context.Context
+//   - idpID string
+//   - sub string
+//   - claims map[string]interface{}
+func (_e *GoogleOIDCAuthnServiceInterfaceMock_Expecter) BuildFederatedAuthResult(ctx interface{}, idpID interface{}, sub interface{}, claims interface{}) *GoogleOIDCAuthnServiceInterfaceMock_BuildFederatedAuthResult_Call {
+	return &GoogleOIDCAuthnServiceInterfaceMock_BuildFederatedAuthResult_Call{Call: _e.mock.On("BuildFederatedAuthResult", ctx, idpID, sub, claims)}
+}
+
+func (_c *GoogleOIDCAuthnServiceInterfaceMock_BuildFederatedAuthResult_Call) Run(run func(ctx context.Context, idpID string, sub string, claims map[string]interface{})) *GoogleOIDCAuthnServiceInterfaceMock_BuildFederatedAuthResult_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		var arg0 context.Context
+		if args[0] != nil {
+			arg0 = args[0].(context.Context)
+		}
+		var arg1 string
+		if args[1] != nil {
+			arg1 = args[1].(string)
+		}
+		var arg2 string
+		if args[2] != nil {
+			arg2 = args[2].(string)
+		}
+		var arg3 map[string]interface{}
+		if args[3] != nil {
+			arg3 = args[3].(map[string]interface{})
+		}
+		run(
+			arg0,
+			arg1,
+			arg2,
+			arg3,
+		)
+	})
+	return _c
+}
+
+func (_c *GoogleOIDCAuthnServiceInterfaceMock_BuildFederatedAuthResult_Call) Return(authnResult *common.AuthnResult, serviceError *common0.ServiceError) *GoogleOIDCAuthnServiceInterfaceMock_BuildFederatedAuthResult_Call {
+	_c.Call.Return(authnResult, serviceError)
+	return _c
+}
+
+func (_c *GoogleOIDCAuthnServiceInterfaceMock_BuildFederatedAuthResult_Call) RunAndReturn(run func(ctx context.Context, idpID string, sub string, claims map[string]interface{}) (*common.AuthnResult, *common0.ServiceError)) *GoogleOIDCAuthnServiceInterfaceMock_BuildFederatedAuthResult_Call {
 	_c.Call.Return(run)
 	return _c
 }
 
 // ExchangeCodeForToken provides a mock function for the type GoogleOIDCAuthnServiceInterfaceMock
-func (_mock *GoogleOIDCAuthnServiceInterfaceMock) ExchangeCodeForToken(ctx context.Context, idpID string, code string, validateResponse bool) (*oauth.TokenResponse, *serviceerror.ServiceError) {
+func (_mock *GoogleOIDCAuthnServiceInterfaceMock) ExchangeCodeForToken(ctx context.Context, idpID string, code string, validateResponse bool) (*oauth.TokenResponse, *common0.ServiceError) {
 	ret := _mock.Called(ctx, idpID, code, validateResponse)
 
 	if len(ret) == 0 {
@@ -194,8 +283,8 @@ func (_mock *GoogleOIDCAuthnServiceInterfaceMock) ExchangeCodeForToken(ctx conte
 	}
 
 	var r0 *oauth.TokenResponse
-	var r1 *serviceerror.ServiceError
-	if returnFunc, ok := ret.Get(0).(func(context.Context, string, string, bool) (*oauth.TokenResponse, *serviceerror.ServiceError)); ok {
+	var r1 *common0.ServiceError
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string, string, bool) (*oauth.TokenResponse, *common0.ServiceError)); ok {
 		return returnFunc(ctx, idpID, code, validateResponse)
 	}
 	if returnFunc, ok := ret.Get(0).(func(context.Context, string, string, bool) *oauth.TokenResponse); ok {
@@ -205,11 +294,11 @@ func (_mock *GoogleOIDCAuthnServiceInterfaceMock) ExchangeCodeForToken(ctx conte
 			r0 = ret.Get(0).(*oauth.TokenResponse)
 		}
 	}
-	if returnFunc, ok := ret.Get(1).(func(context.Context, string, string, bool) *serviceerror.ServiceError); ok {
+	if returnFunc, ok := ret.Get(1).(func(context.Context, string, string, bool) *common0.ServiceError); ok {
 		r1 = returnFunc(ctx, idpID, code, validateResponse)
 	} else {
 		if ret.Get(1) != nil {
-			r1 = ret.Get(1).(*serviceerror.ServiceError)
+			r1 = ret.Get(1).(*common0.ServiceError)
 		}
 	}
 	return r0, r1
@@ -257,18 +346,18 @@ func (_c *GoogleOIDCAuthnServiceInterfaceMock_ExchangeCodeForToken_Call) Run(run
 	return _c
 }
 
-func (_c *GoogleOIDCAuthnServiceInterfaceMock_ExchangeCodeForToken_Call) Return(tokenResponse *oauth.TokenResponse, serviceError *serviceerror.ServiceError) *GoogleOIDCAuthnServiceInterfaceMock_ExchangeCodeForToken_Call {
+func (_c *GoogleOIDCAuthnServiceInterfaceMock_ExchangeCodeForToken_Call) Return(tokenResponse *oauth.TokenResponse, serviceError *common0.ServiceError) *GoogleOIDCAuthnServiceInterfaceMock_ExchangeCodeForToken_Call {
 	_c.Call.Return(tokenResponse, serviceError)
 	return _c
 }
 
-func (_c *GoogleOIDCAuthnServiceInterfaceMock_ExchangeCodeForToken_Call) RunAndReturn(run func(ctx context.Context, idpID string, code string, validateResponse bool) (*oauth.TokenResponse, *serviceerror.ServiceError)) *GoogleOIDCAuthnServiceInterfaceMock_ExchangeCodeForToken_Call {
+func (_c *GoogleOIDCAuthnServiceInterfaceMock_ExchangeCodeForToken_Call) RunAndReturn(run func(ctx context.Context, idpID string, code string, validateResponse bool) (*oauth.TokenResponse, *common0.ServiceError)) *GoogleOIDCAuthnServiceInterfaceMock_ExchangeCodeForToken_Call {
 	_c.Call.Return(run)
 	return _c
 }
 
 // FetchUserInfo provides a mock function for the type GoogleOIDCAuthnServiceInterfaceMock
-func (_mock *GoogleOIDCAuthnServiceInterfaceMock) FetchUserInfo(ctx context.Context, idpID string, accessToken string) (map[string]interface{}, *serviceerror.ServiceError) {
+func (_mock *GoogleOIDCAuthnServiceInterfaceMock) FetchUserInfo(ctx context.Context, idpID string, accessToken string) (map[string]interface{}, *common0.ServiceError) {
 	ret := _mock.Called(ctx, idpID, accessToken)
 
 	if len(ret) == 0 {
@@ -276,8 +365,8 @@ func (_mock *GoogleOIDCAuthnServiceInterfaceMock) FetchUserInfo(ctx context.Cont
 	}
 
 	var r0 map[string]interface{}
-	var r1 *serviceerror.ServiceError
-	if returnFunc, ok := ret.Get(0).(func(context.Context, string, string) (map[string]interface{}, *serviceerror.ServiceError)); ok {
+	var r1 *common0.ServiceError
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string, string) (map[string]interface{}, *common0.ServiceError)); ok {
 		return returnFunc(ctx, idpID, accessToken)
 	}
 	if returnFunc, ok := ret.Get(0).(func(context.Context, string, string) map[string]interface{}); ok {
@@ -287,11 +376,11 @@ func (_mock *GoogleOIDCAuthnServiceInterfaceMock) FetchUserInfo(ctx context.Cont
 			r0 = ret.Get(0).(map[string]interface{})
 		}
 	}
-	if returnFunc, ok := ret.Get(1).(func(context.Context, string, string) *serviceerror.ServiceError); ok {
+	if returnFunc, ok := ret.Get(1).(func(context.Context, string, string) *common0.ServiceError); ok {
 		r1 = returnFunc(ctx, idpID, accessToken)
 	} else {
 		if ret.Get(1) != nil {
-			r1 = ret.Get(1).(*serviceerror.ServiceError)
+			r1 = ret.Get(1).(*common0.ServiceError)
 		}
 	}
 	return r0, r1
@@ -333,41 +422,41 @@ func (_c *GoogleOIDCAuthnServiceInterfaceMock_FetchUserInfo_Call) Run(run func(c
 	return _c
 }
 
-func (_c *GoogleOIDCAuthnServiceInterfaceMock_FetchUserInfo_Call) Return(stringToIfaceVal map[string]interface{}, serviceError *serviceerror.ServiceError) *GoogleOIDCAuthnServiceInterfaceMock_FetchUserInfo_Call {
+func (_c *GoogleOIDCAuthnServiceInterfaceMock_FetchUserInfo_Call) Return(stringToIfaceVal map[string]interface{}, serviceError *common0.ServiceError) *GoogleOIDCAuthnServiceInterfaceMock_FetchUserInfo_Call {
 	_c.Call.Return(stringToIfaceVal, serviceError)
 	return _c
 }
 
-func (_c *GoogleOIDCAuthnServiceInterfaceMock_FetchUserInfo_Call) RunAndReturn(run func(ctx context.Context, idpID string, accessToken string) (map[string]interface{}, *serviceerror.ServiceError)) *GoogleOIDCAuthnServiceInterfaceMock_FetchUserInfo_Call {
+func (_c *GoogleOIDCAuthnServiceInterfaceMock_FetchUserInfo_Call) RunAndReturn(run func(ctx context.Context, idpID string, accessToken string) (map[string]interface{}, *common0.ServiceError)) *GoogleOIDCAuthnServiceInterfaceMock_FetchUserInfo_Call {
 	_c.Call.Return(run)
 	return _c
 }
 
 // GetIDTokenClaims provides a mock function for the type GoogleOIDCAuthnServiceInterfaceMock
-func (_mock *GoogleOIDCAuthnServiceInterfaceMock) GetIDTokenClaims(idToken string) (map[string]interface{}, *serviceerror.ServiceError) {
-	ret := _mock.Called(idToken)
+func (_mock *GoogleOIDCAuthnServiceInterfaceMock) GetIDTokenClaims(ctx context.Context, idToken string) (map[string]interface{}, *common0.ServiceError) {
+	ret := _mock.Called(ctx, idToken)
 
 	if len(ret) == 0 {
 		panic("no return value specified for GetIDTokenClaims")
 	}
 
 	var r0 map[string]interface{}
-	var r1 *serviceerror.ServiceError
-	if returnFunc, ok := ret.Get(0).(func(string) (map[string]interface{}, *serviceerror.ServiceError)); ok {
-		return returnFunc(idToken)
+	var r1 *common0.ServiceError
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string) (map[string]interface{}, *common0.ServiceError)); ok {
+		return returnFunc(ctx, idToken)
 	}
-	if returnFunc, ok := ret.Get(0).(func(string) map[string]interface{}); ok {
-		r0 = returnFunc(idToken)
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string) map[string]interface{}); ok {
+		r0 = returnFunc(ctx, idToken)
 	} else {
 		if ret.Get(0) != nil {
 			r0 = ret.Get(0).(map[string]interface{})
 		}
 	}
-	if returnFunc, ok := ret.Get(1).(func(string) *serviceerror.ServiceError); ok {
-		r1 = returnFunc(idToken)
+	if returnFunc, ok := ret.Get(1).(func(context.Context, string) *common0.ServiceError); ok {
+		r1 = returnFunc(ctx, idToken)
 	} else {
 		if ret.Get(1) != nil {
-			r1 = ret.Get(1).(*serviceerror.ServiceError)
+			r1 = ret.Get(1).(*common0.ServiceError)
 		}
 	}
 	return r0, r1
@@ -379,100 +468,42 @@ type GoogleOIDCAuthnServiceInterfaceMock_GetIDTokenClaims_Call struct {
 }
 
 // GetIDTokenClaims is a helper method to define mock.On call
+//   - ctx context.Context
 //   - idToken string
-func (_e *GoogleOIDCAuthnServiceInterfaceMock_Expecter) GetIDTokenClaims(idToken interface{}) *GoogleOIDCAuthnServiceInterfaceMock_GetIDTokenClaims_Call {
-	return &GoogleOIDCAuthnServiceInterfaceMock_GetIDTokenClaims_Call{Call: _e.mock.On("GetIDTokenClaims", idToken)}
+func (_e *GoogleOIDCAuthnServiceInterfaceMock_Expecter) GetIDTokenClaims(ctx interface{}, idToken interface{}) *GoogleOIDCAuthnServiceInterfaceMock_GetIDTokenClaims_Call {
+	return &GoogleOIDCAuthnServiceInterfaceMock_GetIDTokenClaims_Call{Call: _e.mock.On("GetIDTokenClaims", ctx, idToken)}
 }
 
-func (_c *GoogleOIDCAuthnServiceInterfaceMock_GetIDTokenClaims_Call) Run(run func(idToken string)) *GoogleOIDCAuthnServiceInterfaceMock_GetIDTokenClaims_Call {
+func (_c *GoogleOIDCAuthnServiceInterfaceMock_GetIDTokenClaims_Call) Run(run func(ctx context.Context, idToken string)) *GoogleOIDCAuthnServiceInterfaceMock_GetIDTokenClaims_Call {
 	_c.Call.Run(func(args mock.Arguments) {
-		var arg0 string
+		var arg0 context.Context
 		if args[0] != nil {
-			arg0 = args[0].(string)
+			arg0 = args[0].(context.Context)
+		}
+		var arg1 string
+		if args[1] != nil {
+			arg1 = args[1].(string)
 		}
 		run(
 			arg0,
+			arg1,
 		)
 	})
 	return _c
 }
 
-func (_c *GoogleOIDCAuthnServiceInterfaceMock_GetIDTokenClaims_Call) Return(stringToIfaceVal map[string]interface{}, serviceError *serviceerror.ServiceError) *GoogleOIDCAuthnServiceInterfaceMock_GetIDTokenClaims_Call {
+func (_c *GoogleOIDCAuthnServiceInterfaceMock_GetIDTokenClaims_Call) Return(stringToIfaceVal map[string]interface{}, serviceError *common0.ServiceError) *GoogleOIDCAuthnServiceInterfaceMock_GetIDTokenClaims_Call {
 	_c.Call.Return(stringToIfaceVal, serviceError)
 	return _c
 }
 
-func (_c *GoogleOIDCAuthnServiceInterfaceMock_GetIDTokenClaims_Call) RunAndReturn(run func(idToken string) (map[string]interface{}, *serviceerror.ServiceError)) *GoogleOIDCAuthnServiceInterfaceMock_GetIDTokenClaims_Call {
-	_c.Call.Return(run)
-	return _c
-}
-
-// GetInternalUser provides a mock function for the type GoogleOIDCAuthnServiceInterfaceMock
-func (_mock *GoogleOIDCAuthnServiceInterfaceMock) GetInternalUser(sub string) (*entityprovider.Entity, *serviceerror.ServiceError) {
-	ret := _mock.Called(sub)
-
-	if len(ret) == 0 {
-		panic("no return value specified for GetInternalUser")
-	}
-
-	var r0 *entityprovider.Entity
-	var r1 *serviceerror.ServiceError
-	if returnFunc, ok := ret.Get(0).(func(string) (*entityprovider.Entity, *serviceerror.ServiceError)); ok {
-		return returnFunc(sub)
-	}
-	if returnFunc, ok := ret.Get(0).(func(string) *entityprovider.Entity); ok {
-		r0 = returnFunc(sub)
-	} else {
-		if ret.Get(0) != nil {
-			r0 = ret.Get(0).(*entityprovider.Entity)
-		}
-	}
-	if returnFunc, ok := ret.Get(1).(func(string) *serviceerror.ServiceError); ok {
-		r1 = returnFunc(sub)
-	} else {
-		if ret.Get(1) != nil {
-			r1 = ret.Get(1).(*serviceerror.ServiceError)
-		}
-	}
-	return r0, r1
-}
-
-// GoogleOIDCAuthnServiceInterfaceMock_GetInternalUser_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'GetInternalUser'
-type GoogleOIDCAuthnServiceInterfaceMock_GetInternalUser_Call struct {
-	*mock.Call
-}
-
-// GetInternalUser is a helper method to define mock.On call
-//   - sub string
-func (_e *GoogleOIDCAuthnServiceInterfaceMock_Expecter) GetInternalUser(sub interface{}) *GoogleOIDCAuthnServiceInterfaceMock_GetInternalUser_Call {
-	return &GoogleOIDCAuthnServiceInterfaceMock_GetInternalUser_Call{Call: _e.mock.On("GetInternalUser", sub)}
-}
-
-func (_c *GoogleOIDCAuthnServiceInterfaceMock_GetInternalUser_Call) Run(run func(sub string)) *GoogleOIDCAuthnServiceInterfaceMock_GetInternalUser_Call {
-	_c.Call.Run(func(args mock.Arguments) {
-		var arg0 string
-		if args[0] != nil {
-			arg0 = args[0].(string)
-		}
-		run(
-			arg0,
-		)
-	})
-	return _c
-}
-
-func (_c *GoogleOIDCAuthnServiceInterfaceMock_GetInternalUser_Call) Return(entity *entityprovider.Entity, serviceError *serviceerror.ServiceError) *GoogleOIDCAuthnServiceInterfaceMock_GetInternalUser_Call {
-	_c.Call.Return(entity, serviceError)
-	return _c
-}
-
-func (_c *GoogleOIDCAuthnServiceInterfaceMock_GetInternalUser_Call) RunAndReturn(run func(sub string) (*entityprovider.Entity, *serviceerror.ServiceError)) *GoogleOIDCAuthnServiceInterfaceMock_GetInternalUser_Call {
+func (_c *GoogleOIDCAuthnServiceInterfaceMock_GetIDTokenClaims_Call) RunAndReturn(run func(ctx context.Context, idToken string) (map[string]interface{}, *common0.ServiceError)) *GoogleOIDCAuthnServiceInterfaceMock_GetIDTokenClaims_Call {
 	_c.Call.Return(run)
 	return _c
 }
 
 // GetOAuthClientConfig provides a mock function for the type GoogleOIDCAuthnServiceInterfaceMock
-func (_mock *GoogleOIDCAuthnServiceInterfaceMock) GetOAuthClientConfig(ctx context.Context, idpID string) (*oauth.OAuthClientConfig, *serviceerror.ServiceError) {
+func (_mock *GoogleOIDCAuthnServiceInterfaceMock) GetOAuthClientConfig(ctx context.Context, idpID string) (*oauth.OAuthClientConfig, *common0.ServiceError) {
 	ret := _mock.Called(ctx, idpID)
 
 	if len(ret) == 0 {
@@ -480,8 +511,8 @@ func (_mock *GoogleOIDCAuthnServiceInterfaceMock) GetOAuthClientConfig(ctx conte
 	}
 
 	var r0 *oauth.OAuthClientConfig
-	var r1 *serviceerror.ServiceError
-	if returnFunc, ok := ret.Get(0).(func(context.Context, string) (*oauth.OAuthClientConfig, *serviceerror.ServiceError)); ok {
+	var r1 *common0.ServiceError
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string) (*oauth.OAuthClientConfig, *common0.ServiceError)); ok {
 		return returnFunc(ctx, idpID)
 	}
 	if returnFunc, ok := ret.Get(0).(func(context.Context, string) *oauth.OAuthClientConfig); ok {
@@ -491,11 +522,11 @@ func (_mock *GoogleOIDCAuthnServiceInterfaceMock) GetOAuthClientConfig(ctx conte
 			r0 = ret.Get(0).(*oauth.OAuthClientConfig)
 		}
 	}
-	if returnFunc, ok := ret.Get(1).(func(context.Context, string) *serviceerror.ServiceError); ok {
+	if returnFunc, ok := ret.Get(1).(func(context.Context, string) *common0.ServiceError); ok {
 		r1 = returnFunc(ctx, idpID)
 	} else {
 		if ret.Get(1) != nil {
-			r1 = ret.Get(1).(*serviceerror.ServiceError)
+			r1 = ret.Get(1).(*common0.ServiceError)
 		}
 	}
 	return r0, r1
@@ -531,30 +562,30 @@ func (_c *GoogleOIDCAuthnServiceInterfaceMock_GetOAuthClientConfig_Call) Run(run
 	return _c
 }
 
-func (_c *GoogleOIDCAuthnServiceInterfaceMock_GetOAuthClientConfig_Call) Return(oAuthClientConfig *oauth.OAuthClientConfig, serviceError *serviceerror.ServiceError) *GoogleOIDCAuthnServiceInterfaceMock_GetOAuthClientConfig_Call {
+func (_c *GoogleOIDCAuthnServiceInterfaceMock_GetOAuthClientConfig_Call) Return(oAuthClientConfig *oauth.OAuthClientConfig, serviceError *common0.ServiceError) *GoogleOIDCAuthnServiceInterfaceMock_GetOAuthClientConfig_Call {
 	_c.Call.Return(oAuthClientConfig, serviceError)
 	return _c
 }
 
-func (_c *GoogleOIDCAuthnServiceInterfaceMock_GetOAuthClientConfig_Call) RunAndReturn(run func(ctx context.Context, idpID string) (*oauth.OAuthClientConfig, *serviceerror.ServiceError)) *GoogleOIDCAuthnServiceInterfaceMock_GetOAuthClientConfig_Call {
+func (_c *GoogleOIDCAuthnServiceInterfaceMock_GetOAuthClientConfig_Call) RunAndReturn(run func(ctx context.Context, idpID string) (*oauth.OAuthClientConfig, *common0.ServiceError)) *GoogleOIDCAuthnServiceInterfaceMock_GetOAuthClientConfig_Call {
 	_c.Call.Return(run)
 	return _c
 }
 
 // ValidateIDToken provides a mock function for the type GoogleOIDCAuthnServiceInterfaceMock
-func (_mock *GoogleOIDCAuthnServiceInterfaceMock) ValidateIDToken(ctx context.Context, idpID string, idToken string) *serviceerror.ServiceError {
+func (_mock *GoogleOIDCAuthnServiceInterfaceMock) ValidateIDToken(ctx context.Context, idpID string, idToken string) *common0.ServiceError {
 	ret := _mock.Called(ctx, idpID, idToken)
 
 	if len(ret) == 0 {
 		panic("no return value specified for ValidateIDToken")
 	}
 
-	var r0 *serviceerror.ServiceError
-	if returnFunc, ok := ret.Get(0).(func(context.Context, string, string) *serviceerror.ServiceError); ok {
+	var r0 *common0.ServiceError
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string, string) *common0.ServiceError); ok {
 		r0 = returnFunc(ctx, idpID, idToken)
 	} else {
 		if ret.Get(0) != nil {
-			r0 = ret.Get(0).(*serviceerror.ServiceError)
+			r0 = ret.Get(0).(*common0.ServiceError)
 		}
 	}
 	return r0
@@ -596,12 +627,12 @@ func (_c *GoogleOIDCAuthnServiceInterfaceMock_ValidateIDToken_Call) Run(run func
 	return _c
 }
 
-func (_c *GoogleOIDCAuthnServiceInterfaceMock_ValidateIDToken_Call) Return(serviceError *serviceerror.ServiceError) *GoogleOIDCAuthnServiceInterfaceMock_ValidateIDToken_Call {
+func (_c *GoogleOIDCAuthnServiceInterfaceMock_ValidateIDToken_Call) Return(serviceError *common0.ServiceError) *GoogleOIDCAuthnServiceInterfaceMock_ValidateIDToken_Call {
 	_c.Call.Return(serviceError)
 	return _c
 }
 
-func (_c *GoogleOIDCAuthnServiceInterfaceMock_ValidateIDToken_Call) RunAndReturn(run func(ctx context.Context, idpID string, idToken string) *serviceerror.ServiceError) *GoogleOIDCAuthnServiceInterfaceMock_ValidateIDToken_Call {
+func (_c *GoogleOIDCAuthnServiceInterfaceMock_ValidateIDToken_Call) RunAndReturn(run func(ctx context.Context, idpID string, idToken string) *common0.ServiceError) *GoogleOIDCAuthnServiceInterfaceMock_ValidateIDToken_Call {
 	_c.Call.Return(run)
 	return _c
 }

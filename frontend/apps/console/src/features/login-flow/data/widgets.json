@@ -57,7 +57,7 @@
                       "label": "Sign In",
                       "action": {
                         "type": "NEXT",
-                        "onSuccess": "{{BASIC_AUTH_EXECUTION_STEP_ID}}"
+                        "onSuccess": "{{CREDENTIALS_AUTH_EXECUTION_STEP_ID}}"
                       }
                     }
                   ]
@@ -76,12 +76,22 @@
     "display": {
       "label": "Continue with Google",
       "description": "Login experience with Google",
-      "image": "assets/images/icons/google-generic.svg",
+      "image": "assets/images/icons/google.svg",
+      "preserveImageColor": true,
       "showOnResourcePanel": true
     },
     "config": {
       "data": {
         "__generationMeta__": {
+          "autoWire": {
+            "reuse": [
+              {
+                "stepRef": "AUTH_ASSERT_EXECUTOR_ID",
+                "matchBy": "executorName",
+                "match": "AuthAssertExecutor"
+              }
+            ]
+          },
           "defaultPropertySelectorId": "{{GOOGLE_EXECUTION_STEP_ID}}",
           "replacers": [
             {
@@ -190,6 +200,15 @@
     "config": {
       "data": {
         "__generationMeta__": {
+          "autoWire": {
+            "reuse": [
+              {
+                "stepRef": "AUTH_ASSERT_EXECUTOR_ID",
+                "matchBy": "executorName",
+                "match": "AuthAssertExecutor"
+              }
+            ]
+          },
           "defaultPropertySelectorId": "{{GITHUB_EXECUTION_STEP_ID}}",
           "replacers": [
             {
@@ -288,6 +307,177 @@
   {
     "resourceType": "WIDGET",
     "category": "FLOW",
+    "type": "EUDI_WALLET",
+    "display": {
+      "label": "Continue with EUDI Wallet",
+      "description": "Login experience with the EUDI Wallet (PID presentation)",
+      "image": "assets/images/icons/eudi-generic.svg",
+      "showOnResourcePanel": true
+    },
+    "config": {
+      "data": {
+        "__generationMeta__": {
+          "autoWire": {
+            "reuse": [
+              {
+                "stepRef": "AUTH_ASSERT_EXECUTOR_ID",
+                "matchBy": "executorName",
+                "match": "AuthAssertExecutor"
+              }
+            ]
+          },
+          "defaultPropertySelectorId": "{{EUDI_EXECUTION_STEP_ID}}",
+          "replacers": [
+            {
+              "key": "EUDI_EXECUTION_STEP_ID",
+              "type": "ID"
+            },
+            {
+              "key": "EUDI_WAIT_VIEW_ID",
+              "type": "ID"
+            },
+            {
+              "key": "AUTH_ASSERT_EXECUTOR_ID",
+              "type": "ID"
+            }
+          ]
+        },
+        "steps": [
+          {
+            "__generationMeta__": {
+              "strategy": "MERGE_WITH_DROP_POINT"
+            },
+            "type": "VIEW",
+            "data": {
+              "components": [
+                {
+                  "id": "{{ID}}",
+                  "category": "ACTION",
+                  "type": "BLOCK",
+                  "components": [
+                    {
+                      "id": "{{ID}}",
+                      "category": "ACTION",
+                      "type": "ACTION",
+                      "variant": "OUTLINED",
+                      "eventType": "TRIGGER",
+                      "label": "Continue with EUDI Wallet",
+                      "image": "assets/images/icons/eudi.svg",
+                      "action": {
+                        "type": "NEXT",
+                        "onSuccess": "{{EUDI_EXECUTION_STEP_ID}}"
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          {
+            "id": "{{EUDI_EXECUTION_STEP_ID}}",
+            "type": "TASK_EXECUTION",
+            "size": {
+              "width": 200,
+              "height": 113
+            },
+            "position": {
+              "x": 820,
+              "y": 350
+            },
+            "data": {
+              "action": {
+                "type": "EXECUTOR",
+                "executor": {
+                  "name": "OpenID4VPVerifyExecutor"
+                },
+                "onSuccess": "{{AUTH_ASSERT_EXECUTOR_ID}}",
+                "onFailure": "",
+                "onIncomplete": "{{EUDI_WAIT_VIEW_ID}}"
+              },
+              "properties": {
+                "presentation_definition_id": "eudi-pid",
+                "allowAuthenticationWithoutLocalUser": true
+              }
+            }
+          },
+          {
+            "id": "{{EUDI_WAIT_VIEW_ID}}",
+            "type": "VIEW",
+            "size": {
+              "width": 350,
+              "height": 300
+            },
+            "position": {
+              "x": 820,
+              "y": 50
+            },
+            "data": {
+              "components": [
+                {
+                  "id": "{{ID}}",
+                  "category": "DISPLAY",
+                  "type": "TEXT",
+                  "variant": "HEADING_3",
+                  "label": "Scan with your EUDI Wallet"
+                },
+                {
+                  "id": "{{ID}}",
+                  "category": "DISPLAY",
+                  "type": "TEXT",
+                  "variant": "BODY_1",
+                  "label": "Open your EUDI Wallet and present your PID, then continue."
+                },
+                {
+                  "id": "{{ID}}",
+                  "category": "ACTION",
+                  "type": "BLOCK",
+                  "components": [
+                    {
+                      "id": "{{ID}}",
+                      "category": "ACTION",
+                      "type": "ACTION",
+                      "variant": "PRIMARY",
+                      "eventType": "SUBMIT",
+                      "label": "Refresh status",
+                      "action": {
+                        "type": "NEXT",
+                        "onSuccess": "{{EUDI_EXECUTION_STEP_ID}}"
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          {
+            "id": "{{AUTH_ASSERT_EXECUTOR_ID}}",
+            "type": "TASK_EXECUTION",
+            "size": {
+              "width": 244,
+              "height": 113
+            },
+            "position": {
+              "x": 1234,
+              "y": 230
+            },
+            "data": {
+              "action": {
+                "type": "EXECUTOR",
+                "executor": {
+                  "name": "AuthAssertExecutor"
+                },
+                "onSuccess": "END",
+                "onFailure": ""
+              }
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "resourceType": "WIDGET",
+    "category": "FLOW",
     "type": "SMS_OTP",
     "display": {
       "label": "Continue with SMS OTP",
@@ -298,6 +488,15 @@
     "config": {
       "data": {
         "__generationMeta__": {
+          "autoWire": {
+            "reuse": [
+              {
+                "stepRef": "AUTH_ASSERT_EXECUTOR_ID",
+                "matchBy": "executorName",
+                "match": "AuthAssertExecutor"
+              }
+            ]
+          },
           "replacers": [
             {
               "key": "MOBILE_NUMBER_VIEW_ID",
@@ -305,6 +504,10 @@
             },
             {
               "key": "SMS_SEND_EXECUTOR_ID",
+              "type": "ID"
+            },
+            {
+              "key": "SMS_EXECUTOR_ID",
               "type": "ID"
             },
             {
@@ -385,7 +588,7 @@
                       "label": "Mobile Number",
                       "required": true,
                       "placeholder": "Enter your mobile number",
-                      "ref": "mobile"
+                      "ref": "mobile_number"
                     },
                     {
                       "id": "{{ID}}",
@@ -419,12 +622,47 @@
               "action": {
                 "type": "EXECUTOR",
                 "executor": {
-                  "name": "SMSOTPAuthExecutor",
-                  "mode": "send"
+                  "name": "OTPExecutor",
+                  "mode": "generate",
+                  "inputs": [
+                    {
+                      "ref": "mobile_number",
+                      "type": "PHONE_INPUT",
+                      "identifier": "mobile_number",
+                      "required": true
+                    }
+                  ]
+                },
+                "onSuccess": "{{SMS_EXECUTOR_ID}}",
+                "onFailure": "",
+                "onIncomplete": ""
+              }
+            }
+          },
+          {
+            "id": "{{SMS_EXECUTOR_ID}}",
+            "type": "TASK_EXECUTION",
+            "size": {
+              "width": 200,
+              "height": 100
+            },
+            "position": {
+              "x": 950,
+              "y": 400
+            },
+            "data": {
+              "action": {
+                "type": "EXECUTOR",
+                "executor": {
+                  "name": "SMSExecutor"
                 },
                 "onSuccess": "{{SMS_OTP_VERIFICATION_STEP_ID}}",
                 "onFailure": "",
                 "onIncomplete": ""
+              },
+              "properties": {
+                "senderId": "",
+                "smsTemplate": "OTP"
               }
             }
           },
@@ -506,7 +744,321 @@
               "action": {
                 "type": "EXECUTOR",
                 "executor": {
-                  "name": "SMSOTPAuthExecutor",
+                  "name": "OTPExecutor",
+                  "mode": "verify"
+                },
+                "onSuccess": "{{AUTH_ASSERT_EXECUTOR_ID}}",
+                "onFailure": "",
+                "onIncomplete": ""
+              }
+            }
+          },
+          {
+            "id": "{{AUTH_ASSERT_EXECUTOR_ID}}",
+            "type": "TASK_EXECUTION",
+            "size": {
+              "width": 200,
+              "height": 113
+            },
+            "position": {
+              "x": 690,
+              "y": 900
+            },
+            "data": {
+              "action": {
+                "type": "EXECUTOR",
+                "executor": {
+                  "name": "AuthAssertExecutor"
+                },
+                "onSuccess": "END",
+                "onFailure": ""
+              }
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "resourceType": "WIDGET",
+    "category": "FLOW",
+    "type": "EMAIL_OTP",
+    "display": {
+      "label": "Continue with Email OTP",
+      "description": "Login experience with Email OTP",
+      "image": "assets/images/icons/email-down.svg",
+      "showOnResourcePanel": true
+    },
+    "config": {
+      "data": {
+        "__generationMeta__": {
+          "autoWire": {
+            "reuse": [
+              {
+                "stepRef": "AUTH_ASSERT_EXECUTOR_ID",
+                "matchBy": "executorName",
+                "match": "AuthAssertExecutor"
+              }
+            ]
+          },
+          "replacers": [
+            {
+              "key": "EMAIL_VIEW_ID",
+              "type": "ID"
+            },
+            {
+              "key": "EMAIL_OTP_SEND_EXECUTOR_ID",
+              "type": "ID"
+            },
+            {
+              "key": "EMAIL_EXECUTOR_ID",
+              "type": "ID"
+            },
+            {
+              "key": "EMAIL_OTP_VERIFICATION_STEP_ID",
+              "type": "ID"
+            },
+            {
+              "key": "EMAIL_OTP_VERIFY_EXECUTOR_ID",
+              "type": "ID"
+            },
+            {
+              "key": "AUTH_ASSERT_EXECUTOR_ID",
+              "type": "ID"
+            }
+          ]
+        },
+        "steps": [
+          {
+            "__generationMeta__": {
+              "strategy": "MERGE_WITH_DROP_POINT"
+            },
+            "type": "VIEW",
+            "data": {
+              "components": [
+                {
+                  "id": "{{ID}}",
+                  "category": "ACTION",
+                  "type": "BLOCK",
+                  "components": [
+                    {
+                      "id": "{{ID}}",
+                      "category": "ACTION",
+                      "type": "ACTION",
+                      "variant": "PRIMARY",
+                      "eventType": "TRIGGER",
+                      "label": "Continue with Email OTP",
+                      "action": {
+                        "onSuccess": "{{EMAIL_VIEW_ID}}",
+                        "type": "NEXT"
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          {
+            "id": "{{EMAIL_VIEW_ID}}",
+            "type": "VIEW",
+            "size": {
+              "width": 350,
+              "height": 300
+            },
+            "position": {
+              "x": 690,
+              "y": 50
+            },
+            "data": {
+              "components": [
+                {
+                  "id": "{{ID}}",
+                  "category": "DISPLAY",
+                  "type": "TEXT",
+                  "variant": "HEADING_3",
+                  "label": "Enter Email Address"
+                },
+                {
+                  "category": "BLOCK",
+                  "type": "BLOCK",
+                  "config": {},
+                  "id": "{{ID}}",
+                  "components": [
+                    {
+                      "id": "{{ID}}",
+                      "category": "FIELD",
+                      "type": "EMAIL_INPUT",
+                      "inputType": "email",
+                      "hint": "",
+                      "label": "Email",
+                      "required": true,
+                      "placeholder": "Enter your email address",
+                      "ref": "email"
+                    },
+                    {
+                      "id": "{{ID}}",
+                      "category": "ACTION",
+                      "type": "ACTION",
+                      "variant": "PRIMARY",
+                      "eventType": "SUBMIT",
+                      "label": "Send OTP",
+                      "action": {
+                        "type": "NEXT",
+                        "onSuccess": "{{EMAIL_OTP_SEND_EXECUTOR_ID}}"
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          {
+            "id": "{{EMAIL_OTP_SEND_EXECUTOR_ID}}",
+            "type": "TASK_EXECUTION",
+            "size": {
+              "width": 200,
+              "height": 100
+            },
+            "position": {
+              "x": 690,
+              "y": 400
+            },
+            "data": {
+              "action": {
+                "type": "EXECUTOR",
+                "executor": {
+                  "name": "OTPExecutor",
+                  "mode": "generate",
+                  "inputs": [
+                    {
+                      "ref": "email",
+                      "type": "EMAIL_INPUT",
+                      "identifier": "email",
+                      "required": true
+                    }
+                  ]
+                },
+                "onSuccess": "{{EMAIL_EXECUTOR_ID}}",
+                "onFailure": "",
+                "onIncomplete": ""
+              }
+            }
+          },
+          {
+            "id": "{{EMAIL_EXECUTOR_ID}}",
+            "type": "TASK_EXECUTION",
+            "size": {
+              "width": 200,
+              "height": 100
+            },
+            "position": {
+              "x": 950,
+              "y": 400
+            },
+            "data": {
+              "action": {
+                "type": "EXECUTOR",
+                "executor": {
+                  "name": "EmailExecutor",
+                  "mode": "send",
+                  "inputs": [
+                    {
+                      "ref": "email",
+                      "type": "EMAIL_INPUT",
+                      "identifier": "email",
+                      "required": true
+                    }
+                  ]
+                },
+                "onSuccess": "{{EMAIL_OTP_VERIFICATION_STEP_ID}}",
+                "onFailure": "",
+                "onIncomplete": ""
+              },
+              "properties": {
+                "senderId": "",
+                "emailTemplate": "OTP"
+              }
+            }
+          },
+          {
+            "id": "{{EMAIL_OTP_VERIFICATION_STEP_ID}}",
+            "type": "VIEW",
+            "size": {
+              "width": 350,
+              "height": 343
+            },
+            "position": {
+              "x": 690,
+              "y": 350
+            },
+            "data": {
+              "components": [
+                {
+                  "id": "{{ID}}",
+                  "category": "DISPLAY",
+                  "type": "TEXT",
+                  "variant": "HEADING_3",
+                  "label": "Verify OTP"
+                },
+                {
+                  "id": "{{ID}}",
+                  "category": "BLOCK",
+                  "type": "BLOCK",
+                  "components": [
+                    {
+                      "id": "{{ID}}",
+                      "category": "FIELD",
+                      "type": "OTP_INPUT",
+                      "hint": "",
+                      "ref": "otp",
+                      "label": "Enter the OTP code",
+                      "required": true,
+                      "placeholder": ""
+                    },
+                    {
+                      "id": "{{ID}}",
+                      "category": "ACTION",
+                      "type": "ACTION",
+                      "variant": "PRIMARY",
+                      "eventType": "SUBMIT",
+                      "label": "Verify",
+                      "action": {
+                        "type": "NEXT",
+                        "onSuccess": "{{EMAIL_OTP_VERIFY_EXECUTOR_ID}}"
+                      }
+                    },
+                    {
+                      "id": "{{ID}}",
+                      "category": "ACTION",
+                      "type": "RESEND",
+                      "eventType": "SUBMIT",
+                      "label": "Resend OTP",
+                      "action": {
+                        "type": "NEXT",
+                        "onSuccess": "{{EMAIL_OTP_SEND_EXECUTOR_ID}}"
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          {
+            "id": "{{EMAIL_OTP_VERIFY_EXECUTOR_ID}}",
+            "type": "TASK_EXECUTION",
+            "size": {
+              "width": 200,
+              "height": 100
+            },
+            "position": {
+              "x": 690,
+              "y": 750
+            },
+            "data": {
+              "action": {
+                "type": "EXECUTOR",
+                "executor": {
+                  "name": "OTPExecutor",
                   "mode": "verify"
                 },
                 "onSuccess": "{{AUTH_ASSERT_EXECUTOR_ID}}",
@@ -554,6 +1106,15 @@
     "config": {
       "data": {
         "__generationMeta__": {
+          "autoWire": {
+            "reuse": [
+              {
+                "stepRef": "AUTH_ASSERT_EXECUTOR_ID",
+                "matchBy": "executorName",
+                "match": "AuthAssertExecutor"
+              }
+            ]
+          },
           "defaultPropertySelectorId": "{{PASSKEY_CHALLENGE_EXECUTOR_ID}}",
           "replacers": [
             {
@@ -577,7 +1138,7 @@
               "type": "ID"
             },
             {
-              "key": "BASIC_AUTH_FOR_REG_EXECUTOR_ID",
+              "key": "CREDENTIALS_AUTH_FOR_REG_EXECUTOR_ID",
               "type": "ID"
             },
             {
@@ -806,7 +1367,7 @@
                       "label": "Verify & Register Passkey",
                       "action": {
                         "type": "NEXT",
-                        "onSuccess": "{{BASIC_AUTH_FOR_REG_EXECUTOR_ID}}"
+                        "onSuccess": "{{CREDENTIALS_AUTH_FOR_REG_EXECUTOR_ID}}"
                       }
                     }
                   ]
@@ -815,7 +1376,7 @@
             }
           },
           {
-            "id": "{{BASIC_AUTH_FOR_REG_EXECUTOR_ID}}",
+            "id": "{{CREDENTIALS_AUTH_FOR_REG_EXECUTOR_ID}}",
             "type": "TASK_EXECUTION",
             "size": {
               "width": 200,
@@ -829,7 +1390,7 @@
               "action": {
                 "type": "EXECUTOR",
                 "executor": {
-                  "name": "BasicAuthExecutor"
+                  "name": "CredentialsAuthExecutor"
                 },
                 "onSuccess": "{{PASSKEY_REGISTER_START_EXECUTOR_ID}}",
                 "onFailure": "{{PASSWORD_FOR_REG_VIEW_ID}}",
@@ -917,6 +1478,304 @@
   },
   {
     "resourceType": "WIDGET",
+    "category": "COMPOSITE",
+    "type": "MAGIC_LINK",
+    "display": {
+      "label": "Continue with Magic Link",
+      "description": "Authenticate securely using a Magic Link sent via email.",
+      "image": "assets/images/icons/link.svg",
+      "showOnResourcePanel": true
+    },
+    "config": {
+      "data": {
+        "__generationMeta__": {
+          "autoWire": {
+            "reuse": [
+              {
+                "stepRef": "AUTH_ASSERT_EXECUTOR_ID",
+                "matchBy": "executorName",
+                "match": "AuthAssertExecutor"
+              }
+            ]
+          },
+          "replacers": [
+            {
+              "key": "EMAIL_VIEW_ID",
+              "type": "ID"
+            },
+            {
+              "key": "MAGIC_GENERATE_EXECUTOR",
+              "type": "ID"
+            },
+            {
+              "key": "EMAIL_SEND_EXECUTOR",
+              "type": "ID"
+            },
+            {
+              "key": "EMAIL_SENT_PROMPT_ID",
+              "type": "ID"
+            },
+            {
+              "key": "MAGIC_VERIFY_EXECUTOR",
+              "type": "ID"
+            },
+            {
+              "key": "AUTH_ASSERT_EXECUTOR_ID",
+              "type": "ID"
+            }
+          ]
+        },
+        "steps": [
+          {
+            "__generationMeta__": {
+              "strategy": "MERGE_WITH_DROP_POINT"
+            },
+            "type": "VIEW",
+            "data": {
+              "components": [
+                {
+                  "id": "{{ID}}",
+                  "category": "ACTION",
+                  "type": "BLOCK",
+                  "components": [
+                    {
+                      "id": "{{ID}}",
+                      "category": "ACTION",
+                      "type": "ACTION",
+                      "variant": "OUTLINED",
+                      "eventType": "TRIGGER",
+                      "label": "Continue with Magic Link",
+                      "image": "assets/images/icons/link.svg",
+                      "action": {
+                        "type": "NEXT",
+                        "onSuccess": "{{EMAIL_VIEW_ID}}"
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          {
+            "id": "{{EMAIL_VIEW_ID}}",
+            "type": "VIEW",
+            "size": {
+              "width": 350,
+              "height": 300
+            },
+            "position": {
+              "x": 650,
+              "y": 100
+            },
+            "data": {
+              "components": [
+                {
+                  "id": "{{ID}}",
+                  "category": "DISPLAY",
+                  "type": "TEXT",
+                  "variant": "HEADING_3",
+                  "label": "Login with Magic Link"
+                },
+                {
+                  "category": "BLOCK",
+                  "type": "BLOCK",
+                  "id": "{{ID}}",
+                  "components": [
+                    {
+                      "id": "{{ID}}",
+                      "category": "FIELD",
+                      "type": "EMAIL_INPUT",
+                      "inputType": "email",
+                      "hint": "",
+                      "label": "Email",
+                      "required": true,
+                      "placeholder": "Enter your email address",
+                      "ref": "email"
+                    },
+                    {
+                      "id": "{{ID}}",
+                      "category": "ACTION",
+                      "type": "ACTION",
+                      "variant": "PRIMARY",
+                      "eventType": "SUBMIT",
+                      "label": "Send Magic Link",
+                      "action": {
+                        "type": "NEXT",
+                        "onSuccess": "{{MAGIC_GENERATE_EXECUTOR}}"
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          {
+            "id": "{{MAGIC_GENERATE_EXECUTOR}}",
+            "type": "TASK_EXECUTION",
+            "size": {
+              "width": 200,
+              "height": 113
+            },
+            "position": {
+              "x": 650,
+              "y": 450
+            },
+            "data": {
+              "action": {
+                "type": "EXECUTOR",
+                "executor": {
+                  "name": "MagicLinkExecutor",
+                  "mode": "generate"
+                },
+                "onSuccess": "{{EMAIL_SEND_EXECUTOR}}",
+                "onFailure": "{{EMAIL_VIEW_ID}}"
+              }
+            }
+          },
+          {
+            "id": "{{EMAIL_SEND_EXECUTOR}}",
+            "type": "TASK_EXECUTION",
+            "size": {
+              "width": 200,
+              "height": 113
+            },
+            "position": {
+              "x": 650,
+              "y": 600
+            },
+            "data": {
+              "action": {
+                "type": "EXECUTOR",
+                "executor": {
+                  "name": "EmailExecutor",
+                  "mode": "send",
+                  "inputs": [
+                    {
+                      "identifier": "email",
+                      "type": "EMAIL_INPUT",
+                      "required": true
+                    }
+                  ]
+                },
+                "onSuccess": "{{EMAIL_SENT_PROMPT_ID}}",
+                "onFailure": "{{EMAIL_VIEW_ID}}"
+              },
+              "properties": {
+                "emailTemplate": "MAGIC_LINK"
+              }
+            }
+          },
+          {
+            "id": "{{EMAIL_SENT_PROMPT_ID}}",
+            "type": "VIEW",
+            "size": {
+              "width": 350,
+              "height": 400
+            },
+            "position": {
+              "x": 1000,
+              "y": 600
+            },
+            "data": {
+              "prompts": [
+                {
+                  "inputs": [
+                    {
+                      "ref": "magic_link_token_input",
+                      "identifier": "magicLinkToken",
+                      "type": "HIDDEN",
+                      "required": true
+                    }
+                  ],
+                  "action": {
+                    "ref": "magic_link_action",
+                    "nextNode": "{{MAGIC_VERIFY_EXECUTOR}}"
+                  }
+                }
+              ],
+              "components": [
+                {
+                  "alt": "{{ t(signin:images.app_logo.alt) }}",
+                  "category": "DISPLAY",
+                  "height": "60",
+                  "id": "{{ID}}",
+                  "resourceType": "ELEMENT",
+                  "src": "{{ meta(application.logoUrl) }}",
+                  "type": "IMAGE",
+                  "width": ""
+                },
+                {
+                  "align": "center",
+                  "category": "DISPLAY",
+                  "id": "{{ID}}",
+                  "label": "{{ t(signin:forms.magic_link.email_sent.title) }}",
+                  "resourceType": "ELEMENT",
+                  "type": "TEXT",
+                  "variant": "HEADING_1"
+                },
+                {
+                  "align": "center",
+                  "category": "DISPLAY",
+                  "id": "{{ID}}",
+                  "label": "{{ t(signin:forms.magic_link.email_sent.description) }}",
+                  "resourceType": "ELEMENT",
+                  "type": "TEXT",
+                  "variant": "BODY_1"
+                }
+              ]
+            }
+          },
+          {
+            "id": "{{MAGIC_VERIFY_EXECUTOR}}",
+            "type": "TASK_EXECUTION",
+            "size": {
+              "width": 200,
+              "height": 113
+            },
+            "position": {
+              "x": 650,
+              "y": 750
+            },
+            "data": {
+              "action": {
+                "type": "EXECUTOR",
+                "executor": {
+                  "name": "MagicLinkExecutor",
+                  "mode": "verify"
+                },
+                "onSuccess": "{{AUTH_ASSERT_EXECUTOR_ID}}",
+                "onFailure": "{{EMAIL_VIEW_ID}}"
+              }
+            }
+          },
+          {
+            "id": "{{AUTH_ASSERT_EXECUTOR_ID}}",
+            "type": "TASK_EXECUTION",
+            "size": {
+              "width": 200,
+              "height": 113
+            },
+            "position": {
+              "x": 650,
+              "y": 900
+            },
+            "data": {
+              "action": {
+                "type": "EXECUTOR",
+                "executor": {
+                  "name": "AuthAssertExecutor"
+                },
+                "onSuccess": "END",
+                "onFailure": ""
+              }
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "resourceType": "WIDGET",
     "category": "FLOW",
     "type": "PROVISIONING",
     "display": {
@@ -938,7 +1797,26 @@
               "key": "PROVISIONING_PROMPT_STEP_ID",
               "type": "ID"
             }
-          ]
+          ],
+          "autoWire": {
+            "entry": {
+              "stepRef": "PROVISIONING_EXECUTOR_STEP_ID"
+            },
+            "exit": {
+              "stepRef": "PROVISIONING_EXECUTOR_STEP_ID",
+              "handle": "success"
+            },
+            "spliceAfter": [
+              {
+                "executorName": "AuthorizationExecutor"
+              }
+            ],
+            "spliceBefore": [
+              {
+                "executorName": "AuthAssertExecutor"
+              }
+            ]
+          }
         },
         "steps": [
           {
@@ -1035,18 +1913,174 @@
   },
   {
     "resourceType": "WIDGET",
+    "category": "FLOW",
+    "type": "CONSENT",
+    "display": {
+      "label": "User Consent",
+      "description": "Prompt the user to consent to sharing requested attributes with the application",
+      "image": "assets/images/icons/stamp.svg",
+      "showOnResourcePanel": true
+    },
+    "config": {
+      "data": {
+        "__generationMeta__": {
+          "defaultPropertySelectorId": "{{CONSENT_EXECUTOR_STEP_ID}}",
+          "replacers": [
+            {
+              "key": "CONSENT_EXECUTOR_STEP_ID",
+              "type": "ID",
+              "prefix": "consent_check"
+            },
+            {
+              "key": "CONSENT_VIEW_STEP_ID",
+              "type": "ID",
+              "prefix": "consent_view"
+            }
+          ],
+          "autoWire": {
+            "entry": {
+              "stepRef": "CONSENT_EXECUTOR_STEP_ID"
+            },
+            "exit": {
+              "stepRef": "CONSENT_EXECUTOR_STEP_ID",
+              "handle": "success"
+            },
+            "spliceAfter": [
+              {
+                "executorName": "AuthorizationExecutor"
+              }
+            ],
+            "spliceBefore": [
+              {
+                "executorName": "AuthAssertExecutor"
+              }
+            ]
+          }
+        },
+        "steps": [
+          {
+            "id": "{{CONSENT_EXECUTOR_STEP_ID}}",
+            "type": "TASK_EXECUTION",
+            "size": {
+              "width": 200,
+              "height": 113
+            },
+            "position": {
+              "x": 760,
+              "y": 360
+            },
+            "data": {
+              "action": {
+                "type": "EXECUTOR",
+                "executor": {
+                  "name": "ConsentExecutor"
+                },
+                "onSuccess": "",
+                "onFailure": "",
+                "onIncomplete": "{{CONSENT_VIEW_STEP_ID}}"
+              },
+              "properties": {
+                "timeout": "0"
+              }
+            }
+          },
+          {
+            "id": "{{CONSENT_VIEW_STEP_ID}}",
+            "type": "VIEW",
+            "size": {
+              "width": 350,
+              "height": 500
+            },
+            "position": {
+              "x": 1120,
+              "y": 100
+            },
+            "data": {
+              "components": [
+                {
+                  "id": "{{ID}}",
+                  "category": "DISPLAY",
+                  "type": "TEXT",
+                  "variant": "HEADING_3",
+                  "label": "{{meta(application.name)}} wants to access your account"
+                },
+                {
+                  "id": "{{ID}}",
+                  "category": "DISPLAY",
+                  "type": "TEXT",
+                  "variant": "BODY_1",
+                  "label": "Please review the information requested by the application and provide your consent to proceed."
+                },
+                {
+                  "id": "{{ID}}",
+                  "category": "BLOCK",
+                  "type": "BLOCK",
+                  "components": [
+                    {
+                      "id": "{{ID}}",
+                      "category": "DISPLAY",
+                      "type": "CONSENT"
+                    },
+                    {
+                      "id": "{{ID}}",
+                      "category": "ACTION",
+                      "type": "ACTION",
+                      "variant": "PRIMARY",
+                      "eventType": "SUBMIT",
+                      "label": "Allow",
+                      "action": {
+                        "type": "NEXT",
+                        "onSuccess": "{{CONSENT_EXECUTOR_STEP_ID}}"
+                      }
+                    },
+                    {
+                      "id": "{{ID}}",
+                      "category": "ACTION",
+                      "type": "ACTION",
+                      "variant": "SECONDARY",
+                      "eventType": "SUBMIT",
+                      "label": "Deny",
+                      "action": {
+                        "type": "NEXT",
+                        "onSuccess": "{{CONSENT_EXECUTOR_STEP_ID}}"
+                      }
+                    }
+                  ]
+                },
+                {
+                  "id": "{{ID}}",
+                  "category": "DISPLAY",
+                  "type": "RICH_TEXT",
+                  "label": "<p class=\"rich-text-paragraph\"><span class=\"rich-text-pre-wrap\">Go back to </span><a href=\"{{meta(application.url)}}\" target=\"_blank\" rel=\"noopener noreferrer\" class=\"rich-text-link\"><span class=\"rich-text-pre-wrap\">Application</span></a></p>"
+                }
+              ]
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "resourceType": "WIDGET",
     "category": "COMPOSITE",
     "type": "SELF_SIGN_UP_LINK",
     "display": {
       "label": "Self Sign Up Link",
-      "description": "A rich text link to redirect users to the self-registration page",
+      "description": "A rich text link plus a Call node that invokes a self-registration flow",
       "image": "UserPlus",
       "showOnResourcePanel": true
     },
     "config": {
       "data": {
         "__generationMeta__": {
-          "strategy": "MERGE_WITH_DROP_POINT"
+          "strategy": "MERGE_WITH_DROP_POINT",
+          "replacers": [
+            {
+              "key": "SELF_SIGN_UP_CALL_STEP_ID",
+              "type": "ID",
+              "prefix": "self_sign_up_call"
+            }
+          ]
         },
         "steps": [
           {
@@ -1060,9 +2094,170 @@
                   "category": "DISPLAY",
                   "type": "RICH_TEXT",
                   "id": "{{ID}}",
-                  "label": "<p class=\"rich-text-paragraph\"><span class=\"rich-text-pre-wrap\">Don't have an account? </span><a href=\"{{meta(application.sign_up_url)}}\" target=\"_blank\" rel=\"noopener noreferrer\" class=\"rich-text-link\"><span class=\"rich-text-pre-wrap\">Sign up</span></a></p>"
+                  "action": {
+                    "ref": "action_signup",
+                    "onSuccess": "{{SELF_SIGN_UP_CALL_STEP_ID}}"
+                  },
+                  "label": "<p data-component-ref=\"self-sign-up-link\" class=\"rich-text-paragraph\"><span class=\"rich-text-pre-wrap\">Don't have an account? </span><a href=\"#\" data-action-ref=\"action_signup\" class=\"rich-text-link\"><span class=\"rich-text-pre-wrap\">Sign up</span></a></p>"
                 }
               ]
+            }
+          },
+          {
+            "id": "{{SELF_SIGN_UP_CALL_STEP_ID}}",
+            "type": "CALL",
+            "size": {
+              "width": 260,
+              "height": 130
+            },
+            "position": {
+              "x": 700,
+              "y": 300
+            },
+            "data": {
+              "flow": {"ref": "", "filterFlowType": "REGISTRATION"},
+              "action": {
+                "type": "CALL",
+                "flow": {"ref": ""},
+                "onSuccess": "",
+                "onFailure": ""
+              }
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "resourceType": "WIDGET",
+    "category": "COMPOSITE",
+    "type": "SIGN_IN_LINK",
+    "display": {
+      "label": "Sign In Link",
+      "description": "A rich text link plus a Call node that invokes a sign-in flow",
+      "image": "LogIn",
+      "showOnResourcePanel": true
+    },
+    "config": {
+      "data": {
+        "__generationMeta__": {
+          "strategy": "MERGE_WITH_DROP_POINT",
+          "replacers": [
+            {
+              "key": "SIGN_IN_CALL_STEP_ID",
+              "type": "ID",
+              "prefix": "sign_in_call"
+            }
+          ]
+        },
+        "steps": [
+          {
+            "__generationMeta__": {
+              "strategy": "MERGE_WITH_DROP_POINT"
+            },
+            "type": "VIEW",
+            "data": {
+              "components": [
+                {
+                  "category": "DISPLAY",
+                  "type": "RICH_TEXT",
+                  "id": "{{ID}}",
+                  "action": {
+                    "ref": "action_signin",
+                    "onSuccess": "{{SIGN_IN_CALL_STEP_ID}}"
+                  },
+                  "label": "<p data-component-ref=\"sign-in-link\" class=\"rich-text-paragraph\"><span class=\"rich-text-pre-wrap\">Already have an account? </span><a href=\"#\" data-action-ref=\"action_signin\" class=\"rich-text-link\"><span class=\"rich-text-pre-wrap\">Sign in</span></a></p>"
+                }
+              ]
+            }
+          },
+          {
+            "id": "{{SIGN_IN_CALL_STEP_ID}}",
+            "type": "CALL",
+            "size": {
+              "width": 260,
+              "height": 130
+            },
+            "position": {
+              "x": 700,
+              "y": 300
+            },
+            "data": {
+              "flow": {"ref": "", "filterFlowType": "AUTHENTICATION"},
+              "action": {
+                "type": "CALL",
+                "flow": {"ref": ""},
+                "onSuccess": "",
+                "onFailure": ""
+              }
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "resourceType": "WIDGET",
+    "category": "COMPOSITE",
+    "type": "RECOVERY_LINK",
+    "display": {
+      "label": "Recovery Link",
+      "description": "A rich text link plus a Call node that invokes a password recovery flow",
+      "image": "KeyRound",
+      "showOnResourcePanel": true
+    },
+    "config": {
+      "data": {
+        "__generationMeta__": {
+          "strategy": "MERGE_WITH_DROP_POINT",
+          "replacers": [
+            {
+              "key": "RECOVERY_CALL_STEP_ID",
+              "type": "ID",
+              "prefix": "recovery_call"
+            }
+          ]
+        },
+        "steps": [
+          {
+            "__generationMeta__": {
+              "strategy": "MERGE_WITH_DROP_POINT"
+            },
+            "type": "VIEW",
+            "data": {
+              "components": [
+                {
+                  "category": "DISPLAY",
+                  "type": "RICH_TEXT",
+                  "id": "{{ID}}",
+                  "action": {
+                    "ref": "action_recovery",
+                    "onSuccess": "{{RECOVERY_CALL_STEP_ID}}"
+                  },
+                  "label": "<p data-component-ref=\"recovery-link\" class=\"rich-text-paragraph\"><a href=\"#\" data-action-ref=\"action_recovery\" class=\"rich-text-link\"><span class=\"rich-text-pre-wrap\">Forgot password?</span></a></p>"
+                }
+              ]
+            }
+          },
+          {
+            "id": "{{RECOVERY_CALL_STEP_ID}}",
+            "type": "CALL",
+            "size": {
+              "width": 260,
+              "height": 130
+            },
+            "position": {
+              "x": 700,
+              "y": 300
+            },
+            "data": {
+              "flow": {"ref": "", "filterFlowType": "RECOVERY"},
+              "action": {
+                "type": "CALL",
+                "flow": {"ref": ""},
+                "onSuccess": "",
+                "onFailure": ""
+              }
             }
           }
         ]

@@ -19,27 +19,15 @@
 import {ResourceAvatar, getInitials} from '@thunderid/components';
 import {useDataGridLocaleText} from '@thunderid/hooks';
 import {useLogger} from '@thunderid/logger/react';
-import {
-  IconButton,
-  Tooltip,
-  Typography,
-  Snackbar,
-  Alert,
-  ListingTable,
-  Dialog,
-  DialogTitle,
-  DialogContent,
-  DialogContentText,
-  DialogActions,
-  Button,
-  DataGrid,
-} from '@wso2/oxygen-ui';
-import {Pencil, Trash2} from '@wso2/oxygen-ui-icons-react';
+import {IconButton, Tooltip, Typography, Snackbar, Alert, ListingTable, DataGrid} from '@wso2/oxygen-ui';
+import {Eye, Pencil, Trash2} from '@wso2/oxygen-ui-icons-react';
 import {useMemo, useState, useCallback} from 'react';
 import {useTranslation} from 'react-i18next';
 import {useNavigate} from 'react-router';
-import useDeleteUser from '../api/useDeleteUser';
+import UserDeleteDialog from './UserDeleteDialog';
 import useGetUsers from '../api/useGetUsers';
+import UserConstants from '../constants/user-constants';
+import useUserRoutes from '../hooks/useUserRoutes';
 import type {UserWithDetails} from '../models/users';
 
 export default function UsersList() {
@@ -47,9 +35,9 @@ export default function UsersList() {
   const {t} = useTranslation();
   const logger = useLogger('UsersList');
   const dataGridLocaleText = useDataGridLocaleText();
+  const routes = useUserRoutes();
 
   const {data: userData, isLoading, error: usersRequestError} = useGetUsers();
-  const deleteUserMutation = useDeleteUser();
 
   const error = usersRequestError;
 
@@ -78,31 +66,17 @@ export default function UsersList() {
   const handleEditClick = useCallback(
     (userId: string): void => {
       (async (): Promise<void> => {
-        await navigate(`/users/${userId}`);
+        await navigate(routes.detail(userId));
       })().catch((_error: unknown) => {
         logger.error('Failed to navigate to user details', {error: _error, userId});
       });
     },
-    [logger, navigate],
+    [logger, navigate, routes],
   );
 
   const handleDeleteCancel = () => {
     setDeleteDialogOpen(false);
     setSelectedUserId(null);
-  };
-
-  const handleDeleteConfirm = async () => {
-    if (!selectedUserId) return;
-
-    try {
-      await deleteUserMutation.mutateAsync(selectedUserId);
-      setDeleteDialogOpen(false);
-      setSelectedUserId(null);
-    } catch (err) {
-      // Error is already handled in the hook
-      setDeleteDialogOpen(false);
-      logger.error('Failed to delete user', {error: err, userId: selectedUserId});
-    }
   };
 
   const columns: DataGrid.GridColDef<UserWithDetails>[] = useMemo(
@@ -120,7 +94,13 @@ export default function UsersList() {
           return (
             <ListingTable.CellIcon
               sx={{width: '100%'}}
-              icon={<ResourceAvatar value={picture} size={30} fallback={getInitials(displayVal)} />}
+              icon={
+                <ResourceAvatar
+                  value={picture}
+                  size={30}
+                  fallback={`${UserConstants.DEFAULT_AVATAR_PREFIX}${getInitials(displayVal)}`}
+                />
+              }
               primary={displayVal}
             />
           );
@@ -159,29 +139,39 @@ export default function UsersList() {
         hideable: false,
         renderCell: (params: DataGrid.GridRenderCellParams<UserWithDetails>) => (
           <ListingTable.RowActions>
-            <Tooltip title={t('common:actions.edit')}>
-              <IconButton
-                size="small"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  handleEditClick(params.row.id);
-                }}
-              >
-                <Pencil size={16} />
-              </IconButton>
-            </Tooltip>
-            <Tooltip title={t('common:actions.delete')}>
-              <IconButton
-                size="small"
-                color="error"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  handleDeleteClick(params.row.id);
-                }}
-              >
-                <Trash2 size={16} />
-              </IconButton>
-            </Tooltip>
+            {params.row.isReadOnly ? (
+              <Tooltip title={t('common:status.readOnly', 'Read Only')}>
+                <IconButton size="small" disableRipple sx={{cursor: 'default'}}>
+                  <Eye size={16} />
+                </IconButton>
+              </Tooltip>
+            ) : (
+              <>
+                <Tooltip title={t('common:actions.edit')}>
+                  <IconButton
+                    size="small"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleEditClick(params.row.id);
+                    }}
+                  >
+                    <Pencil size={16} />
+                  </IconButton>
+                </Tooltip>
+                <Tooltip title={t('common:actions.delete')}>
+                  <IconButton
+                    size="small"
+                    color="error"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleDeleteClick(params.row.id);
+                    }}
+                  >
+                    <Trash2 size={16} />
+                  </IconButton>
+                </Tooltip>
+              </>
+            )}
           </ListingTable.RowActions>
         ),
       },
@@ -219,36 +209,7 @@ export default function UsersList() {
       </ListingTable.Provider>
 
       {/* Delete Confirmation Dialog */}
-      <Dialog open={deleteDialogOpen} onClose={handleDeleteCancel}>
-        <DialogTitle>{t('users:deleteUser')}</DialogTitle>
-        <DialogContent>
-          <DialogContentText>{t('users:confirmDeleteUser')}</DialogContentText>
-          {deleteUserMutation.error && (
-            <Alert severity="error" sx={{mt: 2}}>
-              <Typography variant="body2" sx={{fontWeight: 'bold'}}>
-                {deleteUserMutation.error.message}
-              </Typography>
-            </Alert>
-          )}
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={handleDeleteCancel} disabled={deleteUserMutation.isPending}>
-            {t('common:actions.cancel')}
-          </Button>
-          <Button
-            onClick={() => {
-              handleDeleteConfirm().catch(() => {
-                // Handle error
-              });
-            }}
-            color="error"
-            variant="contained"
-            disabled={deleteUserMutation.isPending}
-          >
-            {deleteUserMutation.isPending ? t('common:status.loading') : t('common:actions.delete')}
-          </Button>
-        </DialogActions>
-      </Dialog>
+      <UserDeleteDialog open={deleteDialogOpen} userId={selectedUserId} onClose={handleDeleteCancel} />
 
       <Snackbar
         open={snackbarOpen}

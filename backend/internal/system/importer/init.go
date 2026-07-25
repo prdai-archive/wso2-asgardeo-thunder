@@ -29,12 +29,16 @@ import (
 	flowmgt "github.com/thunder-id/thunderid/internal/flow/mgt"
 	"github.com/thunder-id/thunderid/internal/group"
 	"github.com/thunder-id/thunderid/internal/idp"
+	"github.com/thunder-id/thunderid/internal/notification"
 	"github.com/thunder-id/thunderid/internal/ou"
 	"github.com/thunder-id/thunderid/internal/resource"
 	"github.com/thunder-id/thunderid/internal/role"
+	"github.com/thunder-id/thunderid/internal/serverconfig"
 	i18nmgt "github.com/thunder-id/thunderid/internal/system/i18n/mgt"
 	"github.com/thunder-id/thunderid/internal/system/middleware"
 	"github.com/thunder-id/thunderid/internal/user"
+	"github.com/thunder-id/thunderid/internal/vc/credential"
+	"github.com/thunder-id/thunderid/internal/vc/presentation"
 )
 
 // Initialize wires the importer service and registers its HTTP routes.
@@ -42,6 +46,7 @@ func Initialize(
 	mux *http.ServeMux,
 	applicationService application.ApplicationServiceInterface,
 	idpService idp.IDPServiceInterface,
+	senderService notification.NotificationSenderMgtSvcInterface,
 	flowService flowmgt.FlowMgtServiceInterface,
 	ouService ou.OrganizationUnitServiceInterface,
 	entityTypeService entitytype.EntityTypeServiceInterface,
@@ -54,10 +59,14 @@ func Initialize(
 	userService user.UserServiceInterface,
 	translationService i18nmgt.I18nServiceInterface,
 	agentService agent.AgentServiceInterface,
+	presentationDefinitionService presentation.PresentationDefinitionServiceInterface,
+	credentialConfigurationService credential.CredentialConfigurationServiceInterface,
+	serverConfigService serverconfig.ServerConfigService,
 ) ImportServiceInterface {
 	importService := newImportService(
 		applicationService,
 		idpService,
+		senderService,
 		flowService,
 		ouService,
 		entityTypeService,
@@ -70,6 +79,9 @@ func Initialize(
 		userService,
 		translationService,
 		agentService,
+		presentationDefinitionService,
+		credentialConfigurationService,
+		serverConfigService,
 	)
 	importHandler := newImportHandler(importService)
 

@@ -25,6 +25,12 @@ import (
 	"github.com/thunder-id/thunderid/internal/system/kmprovider/defaultkm/pki"
 )
 
+// RuntimeCryptoProvider is a type alias for convenience.
+type RuntimeCryptoProvider = common.RuntimeCryptoProvider
+
+// ConfigCryptoProvider is a type alias for convenience.
+type ConfigCryptoProvider = common.ConfigCryptoProvider
+
 // Initialize initializes and returns both RuntimeCryptoProvider and ConfigCryptoProvider.
 // The pkiService is injected as a dependency.
 // Currently hardcoded to use the default KM provider, but structured to support

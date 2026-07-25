@@ -22,6 +22,7 @@ export {default as useGetTheme} from './api/useGetTheme';
 export {default as useCreateTheme} from './api/useCreateTheme';
 export {default as useUpdateTheme} from './api/useUpdateTheme';
 export {default as useDeleteTheme} from './api/useDeleteTheme';
+export {default as useGetThemeUsages} from './api/useGetThemeUsages';
 
 // Themes
 export {default as DefaultTheme} from './themes/DefaultTheme';
@@ -62,6 +63,9 @@ export * from './models/theme';
 // Components
 export {default as GoogleFontLoader} from './components/GoogleFontLoader';
 export type {GoogleFontLoaderProps} from './components/GoogleFontLoader';
+
+export {default as QrCode} from './components/QrCode';
+export type {QrCodeProps} from './components/QrCode';
 
 export {default as StylesheetInjector} from './components/StylesheetInjector';
 export type {StylesheetInjectorProps} from './components/StylesheetInjector';

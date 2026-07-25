@@ -1,3 +1,21 @@
+/*
+ * Copyright (c) 2026, WSO2 LLC. (https://www.wso2.com).
+ *
+ * WSO2 LLC. licenses this file to you under the Apache License,
+ * Version 2.0 (the "License"); you may not use this file except
+ * in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ */
+
 import { useEffect, useRef, useState } from "react";
 import { useThunderID } from "@thunderid/react";
 import {
@@ -13,6 +31,9 @@ import {
 } from "lucide-react";
 import { Link, Navigate, Route, Routes, useLocation, useNavigate, useParams } from "react-router-dom";
 import { getLocations } from "./api";
+import { getCachedChatAccessToken, getChatAccessToken } from "./auth/chatTokenService";
+import { AUTH_CONFIG } from "./auth/config";
+import { useAuth } from "./auth/useAuth";
 import { BookingDetailsPageWithAuth } from "./pages/BookingDetailsPageWithAuth";
 import { BookingsPageWithAuth } from "./pages/BookingsPageWithAuth";
 import { BookingsUnavailable } from "./pages/BookingsUnavailable";
@@ -21,10 +42,12 @@ import { getDisplayName, HomePage, SignedInHomePage } from "./pages/HomePage";
 import { ProfilePage } from "./pages/ProfilePage";
 import { PaymentPageWithAuth } from "./pages/PaymentPageWithAuth";
 import { ResultsPage, ResultsPageWithAuth } from "./pages/ResultsPage";
+import { AuthPage } from "./pages/AuthPage";
 import { buildResultsPath, readCriteria } from "./utils/routes";
 
 const AGENT_CHAT_URL = import.meta.env.VITE_AGENT_CHAT_URL || "http://localhost:8790/chat";
 const THUNDER_BASE_URL = import.meta.env.VITE_THUNDER_BASE_URL || "";
+const AI_FEATURES_ENABLED = import.meta.env.VITE_AI_FEATURES_ENABLED === "true";
 
 function createChatMessage(role, content) {
   return {
@@ -61,7 +84,7 @@ function PublicPrimaryNav() {
 }
 
 function LivePrimaryNav() {
-  const { isSignedIn } = useThunderID();
+  const { isSignedIn } = useAuth();
 
   if (isSignedIn) {
     return <span aria-hidden="true" />;
@@ -71,19 +94,15 @@ function LivePrimaryNav() {
 }
 
 function LiveAuthHeader() {
-  const { isSignedIn, isLoading, signIn, clearSession, user } = useThunderID();
+  const { isSignedIn, isLoading, signIn, signOut, user } = useAuth();
   const [isAccountMenuOpen, setIsAccountMenuOpen] = useState(false);
   const accountMenuRef = useRef(null);
   const email = user?.email || user?.mail || "";
   const displayName = getDisplayName(user) || user?.sub || "Traveler";
   const showEmailSub = email && email !== displayName;
 
-  async function handleSignOut() {
-    try {
-      await clearSession();
-    } finally {
-      window.location.replace("/flights");
-    }
+  function handleSignOut() {
+    signOut();
   }
 
   useEffect(() => {
@@ -151,7 +170,7 @@ function LiveAuthHeader() {
         className="primary-small"
         type="button"
         disabled={isLoading}
-        onClick={() => signIn({ acr_values: "urn:thunder:auth:user" })}
+        onClick={() => signIn()}
       >
         Sign in
       </button>
@@ -188,7 +207,7 @@ function PublicFooterLinks() {
 }
 
 function LiveFooterLinks() {
-  const { isSignedIn } = useThunderID();
+  const { isSignedIn } = useAuth();
 
   if (isSignedIn) {
     return null;
@@ -326,24 +345,62 @@ function ChatWidget({ authReady }) {
 }
 
 function LiveChatWidget() {
-  const { getAccessToken, isSignedIn } = useThunderID();
+  const { isSignedIn } = useAuth();
 
-  return <ChatWidgetCore getToken={isSignedIn ? getAccessToken : null} />;
+  return (
+    <ChatWidgetCore
+      getToken={isSignedIn ? () => getChatAccessToken({ interactive: true }) : null}
+      getCachedToken={isSignedIn ? getCachedChatAccessToken : null}
+    />
+  );
 }
 
-function ChatWidgetCore({ getToken }) {
+function ChatWidgetCore({ getToken, getCachedToken }) {
   const [isOpen, setIsOpen] = useState(false);
   const [messages, setMessages] = useState([
     createChatMessage("assistant", "Hi, I can help with travel questions and booking details.")
   ]);
   const [draft, setDraft] = useState("");
   const [isProcessing, setIsProcessing] = useState(false);
+  const [accessDenied, setAccessDenied] = useState(false);
+  const accessCheckedRef = useRef(false);
   const sessionIdRef = useRef(null);
   const pendingRetryRef = useRef(null);
   const getTokenRef = useRef(getToken);
+  const getCachedTokenRef = useRef(getCachedToken);
   const messagesEndRef = useRef(null);
 
   getTokenRef.current = getToken;
+  getCachedTokenRef.current = getCachedToken;
+
+  useEffect(() => {
+    if (!isOpen || accessCheckedRef.current || !getCachedTokenRef.current) {
+      return;
+    }
+
+    async function checkAccess() {
+      try {
+        const token = getCachedTokenRef.current();
+        if (!token) return;
+
+        accessCheckedRef.current = true;
+
+        const res = await fetch(`${AGENT_CHAT_URL}/access`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+
+        if (res.status === 403) {
+          const data = await res.json();
+          setAccessDenied(true);
+          setMessages([createChatMessage("assistant", data.error || "You are not authorized to use this assistant.")]);
+        }
+      } catch {
+        // Network error — let the user try anyway; /chat will reject if needed.
+      }
+    }
+
+    void checkAccess();
+  }, [isOpen]);
 
   async function sendChatMessage(message, addToUI = true) {
     if (addToUI) {
@@ -362,8 +419,13 @@ function ChatWidgetCore({ getToken }) {
           if (token) {
             headers["Authorization"] = `Bearer ${token}`;
           }
-        } catch {
-          // Continue without token — server will reject if auth is required.
+        } catch (error) {
+          setMessages((current) => [
+            ...current,
+            createChatMessage("assistant", error.message || "Could not authorize chat access."),
+          ]);
+          setIsProcessing(false);
+          return;
         }
       }
 
@@ -567,14 +629,15 @@ function ChatWidgetCore({ getToken }) {
               <span>Ask the travel assistant</span>
               <input
                 value={draft}
-                placeholder="Ask about flights or bookings"
+                placeholder={accessDenied ? "Chat unavailable" : "Ask about flights or bookings"}
+                disabled={accessDenied}
                 onChange={(event) => setDraft(event.target.value)}
               />
             </label>
             <button
               className="chat-send-button"
               type="submit"
-              disabled={!draft.trim() || isProcessing}
+              disabled={accessDenied || !draft.trim() || isProcessing}
               aria-label="Send message"
             >
               <Send size={18} />
@@ -667,6 +730,45 @@ function AgentCallbackRoute() {
       color: "#555"
     }}>
       <p>Connecting your account to the assistant…</p>
+    </main>
+  );
+}
+
+function ChatTokenCallbackRoute() {
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const code = params.get("code");
+    const state = params.get("state");
+    const error = params.get("error");
+    const errorDescription = params.get("error_description");
+
+    if (window.opener) {
+      window.opener.postMessage(
+        {
+          type: "wayfinder-chat-token-oauth",
+          code: code || null,
+          state: state || null,
+          error: error || null,
+          errorDescription: errorDescription || null
+        },
+        window.location.origin
+      );
+    }
+
+    const timer = window.setTimeout(() => window.close(), 100);
+    return () => window.clearTimeout(timer);
+  }, []);
+
+  return (
+    <main style={{
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "center",
+      minHeight: "100vh",
+      fontFamily: "sans-serif",
+      color: "#555"
+    }}>
+      <p>Authorizing chat access...</p>
     </main>
   );
 }
@@ -769,11 +871,18 @@ function AppRoutes({ authReady, criteria, locations, onSearch }) {
         path="/profile"
         element={authReady ? <ProfilePage /> : <BookingsUnavailable />}
       />
-      <Route path="/agent-callback" element={<AgentCallbackRoute />} />
-      <Route
-        path="/signin-as-agent"
-        element={authReady ? <AgentSignInRoute /> : <BookingsUnavailable />}
-      />
+      <Route path="/signin" element={authReady ? <AuthPage key="signin" /> : <BookingsUnavailable />} />
+      <Route path="/signup" element={authReady ? <AuthPage key="signup" /> : <BookingsUnavailable />} />
+      <Route path="/recovery" element={authReady ? <AuthPage key="recovery" /> : <BookingsUnavailable />} />
+      <Route path="/auth" element={<Navigate to="/signin" replace />} />
+      {AI_FEATURES_ENABLED && <Route path="/agent-callback" element={<AgentCallbackRoute />} />}
+      {AI_FEATURES_ENABLED && <Route path="/chat-token-callback" element={<ChatTokenCallbackRoute />} />}
+      {AI_FEATURES_ENABLED && (
+        <Route
+          path="/signin-as-agent"
+          element={authReady ? <AgentSignInRoute /> : <BookingsUnavailable />}
+        />
+      )}
       <Route path="*" element={<Navigate to="/flights" replace />} />
     </Routes>
   );
@@ -843,21 +952,26 @@ function App({ authReady }) {
   }
 
   const criteria = readCriteria(location.search);
+  const isAuthPage =
+    !AUTH_CONFIG.isRedirectBased &&
+    ["/signin", "/signup", "/recovery"].includes(location.pathname);
 
   return (
     <div className="app-shell">
-      <header className="site-header">
-        <Link className="brand" to="/flights" aria-label="Wayfinder Travel home">
-          <span className="brand-mark">
-            <Plane size={22} />
-          </span>
-          <span>Wayfinder</span>
-        </Link>
-        <PrimaryNav authReady={authReady} />
-        <AuthenticatedHeader authReady={authReady} />
-      </header>
+      {!isAuthPage && (
+        <header className="site-header">
+          <Link className="brand" to="/flights" aria-label="Wayfinder Travel home">
+            <span className="brand-mark">
+              <Plane size={22} />
+            </span>
+            <span>Wayfinder</span>
+          </Link>
+          <PrimaryNav authReady={authReady} />
+          <AuthenticatedHeader authReady={authReady} />
+        </header>
+      )}
 
-      {!authReady && (
+      {!isAuthPage && !authReady && (
         <div className="setup-banner" role="status">
           <ShieldCheck size={18} />
           Add `VITE_THUNDER_CLIENT_ID` and `VITE_THUNDER_BASE_URL` to enable live
@@ -871,8 +985,8 @@ function App({ authReady }) {
         locations={locations}
         onSearch={handleSearch}
       />
-      <ChatWidget authReady={authReady} />
-      <SiteFooter authReady={authReady} />
+      {AI_FEATURES_ENABLED && !isAuthPage && <ChatWidget authReady={authReady} />}
+      {!isAuthPage && <SiteFooter authReady={authReady} />}
     </div>
   );
 }

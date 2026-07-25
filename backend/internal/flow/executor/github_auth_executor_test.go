@@ -21,70 +21,20 @@ package executor
 import (
 	"testing"
 
-	"github.com/stretchr/testify/suite"
+	"github.com/stretchr/testify/assert"
 
-	authnoauth "github.com/thunder-id/thunderid/internal/authn/oauth"
-	"github.com/thunder-id/thunderid/internal/flow/common"
 	"github.com/thunder-id/thunderid/tests/mocks/authn/githubmock"
-	"github.com/thunder-id/thunderid/tests/mocks/authn/oauthmock"
-	"github.com/thunder-id/thunderid/tests/mocks/authnprovider/managermock"
-	"github.com/thunder-id/thunderid/tests/mocks/entitytypemock"
-	"github.com/thunder-id/thunderid/tests/mocks/flow/coremock"
-	"github.com/thunder-id/thunderid/tests/mocks/idp/idpmock"
 )
 
-type GithubAuthExecutorTestSuite struct {
-	suite.Suite
-	mockFlowFactory       *coremock.FlowFactoryInterfaceMock
-	mockIDPService        *idpmock.IDPServiceInterfaceMock
-	mockEntityTypeService *entitytypemock.EntityTypeServiceInterfaceMock
-	mockGithubService     *githubmock.GithubOAuthAuthnServiceInterfaceMock
-	mockOAuthService      *oauthmock.OAuthAuthnCoreServiceInterfaceMock
-	mockAuthnProvider     *managermock.AuthnProviderManagerInterfaceMock
-}
+func TestNewGithubOAuthExecutor_Success(t *testing.T) {
+	mockFlowFactory, mockIDPService, mockAuthnProvider := setupSocialAuthExecutorMock(t, ExecutorNameGitHubAuth)
+	mockGithubSvc := githubmock.NewGithubOAuthAuthnServiceInterfaceMock(t)
 
-func TestGithubAuthExecutorTestSuite(t *testing.T) {
-	suite.Run(t, new(GithubAuthExecutorTestSuite))
-}
+	executor := newGithubOAuthExecutor(mockFlowFactory, mockIDPService, mockGithubSvc, mockAuthnProvider)
 
-func (suite *GithubAuthExecutorTestSuite) SetupTest() {
-	suite.mockFlowFactory = coremock.NewFlowFactoryInterfaceMock(suite.T())
-	suite.mockIDPService = idpmock.NewIDPServiceInterfaceMock(suite.T())
-	suite.mockEntityTypeService = entitytypemock.NewEntityTypeServiceInterfaceMock(suite.T())
-	suite.mockGithubService = githubmock.NewGithubOAuthAuthnServiceInterfaceMock(suite.T())
-	suite.mockOAuthService = oauthmock.NewOAuthAuthnCoreServiceInterfaceMock(suite.T())
-	suite.mockAuthnProvider = managermock.NewAuthnProviderManagerInterfaceMock(suite.T())
-}
-
-func (suite *GithubAuthExecutorTestSuite) TestNewGithubOAuthExecutor_Success() {
-	defaultInputs := []common.Input{
-		{
-			Identifier: "code",
-			Type:       "string",
-			Required:   true,
-		},
-	}
-	baseExec := coremock.NewExecutorInterfaceMock(suite.T())
-	suite.mockFlowFactory.On("CreateExecutor", ExecutorNameGitHubAuth,
-		common.ExecutorTypeAuthentication, defaultInputs, []common.Input{}).
-		Return(baseExec).Once()
-
-	mockGithubSvc := &mockGithubServiceWithOAuth{
-		GithubOAuthAuthnServiceInterfaceMock: suite.mockGithubService,
-		oauthService:                         suite.mockOAuthService,
-	}
-
-	executor := newGithubOAuthExecutor(suite.mockFlowFactory, suite.mockIDPService,
-		suite.mockEntityTypeService, mockGithubSvc, suite.mockAuthnProvider)
-
-	suite.NotNil(executor)
-	githubExec, ok := executor.(*githubOAuthExecutor)
-	suite.True(ok)
-	suite.NotNil(githubExec.oAuthExecutorInterface)
-	suite.Equal(mockGithubSvc, githubExec.githubAuthService)
-}
-
-type mockGithubServiceWithOAuth struct {
-	*githubmock.GithubOAuthAuthnServiceInterfaceMock
-	oauthService authnoauth.OAuthAuthnCoreServiceInterface
+	assert.NotNil(t, executor)
+	result, ok := executor.(*githubOAuthExecutor)
+	assert.True(t, ok)
+	assert.NotNil(t, result.oAuthExecutorInterface)
+	assert.Equal(t, mockGithubSvc, result.githubAuthService)
 }

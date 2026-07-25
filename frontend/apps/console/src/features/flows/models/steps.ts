@@ -67,6 +67,11 @@ export interface StepAction {
 export interface StepData {
   components?: Element[];
   action?: StepAction;
+  /**
+   * Node-specific properties persisted in the flow definition
+   * (e.g. a user-set `displayName`, executor options).
+   */
+  properties?: Record<string, unknown>;
   [key: string]: unknown;
 }
 
@@ -84,6 +89,7 @@ export const StepTypes = {
   Rule: 'RULE',
   Execution: 'TASK_EXECUTION',
   End: 'END',
+  Call: 'CALL',
 } as const;
 
 export const StaticStepTypes = {
@@ -94,11 +100,12 @@ export const StaticStepTypes = {
 export const ExecutionTypes = {
   GoogleFederation: 'GoogleOIDCAuthExecutor',
   GithubFederation: 'GithubOAuthExecutor',
+  OpenID4VPVerify: 'OpenID4VPVerifyExecutor',
   OAuthExecutor: 'OAuthExecutor',
   OIDCAuthExecutor: 'OIDCAuthExecutor',
   PasskeyAuth: 'PasskeyAuthExecutor',
   MagicLinkExecutor: 'MagicLinkExecutor',
-  SMSOTPAuth: 'SMSOTPAuthExecutor',
+  OTPExecutor: 'OTPExecutor',
   ConsentExecutor: 'ConsentExecutor',
   IdentifyingExecutor: 'IdentifyingExecutor',
   OUResolverExecutor: 'OUResolverExecutor',
@@ -112,6 +119,11 @@ export const ExecutionTypes = {
   HTTPRequestExecutor: 'HTTPRequestExecutor',
   OUExecutor: 'OUExecutor',
   UserTypeResolver: 'UserTypeResolver',
+  SSOCheck: 'SSOCheckExecutor',
+  Session: 'SessionExecutor',
+  SessionSignOut: 'SessionSignOutExecutor',
+  AuthAssert: 'AuthAssertExecutor',
+  Authorization: 'AuthorizationExecutor',
 } as const;
 
 export const ExecutionStepViewTypes = {

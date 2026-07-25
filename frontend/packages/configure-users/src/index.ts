@@ -20,6 +20,7 @@
 export {default as useCreateUser} from './api/useCreateUser';
 export {default as useDeleteUser} from './api/useDeleteUser';
 export {default as useGetUser} from './api/useGetUser';
+export {default as useGetUserUsages} from './api/useGetUserUsages';
 export {default as useGetUsers} from './api/useGetUsers';
 export {default as useGetUserType} from './api/useGetUserType';
 export {default as useGetUserTypes} from './api/useGetUserTypes';
@@ -56,10 +57,15 @@ export * from './models/user-create-flow';
 export * from './models/users';
 
 // Pages
+export {default as UserAddPage} from './pages/UserAddPage';
 export {default as UserCreatePage} from './pages/UserCreatePage';
 export {default as UserEditPage} from './pages/UserEditPage';
 export {default as UserInvitePage} from './pages/UserInvitePage';
 export {default as UsersListPage} from './pages/UsersListPage';
+
+// Routes
+export type {UserRoutePaths} from './hooks/useUserRoutes';
+export {defaultUserRoutePaths, default as useUserRoutes} from './hooks/useUserRoutes';
 
 // Utils
 export {default as renderSchemaField} from './utils/renderSchemaField';

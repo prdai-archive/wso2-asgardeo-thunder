@@ -26,9 +26,9 @@ import (
 type TypeCategory string
 
 const (
-	// TypeCategoryUser categorizes schemas used to validate user entities.
+	// TypeCategoryUser categorizes schemas used to native user entities.
 	TypeCategoryUser TypeCategory = "user"
-	// TypeCategoryAgent categorizes schemas used to validate agent entities.
+	// TypeCategoryAgent categorizes schemas used to native agent entities.
 	TypeCategoryAgent TypeCategory = "agent"
 )
 
@@ -56,10 +56,10 @@ type EntityType struct {
 	ID                    string            `json:"id,omitempty" yaml:"id,omitempty"`
 	Category              TypeCategory      `json:"-" yaml:"category,omitempty"`
 	Name                  string            `json:"name,omitempty" yaml:"name"`
-	OUID                  string            `json:"ouId" yaml:"organization_unit_id"`
+	OUID                  string            `json:"ouId" yaml:"ouId"`
 	OUHandle              string            `json:"ouHandle,omitempty" yaml:"-"`
-	AllowSelfRegistration bool              `json:"allowSelfRegistration" yaml:"allow_self_registration,omitempty"`
-	SystemAttributes      *SystemAttributes `json:"systemAttributes,omitempty" yaml:"system_attributes,omitempty"`
+	AllowSelfRegistration bool              `json:"allowSelfRegistration" yaml:"allowSelfRegistration,omitempty"`
+	SystemAttributes      *SystemAttributes `json:"systemAttributes,omitempty" yaml:"systemAttributes,omitempty"`
 	Schema                json.RawMessage   `json:"schema,omitempty" yaml:"schema"`
 }
 
@@ -93,29 +93,29 @@ type EntityTypeListResponse struct {
 
 // CreateEntityTypeRequest represents the request body for creating an entity type.
 type CreateEntityTypeRequest struct {
-	Name                  string            `json:"name"`
-	OUID                  string            `json:"ouId"`
+	Name                  string            `json:"name" native:"required,min=3,max=100"`
+	OUID                  string            `json:"ouId" native:"required"`
 	AllowSelfRegistration bool              `json:"allowSelfRegistration,omitempty"`
 	SystemAttributes      *SystemAttributes `json:"systemAttributes,omitempty"`
-	Schema                json.RawMessage   `json:"schema"`
+	Schema                json.RawMessage   `json:"schema" native:"required"`
 }
 
 // CreateEntityTypeRequestWithID represents the service-level request for creating an entity type,
 // including an optional ID.
 type CreateEntityTypeRequestWithID struct {
 	ID                    string            `json:"id,omitempty" yaml:"id,omitempty"`
-	Name                  string            `json:"name"`
-	OUID                  string            `json:"ouId"`
+	Name                  string            `json:"name" native:"required,min=3,max=100"`
+	OUID                  string            `json:"ouId" native:"required"`
 	OUHandle              string            `json:"ouHandle,omitempty"`
 	AllowSelfRegistration bool              `json:"allowSelfRegistration,omitempty"`
 	SystemAttributes      *SystemAttributes `json:"systemAttributes,omitempty"`
-	Schema                json.RawMessage   `json:"schema"`
+	Schema                json.RawMessage   `json:"schema" native:"required"`
 }
 
 // UpdateEntityTypeRequest represents the request body for updating an entity type.
 type UpdateEntityTypeRequest struct {
-	Name                  string            `json:"name"`
-	OUID                  string            `json:"ouId"`
+	Name                  string            `json:"name" native:"required,min=3,max=100"`
+	OUID                  string            `json:"ouId" native:"required"`
 	OUHandle              string            `json:"ouHandle,omitempty"`
 	AllowSelfRegistration bool              `json:"allowSelfRegistration,omitempty"`
 	SystemAttributes      *SystemAttributes `json:"systemAttributes,omitempty"`
@@ -128,9 +128,9 @@ type EntityTypeRequestWithID struct {
 	ID                    string            `yaml:"id"`
 	Category              TypeCategory      `yaml:"category,omitempty"`
 	Name                  string            `yaml:"name"`
-	OUID                  string            `yaml:"organization_unit_id,omitempty"`
-	OUHandle              string            `yaml:"ou_handle,omitempty"`
-	AllowSelfRegistration bool              `yaml:"allow_self_registration,omitempty"`
-	SystemAttributes      *SystemAttributes `yaml:"system_attributes,omitempty"`
+	OUID                  string            `yaml:"ouId,omitempty"`
+	OUHandle              string            `yaml:"ouHandle,omitempty"`
+	AllowSelfRegistration bool              `yaml:"allowSelfRegistration,omitempty"`
+	SystemAttributes      *SystemAttributes `yaml:"systemAttributes,omitempty"`
 	Schema                interface{}       `yaml:"schema"`
 }

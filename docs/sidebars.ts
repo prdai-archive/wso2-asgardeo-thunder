@@ -19,8 +19,11 @@
 /* eslint-disable @typescript-eslint/no-unsafe-assignment */
 
 import type {SidebarsConfig} from '@docusaurus/plugin-content-docs';
+import androidSdkSidebar from './content/sdks/android/sidebar';
 import browserSdkSidebar from './content/sdks/browser/sidebar';
 import expressSdkSidebar from './content/sdks/express/sidebar';
+import flutterSdkSidebar from './content/sdks/flutter/sidebar';
+import iosSdkSidebar from './content/sdks/ios/sidebar';
 import javascriptSdkSidebar from './content/sdks/javascript/sidebar';
 import nextjsSdkSidebar from './content/sdks/nextjs/sidebar';
 import nodeSdkSidebar from './content/sdks/node/sidebar';
@@ -29,8 +32,6 @@ import reactSdkSidebar from './content/sdks/react/sidebar';
 import reactRouterSdkSidebar from './content/sdks/react-router/sidebar';
 import tanstackRouterSdkSidebar from './content/sdks/tanstack-router/sidebar';
 import vueSdkSidebar from './content/sdks/vue/sidebar';
-import productConfig from './docusaurus.product.config';
-
 // This runs in Node.js - Don't use client-side code here (browser APIs, JSX...)
 
 // TODO: Use `@wso2/oxygen-ui-icons` in the sidebar. Currently, there's only a React wrapper available, so we need to create custom SVG icons for the sidebar until we have a web component version of the icons.
@@ -57,82 +58,53 @@ const sidebars: SidebarsConfig = {
     {
       type: 'html',
       value:
-        '<div class="sidebar-section-label"><svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg><span>Getting Started</span></div>',
+        '<div class="sidebar-section-label"><svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4.5 16.5c-1.5 1.26-2 5-2 5s3.74-.5 5-2c.71-.84.7-2.13-.09-2.91a2.18 2.18 0 0 0-2.91-.09z"/><path d="m12 15-3-3a22 22 0 0 1 2-3.95A12.88 12.88 0 0 1 22 2c0 2.72-.78 7.5-6 11a22.35 22.35 0 0 1-4 2z"/><path d="M9 12H4s.55-3.03 2-4c1.62-1.08 5 0 5 0"/><path d="M12 15v5s3.03-.55 4-2c1.08-1.62 0-5 0-5"/></svg><span>Get Started</span></div>',
       className: 'sidebar-html-section-header',
     },
     {
       type: 'category',
-      label: 'Getting Started',
+      label: 'Get Started',
       collapsed: false,
       collapsible: false,
       className: 'sidebar-section',
       items: [
+        {type: 'doc', id: 'getting-started/get-thunderid', label: 'Get ThunderID'},
         {
-          type: 'doc',
-          id: 'guides/getting-started/what-is-thunderid',
-          label: `What is ${productConfig.project.name}?`,
-        },
-        {
-          type: 'doc',
-          id: 'guides/getting-started/get-thunderid',
-          label: `Get ${productConfig.project.name}`,
-        },
-        {
-          type: 'doc',
-          id: 'guides/getting-started/register-an-application',
-          label: 'Register an Application',
-        },
-        {
-          type: 'doc',
-          id: 'guides/getting-started/build-a-flow',
-          label: 'Build a Sign-In Flow',
+          type: 'category',
+          label: 'Application',
+          className: 'connect-section connect-section--app',
+          collapsible: true,
+          items: [
+            {type: 'doc', id: 'getting-started/connect-your-application/react', label: 'React', customProps: {icon: 'react'}},
+            {type: 'doc', id: 'getting-started/connect-your-application/nextjs', label: 'Next.js', customProps: {icon: 'next'}},
+            {type: 'doc', id: 'getting-started/connect-your-application/express', label: 'Express', customProps: {icon: 'express'}},
+            {type: 'doc', id: 'getting-started/connect-your-application/vue', label: 'Vue', customProps: {icon: 'vue'}},
+            {type: 'doc', id: 'getting-started/connect-your-application/nuxt', label: 'Nuxt', customProps: {icon: 'nuxt'}},
+            {type: 'doc', id: 'getting-started/connect-your-application/node', label: 'Node.js', customProps: {icon: 'node'}},
+            {type: 'doc', id: 'getting-started/connect-your-application/browser', label: 'JavaScript', customProps: {icon: 'javascript'}},
+            {type: 'doc', id: 'getting-started/connect-your-application/ios', label: 'iOS', customProps: {icon: 'ios'}},
+            {type: 'doc', id: 'getting-started/connect-your-application/android', label: 'Android', customProps: {icon: 'android'}},
+            {type: 'doc', id: 'getting-started/connect-your-application/flutter', label: 'Flutter', customProps: {icon: 'flutter'}},
+          ],
         },
         {
           type: 'category',
-          label: 'Connect Your Application',
-          link: {
-            type: 'doc',
-            id: 'guides/getting-started/connect-your-application/index',
-          },
-          collapsed: true,
+          label: 'AI Agent',
+          className: 'connect-section connect-section--agent',
           collapsible: true,
           items: [
-            {
-              type: 'doc',
-              id: 'guides/getting-started/connect-your-application/react',
-              label: 'React',
-            },
-            {
-              type: 'doc',
-              id: 'guides/getting-started/connect-your-application/nextjs',
-              label: 'Next.js',
-            },
-            {
-              type: 'doc',
-              id: 'guides/getting-started/connect-your-application/express',
-              label: 'Express',
-            },
-            {
-              type: 'doc',
-              id: 'guides/getting-started/connect-your-application/vue',
-              label: 'Vue',
-            },
-            {
-              type: 'doc',
-              id: 'guides/getting-started/connect-your-application/nuxt',
-              label: 'Nuxt',
-            },
-            {
-              type: 'doc',
-              id: 'guides/getting-started/connect-your-application/node',
-              label: 'Node.js',
-            },
-            {
-              type: 'doc',
-              id: 'guides/getting-started/connect-your-application/browser',
-              label: 'Vanilla JavaScript',
-            },
+            {type: 'doc', id: 'getting-started/connect-your-agent/langchain', label: 'LangChain', customProps: {icon: 'langchain'}},
+            {type: 'html', className: 'menu__list-item', value: '<div class="sidebar-coming-soon"><span class="sidebar-cs-icon"><img src="/assets/images/agent/google-adk.svg" alt="" aria-hidden="true" /></span>Google ADK<span class="sidebar-coming-soon-badge">Soon</span></div>'},
+            {type: 'html', className: 'menu__list-item', value: '<div class="sidebar-coming-soon"><span class="sidebar-cs-icon"><svg viewBox="0 0 512 512" fill="currentColor" aria-hidden="true"><path d="M256 48 496 464H16Z"/></svg></span>Vercel AI SDK<span class="sidebar-coming-soon-badge">Soon</span></div>'},
+            {type: 'html', className: 'menu__list-item', value: '<div class="sidebar-coming-soon"><span class="sidebar-cs-icon"><img src="/assets/images/agent/crewai.svg" alt="" aria-hidden="true" /></span>CrewAI<span class="sidebar-coming-soon-badge">Soon</span></div>'},
           ],
+        },
+        {
+          type: 'category',
+          label: 'MCP Server',
+          className: 'connect-section connect-section--mcp',
+          collapsible: true,
+          items: [{type: 'html', value: '<span aria-hidden="true"></span>'}],
         },
       ],
     },
@@ -153,285 +125,13 @@ const sidebars: SidebarsConfig = {
       items: [
         {
           type: 'doc',
-          id: 'guides/working-with-ai/skills',
+          id: 'working-with-ai/skills',
           label: 'Skills',
         },
         {
           type: 'doc',
-          id: 'guides/working-with-ai/mcp-server',
+          id: 'working-with-ai/mcp-server',
           label: 'MCP Server',
-        },
-        {
-          type: 'doc',
-          id: 'guides/working-with-ai/get-started-with-mcp',
-          label: 'Getting Started with MCP',
-        },
-      ],
-    },
-
-    // Guides Section
-    {
-      type: 'html',
-      value:
-        '<div class="sidebar-section-label"><svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76"/></svg><span>Guides</span></div>',
-      className: 'sidebar-html-section-header sidebar-persona-iam sidebar-persona-not-devops',
-    },
-    {
-      type: 'category',
-      label: 'Guides',
-      collapsed: false,
-      collapsible: false,
-      className: 'sidebar-section sidebar-persona-iam sidebar-persona-not-devops',
-      items: [
-        {
-          type: 'category',
-          label: 'Applications',
-          collapsed: true,
-          collapsible: true,
-          items: [
-            {
-              type: 'doc',
-              id: 'guides/guides/applications/manage-applications',
-              label: 'Manage Applications',
-            },
-            {
-              type: 'doc',
-              id: 'guides/guides/applications/application-settings',
-              label: 'Application Settings',
-            },
-          ],
-        },
-        {
-          type: 'category',
-          label: 'Protocols',
-          collapsed: true,
-          collapsible: true,
-          items: [
-            {
-              type: 'doc',
-              id: 'guides/guides/protocols/oauth2',
-              label: 'OAuth 2.0 Configuration',
-            },
-            {
-              type: 'doc',
-              id: 'guides/guides/protocols/dynamic-client-registration',
-              label: 'Dynamic Client Registration',
-            },
-          ],
-        },
-        {
-          type: 'category',
-          label: 'Users',
-          collapsed: true,
-          collapsible: true,
-          items: [
-            {
-              type: 'doc',
-              id: 'guides/guides/users/manage-users',
-              label: 'Manage Users',
-            },
-            {
-              type: 'doc',
-              id: 'guides/guides/users/manage-groups',
-              label: 'Manage Groups',
-            },
-            {
-              type: 'doc',
-              id: 'guides/guides/users/manage-roles',
-              label: 'Manage Roles',
-            },
-            {
-              type: 'doc',
-              id: 'guides/guides/users/user-types',
-              label: 'User Types',
-            },
-            {
-              type: 'doc',
-              id: 'guides/guides/users/user-type-reference',
-              label: 'User Type Reference',
-            },
-          ],
-        },
-        {
-          type: 'category',
-          label: 'Agents',
-          collapsed: true,
-          collapsible: true,
-          items: [
-            {
-              type: 'doc',
-              id: 'guides/guides/agents/manage-agents',
-              label: 'Manage Agents',
-            },
-          ],
-        },
-        {
-          type: 'category',
-          label: 'Integrations',
-          collapsed: true,
-          collapsible: true,
-          items: [
-            {
-              type: 'category',
-              label: 'Identity Providers',
-              collapsed: true,
-              collapsible: true,
-              items: [
-                {
-                  type: 'doc',
-                  id: 'guides/guides/identity-providers/overview',
-                  label: 'What are Identity Providers?',
-                },
-                {
-                  type: 'doc',
-                  id: 'guides/guides/identity-providers/add-google',
-                  label: 'Add Google',
-                },
-                {
-                  type: 'doc',
-                  id: 'guides/guides/identity-providers/add-github',
-                  label: 'Add GitHub',
-                },
-                {
-                  type: 'doc',
-                  id: 'guides/guides/identity-providers/add-oidc-provider',
-                  label: 'Add OIDC Provider',
-                },
-                {
-                  type: 'doc',
-                  id: 'guides/guides/identity-providers/add-oauth-provider',
-                  label: 'Add OAuth 2.0 Provider',
-                },
-                {
-                  type: 'doc',
-                  id: 'guides/guides/identity-providers/manage-identity-providers',
-                  label: 'Manage Identity Providers',
-                },
-                {
-                  type: 'doc',
-                  id: 'guides/guides/identity-providers/connect-idp-to-application',
-                  label: 'Connect IdP to Application',
-                },
-              ],
-            },
-            {
-              type: 'category',
-              label: 'Notifications',
-              collapsed: true,
-              collapsible: true,
-              items: [
-                {
-                  type: 'doc',
-                  id: 'guides/guides/notifications/sms-providers',
-                  label: 'SMS Providers',
-                },
-              ],
-            },
-            {
-              type: 'doc',
-              id: 'guides/guides/smtp-server/smtp-server-configuration',
-              label: 'Configure SMTP Server',
-            },
-          ],
-        },
-        {
-          type: 'doc',
-          id: 'guides/guides/organization-units',
-          label: 'Organization Units',
-        },
-        {
-          type: 'category',
-          label: 'Flows',
-          collapsed: true,
-          collapsible: true,
-          items: [
-            {
-              type: 'doc',
-              id: 'guides/guides/flows/what-are-flows',
-              label: 'What Are Flows?',
-            },
-            {
-              type: 'doc',
-              id: 'guides/guides/flows/flow-concepts',
-              label: 'Flow Concepts',
-            },
-            {
-              type: 'doc',
-              id: 'guides/guides/flows/build-a-flow',
-              label: 'Build a Flow',
-            },
-            {
-              type: 'doc',
-              id: 'guides/guides/flows/advanced-configurations',
-              label: 'Advanced Configurations',
-            },
-          ],
-        },
-        {
-          type: 'doc',
-          id: 'guides/guides/consent',
-          label: 'Consent',
-        },
-        {
-          type: 'doc',
-          id: 'guides/guides/trusted-issuer',
-          label: 'Trusted Issuer',
-        },
-        {
-          type: 'doc',
-          id: 'guides/guides/resource-servers',
-          label: 'Resource Servers',
-        },
-        {
-          type: 'category',
-          label: 'Design',
-          collapsed: true,
-          collapsible: true,
-          items: [
-            {
-              type: 'doc',
-              id: 'guides/guides/design/overview',
-              label: 'Style Your Experience',
-            },
-            {
-              type: 'doc',
-              id: 'guides/guides/design/themes',
-              label: 'Themes',
-            },
-            {
-              type: 'doc',
-              id: 'guides/guides/design/layouts',
-              label: 'Layouts',
-            },
-            {
-              type: 'doc',
-              id: 'guides/guides/design/design-catalog',
-              label: 'Design Catalog',
-            },
-          ],
-        },
-        {
-          type: 'category',
-          label: 'Translations',
-          collapsed: true,
-          collapsible: true,
-          items: [
-            {
-              type: 'doc',
-              id: 'guides/guides/i18n/localization',
-              label: 'Localization',
-            },
-            {
-              type: 'doc',
-              id: 'guides/guides/i18n/manage-translations',
-              label: 'Manage Translations',
-            },
-            {
-              type: 'doc',
-              id: 'guides/guides/i18n/resolve-translations',
-              label: 'Resolve Translations',
-            },
-          ],
         },
       ],
     },
@@ -454,24 +154,38 @@ const sidebars: SidebarsConfig = {
         {
           type: 'category',
           label: 'Consumer Applications (B2C)',
+          link: {type: 'doc', id: 'use-cases/b2c/index'},
           collapsible: true,
           collapsed: true,
           items: [
-            {type: 'doc', id: 'use-cases/b2c/customer-identity', label: 'Customer Identity'},
-            {type: 'doc', id: 'use-cases/b2c/solution-patterns', label: 'Solution Patterns'},
+            {
+              type: 'category',
+              label: 'Architecture Decisions',
+              link: {type: 'doc', id: 'use-cases/b2c/architecture-decisions'},
+              collapsible: true,
+              collapsed: true,
+              items: [
+                {type: 'doc', id: 'use-cases/b2c/integration-patterns', label: 'Integration Patterns'},
+                {type: 'doc', id: 'use-cases/b2c/identity-sources', label: 'Identity Sources'},
+                {type: 'doc', id: 'use-cases/b2c/tokens-and-apis', label: 'Tokens & APIs'},
+                {type: 'doc', id: 'use-cases/b2c/operations', label: 'Run & Observe'},
+              ],
+            },
             {
               type: 'category',
               label: 'Try It Out',
               collapsible: true,
               collapsed: true,
-              link: {type: 'doc', id: 'use-cases/b2c/try-it-out'},
+              link: {type: 'doc', id: 'use-cases/b2c/try-it-out/index'},
               items: [
+                {type: 'doc', id: 'use-cases/b2c/try-it-out/setup', label: 'Set up sample application'},
+                {type: 'doc', id: 'use-cases/b2c/try-it-out/configure-it-yourself', label: 'Configure It Yourself'},
                 {
                   type: 'category',
                   label: 'Walkthroughs',
+                  key: 'b2c-walkthroughs',
                   collapsible: true,
                   collapsed: true,
-                  key: 'b2c-walkthroughs',
                   items: [
                     {type: 'doc', id: 'use-cases/b2c/try-it-out/add-login', label: 'Login'},
                     {type: 'doc', id: 'use-cases/b2c/try-it-out/self-sign-up', label: 'Self Sign-Up'},
@@ -489,11 +203,41 @@ const sidebars: SidebarsConfig = {
                   label: 'Learn More',
                   collapsible: true,
                   collapsed: true,
-                  key: 'b2c-learn-more',
-                  items: [
-                    {type: 'doc', id: 'use-cases/b2c/identity-concepts', label: 'Identity Concepts', key: 'b2c-identity-concepts'},
-                    {type: 'doc', id: 'use-cases/b2c/configure-it-yourself', label: 'Configure It Yourself', key: 'b2c-configure-it-yourself'},
-                  ],
+                  items: [{type: 'doc', id: 'use-cases/b2c/identity-concepts', label: 'Identity Concepts'}],
+                },
+              ],
+            },
+            {
+              type: 'category',
+              label: 'Try In Your Own App',
+              collapsible: true,
+              collapsed: true,
+              link: {type: 'doc', id: 'use-cases/b2c/try-in-your-own-app'},
+              items: [
+                {type: 'doc', id: 'use-cases/b2c/try-in-your-own-app/add-login', label: 'Login', key: 'own-app-login'},
+                {
+                  type: 'doc',
+                  id: 'use-cases/b2c/try-in-your-own-app/self-sign-up',
+                  label: 'Self Sign-Up',
+                  key: 'own-app-self-sign-up',
+                },
+                {
+                  type: 'doc',
+                  id: 'use-cases/b2c/try-in-your-own-app/profile-section',
+                  label: 'View Profile',
+                  key: 'own-app-profile-section',
+                },
+                {
+                  type: 'doc',
+                  id: 'use-cases/b2c/try-in-your-own-app/account-recovery',
+                  label: 'Account Recovery',
+                  key: 'own-app-account-recovery',
+                },
+                {
+                  type: 'doc',
+                  id: 'use-cases/b2c/try-in-your-own-app/onboard-internal-users',
+                  label: 'Onboard Internal Users',
+                  key: 'own-app-onboard-internal-users',
                 },
               ],
             },
@@ -508,32 +252,40 @@ const sidebars: SidebarsConfig = {
         },
         {
           type: 'category',
-          label: 'Agent Identity',
+          label: 'AI Agents',
           collapsible: true,
           collapsed: true,
           items: [
             {
               type: 'category',
-              label: 'Securing AI Agents',
+              label: 'Agent ID',
               collapsible: true,
               collapsed: true,
+              link: {type: 'doc', id: 'use-cases/ai-agents/overview'},
               items: [
-                {type: 'doc', id: 'use-cases/ai-agents/overview', label: 'Overview', key: 'ai-agents-overview'},
-                {type: 'doc', id: 'use-cases/ai-agents/solution-patterns', label: 'Solution Patterns', key: 'ai-agents-solution-patterns'},
+                {type: 'doc', id: 'use-cases/ai-agents/managed-agent-identity', label: 'Managed Identity'},
+                {type: 'doc', id: 'use-cases/ai-agents/invoking-the-agent', label: 'Invoking the Agent'},
+                {type: 'doc', id: 'use-cases/ai-agents/agent-as-subject', label: 'Agent as Subject'},
+                {type: 'doc', id: 'use-cases/ai-agents/model-interaction', label: 'Model Interaction Controls'},
+                {type: 'doc', id: 'use-cases/ai-agents/internal-services', label: 'Internal Business Services'},
+                {type: 'doc', id: 'use-cases/ai-agents/external-integration', label: 'External Integration'},
+                {type: 'doc', id: 'use-cases/ai-agents/multi-agent', label: 'Multi-Agent Interactions'},
                 {
                   type: 'category',
                   label: 'Try It Out',
                   collapsible: true,
                   collapsed: true,
                   key: 'ai-agents-try-it-out',
-                  link: {type: 'doc', id: 'use-cases/ai-agents/try-it-out'},
+                  link: {type: 'doc', id: 'use-cases/ai-agents/try-it-out/index'},
                   items: [
+                    {type: 'doc', id: 'use-cases/ai-agents/try-it-out/setup', label: 'Set up sample application', key: 'ai-agents-setup'},
+                    {type: 'doc', id: 'use-cases/ai-agents/configure-it-yourself', label: 'Configure It Yourself', key: 'ai-agents-configure-it-yourself'},
                     {
                       type: 'category',
                       label: 'Walkthroughs',
+                      key: 'ai-agents-walkthroughs',
                       collapsible: true,
                       collapsed: true,
-                      key: 'ai-agents-walkthroughs',
                       items: [
                         {type: 'doc', id: 'use-cases/ai-agents/try-it-out/protect-the-agent', label: 'Protect the Agent'},
                         {type: 'doc', id: 'use-cases/ai-agents/try-it-out/act-on-its-own', label: 'Acting on Its Own'},
@@ -542,17 +294,6 @@ const sidebars: SidebarsConfig = {
                           id: 'use-cases/ai-agents/try-it-out/act-on-behalf-of-user',
                           label: 'Acting on Behalf of a User',
                         },
-                      ],
-                    },
-                    {
-                      type: 'category',
-                      label: 'Learn More',
-                      collapsible: true,
-                      collapsed: true,
-                      key: 'ai-agents-learn-more',
-                      items: [
-                        {type: 'doc', id: 'use-cases/ai-agents/identity-concepts', label: 'Identity Concepts', key: 'ai-agents-identity-concepts'},
-                        {type: 'doc', id: 'use-cases/ai-agents/configure-it-yourself', label: 'Configure It Yourself', key: 'ai-agents-configure-it-yourself'},
                       ],
                     },
                   ],
@@ -583,9 +324,23 @@ const sidebars: SidebarsConfig = {
                       key: 'mcp-authorization-walkthroughs',
                       items: [
                         {
-                          type: 'doc',
-                          id: 'use-cases/ai-agents/mcp-authorization/try-it-out/connect-via-inspector',
+                          type: 'category',
                           label: 'MCP Authorization',
+                          collapsible: true,
+                          collapsed: true,
+                          key: 'mcp-authorization-walkthroughs-mcp-authorization',
+                          items: [
+                            {
+                              type: 'doc',
+                              id: 'use-cases/ai-agents/mcp-authorization/try-it-out/connect-via-inspector',
+                              label: 'Scope-Based',
+                            },
+                            {
+                              type: 'doc',
+                              id: 'use-cases/ai-agents/mcp-authorization/try-it-out/authzen-authorization',
+                              label: 'AuthZEN-Based',
+                            },
+                          ],
                         },
                       ],
                     },
@@ -601,6 +356,491 @@ const sidebars: SidebarsConfig = {
                       ],
                     },
                   ],
+                },
+              ],
+            },
+          ],
+        },
+        {
+          type: 'category',
+          label: 'Decentralized Identity',
+          collapsible: true,
+          collapsed: true,
+          key: 'use-cases-vc',
+          items: [
+            {type: 'doc', id: 'use-cases/vc/overview', label: 'Overview', key: 'vc-overview'},
+            {
+              type: 'category',
+              label: 'Try It Out',
+              collapsible: true,
+              collapsed: true,
+              key: 'vc-try-it-out',
+              link: {type: 'doc', id: 'use-cases/vc/try-it-out/index'},
+              items: [
+                {type: 'doc', id: 'use-cases/vc/try-it-out/setup', label: 'Set up the sample', key: 'vc-setup'},
+                {type: 'doc', id: 'use-cases/vc/try-it-out/configure-it-yourself', label: 'Configure It Yourself', key: 'vc-configure'},
+                {
+                  type: 'category',
+                  label: 'Walkthroughs',
+                  collapsible: true,
+                  collapsed: true,
+                  key: 'vc-walkthroughs',
+                  items: [
+                    {type: 'doc', id: 'use-cases/vc/try-it-out/issue-credential', label: 'Issue Credential', key: 'vc-issue'},
+                    {type: 'doc', id: 'use-cases/vc/try-it-out/verify-at-lounge', label: 'Verify Credential', key: 'vc-verify'},
+                  ],
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    },
+
+    // Guides Section (moved below Use Cases)
+    {
+      type: 'html',
+      value:
+        '<div class="sidebar-section-label"><svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76"/></svg><span>Guides</span></div>',
+      className: 'sidebar-html-section-header sidebar-persona-iam sidebar-persona-not-devops',
+    },
+    {
+      type: 'category',
+      label: 'Guides',
+      collapsed: false,
+      collapsible: false,
+      className: 'sidebar-section sidebar-persona-iam sidebar-persona-not-devops',
+      items: [
+        {
+          type: 'category',
+          label: 'Applications',
+          collapsed: true,
+          collapsible: true,
+          items: [
+            {
+              type: 'doc',
+              id: 'guides/applications/manage-applications',
+              label: 'Manage Applications',
+            },
+            {
+              type: 'doc',
+              id: 'guides/applications/application-settings',
+              label: 'Application Settings',
+            },
+          ],
+        },
+        {
+          type: 'category',
+          label: 'Users',
+          collapsed: true,
+          collapsible: true,
+          items: [
+            {
+              type: 'doc',
+              id: 'guides/users/manage-users',
+              label: 'Manage Users',
+            },
+            {
+              type: 'doc',
+              id: 'guides/users/manage-groups',
+              label: 'Manage Groups',
+            },
+            {
+              type: 'doc',
+              id: 'guides/users/manage-roles',
+              label: 'Manage Roles',
+            },
+            {
+              type: 'doc',
+              id: 'guides/users/user-types',
+              label: 'User Types',
+            },
+            {
+              type: 'doc',
+              id: 'guides/users/user-type-reference',
+              label: 'User Type Reference',
+            },
+          ],
+        },
+        {
+          type: 'category',
+          label: 'Agents',
+          collapsed: true,
+          collapsible: true,
+          items: [
+            {
+              type: 'doc',
+              id: 'guides/agents/manage-agents',
+              label: 'Manage Agents',
+            },
+            {
+              type: 'doc',
+              id: 'guides/agents/agent-authentication',
+              label: 'Agent Authentication',
+            },
+          ],
+        },
+        {
+          type: 'category',
+          label: 'Integrations',
+          collapsed: true,
+          collapsible: true,
+          items: [
+            {
+              type: 'category',
+              label: 'Identity Providers',
+              collapsed: true,
+              collapsible: true,
+              items: [
+                {
+                  type: 'doc',
+                  id: 'guides/identity-providers/overview',
+                  label: 'What are Identity Providers?',
+                },
+                {
+                  type: 'doc',
+                  id: 'guides/identity-providers/add-google',
+                  label: 'Add Google',
+                },
+                {
+                  type: 'doc',
+                  id: 'guides/identity-providers/add-github',
+                  label: 'Add GitHub',
+                },
+                {
+                  type: 'doc',
+                  id: 'guides/identity-providers/add-oidc-provider',
+                  label: 'Add OIDC Provider',
+                },
+                {
+                  type: 'doc',
+                  id: 'guides/identity-providers/add-oauth-provider',
+                  label: 'Add OAuth 2.0 Provider',
+                },
+                {
+                  type: 'doc',
+                  id: 'guides/identity-providers/manage-identity-providers',
+                  label: 'Manage Identity Providers',
+                },
+                {
+                  type: 'doc',
+                  id: 'guides/identity-providers/connect-idp-to-application',
+                  label: 'Connect IdP to Application',
+                },
+                {
+                  type: 'doc',
+                  id: 'guides/identity-providers/token-exchange-idp',
+                  label: 'Token Exchange',
+                  key: 'idp-token-exchange',
+                },
+              ],
+            },
+            {
+              type: 'category',
+              label: 'Notifications',
+              collapsed: true,
+              collapsible: true,
+              items: [
+                {
+                  type: 'doc',
+                  id: 'guides/smtp-server/smtp-server-configuration',
+                  label: 'SMTP Server',
+                },
+                {
+                  type: 'doc',
+                  id: 'guides/notifications/sms-providers',
+                  label: 'SMS Providers',
+                },
+              ],
+            },
+            {
+              type: 'category',
+              label: 'APIM Gateways',
+              collapsed: true,
+              collapsible: true,
+              items: [
+                {type: 'doc', id: 'guides/integrations/apim-gateways/overview', label: 'Overview'},
+                {type: 'doc', id: 'guides/integrations/apim-gateways/apisix', label: 'Apache APISIX'},
+                {type: 'doc', id: 'guides/integrations/apim-gateways/azure-apim', label: 'Azure API Management'},
+                {type: 'doc', id: 'guides/integrations/apim-gateways/envoy', label: 'Envoy'},
+                {type: 'doc', id: 'guides/integrations/apim-gateways/kong', label: 'Kong Konnect'},
+                {type: 'doc', id: 'guides/integrations/apim-gateways/krakend', label: 'KrakenD'},
+              ],
+            },
+          ],
+        },
+        {
+          type: 'doc',
+          id: 'guides/organization-units',
+          label: 'Organization Units',
+        },
+        {
+          type: 'category',
+          label: 'Flows',
+          collapsed: true,
+          collapsible: true,
+          items: [
+            {
+              type: 'doc',
+              id: 'guides/flows/what-are-flows',
+              label: 'What Are Flows?',
+            },
+            {
+              type: 'doc',
+              id: 'guides/flows/flow-concepts',
+              label: 'Flow Concepts',
+            },
+            {
+              type: 'doc',
+              id: 'guides/flows/build-a-flow',
+              label: 'Build a Flow',
+            },
+            {
+              type: 'doc',
+              id: 'guides/flows/single-sign-on',
+              label: 'Single Sign-On',
+            },
+            {
+              type: 'doc',
+              id: 'guides/flows/advanced-configurations',
+              label: 'Advanced Configurations',
+            },
+          ],
+        },
+        {
+          type: 'doc',
+          id: 'guides/consent',
+          label: 'Consent',
+        },
+        {
+          type: 'doc',
+          id: 'guides/trusted-issuer',
+          label: 'Secure Using a Third-Party IdP',
+        },
+        {
+          type: 'doc',
+          id: 'guides/resource-servers',
+          label: 'Resource Servers',
+        },
+        {
+          type: 'category',
+          label: 'Design',
+          collapsed: true,
+          collapsible: true,
+          items: [
+            {
+              type: 'doc',
+              id: 'guides/design/overview',
+              label: 'Style Your Experience',
+            },
+            {
+              type: 'doc',
+              id: 'guides/design/themes',
+              label: 'Themes',
+            },
+            {
+              type: 'doc',
+              id: 'guides/design/layouts',
+              label: 'Layouts',
+            },
+            {
+              type: 'doc',
+              id: 'guides/design/design-catalog',
+              label: 'Design Catalog',
+            },
+          ],
+        },
+        {
+          type: 'category',
+          label: 'Translations',
+          collapsed: true,
+          collapsible: true,
+          items: [
+            {
+              type: 'doc',
+              id: 'guides/i18n/localization',
+              label: 'Localization',
+            },
+            {
+              type: 'doc',
+              id: 'guides/i18n/manage-translations',
+              label: 'Manage Translations',
+            },
+            {
+              type: 'doc',
+              id: 'guides/i18n/resolve-translations',
+              label: 'Resolve Translations',
+            },
+          ],
+        },
+        {
+          type: 'category',
+          label: 'Protocols & Standards',
+          collapsed: true,
+          collapsible: true,
+          link: {
+            type: 'doc',
+            id: 'guides/protocols/index',
+          },
+          items: [
+            {
+              type: 'category',
+              label: 'OAuth & OIDC',
+              collapsed: true,
+              collapsible: true,
+              link: {
+                type: 'doc',
+                id: 'guides/protocols/oauth-oidc/index',
+              },
+              items: [
+                {
+                  type: 'category',
+                  label: 'Grant Types',
+                  collapsed: true,
+                  collapsible: true,
+                  items: [
+                    {
+                      type: 'doc',
+                      id: 'guides/protocols/oauth-oidc/authorization-code',
+                      label: 'Authorization Code',
+                    },
+                    {
+                      type: 'doc',
+                      id: 'guides/protocols/oauth-oidc/client-credentials',
+                      label: 'Client Credentials',
+                    },
+                    {type: 'doc', id: 'guides/protocols/oauth-oidc/refresh-token', label: 'Refresh Token'},
+                    // Unique `key` avoids a translation-key collision with the "Token Exchange"
+                    // item under Identity Providers (i18n key is derived from the label).
+                    {
+                      type: 'doc',
+                      id: 'guides/protocols/oauth-oidc/token-exchange',
+                      label: 'Token Exchange',
+                      key: 'oauth-token-exchange',
+                    },
+                    {
+                      type: 'doc',
+                      id: 'guides/protocols/oauth-oidc/backchannel-authentication',
+                      label: 'Backchannel Authentication (CIBA)',
+                    },
+                  ],
+                },
+                {
+                  type: 'category',
+                  label: 'Client Authentication',
+                  collapsed: true,
+                  collapsible: true,
+                  items: [
+                    {
+                      type: 'doc',
+                      id: 'guides/protocols/oauth-oidc/client-authentication-methods',
+                      label: 'Client Authentication Methods',
+                    },
+                  ],
+                },
+                {
+                  type: 'category',
+                  label: 'Security Extensions',
+                  collapsed: true,
+                  collapsible: true,
+                  items: [
+                    {type: 'doc', id: 'guides/protocols/oauth-oidc/pkce', label: 'PKCE'},
+                    {type: 'doc', id: 'guides/protocols/oauth-oidc/par', label: 'Pushed Authorization Requests'},
+                    {
+                      type: 'doc',
+                      id: 'guides/protocols/oauth-oidc/dpop',
+                      label: 'DPoP — Sender-Constrained Tokens',
+                    },
+                    {
+                      type: 'doc',
+                      id: 'guides/protocols/oauth-oidc/issuer-identification',
+                      label: 'Issuer Identification',
+                    },
+                    {
+                      type: 'doc',
+                      id: 'guides/protocols/oauth-oidc/resource-indicators',
+                      label: 'Resource Indicators',
+                    },
+                  ],
+                },
+                {
+                  type: 'category',
+                  label: 'Token Operations',
+                  collapsed: true,
+                  collapsible: true,
+                  items: [
+                    {
+                      type: 'doc',
+                      id: 'guides/protocols/oauth-oidc/token-introspection',
+                      label: 'Token Introspection',
+                    },
+                  ],
+                },
+                {
+                  type: 'category',
+                  label: 'Discovery & Registration',
+                  collapsed: true,
+                  collapsible: true,
+                  items: [
+                    {type: 'doc', id: 'guides/protocols/oauth-oidc/server-metadata', label: 'Server Metadata'},
+                    {type: 'doc', id: 'guides/protocols/oauth-oidc/jwks', label: 'JWKS'},
+                    {
+                      type: 'doc',
+                      id: 'guides/protocols/oauth-oidc/dynamic-client-registration',
+                      label: 'Dynamic Client Registration',
+                    },
+                  ],
+                },
+                {
+                  type: 'category',
+                  label: 'OIDC',
+                  collapsed: true,
+                  collapsible: true,
+                  items: [
+                    {type: 'doc', id: 'guides/protocols/oauth-oidc/openid-connect', label: 'OpenID Connect'},
+                    {type: 'doc', id: 'guides/protocols/oauth-oidc/userinfo', label: 'UserInfo'},
+                    {type: 'doc', id: 'guides/protocols/oauth-oidc/claims-and-scopes', label: 'Claims & Scopes'},
+                    {type: 'doc', id: 'guides/protocols/oauth-oidc/token-formats', label: 'Token Formats'},
+                  ],
+                },
+              ],
+            },
+            {
+              type: 'category',
+              label: 'Verifiable Credentials',
+              collapsed: true,
+              collapsible: true,
+              link: {
+                type: 'doc',
+                id: 'guides/protocols/openid4vc/index',
+              },
+              items: [
+                {
+                  type: 'doc',
+                  id: 'guides/protocols/openid4vc/openid4vci',
+                  label: 'OpenID for Verifiable Credential Issuance',
+                },
+                {
+                  type: 'doc',
+                  id: 'guides/protocols/openid4vc/openid4vp',
+                  label: 'OpenID for Verifiable Presentations',
+                },
+              ],
+            },
+            {
+              type: 'category',
+              label: 'AuthZEN',
+              collapsed: true,
+              collapsible: true,
+              link: {
+                type: 'doc',
+                id: 'guides/protocols/authzen/index',
+              },
+              items: [
+                {
+                  type: 'doc',
+                  id: 'guides/protocols/authzen/pdp',
+                  label: 'Policy Decision Point',
                 },
               ],
             },
@@ -630,81 +870,141 @@ const sidebars: SidebarsConfig = {
           collapsed: true,
           items: [
             {
-              type: 'doc',
-              id: 'guides/key-concepts/authentication/passwordless/passkeys',
-              label: 'Passkeys',
+              type: 'category',
+              label: 'Passwordless',
+              collapsible: true,
+              collapsed: true,
+              items: [
+                {
+                  type: 'doc',
+                  id: 'key-concepts/authentication/passwordless/passkeys',
+                  label: 'Passkeys',
+                },
+                {
+                  type: 'doc',
+                  id: 'key-concepts/authentication/passwordless/magiclink',
+                  label: 'Magic Link',
+                },
+              ],
             },
             {
               type: 'doc',
-              id: 'guides/key-concepts/authentication/integration-models',
+              id: 'key-concepts/authentication/integration-models',
               label: 'Integration Models',
+            },
+            {
+              type: 'doc',
+              id: 'key-concepts/authentication/sessions',
+              label: 'Sessions and Single Sign-On',
             },
           ],
         },
         {
           type: 'doc',
-          id: 'guides/key-concepts/authorization',
+          id: 'key-concepts/authorization',
           label: 'Authorization',
         },
         {
           type: 'doc',
-          id: 'guides/key-concepts/tokens',
+          id: 'key-concepts/tokens',
           label: 'Tokens',
-        },
-      ],
-    },
-
-    // Deployment Patterns Section
-    {
-      type: 'html',
-      value:
-        '<div class="sidebar-section-label"><svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="20" height="8" x="2" y="2" rx="2" ry="2"/><rect width="20" height="8" x="2" y="14" rx="2" ry="2"/><line x1="6" x2="6.01" y1="6" y2="6"/><line x1="6" x2="6.01" y1="18" y2="18"/></svg><span>Deployment Patterns</span></div>',
-      className: 'sidebar-html-section-header sidebar-persona-iam',
-    },
-    {
-      type: 'category',
-      label: 'Deployment Patterns',
-      collapsed: false,
-      collapsible: false,
-      className: 'sidebar-section sidebar-persona-iam',
-      items: [
-        {
-          type: 'doc',
-          id: 'guides/deployment-patterns/index',
-          label: 'Choose Your Deployment',
         },
         {
           type: 'category',
-          label: 'Deployment Paths',
+          label: 'Import and Export',
           collapsible: true,
           collapsed: true,
           items: [
             {
               type: 'doc',
-              id: 'guides/deployment-patterns/docker',
-              label: 'Docker',
+              id: 'guides/declarative-configurations/what-is-import-and-export',
+              label: 'What Is Import and Export?',
             },
             {
               type: 'doc',
-              id: 'guides/deployment-patterns/kubernetes',
+              id: 'guides/declarative-configurations/import-resources',
+              label: 'Import Resources',
+            },
+            {
+              type: 'doc',
+              id: 'guides/resource-export',
+              label: 'Export Resources',
+            },
+            {
+              type: 'doc',
+              id: 'guides/declarative-configurations/templates',
+              label: 'Template Resources',
+            },
+          ],
+        },
+      ],
+    },
+
+    // Deployment Section
+    {
+      type: 'html',
+      value:
+        '<div class="sidebar-section-label"><svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="20" height="8" x="2" y="2" rx="2" ry="2"/><rect width="20" height="8" x="2" y="14" rx="2" ry="2"/><line x1="6" x2="6.01" y1="6" y2="6"/><line x1="6" x2="6.01" y1="18" y2="18"/></svg><span>Deployment</span></div>',
+      className: 'sidebar-html-section-header sidebar-persona-iam',
+    },
+    {
+      type: 'category',
+      label: 'Deployment',
+      collapsed: false,
+      collapsible: false,
+      className: 'sidebar-section sidebar-persona-iam',
+      items: [
+        {
+          type: 'category',
+          label: 'Deployment Paths',
+          link: {type: 'doc', id: 'deployment/deployment-paths/index'},
+          collapsible: true,
+          collapsed: true,
+          items: [
+            {
+              type: 'category',
+              label: 'Docker',
+              collapsible: true,
+              collapsed: false,
+              items: [
+                {
+                  type: 'doc',
+                  id: 'deployment/deployment-paths/docker',
+                  label: 'Deploy with Docker',
+                },
+                {
+                  type: 'doc',
+                  id: 'deployment/deployment-paths/docker-production',
+                  label: 'Production Recommendations',
+                },
+              ],
+            },
+            {
+              type: 'doc',
+              id: 'deployment/deployment-paths/kubernetes',
               label: 'Kubernetes',
             },
             {
               type: 'doc',
-              id: 'guides/deployment-patterns/openchoreo',
+              id: 'deployment/deployment-paths/openchoreo',
               label: 'OpenChoreo',
             },
           ],
         },
         {
           type: 'doc',
-          id: 'guides/getting-started/configuration',
+          id: 'deployment/configuration',
           label: 'Configure your Instance',
         },
         {
           type: 'doc',
-          id: 'guides/deployment-patterns/production-guidelines',
+          id: 'deployment/production-guidelines',
           label: 'Production Guidelines',
+        },
+        {
+          type: 'doc',
+          id: 'deployment/observability',
+          label: 'Observability',
         },
       ],
     },
@@ -719,6 +1019,9 @@ const sidebars: SidebarsConfig = {
   browserSdkSidebar,
   nextjsSdkSidebar,
   javascriptSdkSidebar,
+  iosSdkSidebar,
+  androidSdkSidebar,
+  flutterSdkSidebar,
   communitySidebar: [
     // Community Section
     {
@@ -733,7 +1036,11 @@ const sidebars: SidebarsConfig = {
       className: 'sidebar-section',
       collapsed: false,
       collapsible: false,
-      items: [{type: 'doc', id: 'community/overview', label: 'Join the Community', key: 'community-overview'}],
+      items: [
+        {type: 'doc', id: 'community/overview', label: 'Join the Community', key: 'community-overview'},
+        {type: 'doc', id: 'community/contributors', label: 'Contributors'},
+        {type: 'doc', id: 'community/code-of-conduct', label: 'Code of Conduct'},
+      ],
     },
 
     // Contribute Section
@@ -750,95 +1057,150 @@ const sidebars: SidebarsConfig = {
       collapsed: false,
       collapsible: false,
       items: [
-        {type: 'doc', id: 'community/contributing/overview', label: 'Contribute to ThunderID'},
-        {type: 'doc', id: 'community/contributing/sharing-ideas', label: 'Share Ideas'},
-        {type: 'doc', id: 'community/contributing/proposing-features', label: 'Propose Features'},
-        {type: 'doc', id: 'community/contributing/contributing-code/prerequisites', label: 'Prerequisites'},
-        {type: 'doc', id: 'community/contributing/contributing-code/configure-and-run', label: 'Configure and Run'},
+        {type: 'doc', id: 'community/contributing/report-a-bug', label: 'Report a Bug'},
+        {type: 'doc', id: 'community/contributing/contribute-ideas', label: 'Contribute Ideas'},
+        {
+          type: 'category',
+          label: 'Contribute Code',
+          collapsed: false,
+          collapsible: true,
+          items: [
+            {type: 'doc', id: 'community/contributing/contributing-code/prerequisites', label: 'Prerequisites'},
+            {type: 'doc', id: 'community/contributing/contributing-code/configure-and-run', label: 'Configure and Run'},
+            {
+              type: 'category',
+              label: 'Optional Setup',
+              key: 'code-optional-setup',
+              collapsed: true,
+              collapsible: true,
+              items: [
+                {type: 'doc', id: 'community/contributing/contributing-code/optional-setup/build-the-project', label: 'Build the Project'},
+                {type: 'doc', id: 'community/contributing/contributing-code/optional-setup/useful-commands', label: 'Useful Commands'},
+                {type: 'doc', id: 'community/contributing/contributing-code/optional-setup/setup-and-data-seeding', label: 'Setup and Data Seeding'},
+                {type: 'doc', id: 'community/contributing/contributing-code/optional-setup/advanced-setup', label: 'Advanced Setup (Manual Mode)'},
+              ],
+            },
+            {type: 'doc', id: 'community/contributing/contributing-code/debugging', label: 'Debugging'},
+            {
+              type: 'category',
+              label: 'Backend Development',
+              collapsed: true,
+              collapsible: true,
+              items: [
+                {
+                  type: 'doc',
+                  id: 'community/contributing/contributing-code/backend-development/overview',
+                  label: 'Overview',
+                  key: 'backend-overview',
+                },
+                {
+                  type: 'doc',
+                  id: 'community/contributing/contributing-code/backend-development/observability',
+                  label: 'Observability',
+                },
+              ],
+            },
+            {
+              type: 'category',
+              label: 'Frontend Development',
+              collapsed: true,
+              collapsible: true,
+              items: [
+                {
+                  type: 'doc',
+                  id: 'community/contributing/contributing-code/frontend-development/overview',
+                  label: 'Overview',
+                  key: 'frontend-overview',
+                },
+                {
+                  type: 'doc',
+                  id: 'community/contributing/contributing-code/frontend-development/conventions',
+                  label: 'Conventions',
+                  key: 'frontend-conventions',
+                },
+                {
+                  type: 'doc',
+                  id: 'community/contributing/contributing-code/frontend-development/best-practices',
+                  label: 'Best Practices',
+                  key: 'frontend-best-practices',
+                },
+              ],
+            },
+            {
+              type: 'category',
+              label: 'SDK Development',
+              collapsed: true,
+              collapsible: true,
+              items: [
+                {
+                  type: 'doc',
+                  id: 'community/contributing/contributing-code/sdk-development/overview',
+                  label: 'Overview',
+                  key: 'sdk-overview',
+                },
+              ],
+            },
+            {
+              type: 'category',
+              label: 'Documentation Development',
+              collapsed: true,
+              collapsible: true,
+              items: [
+                {type: 'doc', id: 'community/contributing/documentation-guide/overview', label: 'Overview'},
+                {
+                  type: 'doc',
+                  id: 'community/contributing/documentation-guide/configure-and-run',
+                  label: 'Configure & Run',
+                },
+                {
+                  type: 'category',
+                  label: 'Optional Setup',
+                  key: 'docs-optional-setup',
+                  collapsed: true,
+                  collapsible: true,
+                  items: [
+                    {
+                      type: 'doc',
+                      id: 'community/contributing/documentation-guide/build-the-documentation',
+                      label: 'Build the Documentation',
+                    },
+                    {
+                      type: 'doc',
+                      id: 'community/contributing/documentation-guide/useful-commands',
+                      label: 'Useful Commands',
+                      key: 'docs-useful-commands',
+                    },
+                  ],
+                },
+                {
+                  type: 'doc',
+                  id: 'community/contributing/documentation-guide/style-guide',
+                  label: 'Style Guide',
+                },
+                {
+                  type: 'doc',
+                  id: 'community/contributing/documentation-guide/writing-guide',
+                  label: 'Writing Guide',
+                },
+                {
+                  type: 'doc',
+                  id: 'community/contributing/documentation-guide/advanced-topics',
+                  label: 'Advanced Topics',
+                },
+              ],
+            },
+            {
+              type: 'doc',
+              id: 'community/contributing/contributing-code/pull-request-workflow',
+              label: 'Pull Request Workflow',
+              key: 'code-development-pipeline',
+            },
+          ],
+        },
         {
           type: 'doc',
-          id: 'community/contributing/contributing-code/development-pipeline',
-          label: 'Development Pipeline',
-          key: 'code-development-pipeline',
-        },
-        {type: 'doc', id: 'community/contributing/contributing-code/debugging', label: 'Debugging'},
-        {
-          type: 'category',
-          label: 'Backend Development',
-          collapsed: true,
-          collapsible: true,
-          items: [
-            {
-              type: 'doc',
-              id: 'community/contributing/contributing-code/backend-development/overview',
-              label: 'Backend Overview',
-              key: 'backend-overview',
-            },
-            {
-              type: 'doc',
-              id: 'community/contributing/contributing-code/backend-development/observability',
-              label: 'Observability',
-            },
-          ],
-        },
-        {
-          type: 'category',
-          label: 'Frontend Development',
-          collapsed: true,
-          collapsible: true,
-          items: [
-            {
-              type: 'doc',
-              id: 'community/contributing/contributing-code/frontend-development/overview',
-              label: 'Frontend Overview',
-              key: 'frontend-overview',
-            },
-            {
-              type: 'doc',
-              id: 'community/contributing/contributing-code/frontend-development/scaffolding-tool',
-              label: 'Scaffolding Tool',
-            },
-          ],
-        },
-        {
-          type: 'category',
-          label: 'Documentation Development',
-          collapsed: true,
-          collapsible: true,
-          items: [
-            {
-              type: 'doc',
-              id: 'community/contributing/contributing-code/documentation-development/overview',
-              label: 'Documentation Overview',
-              key: 'docs-overview',
-            },
-            {
-              type: 'doc',
-              id: 'community/contributing/contributing-code/documentation-development/development-pipeline',
-              label: 'Documentation Development Pipeline',
-              key: 'docs-development-pipeline',
-            },
-            {
-              type: 'doc',
-              id: 'community/contributing/contributing-code/documentation-development/writing-documentation',
-              label: 'Writing Documentation',
-            },
-            {
-              type: 'doc',
-              id: 'community/contributing/contributing-code/documentation-development/documentation-style-guide',
-              label: 'Style Guide',
-            },
-            {
-              type: 'doc',
-              id: 'community/contributing/contributing-code/documentation-development/advanced-topics',
-              label: 'Advanced Topics',
-            },
-            {
-              type: 'doc',
-              id: 'community/contributing/contributing-code/documentation-development/glossary',
-              label: 'Glossary',
-            },
-          ],
+          id: 'community/contributing/documentation-guide/glossary',
+          label: 'Glossary',
         },
       ],
     },

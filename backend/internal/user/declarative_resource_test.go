@@ -32,6 +32,7 @@ import (
 	serverconst "github.com/thunder-id/thunderid/internal/system/constants"
 	"github.com/thunder-id/thunderid/internal/system/cryptolib"
 	"github.com/thunder-id/thunderid/internal/system/log"
+	"github.com/thunder-id/thunderid/pkg/thunderidengine/providers"
 	"github.com/thunder-id/thunderid/tests/mocks/entitymock"
 )
 
@@ -150,7 +151,7 @@ func (suite *DeclarativeResourceTestSuite) TestParseToUser_HashesCredentials() {
 	yamlData := []byte("" +
 		"id: user-1\n" +
 		"type: person\n" +
-		"ou_id: ou-1\n" +
+		"ouId: ou-1\n" +
 		"attributes:\n" +
 		"  username: alice\n" +
 		"  email: alice@example.com\n" +
@@ -169,7 +170,7 @@ func (suite *DeclarativeResourceTestSuite) TestParseToUserWrapper() {
 	yamlData := []byte("" +
 		"id: user-1\n" +
 		"type: person\n" +
-		"ou_id: ou-1\n" +
+		"ouId: ou-1\n" +
 		"attributes:\n" +
 		"  username: alice\n" +
 		"  email: alice@example.com\n")
@@ -227,7 +228,7 @@ func (suite *DeclarativeResourceTestSuite) TestMakeUserParser_ParsesYAMLToEntity
 	userYAML := []byte("" +
 		"id: user-1\n" +
 		"type: person\n" +
-		"ou_id: ou-1\n" +
+		"ouId: ou-1\n" +
 		"attributes:\n" +
 		"  username: alice\n" +
 		"  email: alice@example.com\n" +
@@ -242,7 +243,7 @@ func (suite *DeclarativeResourceTestSuite) TestMakeUserParser_ParsesYAMLToEntity
 	suite.Equal("user-1", e.ID)
 	suite.Equal("person", e.Type)
 	suite.Equal("ou-1", e.OUID)
-	suite.Equal(entitypkg.EntityCategoryUser, e.Category)
+	suite.Equal(providers.EntityCategoryUser, e.Category)
 
 	// Verify attributes preserved
 	var attrs map[string]interface{}
@@ -273,7 +274,7 @@ func (suite *DeclarativeResourceTestSuite) TestValidateResource_MissingUsername(
 		Attributes: map[string]interface{}{},
 	}
 
-	_, err := exporter.ValidateResource(resource, "user-1", log.GetLogger())
+	_, err := exporter.ValidateResource(context.Background(), resource, "user-1", log.GetLogger())
 	suite.NotNil(err)
 }
 
@@ -281,7 +282,7 @@ func (suite *DeclarativeResourceTestSuite) TestMakeUserValidator_Success() {
 	attrs, err := json.Marshal(map[string]interface{}{"username": "alice"})
 	suite.Require().NoError(err)
 
-	e := &entitypkg.Entity{
+	e := &providers.Entity{
 		ID:         "user-1",
 		Type:       "person",
 		OUID:       "ou-1",
@@ -290,7 +291,7 @@ func (suite *DeclarativeResourceTestSuite) TestMakeUserValidator_Success() {
 
 	svcMock := entitymock.NewEntityServiceInterfaceMock(suite.T())
 	svcMock.On("GetEntity", context.Background(), "user-1").
-		Return((*entitypkg.Entity)(nil), entitypkg.ErrEntityNotFound)
+		Return((*providers.Entity)(nil), entitypkg.ErrEntityNotFound)
 
 	validator := makeUserValidator()
 	err = validator(e, svcMock)
@@ -301,7 +302,7 @@ func (suite *DeclarativeResourceTestSuite) TestMakeUserValidator_DuplicateEntity
 	attrs, err := json.Marshal(map[string]interface{}{"username": "alice"})
 	suite.Require().NoError(err)
 
-	e := &entitypkg.Entity{
+	e := &providers.Entity{
 		ID:         "user-1",
 		Type:       "person",
 		OUID:       "ou-1",
@@ -310,7 +311,7 @@ func (suite *DeclarativeResourceTestSuite) TestMakeUserValidator_DuplicateEntity
 
 	svcMock := entitymock.NewEntityServiceInterfaceMock(suite.T())
 	svcMock.On("GetEntity", context.Background(), "user-1").
-		Return(&entitypkg.Entity{Category: entitypkg.EntityCategoryUser, ID: "user-1"}, nil)
+		Return(&providers.Entity{Category: providers.EntityCategoryUser, ID: "user-1"}, nil)
 
 	validator := makeUserValidator()
 	err = validator(e, svcMock)
@@ -322,7 +323,7 @@ func (suite *DeclarativeResourceTestSuite) TestMakeUserValidator_DBError() {
 	attrs, err := json.Marshal(map[string]interface{}{"username": "alice"})
 	suite.Require().NoError(err)
 
-	e := &entitypkg.Entity{
+	e := &providers.Entity{
 		ID:         "user-1",
 		Type:       "person",
 		OUID:       "ou-1",
@@ -331,7 +332,7 @@ func (suite *DeclarativeResourceTestSuite) TestMakeUserValidator_DBError() {
 
 	svcMock := entitymock.NewEntityServiceInterfaceMock(suite.T())
 	svcMock.On("GetEntity", context.Background(), "user-1").
-		Return((*entitypkg.Entity)(nil), errors.New("db error"))
+		Return((*providers.Entity)(nil), errors.New("db error"))
 
 	validator := makeUserValidator()
 	err = validator(e, svcMock)

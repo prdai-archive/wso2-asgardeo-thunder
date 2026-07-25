@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2025, WSO2 LLC. (https://www.wso2.com).
+ * Copyright (c) 2025-2026, WSO2 LLC. (https://www.wso2.com).
  *
  * WSO2 LLC. licenses this file to you under the Apache License,
  * Version 2.0 (the "License"); you may not use this file except
@@ -20,15 +20,15 @@ package executor
 
 // Executor name constants
 const (
-	ExecutorNameBasicAuth     = "BasicAuthExecutor"
-	ExecutorNameSMSAuth       = "SMSOTPAuthExecutor"
-	ExecutorNameMagicLinkAuth = "MagicLinkAuthExecutor"
+	ExecutorNameCredentialsAuth = "CredentialsAuthExecutor"
+	ExecutorNameMagicLink       = "MagicLinkExecutor"
 	// nolint:gosec // G101: This is an executor name, not a credential
 	ExecutorNamePasskeyAuth                  = "PasskeyAuthExecutor"
 	ExecutorNameOAuth                        = "OAuthExecutor"
 	ExecutorNameOIDCAuth                     = "OIDCAuthExecutor"
 	ExecutorNameGitHubAuth                   = "GithubOAuthExecutor"
 	ExecutorNameGoogleAuth                   = "GoogleOIDCAuthExecutor"
+	ExecutorNameOpenID4VPVerify              = "OpenID4VPVerifyExecutor"
 	ExecutorNameIdentifying                  = "IdentifyingExecutor"
 	ExecutorNameAuthAssert                   = "AuthAssertExecutor"
 	ExecutorNameProvisioning                 = "ProvisioningExecutor"
@@ -46,15 +46,20 @@ const (
 	ExecutorNameAttributeUniquenessValidator = "AttributeUniquenessValidator"
 	ExecutorNameSMSExecutor                  = "SMSExecutor"
 	ExecutorNameFederatedAuthResolver        = "FederatedAuthResolverExecutor"
+	ExecutorNameSSOCheck                     = "SSOCheckExecutor"
+	ExecutorNameSession                      = "SessionExecutor"
+	ExecutorNameSessionSignOut               = "SessionSignOutExecutor"
+	ExecutorNameOTPExecutor                  = "OTPExecutor"
 )
 
 // Executor mode constants
 const (
-	ExecutorModeSend     = "send"
-	ExecutorModeGenerate = "generate"
-	ExecutorModeVerify   = "verify"
-	ExecutorModeIdentify = "identify"
-	ExecutorModeResolve  = "resolve"
+	ExecutorModeSend       = "send"
+	ExecutorModeGenerate   = "generate"
+	ExecutorModeVerify     = "verify"
+	ExecutorModeIdentify   = "identify"
+	ExecutorModeResolve    = "resolve"
+	ExecutorModeCheckState = "check_state"
 )
 
 // User attribute and input constants
@@ -67,7 +72,6 @@ const (
 	userAttributeSub      = "sub"
 
 	userInputCode  = "code"
-	userInputNonce = "nonce"
 	userInputState = "state"
 
 	userInputOuName           = "ouName"
@@ -77,6 +81,7 @@ const (
 	userInputOTP              = "otp"
 	userInputMagicLinkToken   = "token"
 	userInputConsentDecisions = "consent_decisions"
+	userInputLoginHint        = "login_hint"
 
 	ouIDKey        = "ouId"
 	defaultOUIDKey = "defaultOUID"
@@ -84,6 +89,10 @@ const (
 
 	dataValueTrue  = "true"
 	dataValueFalse = "false"
+
+	entityStateNotExists = "not_exists"
+	entityStateExists    = "exists"
+	entityStateAmbiguous = "ambiguous"
 )
 
 // Executor property keys
@@ -102,18 +111,17 @@ const (
 	propertyKeyDynamicInputsIncludeOptionalCredentials = "includeOptionalCredentials"
 	propertyKeyMaxDynamicInputsPerPrompt               = "maxPerPrompt"
 	propertyKeyInviteBaseURL                           = "inviteBaseURL"
+	propertyKeyPresentationDefinitionID                = "presentation_definition_id"
+	propertyKeyCallbackType                            = "callbackType"
+	propertyKeyLoginHintAttribute                      = "loginHintAttribute"
+	propertyKeyMaxOTPAttempts                          = "maxAttempts"
+	// propertyKeyPromptOnSignOut, when set to boolean true on a session sign-out node, makes the executor
+	// confirm the logout with the End-User (via the node's onIncomplete prompt) whenever the RP-initiated
+	// logout was not accompanied by a valid id_token_hint (RuntimeKeyLogoutPromptRequired).
+	propertyKeyPromptOnSignOut = "promptOnSignOut"
 )
 
 // nonSearchableInputs contains the list of user inputs/ attributes that are non-searchable.
-var nonSearchableInputs = []string{"password", "code", "nonce", "otp", "token", "userInputMagicLinkToken"}
-
-// Failure reason constants
-const (
-	failureReasonUserNotAuthenticated = "User is not authenticated"
-	failureReasonUserNotFound         = "User not found"
-	failureReasonInvalidCredentials   = "Invalid credentials provided" // #nosec G101
-	failureReasonFailedToIdentifyUser = "Failed to identify user"
-	failureReasonAmbiguousUser        = "User identity is ambiguous"
-	failureReasonInvalidOTP           = "invalid OTP provided"
-	failureReasonInvalidMagicLink     = "Invalid magic link token"
-)
+var nonSearchableInputs = []string{
+	"password", "code", "otp", "token", "userInputMagicLinkToken", "otpSessionToken",
+}

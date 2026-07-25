@@ -22,12 +22,13 @@ import (
 	"context"
 	"testing"
 
+	tidcommon "github.com/thunder-id/thunderid/pkg/thunderidengine/common"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/suite"
 
 	serverconst "github.com/thunder-id/thunderid/internal/system/constants"
 	declarativeresource "github.com/thunder-id/thunderid/internal/system/declarative_resource"
-	"github.com/thunder-id/thunderid/internal/system/error/serviceerror"
 	"github.com/thunder-id/thunderid/internal/system/log"
 )
 
@@ -160,7 +161,7 @@ func (suite *RoleExporterTestSuite) TestGetAllResourceIDs_ExcludesDeclarativeRol
 
 // Test GetAllResourceIDs - error on GetRoleList
 func (suite *RoleExporterTestSuite) TestGetAllResourceIDs_ErrorOnGetRoleList() {
-	serviceErr := &serviceerror.ServiceError{Code: "500"}
+	serviceErr := &tidcommon.ServiceError{Code: "500"}
 	suite.mockService.On("GetRoleList", suite.ctx, serverconst.MaxPageSize, 0).Return(nil, serviceErr)
 
 	ids, err := suite.exporter.GetAllResourceIDs(suite.ctx)
@@ -178,7 +179,7 @@ func (suite *RoleExporterTestSuite) TestGetAllResourceIDs_ErrorOnIsRoleDeclarati
 		},
 		TotalResults: 1,
 	}
-	serviceErr := &serviceerror.ServiceError{Code: "500"}
+	serviceErr := &tidcommon.ServiceError{Code: "500"}
 
 	suite.mockService.On("GetRoleList", suite.ctx, serverconst.MaxPageSize, 0).Return(roleList, nil)
 	suite.mockService.On("IsRoleDeclarative", suite.ctx, "role1").Return(false, serviceErr)
@@ -235,7 +236,7 @@ func (suite *RoleExporterTestSuite) TestGetResourceByID_Success() {
 
 // Test GetResourceByID - error on GetRoleWithPermissions
 func (suite *RoleExporterTestSuite) TestGetResourceByID_ErrorOnGetRoleWithPermissions() {
-	serviceErr := &serviceerror.ServiceError{Code: "404"}
+	serviceErr := &tidcommon.ServiceError{Code: "404"}
 	suite.mockService.On("GetRoleWithPermissions", suite.ctx, "nonexistent").Return(nil, serviceErr)
 
 	resource, name, err := suite.exporter.GetResourceByID(suite.ctx, "nonexistent")
@@ -255,7 +256,7 @@ func (suite *RoleExporterTestSuite) TestValidateResource_Success() {
 	}
 	logger := log.GetLogger()
 
-	name, exportErr := suite.exporter.ValidateResource(resource, "role1", logger)
+	name, exportErr := suite.exporter.ValidateResource(context.Background(), resource, "role1", logger)
 
 	suite.Nil(exportErr)
 	assert.Equal(suite.T(), "Admin", name)
@@ -265,7 +266,7 @@ func (suite *RoleExporterTestSuite) TestValidateResource_Success() {
 func (suite *RoleExporterTestSuite) TestValidateResource_InvalidType() {
 	logger := log.GetLogger()
 
-	name, exportErr := suite.exporter.ValidateResource("not a role", "role1", logger)
+	name, exportErr := suite.exporter.ValidateResource(context.Background(), "not a role", "role1", logger)
 
 	suite.NotNil(exportErr)
 	assert.Empty(suite.T(), name)
@@ -277,9 +278,9 @@ func (suite *RoleExporterTestSuite) TestParseToRole_ValidYAML() {
 id: role1
 name: Admin
 description: Admin role
-ou_id: ou1
+ouId: ou1
 permissions:
-  - resource_server_id: rs1
+  - resourceServerId: rs1
     permissions:
       - read
       - write
@@ -317,7 +318,7 @@ func (suite *RoleExporterTestSuite) TestParseToRole_OptionalFieldsOmitted() {
 	yamlData := []byte(`
 id: role1
 name: Admin
-ou_id: ou1
+ouId: ou1
 `)
 
 	role, err := parseToRole(yamlData)
@@ -385,7 +386,7 @@ func (suite *RoleExporterTestSuite) TestValidateRoleWrapper_MissingOUID() {
 	err := validateRoleWrapper(role, nil, nil, nil)
 
 	assert.Error(suite.T(), err)
-	assert.Contains(suite.T(), err.Error(), "ou_id or ou_handle is required for role 'Admin'")
+	assert.Contains(suite.T(), err.Error(), "ouId or ouHandle is required for role 'Admin'")
 }
 
 // Test validateRoleWrapper - invalid assignment type
@@ -459,7 +460,7 @@ func (suite *RoleExporterTestSuite) TestParseToRoleWrapper() {
 	yamlData := []byte(`
 id: role1
 name: Admin
-ou_id: ou1
+ouId: ou1
 `)
 
 	result, err := parseToRoleWrapper(yamlData)

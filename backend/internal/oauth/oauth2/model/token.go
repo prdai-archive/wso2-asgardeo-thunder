@@ -38,6 +38,8 @@ type TokenRequest struct {
 	ActorTokenType     string   `json:"actor_token_type,omitempty"`
 	RequestedTokenType string   `json:"requested_token_type,omitempty"`
 	Audiences          []string `json:"audiences,omitempty"`
+	AuthReqID          string   `json:"auth_req_id,omitempty"`
+	Assertion          string   `json:"assertion,omitempty"`
 }
 
 // TokenResponse represents the OAuth2 token response.
@@ -66,6 +68,9 @@ type TokenDTO struct {
 	OriginalAudiences []string
 	ClaimsRequest     *ClaimsRequest
 	ClaimsLocales     string
+	// TokenFamilyID is the token family id (tfid) stamped on the token, carried here so the refresh
+	// token issued alongside an access token can be stamped with the same family id.
+	TokenFamilyID string
 }
 
 // TokenResponseDTO represents the data transfer object for token responses.

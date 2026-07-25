@@ -25,9 +25,9 @@ import (
 	"strings"
 	"time"
 
+	tidcommon "github.com/thunder-id/thunderid/pkg/thunderidengine/common"
+
 	declarativeresource "github.com/thunder-id/thunderid/internal/system/declarative_resource"
-	"github.com/thunder-id/thunderid/internal/system/error/serviceerror"
-	"github.com/thunder-id/thunderid/internal/system/i18n/core"
 	"github.com/thunder-id/thunderid/internal/system/log"
 )
 
@@ -42,38 +42,38 @@ const (
 	formatYAML = "yaml"
 	formatJSON = "json"
 
-	resourceTypeApplication        = "application"
-	resourceTypeIdentityProvider   = "identity_provider"
-	resourceTypeNotificationSender = "notification_sender"
-	resourceTypeUserType           = "user_type"
-	resourceTypeOU                 = "organization_unit"
-	resourceTypeUser               = "user"
-	resourceTypeGroup              = "group"
-	resourceTypeResourceServer     = "resource_server"
-	resourceTypeRole               = "role"
-	resourceTypeFlow               = "flow"
-	resourceTypeTranslation        = "translation"
-	resourceTypeLayout             = "layout"
-	resourceTypeTheme              = "theme"
-	resourceTypeAgent              = "agent"
+	resourceTypeApplication    = "application"
+	resourceTypeConnection     = "connection"
+	resourceTypeUserType       = "user_type"
+	resourceTypeOU             = "organization_unit"
+	resourceTypeUser           = "user"
+	resourceTypeGroup          = "group"
+	resourceTypeResourceServer = "resource_server"
+	resourceTypeRole           = "role"
+	resourceTypeFlow           = "flow"
+	resourceTypeTranslation    = "translation"
+	resourceTypeLayout         = "layout"
+	resourceTypeTheme          = "theme"
+	resourceTypeAgent          = "agent"
+	resourceTypeServerConfig   = "server_config"
 )
 
 // parameterizerInterface defines the interface for template parameterization.
 type parameterizerInterface interface {
-	ToParameterizedYAML(obj interface{},
+	ToParameterizedYAML(ctx context.Context, obj interface{},
 		resourceType string, resourceName string,
 		rules *declarativeresource.ResourceRules) (string, map[string]string, error)
 }
 
 // ExportServiceInterface defines the interface for the export service.
 type ExportServiceInterface interface {
-	ExportResources(ctx context.Context, request *ExportRequest) (*ExportResponse, *serviceerror.ServiceError)
+	ExportResources(ctx context.Context, request *ExportRequest) (*ExportResponse, *tidcommon.ServiceError)
 }
 
 // exportService implements the ExportServiceInterface.
 type exportService struct {
 	parameterizer parameterizerInterface
-	registry      *ResourceExporterRegistry
+	registry      *resourceExporterRegistry
 }
 
 // newExportService creates a new instance of exportService.
@@ -95,9 +95,9 @@ func newExportService(
 // ExportResources exports the specified resources as YAML files.
 func (es *exportService) ExportResources(
 	ctx context.Context, request *ExportRequest,
-) (*ExportResponse, *serviceerror.ServiceError) {
+) (*ExportResponse, *tidcommon.ServiceError) {
 	if request == nil {
-		return nil, serviceerror.CustomServiceError(ErrorInvalidRequest, core.I18nMessage{
+		return nil, tidcommon.CustomServiceError(ErrorInvalidRequest, tidcommon.I18nMessage{
 			Key:          "error.exportservice.nil_request_description",
 			DefaultValue: "Export request cannot be nil",
 		})
@@ -121,20 +121,20 @@ func (es *exportService) ExportResources(
 
 	// Map resource types to their IDs from the request
 	resourceMap := map[string][]string{
-		resourceTypeApplication:        request.Applications,
-		resourceTypeIdentityProvider:   request.IdentityProviders,
-		resourceTypeNotificationSender: request.NotificationSenders,
-		resourceTypeUserType:           request.UserTypes,
-		resourceTypeOU:                 request.OrganizationUnits,
-		resourceTypeUser:               request.Users,
-		resourceTypeGroup:              request.Groups,
-		resourceTypeResourceServer:     request.ResourceServers,
-		resourceTypeRole:               request.Roles,
-		resourceTypeFlow:               request.Flows,
-		resourceTypeTranslation:        request.Translations,
-		resourceTypeLayout:             request.Layouts,
-		resourceTypeTheme:              request.Themes,
-		resourceTypeAgent:              request.Agents,
+		resourceTypeApplication:    request.Applications,
+		resourceTypeConnection:     request.Connections,
+		resourceTypeUserType:       request.UserTypes,
+		resourceTypeOU:             request.OrganizationUnits,
+		resourceTypeUser:           request.Users,
+		resourceTypeGroup:          request.Groups,
+		resourceTypeResourceServer: request.ResourceServers,
+		resourceTypeRole:           request.Roles,
+		resourceTypeFlow:           request.Flows,
+		resourceTypeTranslation:    request.Translations,
+		resourceTypeLayout:         request.Layouts,
+		resourceTypeTheme:          request.Themes,
+		resourceTypeAgent:          request.Agents,
+		resourceTypeServerConfig:   request.ServerConfigs,
 	}
 
 	// Export resources using the registry
@@ -152,7 +152,7 @@ func (es *exportService) ExportResources(
 
 		exporter, exists := es.registry.Get(resourceType)
 		if !exists {
-			log.GetLogger().Warn("No exporter registered for resource type",
+			log.GetLogger().Warn(ctx, "No exporter registered for resource type",
 				log.String("resourceType", resourceType))
 			continue
 		}
@@ -167,7 +167,7 @@ func (es *exportService) ExportResources(
 	}
 
 	if len(exportFiles) == 0 {
-		return nil, serviceerror.CustomServiceError(ErrorNoResourcesFound, core.I18nMessage{
+		return nil, tidcommon.CustomServiceError(ErrorNoResourcesFound, tidcommon.I18nMessage{
 			Key:          "error.exportservice.no_valid_resources_for_export_description",
 			DefaultValue: "No valid resources found for export",
 		})
@@ -263,7 +263,7 @@ func (es *exportService) exportResourcesWithExporter(
 		// Export all resources
 		ids, err := exporter.GetAllResourceIDs(ctx)
 		if err != nil {
-			logger.Warn("Failed to get all resources",
+			logger.Warn(ctx, "Failed to get all resources",
 				log.String("resourceType", resourceType), log.Any("error", err))
 			return []ExportFile{}, variableValues, []declarativeresource.ExportError{}
 		}
@@ -276,7 +276,7 @@ func (es *exportService) exportResourcesWithExporter(
 		// Get the resource
 		resource, _, svcErr := exporter.GetResourceByID(ctx, resourceID)
 		if svcErr != nil {
-			logger.Warn("Failed to get resource for export",
+			logger.Warn(ctx, "Failed to get resource for export",
 				log.String("resourceType", resourceType),
 				log.String("resourceID", resourceID),
 				log.String("error", svcErr.Error.DefaultValue))
@@ -290,7 +290,7 @@ func (es *exportService) exportResourcesWithExporter(
 		}
 
 		// Validate resource
-		validatedName, exportErr := exporter.ValidateResource(resource, resourceID, logger)
+		validatedName, exportErr := exporter.ValidateResource(ctx, resource, resourceID, logger)
 		if exportErr != nil {
 			exportErrors = append(exportErrors, *exportErr)
 			continue
@@ -302,14 +302,14 @@ func (es *exportService) exportResourcesWithExporter(
 
 		if options.Format == formatJSON {
 			// Convert to JSON format (could be implemented later)
-			logger.Warn("JSON format not yet implemented, falling back to YAML")
+			logger.Warn(ctx, "JSON format not yet implemented, falling back to YAML")
 			options.Format = formatYAML
 		}
 
-		templateContent, vars, err := es.generateTemplateFromStruct(
+		templateContent, vars, err := es.generateTemplateFromStruct(ctx,
 			resource, exporter.GetParameterizerType(), validatedName, exporter)
 		if err != nil {
-			logger.Warn("Failed to generate template from struct",
+			logger.Warn(ctx, "Failed to generate template from struct",
 				log.String("resourceType", resourceType),
 				log.String("resourceID", resourceID),
 				log.String("error", err.Error()))
@@ -324,7 +324,7 @@ func (es *exportService) exportResourcesWithExporter(
 		for k, v := range vars {
 			variableValues[k] = v
 		}
-		content = addResourceTypeComment(templateContent, resourceType)
+		content = addResourceTypeField(templateContent, resourceType)
 
 		// Determine file name and folder path based on options
 		fileName = es.generateFileName(validatedName, resourceType, resourceID, options)
@@ -344,7 +344,7 @@ func (es *exportService) exportResourcesWithExporter(
 	return exportFiles, variableValues, exportErrors
 }
 
-func (es *exportService) generateTemplateFromStruct(data interface{},
+func (es *exportService) generateTemplateFromStruct(ctx context.Context, data interface{},
 	paramResourceType string, resourceName string,
 	exporter declarativeresource.ResourceExporter) (string, map[string]string, error) {
 	var rules *declarativeresource.ResourceRules
@@ -353,7 +353,7 @@ func (es *exportService) generateTemplateFromStruct(data interface{},
 	} else {
 		rules = exporter.GetResourceRules()
 	}
-	template, vars, err := es.parameterizer.ToParameterizedYAML(
+	template, vars, err := es.parameterizer.ToParameterizedYAML(ctx,
 		data, paramResourceType, resourceName, rules)
 	if err != nil {
 		return "", nil, err
@@ -361,12 +361,12 @@ func (es *exportService) generateTemplateFromStruct(data interface{},
 	return template, vars, nil
 }
 
-func addResourceTypeComment(content, resourceType string) string {
-	commentLine := "# resource_type: " + resourceType
-	if strings.HasPrefix(content, commentLine+"\n") || content == commentLine {
+func addResourceTypeField(content, resourceType string) string {
+	fieldLine := "resource_type: " + resourceType
+	if strings.HasPrefix(content, fieldLine+"\n") || content == fieldLine {
 		return content
 	}
-	return commentLine + "\n" + content
+	return fieldLine + "\n" + content
 }
 
 // sanitizeFileName sanitizes a filename by removing invalid characters.

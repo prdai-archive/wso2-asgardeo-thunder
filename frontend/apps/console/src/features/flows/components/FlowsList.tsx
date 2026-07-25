@@ -19,11 +19,12 @@
 import {useDataGridLocaleText} from '@thunderid/hooks';
 import {useLogger} from '@thunderid/logger/react';
 import {Box, Chip, IconButton, Tooltip, Typography, ListingTable, DataGrid} from '@wso2/oxygen-ui';
-import {Pencil, Trash2} from '@wso2/oxygen-ui-icons-react';
+import {Eye, Pencil, Trash2} from '@wso2/oxygen-ui-icons-react';
 import {useMemo, useCallback, useState, type JSX} from 'react';
 import {useTranslation} from 'react-i18next';
 import {useNavigate} from 'react-router';
 import FlowDeleteDialog from './FlowDeleteDialog';
+import RouteConfig from '../../../configs/RouteConfig';
 import useGetFlows from '../api/useGetFlows';
 import type {BasicFlowDefinition} from '../models/responses';
 
@@ -50,7 +51,7 @@ export default function FlowsList(): JSX.Element {
   const handleEditClick = useCallback(
     (flow: BasicFlowDefinition): void => {
       (async (): Promise<void> => {
-        await navigate(`/flows/signin/${flow.id}`);
+        await navigate(RouteConfig.flows.detail('signin', flow.id));
       })().catch((_error: unknown) => {
         logger.error('Failed to navigate to flow builder', {error: _error, flowId: flow.id});
       });
@@ -83,22 +84,6 @@ export default function FlowsList(): JSX.Element {
         ),
       },
       {
-        field: 'activeVersion',
-        headerName: t('flows:listing.columns.version'),
-        width: 100,
-        renderCell: (params: DataGrid.GridRenderCellParams<BasicFlowDefinition>): JSX.Element => (
-          <Chip
-            label={`v${params.row.activeVersion}`}
-            size="small"
-            variant="outlined"
-            sx={{
-              fontFamily: 'monospace',
-              fontSize: '0.7rem',
-            }}
-          />
-        ),
-      },
-      {
         field: 'updatedAt',
         headerName: t('flows:listing.columns.updatedAt'),
         width: 180,
@@ -125,29 +110,39 @@ export default function FlowsList(): JSX.Element {
         renderCell: (params: DataGrid.GridRenderCellParams<BasicFlowDefinition>): JSX.Element | null => {
           return (
             <ListingTable.RowActions>
-              <Tooltip title={t('common:actions.edit')}>
-                <IconButton
-                  size="small"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    handleEditClick(params.row);
-                  }}
-                >
-                  <Pencil size={16} />
-                </IconButton>
-              </Tooltip>
-              <Tooltip title={t('common:actions.delete')}>
-                <IconButton
-                  size="small"
-                  color="error"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    handleDeleteClick(params.row);
-                  }}
-                >
-                  <Trash2 size={16} />
-                </IconButton>
-              </Tooltip>
+              {params.row.isReadOnly ? (
+                <Tooltip title={t('common:status.readOnly', 'Read Only')}>
+                  <IconButton size="small" disableRipple sx={{cursor: 'default'}}>
+                    <Eye size={16} />
+                  </IconButton>
+                </Tooltip>
+              ) : (
+                <>
+                  <Tooltip title={t('common:actions.edit')}>
+                    <IconButton
+                      size="small"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleEditClick(params.row);
+                      }}
+                    >
+                      <Pencil size={16} />
+                    </IconButton>
+                  </Tooltip>
+                  <Tooltip title={t('common:actions.delete')}>
+                    <IconButton
+                      size="small"
+                      color="error"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleDeleteClick(params.row);
+                      }}
+                    >
+                      <Trash2 size={16} />
+                    </IconButton>
+                  </Tooltip>
+                </>
+              )}
             </ListingTable.RowActions>
           );
         },
@@ -177,8 +172,13 @@ export default function FlowsList(): JSX.Element {
             rows={data?.flows ?? []}
             columns={columns}
             getRowId={(row): string => (row as BasicFlowDefinition).id}
+            getRowClassName={(params) =>
+              (params.row as BasicFlowDefinition).isReadOnly ? 'row-not-clickable' : 'row-clickable'
+            }
             onRowClick={(params) => {
-              handleEditClick(params.row as BasicFlowDefinition);
+              if (!(params.row as BasicFlowDefinition).isReadOnly) {
+                handleEditClick(params.row as BasicFlowDefinition);
+              }
             }}
             initialState={{
               pagination: {

@@ -21,10 +21,13 @@ package executor
 import (
 	"errors"
 
+	"github.com/thunder-id/thunderid/pkg/thunderidengine/providers"
+
+	tidcommon "github.com/thunder-id/thunderid/pkg/thunderidengine/common"
+
 	"github.com/thunder-id/thunderid/internal/flow/common"
 	"github.com/thunder-id/thunderid/internal/flow/core"
 	"github.com/thunder-id/thunderid/internal/ou"
-	"github.com/thunder-id/thunderid/internal/system/error/serviceerror"
 	"github.com/thunder-id/thunderid/internal/system/log"
 	"github.com/thunder-id/thunderid/internal/system/security"
 )
@@ -41,7 +44,7 @@ const (
 
 // ouResolverExecutor resolves the organization unit for a user being onboarded.
 type ouResolverExecutor struct {
-	core.ExecutorInterface
+	providers.Executor
 	ouService ou.OrganizationUnitServiceInterface
 	logger    *log.Logger
 }
@@ -53,25 +56,30 @@ func newOUResolverExecutor(
 ) *ouResolverExecutor {
 	logger := log.GetLogger().With(log.String(log.LoggerKeyComponentName, "OUResolverExecutor"))
 
-	defaultInputs := []common.Input{
+	defaultInputs := []providers.Input{
 		{
 			Ref:        "ou_selection_input",
 			Identifier: ouIDKey,
-			Type:       "OU_SELECT",
+			Type:       providers.InputTypeOUSelect,
 			Required:   true,
 		},
 	}
 
 	base := flowFactory.CreateExecutor(
 		ExecutorNameOUResolver,
-		common.ExecutorTypeUtility,
+		providers.ExecutorTypeUtility,
 		defaultInputs,
-		[]common.Input{},
+		[]providers.Input{},
+		&providers.ExecutorMeta{
+			SupportedProperties: []providers.ExecutorSupportedProperties{
+				{Property: common.NodePropertyOUResolveFrom},
+			},
+		},
 	)
 	return &ouResolverExecutor{
-		ExecutorInterface: base,
-		ouService:         ouService,
-		logger:            logger,
+		Executor:  base,
+		ouService: ouService,
+		logger:    logger,
 	}
 }
 
@@ -81,17 +89,17 @@ func newOUResolverExecutor(
 //   - "caller": overrides the default OU with the caller's OU from the security context.
 //   - "prompt": checks for child OUs and prompts the user to select one if applicable.
 //   - "promptAll": shows the full OU tree from root, independent of UserTypeResolver.
-func (e *ouResolverExecutor) Execute(ctx *core.NodeContext) (*common.ExecutorResponse, error) {
+func (e *ouResolverExecutor) Execute(ctx *providers.NodeContext) (*providers.ExecutorResponse, error) {
 	logger := e.logger.With(log.String(log.LoggerKeyExecutionID, ctx.ExecutionID))
 
-	execResp := &common.ExecutorResponse{
-		Status:      common.ExecComplete,
+	execResp := &providers.ExecutorResponse{
+		Status:      providers.ExecComplete,
 		RuntimeData: make(map[string]string),
 	}
 
 	resolveFrom := e.getResolveFrom(ctx)
 	if resolveFrom == "" {
-		logger.Debug("resolveFrom not configured, skipping OU override")
+		logger.Debug(ctx.Context, "resolveFrom not configured, skipping OU override")
 		return execResp, nil
 	}
 
@@ -103,25 +111,32 @@ func (e *ouResolverExecutor) Execute(ctx *core.NodeContext) (*common.ExecutorRes
 	case ouResolveFromPromptAll:
 		return e.resolveFromPromptAll(ctx, logger)
 	default:
-		logger.Error("Unsupported resolveFrom value", log.String("resolveFrom", resolveFrom))
-		execResp.Status = common.ExecFailure
-		execResp.FailureReason = "Unsupported OU resolution strategy: " + resolveFrom
+		logger.Error(ctx.Context, "Unsupported resolveFrom value", log.String("resolveFrom", resolveFrom))
+		execResp.Status = providers.ExecFailure
+		execResp.Error = tidcommon.CustomServiceError(ErrOUResolutionFailed, tidcommon.I18nMessage{
+			Key:          ErrOUResolutionFailed.ErrorDescription.Key,
+			DefaultValue: "Unsupported OU resolution strategy: {{param(strategy)}}",
+			Params:       map[string]string{"strategy": resolveFrom},
+		})
 		return execResp, nil
 	}
 }
 
 // resolveFromCaller resolves the OU from the caller's security context.
-func (e *ouResolverExecutor) resolveFromCaller(ctx *core.NodeContext,
-	execResp *common.ExecutorResponse, logger *log.Logger) (*common.ExecutorResponse, error) {
+func (e *ouResolverExecutor) resolveFromCaller(ctx *providers.NodeContext,
+	execResp *providers.ExecutorResponse, logger *log.Logger) (*providers.ExecutorResponse, error) {
 	callerOUID := security.GetOUID(ctx.Context)
 	if callerOUID == "" {
-		logger.Error("Caller OU not found in security context")
-		execResp.Status = common.ExecFailure
-		execResp.FailureReason = "Unable to determine caller organization unit"
+		logger.Error(ctx.Context, "Caller OU not found in security context")
+		execResp.Status = providers.ExecFailure
+		execResp.Error = tidcommon.CustomServiceError(ErrOUResolutionFailed, tidcommon.I18nMessage{
+			Key:          ErrOUResolutionFailed.ErrorDescription.Key,
+			DefaultValue: "Unable to resolve caller organization unit from  context",
+		})
 		return execResp, nil
 	}
 
-	logger.Debug("Overriding user OU with caller's OU", log.String("callerOUID", callerOUID))
+	logger.Debug(ctx.Context, "Overriding user OU with caller's OU", log.String("callerOUID", callerOUID))
 	execResp.RuntimeData[ouIDKey] = callerOUID
 
 	return execResp, nil
@@ -129,9 +144,9 @@ func (e *ouResolverExecutor) resolveFromCaller(ctx *core.NodeContext,
 
 // resolveFromPrompt checks whether the user type's OU has child OUs and,
 // if so, prompts the admin to select one during the onboarding flow.
-func (e *ouResolverExecutor) resolveFromPrompt(ctx *core.NodeContext,
-	logger *log.Logger) (*common.ExecutorResponse, error) {
-	execResp := &common.ExecutorResponse{
+func (e *ouResolverExecutor) resolveFromPrompt(ctx *providers.NodeContext,
+	logger *log.Logger) (*providers.ExecutorResponse, error) {
+	execResp := &providers.ExecutorResponse{
 		RuntimeData:    make(map[string]string),
 		AdditionalData: make(map[string]string),
 		ForwardedData:  make(map[string]interface{}),
@@ -151,28 +166,28 @@ func (e *ouResolverExecutor) resolveFromPrompt(ctx *core.NodeContext,
 		// Validate that the selected OU belongs to the parent OU's subtree.
 		isDescendant, svcErr := e.ouService.IsParent(ctx.Context, parentOUID, selectedOUID)
 		if svcErr != nil {
-			if svcErr.Type == serviceerror.ClientErrorType {
-				execResp.Status = common.ExecUserInputRequired
+			if svcErr.Type == tidcommon.ClientErrorType {
+				execResp.Status = providers.ExecUserInputRequired
 				execResp.Inputs = e.GetDefaultInputs()
-				execResp.FailureReason = "The selected organization unit is not valid."
+				execResp.Error = &ErrInvalidOU
 				return execResp, nil
 			}
 
 			return nil, errors.New("failed to validate selected organization unit: " + svcErr.Error.DefaultValue)
 		}
 		if !isDescendant {
-			logger.Debug("Selected OU is not a descendant of the parent OU",
+			logger.Debug(ctx.Context, "Selected OU is not a descendant of the parent OU",
 				log.String(ouIDKey, selectedOUID),
 				log.String("parentOUID", parentOUID))
-			execResp.Status = common.ExecUserInputRequired
+			execResp.Status = providers.ExecUserInputRequired
 			execResp.Inputs = e.GetDefaultInputs()
-			execResp.FailureReason = "The selected organization unit is not valid for the chosen user type."
+			execResp.Error = &ErrOUNotValidForUserType
 			return execResp, nil
 		}
 
-		logger.Debug("OU selected by user", log.String(ouIDKey, selectedOUID))
+		logger.Debug(ctx.Context, "OU selected by user", log.String(ouIDKey, selectedOUID))
 		execResp.RuntimeData[ouIDKey] = selectedOUID
-		execResp.Status = common.ExecComplete
+		execResp.Status = providers.ExecComplete
 		return execResp, nil
 	}
 
@@ -183,22 +198,22 @@ func (e *ouResolverExecutor) resolveFromPrompt(ctx *core.NodeContext,
 	}
 
 	if children.TotalResults == 0 {
-		logger.Debug("No child OUs found, skipping OU selection")
-		execResp.Status = common.ExecComplete
+		logger.Debug(ctx.Context, "No child OUs found, skipping OU selection")
+		execResp.Status = providers.ExecComplete
 		return execResp, nil
 	}
 
 	// Child OUs exist — prompt the user to select one.
-	logger.Debug("Child OUs found, requesting OU selection",
+	logger.Debug(ctx.Context, "Child OUs found, requesting OU selection",
 		log.String("parentOUID", parentOUID),
 		log.Int("totalChildren", children.TotalResults))
 
-	execResp.Status = common.ExecUserInputRequired
+	execResp.Status = providers.ExecUserInputRequired
 
 	inputs := e.GetDefaultInputs()
 	if len(inputs) > 0 {
 		input := inputs[0]
-		execResp.Inputs = []common.Input{input}
+		execResp.Inputs = []providers.Input{input}
 		// Forward the root OU ID so the frontend knows where to start the tree picker.
 		execResp.AdditionalData[common.DataRootOUID] = parentOUID
 		execResp.ForwardedData[common.ForwardedDataKeyInputs] = execResp.Inputs
@@ -209,9 +224,9 @@ func (e *ouResolverExecutor) resolveFromPrompt(ctx *core.NodeContext,
 
 // resolveFromPromptAll shows the full OU tree from root, allowing selection of any OU.
 // Unlike "prompt", this strategy does not depend on UserTypeResolver having run first.
-func (e *ouResolverExecutor) resolveFromPromptAll(ctx *core.NodeContext,
-	logger *log.Logger) (*common.ExecutorResponse, error) {
-	execResp := &common.ExecutorResponse{
+func (e *ouResolverExecutor) resolveFromPromptAll(ctx *providers.NodeContext,
+	logger *log.Logger) (*providers.ExecutorResponse, error) {
+	execResp := &providers.ExecutorResponse{
 		RuntimeData:    make(map[string]string),
 		AdditionalData: make(map[string]string),
 		ForwardedData:  make(map[string]interface{}),
@@ -224,26 +239,26 @@ func (e *ouResolverExecutor) resolveFromPromptAll(ctx *core.NodeContext,
 			return nil, errors.New("failed to validate selected organization unit: " + svcErr.Error.DefaultValue)
 		}
 		if !exists {
-			execResp.Status = common.ExecUserInputRequired
+			execResp.Status = providers.ExecUserInputRequired
 			execResp.Inputs = e.GetDefaultInputs()
-			execResp.FailureReason = "The selected organization unit does not exist."
+			execResp.Error = &ErrOUNotFound
 			return execResp, nil
 		}
 
-		logger.Debug("OU selected by user", log.String(ouIDKey, selectedOUID))
+		logger.Debug(ctx.Context, "OU selected by user", log.String(ouIDKey, selectedOUID))
 		execResp.RuntimeData[ouIDKey] = selectedOUID
-		execResp.Status = common.ExecComplete
+		execResp.Status = providers.ExecComplete
 		return execResp, nil
 	}
 
 	// No selection yet — prompt the user with the full OU tree.
-	logger.Debug("Requesting OU selection from full tree")
-	execResp.Status = common.ExecUserInputRequired
+	logger.Debug(ctx.Context, "Requesting OU selection from full tree")
+	execResp.Status = providers.ExecUserInputRequired
 
 	inputs := e.GetDefaultInputs()
 	if len(inputs) > 0 {
 		input := inputs[0]
-		execResp.Inputs = []common.Input{input}
+		execResp.Inputs = []providers.Input{input}
 		execResp.ForwardedData[common.ForwardedDataKeyInputs] = execResp.Inputs
 	}
 
@@ -251,7 +266,7 @@ func (e *ouResolverExecutor) resolveFromPromptAll(ctx *core.NodeContext,
 }
 
 // getResolveFrom retrieves the resolveFrom strategy from the node properties.
-func (e *ouResolverExecutor) getResolveFrom(ctx *core.NodeContext) string {
+func (e *ouResolverExecutor) getResolveFrom(ctx *providers.NodeContext) string {
 	if ctx.NodeProperties == nil {
 		return ""
 	}

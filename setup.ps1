@@ -1,6 +1,6 @@
 #!/usr/bin/env pwsh
 # ----------------------------------------------------------------------------
-# Copyright (c) 2025, WSO2 LLC. (https://www.wso2.com).
+# Copyright (c) 2025-2026, WSO2 LLC. (https://www.wso2.com).
 #
 # WSO2 LLC. licenses this file to you under the Apache License,
 # Version 2.0 (the "License"); you may not use this file except
@@ -56,7 +56,20 @@ $BOOTSTRAP_FAIL_FAST = if ($env:BOOTSTRAP_FAIL_FAST -eq "false") { $false } else
 $BOOTSTRAP_SKIP_PATTERN = if ($env:BOOTSTRAP_SKIP_PATTERN) { $env:BOOTSTRAP_SKIP_PATTERN } else { "" }
 $BOOTSTRAP_ONLY_PATTERN = if ($env:BOOTSTRAP_ONLY_PATTERN) { $env:BOOTSTRAP_ONLY_PATTERN } else { "" }
 $BOOTSTRAP_DIR = if ($env:BOOTSTRAP_DIR) { $env:BOOTSTRAP_DIR } else { ".\bootstrap" }
-$WITH_CONSENT = if ($env:WITH_CONSENT -eq 'false') { $false } else { $true }
+$ADMIN_USERNAME_PROVIDED = if ($env:ADMIN_USERNAME) { $true } else { $false }
+$ADMIN_PASSWORD_PROVIDED = if ($env:ADMIN_PASSWORD) { $true } else { $false }
+$ADMIN_USERNAME = if ($env:ADMIN_USERNAME) { $env:ADMIN_USERNAME } else { "admin" }
+# Left empty when not supplied: Set-AdminPassword (below) generates a random password
+# in that case, rather than falling back to a fixed, predictable value.
+$ADMIN_PASSWORD = if ($env:ADMIN_PASSWORD) { $env:ADMIN_PASSWORD } else { "" }
+$ADMIN_PASSWORD_GENERATED = $false
+# Direct Auth Secret gates the Direct API endpoints (secure by default). When not supplied, one is
+# generated during setup and written to the secret file referenced by deployment.yaml.
+$DIRECT_AUTH_SECRET = if ($env:DIRECT_AUTH_SECRET) { $env:DIRECT_AUTH_SECRET } else { "" }
+$DIRECT_AUTH_SECRET_GENERATED = $false
+$DIRECT_AUTH_SECRET_FILE = ""
+# Set when key material is generated this run (controls the one-time notice).
+$CERTS_GENERATED = $false
 
 # ============================================================================
 # Logging Functions
@@ -99,121 +112,6 @@ function Log-Debug {
 }
 
 # ============================================================================
-# API Call Helper Function
-# ============================================================================
-
-function Invoke-Api {
-    param(
-        [string]$Method,
-        [string]$Endpoint,
-        [string]$Data = ""
-    )
-
-    # Get base URL from environment variable
-    $baseUrl = if ($env:API_BASE) {
-        $env:API_BASE
-    } else {
-        Log-Error "API_BASE is not set!"
-        return @{
-            StatusCode = 0
-            Body = ""
-            Error = "API_BASE not set"
-        }
-    }
-
-    $url = "$baseUrl$Endpoint"
-
-    Log-Debug "API Call: $Method $url"
-    if ($Data) {
-        Log-Debug "Request Body: $Data"
-    }
-
-    $responseFile = [System.IO.Path]::GetTempFileName()
-    $dataFile = $null
-
-    try {
-        $curlArgs = @(
-            "-X", $Method,
-            "-k",  # Skip SSL verification
-            "-s",  # Silent mode
-            "-w", "%{http_code}",  # Write status code
-            "-H", "Content-Type: application/json",
-            "-o", $responseFile  # Output to file
-        )
-
-        if ($Data -and ($Method -eq "POST" -or $Method -eq "PUT" -or $Method -eq "PATCH")) {
-            # Save data to temp file for curl
-            $dataFile = [System.IO.Path]::GetTempFileName()            
-            if ($PSVersionTable.PSVersion.Major -ge 6) {
-                $Data | Out-File -FilePath $dataFile -Encoding UTF8NoBOM -NoNewline
-            } else {
-                [System.IO.File]::WriteAllText($dataFile, $Data, [System.Text.UTF8Encoding]::new($false))
-            }
-            
-            $curlArgs += @("-d", "@$dataFile")
-        }
-
-        $curlArgs += $url
-
-        Log-Debug "curl command: curl $($curlArgs -join ' ')"
-
-        # Execute curl and capture output
-        $curlOutput = & curl.exe @curlArgs 2>&1
-        $curlExitCode = $LASTEXITCODE
-
-        # The last line should be the status code
-        $statusCode = $curlOutput | Select-Object -Last 1
-
-        # Handle curl errors (nonzero exit code or status code might be empty or non-numeric)
-        if ($curlExitCode -ne 0 -or -not $statusCode -or $statusCode -notmatch '^\d+$') {
-            Log-Error "Failed to execute curl command or received invalid response (exit code: $curlExitCode)"
-            Log-Error "curl output: $($curlOutput -join "`n")"
-            return @{
-                StatusCode = 0
-                Body = ""
-                Error = "curl execution failed (exit code: $curlExitCode): $($curlOutput -join '; ')"
-            }
-        }
-
-        # Read response body (file should always exist, but check defensively)
-        $body = if (Test-Path $responseFile) {
-            Get-Content -Path $responseFile -Raw
-        } else {
-            ""
-        }
-
-        Log-Debug "Response Status: $statusCode"
-        Log-Debug "Response Body: $body"
-
-        $finalBody = if ($body) { $body } else { "" }
-
-        return @{
-            StatusCode = [int]$statusCode
-            Body = $finalBody
-        }
-    }
-    catch {
-        Log-Error "API call failed: $_"
-        Log-Error "Exception: $($_.Exception.Message)"
-
-        return @{
-            StatusCode = 0
-            Body = ""
-            Error = $_.Exception.Message
-        }
-    }
-    finally {
-        # Clean up temp files
-        if (Test-Path $responseFile) {
-            Remove-Item $responseFile -Force -ErrorAction SilentlyContinue
-        }
-        if ($dataFile -and (Test-Path $dataFile)) {
-            Remove-Item $dataFile -Force -ErrorAction SilentlyContinue
-        }
-    }
-}
-
-# ============================================================================
 # Help Function
 # ============================================================================
 
@@ -227,7 +125,12 @@ function Show-Help {
     Write-Host "  --verbose                Enable detailed setup output"
     Write-Host "  --debug                  Enable debug mode with remote debugging"
     Write-Host "  --debug-port PORT        Set debug port (default: 2345)"
-    Write-Host "  --without-consent        Disable the bundled consent server"
+    Write-Host "  --admin-username VALUE   Username for the default admin user (default: admin)"
+    Write-Host "                           Falls back to ADMIN_USERNAME env var if flag not set"
+    Write-Host "  --admin-password VALUE   Password for the default admin user"
+    Write-Host "                           Falls back to ADMIN_PASSWORD env var; generated if unset"
+    Write-Host "  --direct-auth-secret VALUE Secret gating the Direct API endpoints"
+    Write-Host "                           Falls back to DIRECT_AUTH_SECRET env var; generated if unset"
     Write-Host "  --help                   Show this help message"
     Write-Host ""
     Write-Host "Description:"
@@ -270,9 +173,42 @@ while ($i -lt $args.Count) {
             }
             break
         }
-        '--without-consent' {
-            $WITH_CONSENT = $false
+        '--admin-username' {
             $i++
+            if ($i -lt $args.Count -and $args[$i] -notlike '--*') {
+                $ADMIN_USERNAME = $args[$i]
+                $ADMIN_USERNAME_PROVIDED = $true
+                $i++
+            }
+            else {
+                Write-Host "--admin-username requires a non-empty value" -ForegroundColor Red
+                exit 1
+            }
+            break
+        }
+        '--admin-password' {
+            $i++
+            if ($i -lt $args.Count -and $args[$i] -notlike '--*') {
+                $ADMIN_PASSWORD = $args[$i]
+                $ADMIN_PASSWORD_PROVIDED = $true
+                $i++
+            }
+            else {
+                Write-Host "--admin-password requires a non-empty value" -ForegroundColor Red
+                exit 1
+            }
+            break
+        }
+        '--direct-auth-secret' {
+            $i++
+            if ($i -lt $args.Count -and $args[$i] -notlike '--*') {
+                $DIRECT_AUTH_SECRET = $args[$i]
+                $i++
+            }
+            else {
+                Write-Host "--direct-auth-secret requires a non-empty value" -ForegroundColor Red
+                exit 1
+            }
             break
         }
         '--help' {
@@ -291,14 +227,14 @@ while ($i -lt $args.Count) {
 # Read Configuration from deployment.yaml
 # ============================================================================
 
-$CONFIG_FILE = ".\repository\conf\deployment.yaml"
+$CONFIG_FILE = ".\deployment.yaml"
 
 function Read-Config {
     $configFile = $CONFIG_FILE
 
     if (-not (Test-Path $configFile)) {
         # Try alternative path (for packaged distribution)
-        $configFile = ".\backend\cmd\server\repository\conf\deployment.yaml"
+        $configFile = ".\backend\cmd\server\deployment.yaml"
     }
 
     if (-not (Test-Path $configFile)) {
@@ -367,8 +303,252 @@ function Read-Config {
     return $true
 }
 
+# Resolve-ConfigFile returns the path to the deployment.yaml in use, or "" if not found.
+function Resolve-ConfigFile {
+    if (Test-Path $CONFIG_FILE) { return $CONFIG_FILE }
+    if (Test-Path ".\backend\cmd\server\deployment.yaml") { return ".\backend\cmd\server\deployment.yaml" }
+    return ""
+}
+
+# Set-AdminPassword ensures the default admin account is usable out of the box while staying secure by
+# default: it uses the provided value, or generates a random one. Unlike the Direct Auth Secret, this
+# intentionally regenerates every run where no value is supplied (no persisted value to check), so
+# re-running setup.ps1 with nothing explicit set is also how an operator resets the password.
+function Set-AdminPassword {
+    if ($ADMIN_PASSWORD) {
+        return
+    }
+
+    # Generate a 12-character password mixing letters, digits, and special characters.
+    # The special set is limited to shell- and YAML-safe punctuation, because the value
+    # flows through environment variables and the bundle's YAML template before it is
+    # stored. Regenerate until the result contains at least one digit and one special
+    # character so it reliably looks like a password.
+    $charset = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789@#%+=_.?-'.ToCharArray()
+    $rng = [System.Security.Cryptography.RandomNumberGenerator]::Create()
+    do {
+        $bytes = New-Object 'System.Byte[]' 12
+        $rng.GetBytes($bytes)
+        $password = -join ($bytes | ForEach-Object { $charset[$_ % $charset.Length] })
+    } while (-not ($password -match '[0-9]' -and $password -match '[@#%+=_.?-]'))
+
+    $script:ADMIN_PASSWORD = $password
+    $script:ADMIN_PASSWORD_GENERATED = $true
+}
+
+# Show-AdminCredentialsNotice prints the generated admin password once, so the operator can capture it.
+# Only shown when the password was generated during this run (not for operator-supplied values).
+function Show-AdminCredentialsNotice {
+    if (-not $ADMIN_PASSWORD_GENERATED) { return }
+    Write-Host "Admin credentials:"
+    Write-Host "  Username: $ADMIN_USERNAME"
+    Write-Host "  Password: $ADMIN_PASSWORD"
+    Write-Host "  Sign in to the Console with these credentials."
+    Write-Host ""
+}
+
+# Set-DirectAuthSecret ensures the Direct API is usable out of the box while staying secure by default.
+# The secret is persisted to config/secrets/direct_auth_secret and the server reads it via the file://
+# reference in deployment.yaml. This keeps generation working when deployment.yaml is read-only: only
+# the secrets directory needs to be writable. An operator can still set an explicit inline secret in
+# deployment.yaml, which is honored as-is.
+function Set-DirectAuthSecret {
+    $configFile = Resolve-ConfigFile
+    if (-not $configFile) {
+        Log-Warning "deployment.yaml not found; skipping Direct Auth Secret configuration"
+        return
+    }
+
+    # Inspect the configured secret. A file:// reference points at the secret file this script
+    # maintains; a plain value means the operator set an explicit secret, which is honored as-is.
+    $content = Get-Content $configFile -Raw
+    $existing = ""
+    if ($content -match '(?m)^\s*direct_auth_secret:\s*[''"]?([^''"\s]+)[''"]?') {
+        $existing = $matches[1]
+    }
+    $ref = ""
+    if ($existing -like 'file://*') {
+        $ref = $existing.Substring(7)
+    }
+    elseif ($existing) {
+        $script:DIRECT_AUTH_SECRET = $existing
+        return
+    }
+
+    # Resolve the target secret file (from the file:// reference, or the default location).
+    $baseDir = Split-Path -Parent $configFile
+    if ($ref) {
+        if ([System.IO.Path]::IsPathRooted($ref)) { $secretFile = $ref }
+        else { $secretFile = Join-Path $baseDir $ref }
+    }
+    else {
+        $secretFile = Join-Path $baseDir "config/secrets/direct_auth_secret"
+    }
+    New-Item -ItemType Directory -Force -Path (Split-Path -Parent $secretFile) | Out-Null
+    # Record the resolved path so the notice can report where the secret was written.
+    $script:DIRECT_AUTH_SECRET_FILE = $secretFile
+
+    # An explicit provided value is written to the secret file. Otherwise reuse an existing secret,
+    # or generate a random one. Use Set-Content/Get-Content (PowerShell cmdlets) rather than
+    # [System.IO.File] so relative paths resolve against the session location, matching New-Item above.
+    if ($DIRECT_AUTH_SECRET) {
+        Set-Content -Path $secretFile -Value $DIRECT_AUTH_SECRET -NoNewline -Encoding Ascii
+        return
+    }
+    if ((Test-Path $secretFile) -and ((Get-Item $secretFile).Length -gt 0)) {
+        $script:DIRECT_AUTH_SECRET = (Get-Content -Path $secretFile -Raw)
+        return
+    }
+    $bytes = New-Object 'System.Byte[]' 32
+    [System.Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($bytes)
+    $script:DIRECT_AUTH_SECRET = ($bytes | ForEach-Object { $_.ToString('x2') }) -join ''
+    Set-Content -Path $secretFile -Value $DIRECT_AUTH_SECRET -NoNewline -Encoding Ascii
+    $script:DIRECT_AUTH_SECRET_GENERATED = $true
+}
+
+# Show-DirectAuthSecretNotice prints the generated Direct Auth Secret once, so the operator can capture it.
+function Show-DirectAuthSecretNotice {
+    if (-not $DIRECT_AUTH_SECRET_GENERATED) { return }
+    Write-Host "Direct Auth Secret (Direct API): $DIRECT_AUTH_SECRET"
+    Write-Host "  Send it in the 'Direct-Auth-Secret' header when calling the Direct API endpoints."
+    Write-Host "  It has been written to $DIRECT_AUTH_SECRET_FILE, which deployment.yaml"
+    Write-Host "  references via server.security.direct_auth_secret."
+    Write-Host ""
+}
+
+# Write DER bytes as a PEM file (64-char lines, LF endings) of the given block type.
+function Write-PemFile {
+    param(
+        [string]$Path,
+        [string]$Type,
+        [byte[]]$Der
+    )
+    $b64 = [Convert]::ToBase64String($Der)
+    $sb = New-Object System.Text.StringBuilder
+    [void]$sb.Append("-----BEGIN $Type-----`n")
+    for ($i = 0; $i -lt $b64.Length; $i += 64) {
+        $len = [Math]::Min(64, $b64.Length - $i)
+        [void]$sb.Append($b64.Substring($i, $len))
+        [void]$sb.Append("`n")
+    }
+    [void]$sb.Append("-----END $Type-----`n")
+    [System.IO.File]::WriteAllText($Path, $sb.ToString())
+}
+
+# Generate a self-signed cert/key PEM pair if absent, using .NET (no openssl needed on Windows).
+function New-SelfSignedCertPair {
+    param(
+        [string]$CertFile,
+        [string]$KeyFile,
+        [string]$Algo
+    )
+    if ((Test-Path $CertFile) -and (Test-Path $KeyFile)) {
+        return
+    }
+
+    $subject = "CN=localhost, OU=$PRODUCT_NAME, O=WSO2"
+    $san = New-Object System.Security.Cryptography.X509Certificates.SubjectAlternativeNameBuilder
+    $san.AddDnsName("localhost")
+    $san.AddIpAddress([System.Net.IPAddress]::Parse("127.0.0.1"))
+
+    if ($Algo -eq 'ecdsa') {
+        $key = [System.Security.Cryptography.ECDsa]::Create([System.Security.Cryptography.ECCurve+NamedCurves]::nistP256)
+        $req = [System.Security.Cryptography.X509Certificates.CertificateRequest]::new(
+            $subject, $key, [System.Security.Cryptography.HashAlgorithmName]::SHA256)
+        $days = 3650
+    }
+    else {
+        $key = [System.Security.Cryptography.RSA]::Create(2048)
+        $req = [System.Security.Cryptography.X509Certificates.CertificateRequest]::new(
+            $subject, $key, [System.Security.Cryptography.HashAlgorithmName]::SHA256,
+            [System.Security.Cryptography.RSASignaturePadding]::Pkcs1)
+        $days = 365
+    }
+    $req.CertificateExtensions.Add($san.Build())
+
+    $notBefore = [System.DateTimeOffset]::UtcNow.AddDays(-1)
+    $notAfter = [System.DateTimeOffset]::UtcNow.AddDays($days)
+    $cert = $req.CreateSelfSigned($notBefore, $notAfter)
+
+    Write-PemFile -Path $CertFile -Type "CERTIFICATE" -Der $cert.RawData
+    Write-PemFile -Path $KeyFile -Type "PRIVATE KEY" -Der $key.ExportPkcs8PrivateKey()
+    $cert.Dispose()
+    $key.Dispose()
+    $script:CERTS_GENERATED = $true
+}
+
+# Generate the server TLS, JWT signing, and AES key material if absent (reused on later runs).
+function Set-Certificates {
+    $configFile = Resolve-ConfigFile
+    if ($configFile) {
+        $certDir = Join-Path (Split-Path -Parent $configFile) "config/certs"
+    }
+    else {
+        $certDir = "./config/certs"
+    }
+    New-Item -ItemType Directory -Force -Path $certDir | Out-Null
+    # Absolute path so the .NET file writes below resolve correctly (they ignore the PowerShell location).
+    $certDir = (Resolve-Path -LiteralPath $certDir).Path
+
+    New-SelfSignedCertPair -CertFile (Join-Path $certDir "server.cert") -KeyFile (Join-Path $certDir "server.key") -Algo rsa
+    New-SelfSignedCertPair -CertFile (Join-Path $certDir "signing.cert") -KeyFile (Join-Path $certDir "signing.key") -Algo rsa
+    New-SelfSignedCertPair -CertFile (Join-Path $certDir "ecdsa-signing.cert") -KeyFile (Join-Path $certDir "ecdsa-signing.key") -Algo ecdsa
+
+    $cryptoKey = Join-Path $certDir "crypto.key"
+    if (-not (Test-Path $cryptoKey)) {
+        $bytes = New-Object 'System.Byte[]' 32
+        [System.Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($bytes)
+        $hex = ($bytes | ForEach-Object { $_.ToString('x2') }) -join ''
+        [System.IO.File]::WriteAllText($cryptoKey, $hex)
+        $script:CERTS_GENERATED = $true
+    }
+}
+
+# Print a one-time notice when key material was generated this run.
+function Show-CertificatesNotice {
+    if (-not $CERTS_GENERATED) { return }
+    Write-Host "Generated missing security material in config/certs."
+    Write-Host "  Preserve this directory; if these keys are lost or changed, previously issued tokens and encrypted data can no longer be validated or decrypted."
+    Write-Host ""
+}
+
+# ============================================================================
+# Prompt for Admin Credentials (interactive mode only)
+# ============================================================================
+
+# Prompt for any credential not supplied via CLI flags or environment variables, but only
+# when stdin is a terminal.
+if (([Console]::In -and -not [Console]::IsInputRedirected) -and (-not $ADMIN_USERNAME_PROVIDED -or -not $ADMIN_PASSWORD_PROVIDED)) {
+    Write-Host ""
+    Write-Host "Configure the default admin user (press Enter to accept defaults):"
+    Write-Host ""
+    if (-not $ADMIN_USERNAME_PROVIDED) {
+        $inputUsername = Read-Host "  Admin username [admin]"
+        $ADMIN_USERNAME = if ($inputUsername) { $inputUsername } else { "admin" }
+    }
+    if (-not $ADMIN_PASSWORD_PROVIDED) {
+        # Generate the password up front so it can be shown as the prompt default (the value
+        # used if the operator presses Enter). A typed value overrides it.
+        Set-AdminPassword
+        $inputPassword = Read-Host "  Admin password [$ADMIN_PASSWORD]" -AsSecureString
+        $plainInputPassword = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto(
+            [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($inputPassword)
+        )
+        if ($plainInputPassword) {
+            $ADMIN_PASSWORD = $plainInputPassword
+            $ADMIN_PASSWORD_GENERATED = $false
+        }
+    }
+    Write-Host ""
+}
+
 # Read configuration
 Read-Config | Out-Null
+
+# Configure the admin password and Direct Auth Secret before bootstrap so both are ready to use.
+Set-AdminPassword
+Set-DirectAuthSecret
+Set-Certificates
 
 # Construct base URL (internal API endpoint)
 $BASE_URL = "$($script:PROTOCOL)://$($script:HOSTNAME):$($script:PORT)"
@@ -454,438 +634,76 @@ if ($DEBUG_MODE -and -not (Get-Command dlv -ErrorAction SilentlyContinue)) {
 }
 
 # ============================================================================
-# Start the Server with Security Disabled
+# Create Default Resources (in-process bootstrap)
 # ============================================================================
 
-if ($VERBOSE_MODE) {
-    Write-Host "[WARN] Starting temporary server with security disabled..." -ForegroundColor Yellow
-    Write-Host ""
-}
-
-# Export environment variable to skip security
-$hadSkipSecurity = Test-Path Env:SKIP_SECURITY
-$previousSkipSecurity = $env:SKIP_SECURITY
-$env:SKIP_SECURITY = "true"
-
-# Resolve the server executable path
+# Resolve the script directory (used to locate start.ps1).
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
-$possible = @(
-    (Join-Path $scriptDir "${BINARY_NAME}.exe"),
-    (Join-Path $scriptDir $BINARY_NAME)
-)
-$serverExecPath = $possible | Where-Object { Test-Path $_ } | Select-Object -First 1
-if (-not $serverExecPath) {
-    $serverExecPath = Join-Path $scriptDir $BINARY_NAME
+
+# Create the default resources by delegating to start.ps1 -Bootstrap. The public URL and admin credentials are
+# exported so the bootstrap subcommand picks them up.
+$env:PUBLIC_URL = $PUBLIC_URL
+$env:ADMIN_USERNAME = $ADMIN_USERNAME
+$env:ADMIN_PASSWORD = $ADMIN_PASSWORD
+
+$startScript = Join-Path $scriptDir 'start.ps1'
+if (-not (Test-Path $startScript)) {
+    Log-Error "start.ps1 is missing: $startScript"
+    exit 1
 }
 
-# Start Consent Server (if enabled)
-$consentProc = $null
-$consentDir = Join-Path $scriptDir 'consent'
-$serverStdOutLog = $null
-$serverStdErrLog = $null
-$consentStdOutLog = $null
-$consentStdErrLog = $null
-if ($WITH_CONSENT) {
-    if (-not (Test-Path $consentDir)) {
-        Log-Error "Consent server is enabled but consent directory not found: $consentDir"
-        exit 1
-    }
-    if ($VERBOSE_MODE) {
-        Write-Host "[INFO] Starting Consent Server..." -ForegroundColor Cyan
-    }
-    $consentPort = if ($env:CONSENT_SERVER_PORT) { $env:CONSENT_SERVER_PORT } else { "9090" }
-    $consentBinary = @(
-        (Join-Path $consentDir 'consent-server.exe'),
-        (Join-Path $consentDir 'consent-server')
-    ) | Where-Object { Test-Path $_ } | Select-Object -First 1
-    if (-not $consentBinary) {
-        Log-Error "Consent server is enabled but consent-server binary not found in: $consentDir"
-        exit 1
-    }
-    $consentProcessArgs = @{
-        FilePath = $consentBinary
-        WorkingDirectory = $consentDir
-        NoNewWindow = $true
-        PassThru = $true
-    }
-    if ($SILENT_MODE) {
-        $consentStdOutLog = [System.IO.Path]::GetTempFileName()
-        $consentStdErrLog = [System.IO.Path]::GetTempFileName()
-        $consentProcessArgs["RedirectStandardOutput"] = $consentStdOutLog
-        $consentProcessArgs["RedirectStandardError"] = $consentStdErrLog
-    }
-    $consentProc = Start-Process @consentProcessArgs
-    $consentTimeout = 30
-    $consentElapsed = 0
-    while ($consentElapsed -lt $consentTimeout) {
-        if ($consentProc.HasExited) {
-            Log-Error "Consent server process exited unexpectedly (code $($consentProc.ExitCode))"
-            exit 1
-        }
-        try {
-            $resp = Invoke-WebRequest -Uri "http://localhost:${consentPort}/health/readiness" -UseBasicParsing -ErrorAction Stop
-            if ($resp.StatusCode -eq 200) {
-                if ($VERBOSE_MODE) {
-                    Write-Host "[INFO] Consent server is ready" -ForegroundColor Cyan
-                }
-                break
-            }
-        } catch { }
-        Start-Sleep -Seconds 1
-        $consentElapsed++
-    }
-    if ($consentElapsed -ge $consentTimeout) {
-        Log-Error "Consent server failed to become ready within ${consentTimeout}s"
-        exit 1
-    }
+if ($VERBOSE_MODE) {
+    Write-Host "[WAIT] Creating default resources..." -ForegroundColor Blue
 }
 
-$proc = $null
 try {
-    $serverProcessArgs = @{
-        WorkingDirectory = $scriptDir
-        NoNewWindow = $true
-        PassThru = $true
-    }
-    if ($SILENT_MODE) {
-        $serverStdOutLog = [System.IO.Path]::GetTempFileName()
-        $serverStdErrLog = [System.IO.Path]::GetTempFileName()
-        $serverProcessArgs["RedirectStandardOutput"] = $serverStdOutLog
-        $serverProcessArgs["RedirectStandardError"] = $serverStdErrLog
-    }
-
-    if ($DEBUG_MODE) {
-        $dlvArgs = @(
-            'exec'
-            "--listen=:$DEBUG_PORT"
-            '--headless=true'
-            '--api-version=2'
-            '--accept-multiclient'
-            '--continue'
-            $serverExecPath
-        )
-        $serverProcessArgs["FilePath"] = "dlv"
-        $serverProcessArgs["ArgumentList"] = $dlvArgs
-        $proc = Start-Process @serverProcessArgs
-    }
-    else {
-        $serverProcessArgs["FilePath"] = $serverExecPath
-        $proc = Start-Process @serverProcessArgs
-    }
-
-    $SERVER_PID = $proc.Id
-
-    # Cleanup function
-    $cleanup = {
-        if ($VERBOSE_MODE) {
-            Write-Host ""
-            Write-Host "[STOP] Stopping temporary server..." -ForegroundColor Cyan
-        }
-        if ($proc -and -not $proc.HasExited) {
-            try {
-                Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
-            } catch { }
-        }
-        if ($consentProc -and -not $consentProc.HasExited) {
-            try {
-                Stop-Process -Id $consentProc.Id -Force -ErrorAction SilentlyContinue
-            } catch { }
-        }
-    }
-
-    # Register cleanup on exit
-    Register-EngineEvent PowerShell.Exiting -Action $cleanup | Out-Null
-
-    # ============================================================================
-    # Wait for Server to be Ready
-    # ============================================================================
-
-    if ($VERBOSE_MODE) {
-        Write-Host "[WAIT] Waiting for server to be ready..." -ForegroundColor Blue
-        Write-Host "   Server URL: $BASE_URL" -ForegroundColor Blue
-    }
-
-    $TIMEOUT = 60
-    $ELAPSED = 0
-    $RETRY_DELAY = 2
-    $lastError = ""
-
-    while ($ELAPSED -lt $TIMEOUT) {
-        Log-Debug "Attempting health check (attempt $([math]::Floor($ELAPSED / $RETRY_DELAY) + 1))..."
-
-        $healthUrl = "$BASE_URL/health/readiness"
-        Log-Debug "Making request to: $healthUrl"
-
-        $requestStart = Get-Date
-        $statusCode = & curl.exe -k -s -w "%{http_code}" -o NUL $healthUrl 2>&1 | Select-Object -Last 1
-        $requestDuration = (Get-Date) - $requestStart
-
-        Log-Debug "Request completed in $([math]::Round($requestDuration.TotalSeconds, 2))s with status: $statusCode"
-
-        if ($statusCode -eq "200") {
-            if ($VERBOSE_MODE) {
-                Write-Host ""
-                Write-Host "[OK] Server is ready" -ForegroundColor Green
-                Log-Debug "Health check response: $body"
-                Write-Host ""
-            }
-            break
-        }
-        else {
-            # Server not ready yet
-            $currentError = "HTTP $statusCode"
-
-            # Log additional details when error status changes
-            if ($currentError -ne $lastError) {
-                Write-Host ""
-                Log-Debug "Health check failed with status: $statusCode"
-
-                if (-not $statusCode -or $statusCode -eq '000') {
-                    Log-Debug "Connection refused - server not yet listening"
-                } elseif ($statusCode -match "^50[0-9]$") {
-                    Log-Debug "Server error - server might be starting"
-                }
-
-                $lastError = $currentError
-                Write-Host "." -NoNewline
-            } else {
-                Write-Host "." -NoNewline
-            }
-        }
-
-        Start-Sleep -Seconds $RETRY_DELAY
-        $ELAPSED += $RETRY_DELAY
-    }
-
-    if ($ELAPSED -ge $TIMEOUT) {
-        Write-Host ""
-        Write-Host "[ERROR] Server health check failed within $TIMEOUT seconds" -ForegroundColor Red
-        Write-Host "Expected server at: $BASE_URL" -ForegroundColor Red
-        Write-Host "Last status: $lastError" -ForegroundColor Red
+    & $startScript --bootstrap
+    if ($LASTEXITCODE -ne 0) {
+        Log-Error "Failed to create default resources"
         exit 1
-    }
-
-    # ============================================================================
-    # Run Bootstrap Scripts
-    # ============================================================================
-
-    # Export environment variable for bootstrap scripts
-    $env:SETUP_SILENT_MODE = if ($SILENT_MODE) { "true" } else { "false" }
-
-    # Check if bootstrap directory exists
-    if (-not (Test-Path $BOOTSTRAP_DIR)) {
-        Log-Warning "Bootstrap directory not found: $BOOTSTRAP_DIR"
-        Log-Info "Skipping bootstrap execution"
-    }
-    else {
-        Log-Info "========================================="
-        Log-Info "$PRODUCT_NAME Bootstrap Process"
-        Log-Info "========================================="
-        Log-Info "Bootstrap directory: $BOOTSTRAP_DIR"
-        Log-Info "Fail fast: $BOOTSTRAP_FAIL_FAST"
-        Log-Info "Started at: $(Get-Date)"
-        Write-Host ""
-
-        # Collect all PowerShell scripts from bootstrap directory
-        $scripts = @()
-
-        # Find PowerShell scripts in bootstrap directory
-        if (Test-Path $BOOTSTRAP_DIR) {
-            Log-Debug "Scanning $BOOTSTRAP_DIR for PowerShell scripts..."
-            $scripts = Get-ChildItem -Path $BOOTSTRAP_DIR -Filter "*.ps1" -File -ErrorAction SilentlyContinue
-
-            Log-Debug "Found $($scripts.Count) PowerShell script(s)"
-            foreach ($bootstrapScript in $scripts) {
-                Log-Debug "  - $($bootstrapScript.Name)"
-            }
-        }
-
-        # Sort scripts by filename (numeric prefix determines order)
-        $sortedScripts = $scripts | Sort-Object Name
-
-        if ($sortedScripts.Count -eq 0) {
-            Log-Warning "No bootstrap scripts found"
-        }
-        else {
-            Log-Info "Discovered $($sortedScripts.Count) PowerShell script(s)"
-            Log-Debug "Scripts will be executed in this order:"
-            foreach ($bootstrapScript in $sortedScripts) {
-                Log-Debug "  - $($bootstrapScript.Name)"
-            }
-            Write-Host ""
-
-            # Execute scripts
-            $scriptCount = 0
-            $successCount = 0
-            $failedCount = 0
-            $skippedCount = 0
-
-            foreach ($bootstrapScript in $sortedScripts) {
-                $scriptName = $bootstrapScript.Name
-
-                if ($SILENT_MODE) {
-                    if ($scriptName -eq "01-default-resources.ps1" -or $scriptName -eq "01-default-resources.sh") {
-                        Write-Host ""
-                        Write-Host "  Default resources"
-                    }
-                    elseif ($scriptName -eq "02-sample-resources.ps1" -or $scriptName -eq "02-sample-resources.sh") {
-                        Write-Host ""
-                        Write-Host "  Sample resources"
-                    }
-                }
-
-                # Skip if matches skip pattern
-                if ($BOOTSTRAP_SKIP_PATTERN -and ($scriptName -match $BOOTSTRAP_SKIP_PATTERN)) {
-                    Log-Info "[SKIP] Skipping $scriptName (matches skip pattern regex: $BOOTSTRAP_SKIP_PATTERN)"
-                    $skippedCount++
-                    continue
-                }
-
-                # Skip if doesn't match only pattern
-                if ($BOOTSTRAP_ONLY_PATTERN -and ($scriptName -notmatch $BOOTSTRAP_ONLY_PATTERN)) {
-                    Log-Info "[SKIP] Skipping $scriptName (doesn't match only pattern: $BOOTSTRAP_ONLY_PATTERN)"
-                    $skippedCount++
-                    continue
-                }
-
-                Log-Info "[EXEC] Executing: $scriptName"
-                $scriptCount++
-
-                # Execute PowerShell script
-                $startTime = Get-Date
-
-                try {
-                    if ($SILENT_MODE) {
-                        & $bootstrapScript.FullName *> $null
-                    }
-                    else {
-                        & $bootstrapScript.FullName
-                    }
-                    $exitCode = $LASTEXITCODE
-
-                    $endTime = Get-Date
-                    $duration = [math]::Round(($endTime - $startTime).TotalSeconds, 2)
-
-                    if ($exitCode -eq 0 -or $null -eq $exitCode) {
-                        Log-Success "$scriptName completed (${duration}s)"
-                        $successCount++
-                    }
-                    else {
-                        Log-Error "$scriptName failed with exit code $exitCode (${duration}s)"
-                        $failedCount++
-
-                        if ($BOOTSTRAP_FAIL_FAST) {
-                            Log-Error "Stopping bootstrap (BOOTSTRAP_FAIL_FAST=true)"
-                            exit 1
-                        }
-                    }
-                }
-                catch {
-                    $endTime = Get-Date
-                    $duration = [math]::Round(($endTime - $startTime).TotalSeconds, 2)
-
-                    Log-Error "$scriptName failed with error: $_  (${duration}s)"
-                    $failedCount++
-
-                    if ($BOOTSTRAP_FAIL_FAST) {
-                        Log-Error "Stopping bootstrap (BOOTSTRAP_FAIL_FAST=true)"
-                        exit 1
-                    }
-                }
-
-                Write-Host ""
-            }
-
-            # Summary
-            Write-Host ""
-            Log-Info "========================================="
-            Log-Info "Bootstrap Summary"
-            Log-Info "========================================="
-            Log-Info "Total scripts discovered: $($sortedScripts.Count)"
-            Log-Info "Executed: $scriptCount"
-            Log-Success "Successful: $successCount"
-
-            if ($failedCount -gt 0) {
-                Log-Error "Failed: $failedCount"
-            }
-
-            if ($skippedCount -gt 0) {
-                Log-Info "Skipped: $skippedCount"
-            }
-
-            Log-Info "Completed at: $(Get-Date)"
-            Log-Info "========================================="
-
-            if ($failedCount -gt 0) {
-                exit 1
-            }
-
-            Log-Success "Bootstrap completed successfully!"
-        }
-    }
-
-    # ============================================================================
-    # Setup Completed
-    # ============================================================================
-
-    Write-Host ""
-    Write-Host ""
-    if ($SILENT_MODE) {
-        Write-Host "========================================="
-        Write-Host "✅ Setup completed successfully!"
-        Write-Host "========================================="
-        Write-Host ""
-        Write-Host "Admin credentials:"
-        Write-Host "  URL:      ${PUBLIC_URL}/console"
-        Write-Host "  Username: admin"
-        Write-Host "  Password: admin"
-        Write-Host ""
-        Write-Host "Run .\start.ps1 to start ${PRODUCT_NAME}."
-        Write-Host ""
-    }
-    else {
-        Write-Host "========================================="
-        Write-Host "[OK] Setup completed successfully!" -ForegroundColor Green
-        Write-Host "========================================="
-        Write-Host ""
-        Write-Host "[INFO] Next steps:"
-        Write-Host "   1. Start the server: .\start.ps1" -ForegroundColor Cyan
-        Write-Host "   2. Access $PRODUCT_NAME at: $BASE_URL" -ForegroundColor Cyan
-        Write-Host "   3. Login with admin credentials:"
-        Write-Host "      Username: admin" -ForegroundColor Cyan
-        Write-Host "      Password: admin" -ForegroundColor Cyan
-        Write-Host ""
     }
 }
 finally {
-    # Cleanup
-    if ($VERBOSE_MODE) {
-        Write-Host ""
-        Write-Host "[STOP] Stopping temporary server..." -ForegroundColor Cyan
-    }
-    if ($proc -and -not $proc.HasExited) {
-        try {
-            Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
-        } catch { }
-    }
-    if ($consentProc -and -not $consentProc.HasExited) {
-        try {
-            Stop-Process -Id $consentProc.Id -Force -ErrorAction SilentlyContinue
-        } catch { }
-    }
+    # Env:ADMIN_USERNAME/ADMIN_PASSWORD were set above so the nested start.ps1 call could read
+    # them. This script runs in the caller's own pwsh.exe process (not a forked child), so without
+    # this cleanup they'd leak into the interactive session and silently suppress the prompt on
+    # the next ./setup.ps1 run.
+    Remove-Item Env:ADMIN_USERNAME -ErrorAction SilentlyContinue
+    Remove-Item Env:ADMIN_PASSWORD -ErrorAction SilentlyContinue
+}
+Log-Success "Default resources created"
 
-    foreach ($tempLog in @($serverStdOutLog, $serverStdErrLog, $consentStdOutLog, $consentStdErrLog)) {
-        if ($tempLog -and (Test-Path $tempLog)) {
-            Remove-Item $tempLog -Force -ErrorAction SilentlyContinue
-        }
-    }
+# ========================================================================
+# Setup Completed
+# ========================================================================
 
-    # Restore SKIP_SECURITY to its previous state
-    if (-not $hadSkipSecurity) {
-        Remove-Item Env:SKIP_SECURITY -ErrorAction SilentlyContinue
-    } else {
-        $env:SKIP_SECURITY = $previousSkipSecurity
-    }
+Write-Host ""
+Write-Host ""
+if ($SILENT_MODE) {
+    Write-Host "========================================="
+    Write-Host "Setup completed successfully!"
+    Write-Host "========================================="
+    Write-Host ""
+    Write-Host "Console URL: ${PUBLIC_URL}/console"
+    Write-Host ""
+    Show-AdminCredentialsNotice
+    Show-DirectAuthSecretNotice
+    Show-CertificatesNotice
+    Write-Host "Run .\start.ps1 to start ${PRODUCT_NAME}."
+    Write-Host ""
+}
+else {
+    Write-Host "========================================="
+    Write-Host "[OK] Setup completed successfully!" -ForegroundColor Green
+    Write-Host "========================================="
+    Write-Host ""
+    Show-AdminCredentialsNotice
+    Show-DirectAuthSecretNotice
+    Show-CertificatesNotice
+    Write-Host "[INFO] Next steps:"
+    Write-Host "   1. Start the server: .\start.ps1" -ForegroundColor Cyan
+    Write-Host "   2. Access $PRODUCT_NAME at: $BASE_URL" -ForegroundColor Cyan
+    Write-Host ""
 }
 
 exit 0

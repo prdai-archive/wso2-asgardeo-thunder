@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2025, WSO2 LLC. (https://www.wso2.com).
+ * Copyright (c) 2025-2026, WSO2 LLC. (https://www.wso2.com).
  *
  * WSO2 LLC. licenses this file to you under the Apache License,
  * Version 2.0 (the "License"); you may not use this file except
@@ -19,6 +19,7 @@
 package main
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/tls"
@@ -38,7 +39,10 @@ import (
 	"testing"
 	"time"
 
+	engineconfig "github.com/thunder-id/thunderid/pkg/thunderidengine/config"
+
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 
 	"github.com/thunder-id/thunderid/internal/system/config"
@@ -63,94 +67,14 @@ func (suite *CreateSecurityMiddlewareTestSuite) SetupTest() {
 	suite.logger = log.GetLogger()
 	suite.mockJWTService = jwtmock.NewJWTServiceInterfaceMock(suite.T())
 	suite.mux = http.NewServeMux()
-
-	// Ensure environment variable is clean before each test
-	_ = os.Unsetenv("SKIP_SECURITY")
-}
-
-func (suite *CreateSecurityMiddlewareTestSuite) TearDownTest() {
-	// Clean up environment variable after each test
-	_ = os.Unsetenv("SKIP_SECURITY")
-}
-
-// TestCreateSecurityMiddleware_WithEnvironmentVariable tests various SKIP_SECURITY environment variable values
-func (suite *CreateSecurityMiddlewareTestSuite) TestCreateSecurityMiddleware_WithEnvironmentVariable() {
-	testCases := []struct {
-		name               string
-		envValue           string
-		setEnv             bool
-		expectSecuritySkip bool
-	}{
-		{
-			name:               "Security enabled - no env variable",
-			setEnv:             false,
-			expectSecuritySkip: false,
-		},
-		{
-			name:               "Security disabled - true",
-			envValue:           "true",
-			setEnv:             true,
-			expectSecuritySkip: true,
-		},
-		{
-			name:               "Security enabled - false",
-			envValue:           "false",
-			setEnv:             true,
-			expectSecuritySkip: false,
-		},
-		{
-			name:               "Security enabled - empty string",
-			envValue:           "",
-			setEnv:             true,
-			expectSecuritySkip: false,
-		},
-		{
-			name:               "Security enabled - invalid value",
-			envValue:           "yes",
-			setEnv:             true,
-			expectSecuritySkip: false,
-		},
-		{
-			name:               "Security enabled - uppercase TRUE",
-			envValue:           "TRUE",
-			setEnv:             true,
-			expectSecuritySkip: false,
-		},
-		{
-			name:               "Security enabled - mixed case True",
-			envValue:           "True",
-			setEnv:             true,
-			expectSecuritySkip: false,
-		},
-	}
-
-	for _, tc := range testCases {
-		suite.Run(tc.name, func() {
-			// Setup
-			if tc.setEnv {
-				_ = os.Setenv("SKIP_SECURITY", tc.envValue)
-			} else {
-				_ = os.Unsetenv("SKIP_SECURITY")
-			}
-
-			// Execute
-			handler := createSecurityMiddleware(suite.logger, suite.mux, suite.mockJWTService)
-
-			// Assert - handler is always returned now, regardless of skip security flag
-			assert.NotNil(suite.T(), handler, "Handler should always be non-nil")
-
-			// Cleanup for next iteration
-			_ = os.Unsetenv("SKIP_SECURITY")
-		})
-	}
 }
 
 // TestCreateSecurityMiddleware_MultipleInvocations tests that multiple calls work correctly
 func (suite *CreateSecurityMiddlewareTestSuite) TestCreateSecurityMiddleware_MultipleInvocations() {
 	// Execute multiple times
-	handler1 := createSecurityMiddleware(suite.logger, suite.mux, suite.mockJWTService)
-	handler2 := createSecurityMiddleware(suite.logger, suite.mux, suite.mockJWTService)
-	handler3 := createSecurityMiddleware(suite.logger, suite.mux, suite.mockJWTService)
+	handler1 := createSecurityMiddleware(context.Background(), suite.logger, suite.mux, suite.mockJWTService, nil)
+	handler2 := createSecurityMiddleware(context.Background(), suite.logger, suite.mux, suite.mockJWTService, nil)
+	handler3 := createSecurityMiddleware(context.Background(), suite.logger, suite.mux, suite.mockJWTService, nil)
 
 	// Assert - each call should return a new handler instance
 	assert.NotNil(suite.T(), handler1)
@@ -158,36 +82,11 @@ func (suite *CreateSecurityMiddlewareTestSuite) TestCreateSecurityMiddleware_Mul
 	assert.NotNil(suite.T(), handler3)
 }
 
-// TestCreateSecurityMiddleware_RuntimeToggle tests toggling security at runtime by changing environment variable
-func (suite *CreateSecurityMiddlewareTestSuite) TestCreateSecurityMiddleware_RuntimeToggle() {
-	// First call with security enabled
-	handler1 := createSecurityMiddleware(suite.logger, suite.mux, suite.mockJWTService)
-	assert.NotNil(suite.T(), handler1, "First handler should not be nil")
-
-	// Disable security
-	_ = os.Setenv("SKIP_SECURITY", "true")
-	handler2 := createSecurityMiddleware(suite.logger, suite.mux, suite.mockJWTService)
-	assert.NotNil(suite.T(), handler2, "Second handler should not be nil (skipSecurity is handled internally)")
-
-	// Re-enable security
-	_ = os.Unsetenv("SKIP_SECURITY")
-	handler3 := createSecurityMiddleware(suite.logger, suite.mux, suite.mockJWTService)
-	assert.NotNil(suite.T(), handler3, "Third handler should not be nil after re-enabling security")
-}
-
 func TestCreateHTTPServer_WithHTTPOnly(t *testing.T) {
 	logger := log.GetLogger()
-	if err := os.Setenv("SKIP_SECURITY", "true"); err != nil {
-		t.Fatalf("failed to set SKIP_SECURITY: %v", err)
-	}
-	defer func() {
-		if err := os.Unsetenv("SKIP_SECURITY"); err != nil {
-			t.Fatalf("failed to unset SKIP_SECURITY: %v", err)
-		}
-	}()
 
 	cfg := &config.Config{
-		Server: config.ServerConfig{
+		Server: engineconfig.ServerConfig{
 			Hostname: "localhost",
 			Port:     0,
 			HTTPOnly: true,
@@ -195,7 +94,7 @@ func TestCreateHTTPServer_WithHTTPOnly(t *testing.T) {
 	}
 
 	mux := http.NewServeMux()
-	server := createHTTPServer(logger, cfg, mux, nil)
+	server := createHTTPServer(context.Background(), logger, cfg, mux, nil, nil)
 
 	assert.Equal(t, "localhost:0", server.Addr)
 	assert.NotNil(t, server.Handler)
@@ -227,7 +126,7 @@ func TestCreateListener_Success(t *testing.T) {
 		netListen = originalListen
 	})
 
-	ln := createListener(logger, server)
+	ln := createListener(context.Background(), logger, server)
 
 	assert.Equal(t, 1, callCount)
 	assert.Equal(t, stubListener, ln)
@@ -249,7 +148,7 @@ func TestCreateListener_ExitsOnError(t *testing.T) {
 			Addr:              "invalid-address",
 			ReadHeaderTimeout: time.Second,
 		}
-		createListener(logger, server)
+		createListener(context.Background(), logger, server)
 		return
 	}
 
@@ -281,7 +180,7 @@ func TestCreateTLSListener_Success(t *testing.T) {
 		tlsListen = originalTLSListen
 	})
 
-	ln := createTLSListener(logger, server, tlsConfig)
+	ln := createTLSListener(context.Background(), logger, server, tlsConfig)
 
 	assert.Equal(t, 1, callCount)
 	assert.Equal(t, stubListener, ln)
@@ -303,7 +202,7 @@ func TestCreateTLSListener_ExitsOnError(t *testing.T) {
 			Addr:              "invalid-address",
 			ReadHeaderTimeout: time.Second,
 		}
-		createTLSListener(logger, server, &tls.Config{MinVersion: tls.VersionTLS12})
+		createTLSListener(context.Background(), logger, server, &tls.Config{MinVersion: tls.VersionTLS12})
 		return
 	}
 
@@ -322,7 +221,7 @@ func TestGetThunderHome_UsesFlagValue(t *testing.T) {
 	flag.CommandLine = flag.NewFlagSet(os.Args[0], flag.ExitOnError)
 	os.Args = []string{origArgs[0], "-serverHome", tmpDir}
 
-	got := getThunderHome(log.GetLogger())
+	got := getThunderHome(context.Background(), log.GetLogger())
 	assert.Equal(t, tmpDir, got)
 }
 
@@ -341,7 +240,7 @@ func TestGetThunderHome_DefaultsToCWD(t *testing.T) {
 	os.Args = []string{origArgs[0]}
 	_ = os.Chdir(tmpDir)
 
-	got := getThunderHome(log.GetLogger())
+	got := getThunderHome(context.Background(), log.GetLogger())
 	expectedResolved, err := filepath.EvalSymlinks(tmpDir)
 	assert.NoError(t, err)
 	gotResolved, err := filepath.EvalSymlinks(got)
@@ -359,7 +258,8 @@ func TestCreateStaticFileHandler(t *testing.T) {
 	requireWriteFile(t, filepath.Join(tmpDir, "index.html"), indexContent)
 	requireWriteFile(t, filepath.Join(tmpDir, "hello.txt"), fileContent)
 
-	handler := createStaticFileHandler("/app/", tmpDir, logger)
+	handler, err := createStaticFileHandler("/app/", tmpDir, logger)
+	require.NoError(t, err)
 
 	t.Run("serves existing file", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/app/hello.txt", nil)
@@ -380,6 +280,51 @@ func TestCreateStaticFileHandler(t *testing.T) {
 		assert.Equal(t, http.StatusOK, rr.Code)
 		assert.Equal(t, string(indexContent), rr.Body.String())
 	})
+
+	t.Run("rejects path escaping the served directory", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/app/placeholder", nil)
+		// Set an out-of-bounds path directly to exercise the containment check,
+		// bypassing the ServeMux normalization that would run in production.
+		req.URL.Path = "/app/../../../../etc/passwd"
+		rr := httptest.NewRecorder()
+
+		handler.ServeHTTP(rr, req)
+
+		assert.Equal(t, http.StatusNotFound, rr.Code)
+		assert.NotContains(t, rr.Body.String(), "root:")
+	})
+
+	t.Run("returns error when the directory cannot be opened", func(t *testing.T) {
+		_, err := createStaticFileHandler("/app/", filepath.Join(tmpDir, "does-not-exist"), logger)
+		require.Error(t, err)
+	})
+
+	t.Run("returns 404 when index.html is absent and file not found", func(t *testing.T) {
+		noIndexDir := t.TempDir()
+		requireWriteFile(t, filepath.Join(noIndexDir, "asset.txt"), []byte("asset"))
+		noIndexHandler, err := createStaticFileHandler("/app/", noIndexDir, logger)
+		require.NoError(t, err)
+
+		req := httptest.NewRequest(http.MethodGet, "/app/unknown", nil)
+		rr := httptest.NewRecorder()
+
+		noIndexHandler.ServeHTTP(rr, req)
+
+		assert.Equal(t, http.StatusNotFound, rr.Code)
+	})
+
+	t.Run("serves nested index.html through the normal file flow", func(t *testing.T) {
+		require.NoError(t, os.MkdirAll(filepath.Join(tmpDir, "nested"), 0o750))
+		requireWriteFile(t, filepath.Join(tmpDir, "nested", "index.html"), []byte("nested index"))
+
+		req := httptest.NewRequest(http.MethodGet, "/app/nested/index.html", nil)
+		rr := httptest.NewRecorder()
+
+		handler.ServeHTTP(rr, req)
+
+		// The nested file must not be served through the root index.html no-cache branch.
+		assert.Empty(t, rr.Header().Get(constants.CacheControlHeaderName))
+	})
 }
 
 func TestCreateStaticFileHandler_CacheHeaders(t *testing.T) {
@@ -396,7 +341,8 @@ func TestCreateStaticFileHandler_CacheHeaders(t *testing.T) {
 	requireWriteFile(t, filepath.Join(tmpDir, "styles.css"), cssContent)
 	requireWriteFile(t, filepath.Join(tmpDir, "logo.png"), imageContent)
 
-	handler := createStaticFileHandler("/app/", tmpDir, logger)
+	handler, err := createStaticFileHandler("/app/", tmpDir, logger)
+	require.NoError(t, err)
 
 	t.Run("sets cache headers when serving index.html at root", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/app/", nil)
@@ -513,42 +459,6 @@ func TestCreateStaticFileHandler_CacheHeaders(t *testing.T) {
 	})
 }
 
-func TestDirectoryExists(t *testing.T) {
-	tmpDir := t.TempDir()
-
-	t.Run("returns true for existing directory", func(t *testing.T) {
-		assert.True(t, directoryExists(tmpDir))
-	})
-
-	t.Run("returns false for non-existent directory", func(t *testing.T) {
-		assert.False(t, directoryExists(filepath.Join(tmpDir, "nonexistent")))
-	})
-
-	t.Run("returns false for file, not directory", func(t *testing.T) {
-		filePath := filepath.Join(tmpDir, "file.txt")
-		requireWriteFile(t, filePath, []byte("content"))
-		assert.False(t, directoryExists(filePath))
-	})
-}
-
-func TestFileExists(t *testing.T) {
-	tmpDir := t.TempDir()
-	filePath := filepath.Join(tmpDir, "file.txt")
-	requireWriteFile(t, filePath, []byte("content"))
-
-	t.Run("returns true for existing file", func(t *testing.T) {
-		assert.True(t, fileExists(filePath))
-	})
-
-	t.Run("returns false for non-existent file", func(t *testing.T) {
-		assert.False(t, fileExists(filepath.Join(tmpDir, "nonexistent.txt")))
-	})
-
-	t.Run("returns false for directory, not file", func(t *testing.T) {
-		assert.False(t, fileExists(tmpDir))
-	})
-}
-
 func TestRegisterStaticFileHandlers(t *testing.T) {
 	logger := log.GetLogger()
 	tmpDir := t.TempDir()
@@ -567,7 +477,7 @@ func TestRegisterStaticFileHandlers(t *testing.T) {
 
 	t.Run("registers handlers for existing directories", func(t *testing.T) {
 		mux := http.NewServeMux()
-		registerStaticFileHandlers(logger, mux, tmpDir)
+		registerStaticFileHandlers(context.Background(), logger, mux, tmpDir)
 
 		// Test gate handler
 		req := httptest.NewRequest(http.MethodGet, "/gate/", nil)
@@ -584,11 +494,56 @@ func TestRegisterStaticFileHandlers(t *testing.T) {
 		assert.Contains(t, rr.Body.String(), "console app")
 	})
 
+	t.Run("serves js files as application/javascript", func(t *testing.T) {
+		jsContent := []byte("console.log('hello');")
+		requireWriteFile(t, filepath.Join(gateDir, "app.js"), jsContent)
+
+		mux := http.NewServeMux()
+		registerStaticFileHandlers(context.Background(), logger, mux, tmpDir)
+
+		req := httptest.NewRequest(http.MethodGet, "/gate/app.js", nil)
+		rr := httptest.NewRecorder()
+		mux.ServeHTTP(rr, req)
+
+		assert.Equal(t, http.StatusOK, rr.Code)
+		assert.Equal(t, "application/javascript; charset=utf-8", rr.Header().Get("Content-Type"))
+	})
+
+	t.Run("serves console js files as application/javascript", func(t *testing.T) {
+		jsContent := []byte("console.log('hello');")
+		requireWriteFile(t, filepath.Join(consoleDir, "app.js"), jsContent)
+
+		mux := http.NewServeMux()
+		registerStaticFileHandlers(context.Background(), logger, mux, tmpDir)
+
+		req := httptest.NewRequest(http.MethodGet, "/console/app.js", nil)
+		rr := httptest.NewRecorder()
+		mux.ServeHTTP(rr, req)
+
+		assert.Equal(t, http.StatusOK, rr.Code)
+		assert.Equal(t, "application/javascript; charset=utf-8", rr.Header().Get("Content-Type"))
+	})
+
+	t.Run("serves mjs files as application/javascript", func(t *testing.T) {
+		mjsContent := []byte("export default {};")
+		requireWriteFile(t, filepath.Join(gateDir, "app.mjs"), mjsContent)
+
+		mux := http.NewServeMux()
+		registerStaticFileHandlers(context.Background(), logger, mux, tmpDir)
+
+		req := httptest.NewRequest(http.MethodGet, "/gate/app.mjs", nil)
+		rr := httptest.NewRecorder()
+		mux.ServeHTTP(rr, req)
+
+		assert.Equal(t, http.StatusOK, rr.Code)
+		assert.Equal(t, "application/javascript; charset=utf-8", rr.Header().Get("Content-Type"))
+	})
+
 	t.Run("handles missing directories gracefully", func(t *testing.T) {
 		emptyTmpDir := t.TempDir()
 		mux := http.NewServeMux()
 		// Should not panic
-		registerStaticFileHandlers(logger, mux, emptyTmpDir)
+		registerStaticFileHandlers(context.Background(), logger, mux, emptyTmpDir)
 	})
 }
 
@@ -701,4 +656,18 @@ func runExitHelper(t *testing.T, envKey, testName string) {
 	} else {
 		t.Fatalf("expected process to exit with code 1, got %v", err)
 	}
+}
+
+func TestAccessLogExcludePaths(t *testing.T) {
+	// The frontend prefixes are always present, even with no configured extras.
+	assert.Equal(t, []string{"/gate/", "/console/"}, accessLogExcludePaths(nil))
+
+	// Configured prefixes are appended after the built-in frontend prefixes.
+	assert.Equal(t, []string{"/gate/", "/console/", "/health/", "/metrics/"},
+		accessLogExcludePaths([]string{"/health/", "/metrics/"}))
+
+	// Empty and root ("/") entries are dropped so they cannot match every request
+	// and silently disable all access logging.
+	assert.Equal(t, []string{"/gate/", "/console/", "/health/"},
+		accessLogExcludePaths([]string{"", "/health/", "/"}))
 }

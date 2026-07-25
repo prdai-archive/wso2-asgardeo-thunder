@@ -1,3 +1,4 @@
+resource_type: flow
 id: decl-flow-1
 handle: decl-flow-1
 name: Declarative Test Flow
@@ -21,11 +22,11 @@ nodes:
             required: true
         action:
           ref: action_001
-          nextNode: basic_auth
-  - id: basic_auth
+          nextNode: credentials_auth
+  - id: credentials_auth
     type: TASK_EXECUTION
     executor:
-      name: BasicAuthExecutor
+      name: CredentialsAuthExecutor
       inputs:
         - ref: input_001
           identifier: username

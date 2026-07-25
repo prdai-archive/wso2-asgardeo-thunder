@@ -1,3 +1,21 @@
+/*
+ * Copyright (c) 2026, WSO2 LLC. (https://www.wso2.com).
+ *
+ * WSO2 LLC. licenses this file to you under the Apache License,
+ * Version 2.0 (the "License"); you may not use this file except
+ * in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ */
+
 import { createServer } from "node:http";
 import { randomUUID } from "node:crypto";
 import { URL } from "node:url";
@@ -24,7 +42,9 @@ import {
   findRecommendedFlights,
   listBookedFlights,
   listLocations,
-  listTrips
+  listTrips,
+  setAllBusinessFlightsAvailable,
+  setAllBusinessFlightsUnavailable
 } from "./db.js";
 import { getProtectedResourceMetadata, handleMcpRequest } from "./mcp.js";
 
@@ -55,10 +75,11 @@ function logRequest(method, pathname, claims) {
     console.log(`${method} ${pathname}`);
     return;
   }
-  const type = claims.sub === claims.client_id ? "m2m" : "user";
+  const type = claims.grant_type === "client_credentials" ? "m2m" : "user";
   const aud = Array.isArray(claims.aud) ? claims.aud.join(",") : (claims.aud || "-");
+  const act = claims.act?.sub ? ` | act: ${claims.act.sub}` : "";
   console.log(
-    `${method} ${pathname} | type: ${type} | client_id: ${claims.client_id || "-"} | sub: ${claims.sub || "-"} | aud: ${aud} | scope: ${claims.scope || "-"}`
+    `${method} ${pathname} | type: ${type} | client_id: ${claims.client_id || "-"} | sub: ${claims.sub || "-"}${act} | aud: ${aud} | scope: ${claims.scope || "-"}`
   );
 }
 
@@ -297,6 +318,24 @@ async function route(request, response) {
 
       return sendJson(response, 200, {
         data: { deleted: result.deleted, username }
+      }, request);
+    }
+
+    if (request.method === "POST" && url.pathname === "/api/demo/unlock-business-class") {
+      const result = setAllBusinessFlightsAvailable();
+
+      return sendJson(response, 200, {
+        message: `Made ${result.updated} Business class flights available for direct upgrade.`,
+        ...result
+      }, request);
+    }
+
+    if (request.method === "POST" && url.pathname === "/api/demo/lock-business-class") {
+      const result = setAllBusinessFlightsUnavailable();
+
+      return sendJson(response, 200, {
+        message: `Made ${result.updated} Business class flights unavailable (CIBA approval required).`,
+        ...result
       }, request);
     }
 

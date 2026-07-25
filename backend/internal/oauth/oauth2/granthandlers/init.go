@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2025, WSO2 LLC. (https://www.wso2.com).
+ * Copyright (c) 2025-2026, WSO2 LLC. (https://www.wso2.com).
  *
  * WSO2 LLC. licenses this file to you under the Apache License,
  * Version 2.0 (the "License"); you may not use this file except
@@ -19,52 +19,47 @@
 package granthandlers
 
 import (
-	"net/http"
-
 	"github.com/thunder-id/thunderid/internal/attributecache"
-	"github.com/thunder-id/thunderid/internal/authz"
-	"github.com/thunder-id/thunderid/internal/entityprovider"
-	"github.com/thunder-id/thunderid/internal/flow/flowexec"
-	"github.com/thunder-id/thunderid/internal/inboundclient"
+	oauthconfig "github.com/thunder-id/thunderid/internal/oauth/config"
 	oauth2authz "github.com/thunder-id/thunderid/internal/oauth/oauth2/authz"
-	"github.com/thunder-id/thunderid/internal/oauth/oauth2/par"
+	"github.com/thunder-id/thunderid/internal/oauth/oauth2/ciba"
+	"github.com/thunder-id/thunderid/internal/oauth/oauth2/revocation"
 	"github.com/thunder-id/thunderid/internal/oauth/oauth2/tokenservice"
-	"github.com/thunder-id/thunderid/internal/ou"
-	"github.com/thunder-id/thunderid/internal/resource"
 	"github.com/thunder-id/thunderid/internal/system/jose/jwt"
+	"github.com/thunder-id/thunderid/pkg/thunderidengine/providers"
 )
 
-// Initialize initializes the grant handler provider with the given services.
+// Initialize initializes the grant handler provider. oauth2AuthzService is created by the
+// caller (oauth/init.go) so it can also be passed to the callback dispatcher without
+// granthandlers needing to own authz initialization or expose it.
 func Initialize(
-	mux *http.ServeMux,
 	jwtService jwt.JWTServiceInterface,
-	inboundClient inboundclient.InboundClientServiceInterface,
-	flowExecService flowexec.FlowExecServiceInterface,
+	oauth2AuthzService oauth2authz.AuthorizeServiceInterface,
 	tokenBuilder tokenservice.TokenBuilderInterface,
 	tokenValidator tokenservice.TokenValidatorInterface,
 	attrCacheService attributecache.AttributeCacheServiceInterface,
-	ouService ou.OrganizationUnitServiceInterface,
-	authzService authz.AuthorizationServiceInterface,
-	entityProv entityprovider.EntityProviderInterface,
-	resourceService resource.ResourceServiceInterface,
-	parService par.PARServiceInterface,
-) (GrantHandlerProviderInterface, error) {
-	oauthAuthzService, err := oauth2authz.Initialize(
-		mux, inboundClient, resourceService, jwtService, flowExecService, parService,
-	)
-	if err != nil {
-		return nil, err
-	}
-	grantHandlerProvider := newGrantHandlerProvider(
+	ouService providers.OrganizationUnitProvider,
+	authzService providers.AuthorizationProvider,
+	actorProvider providers.ActorProvider,
+	resourceService providers.ResourceServerProvider,
+	cibaService ciba.CIBAServiceInterface,
+	refreshTokenRevoker revocation.RefreshTokenRevokerInterface,
+	criteriaRevoker revocation.CriteriaRevokerInterface,
+	cfg oauthconfig.Config,
+) GrantHandlerProviderInterface {
+	return newGrantHandlerProvider(
 		jwtService,
-		oauthAuthzService,
+		oauth2AuthzService,
 		tokenBuilder,
 		tokenValidator,
 		attrCacheService,
 		ouService,
 		authzService,
-		entityProv,
+		actorProvider,
 		resourceService,
+		cibaService,
+		refreshTokenRevoker,
+		criteriaRevoker,
+		cfg,
 	)
-	return grantHandlerProvider, nil
 }

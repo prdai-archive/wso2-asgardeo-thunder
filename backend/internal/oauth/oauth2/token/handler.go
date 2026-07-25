@@ -28,8 +28,8 @@ import (
 	"github.com/thunder-id/thunderid/internal/oauth/oauth2/model"
 	sysconst "github.com/thunder-id/thunderid/internal/system/constants"
 	"github.com/thunder-id/thunderid/internal/system/log"
-	"github.com/thunder-id/thunderid/internal/system/observability"
 	"github.com/thunder-id/thunderid/internal/system/utils"
+	"github.com/thunder-id/thunderid/pkg/thunderidengine/providers"
 )
 
 // TokenHandlerInterface defines the interface for handling OAuth 2.0 token requests.
@@ -40,13 +40,13 @@ type TokenHandlerInterface interface {
 // tokenHandler implements the TokenHandlerInterface.
 type tokenHandler struct {
 	tokenService     TokenServiceInterface
-	observabilitySvc observability.ObservabilityServiceInterface
+	observabilitySvc providers.ObservabilityProvider
 }
 
 // newTokenHandler creates a new instance of tokenHandler.
 func newTokenHandler(
 	tokenService TokenServiceInterface,
-	observabilitySvc observability.ObservabilityServiceInterface,
+	observabilitySvc providers.ObservabilityProvider,
 ) TokenHandlerInterface {
 	return &tokenHandler{
 		tokenService:     tokenService,
@@ -65,7 +65,7 @@ func (th *tokenHandler) HandleTokenRequest(w http.ResponseWriter, r *http.Reques
 	if err := r.ParseForm(); err != nil {
 		publishTokenIssuanceFailedEvent(th.observabilitySvc, r.Context(), "", "", "",
 			http.StatusBadRequest, err.Error(), startTime)
-		utils.WriteJSONError(w, constants.ErrorInvalidRequest,
+		utils.WriteJSONError(r.Context(), w, constants.ErrorInvalidRequest,
 			"Failed to parse request body", http.StatusBadRequest, nil)
 		return
 	}
@@ -75,7 +75,7 @@ func (th *tokenHandler) HandleTokenRequest(w http.ResponseWriter, r *http.Reques
 	if len(dpopHeaders) > 1 {
 		publishTokenIssuanceFailedEvent(th.observabilitySvc, r.Context(), "", "", "",
 			http.StatusBadRequest, "Multiple DPoP headers", startTime)
-		utils.WriteJSONError(w, constants.ErrorInvalidDPoPProof,
+		utils.WriteJSONError(r.Context(), w, constants.ErrorInvalidDPoPProof,
 			"Multiple DPoP headers", http.StatusBadRequest, nil)
 		return
 	}
@@ -87,8 +87,8 @@ func (th *tokenHandler) HandleTokenRequest(w http.ResponseWriter, r *http.Reques
 	// Get authenticated client from context (set by ClientAuthMiddleware).
 	clientInfo := clientauth.GetOAuthClient(r.Context())
 	if clientInfo == nil {
-		logger.Error("OAuth client not found in context - ClientAuthMiddleware must be applied")
-		utils.WriteJSONError(w, constants.ErrorServerError,
+		logger.Error(ctx, "OAuth client not found in context - ClientAuthMiddleware must be applied")
+		utils.WriteJSONError(r.Context(), w, constants.ErrorServerError,
 			"Something went wrong", http.StatusInternalServerError, nil)
 		return
 	}
@@ -112,6 +112,8 @@ func (th *tokenHandler) HandleTokenRequest(w http.ResponseWriter, r *http.Reques
 		ActorTokenType:     r.FormValue(constants.RequestParamActorTokenType),
 		RequestedTokenType: r.FormValue(constants.RequestParamRequestedTokenType),
 		Audiences:          r.Form[constants.RequestParamAudience],
+		AuthReqID:          r.FormValue(constants.RequestParamAuthReqID),
+		Assertion:          r.FormValue(constants.RequestParamAssertion),
 	}
 
 	// Delegate all business logic to the token service.
@@ -127,22 +129,22 @@ func (th *tokenHandler) HandleTokenRequest(w http.ResponseWriter, r *http.Reques
 			}
 			description := tokenError.ErrorDescription
 			if tokenError.Error == constants.ErrorInvalidDPoPProof {
-				logger.Debug("DPoP proof rejected", log.String("error", description))
+				logger.Debug(ctx, "DPoP proof rejected", log.String("error", description))
 				description = "Invalid DPoP proof"
 			}
-			utils.WriteJSONError(w, tokenError.Error, description, statusCode, nil)
+			utils.WriteJSONError(r.Context(), w, tokenError.Error, description, statusCode, nil)
 		} else {
-			utils.WriteJSONError(w, constants.ErrorServerError, "Something went wrong",
+			utils.WriteJSONError(r.Context(), w, constants.ErrorServerError, "Something went wrong",
 				http.StatusInternalServerError, nil)
 		}
 		return
 	}
 
-	logger.Debug("Token response sending", log.String("client_id", clientInfo.ClientID))
+	logger.Debug(ctx, "Token response sending", log.String("client_id", clientInfo.ClientID))
 
 	// Must include the following headers when sensitive data is returned.
 	w.Header().Set(sysconst.CacheControlHeaderName, sysconst.CacheControlNoStore)
 	w.Header().Set(sysconst.PragmaHeaderName, sysconst.PragmaNoCache)
 
-	utils.WriteSuccessResponse(w, http.StatusOK, tokenResponse)
+	utils.WriteSuccessResponse(r.Context(), w, http.StatusOK, tokenResponse)
 }

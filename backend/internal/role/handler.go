@@ -19,13 +19,16 @@
 package role
 
 import (
+	"context"
+	"errors"
 	"net/http"
 	"net/url"
 	"strconv"
 
+	tidcommon "github.com/thunder-id/thunderid/pkg/thunderidengine/common"
+
 	serverconst "github.com/thunder-id/thunderid/internal/system/constants"
 	"github.com/thunder-id/thunderid/internal/system/error/apierror"
-	"github.com/thunder-id/thunderid/internal/system/error/serviceerror"
 	"github.com/thunder-id/thunderid/internal/system/log"
 	sysutils "github.com/thunder-id/thunderid/internal/system/utils"
 )
@@ -53,13 +56,13 @@ func (rh *roleHandler) HandleRoleListRequest(w http.ResponseWriter, r *http.Requ
 
 	limit, offset, svcErr := parsePaginationParams(r.URL.Query())
 	if svcErr != nil {
-		handleError(w, svcErr)
+		handleError(ctx, w, svcErr)
 		return
 	}
 
 	roleList, svcErr := rh.roleService.GetRoleList(ctx, limit, offset)
 	if svcErr != nil {
-		handleError(w, svcErr)
+		handleError(ctx, w, svcErr)
 		return
 	}
 
@@ -77,9 +80,9 @@ func (rh *roleHandler) HandleRoleListRequest(w http.ResponseWriter, r *http.Requ
 		Links:        roleList.Links,
 	}
 
-	sysutils.WriteSuccessResponse(w, http.StatusOK, roleListResponse)
+	sysutils.WriteSuccessResponse(ctx, w, http.StatusOK, roleListResponse)
 
-	logger.Debug("Successfully listed roles with pagination",
+	logger.Debug(ctx, "Successfully listed roles with pagination",
 		log.Int("limit", limit), log.Int("offset", offset),
 		log.Int("totalResults", roleListResponse.TotalResults),
 		log.Int("count", roleListResponse.Count))
@@ -92,7 +95,12 @@ func (rh *roleHandler) HandleRolePostRequest(w http.ResponseWriter, r *http.Requ
 
 	createRequest, err := sysutils.DecodeJSONBody[CreateRoleRequest](r)
 	if err != nil {
-		handleError(w, &ErrorInvalidRequestFormat)
+		var valErr *sysutils.ValidationError
+		if errors.As(err, &valErr) {
+			sysutils.WriteStructuredErrorResponse(w, http.StatusBadRequest, "Validation Failed", valErr.Errors)
+			return
+		}
+		handleError(ctx, w, &ErrorInvalidRequestFormat)
 		return
 	}
 
@@ -103,16 +111,16 @@ func (rh *roleHandler) HandleRolePostRequest(w http.ResponseWriter, r *http.Requ
 
 	serviceRole, svcErr := rh.roleService.CreateRole(ctx, serviceRequest)
 	if svcErr != nil {
-		handleError(w, svcErr)
+		handleError(ctx, w, svcErr)
 		return
 	}
 
 	// Convert service response to HTTP response
 	createdRole := rh.toHTTPCreateRoleResponse(serviceRole)
 
-	sysutils.WriteSuccessResponse(w, http.StatusCreated, createdRole)
+	sysutils.WriteSuccessResponse(ctx, w, http.StatusCreated, createdRole)
 
-	logger.Debug("Successfully created role", log.String("roleId", createdRole.ID))
+	logger.Debug(ctx, "Successfully created role", log.String("roleId", createdRole.ID))
 }
 
 // HandleRoleGetRequest handles the get role by id request.
@@ -123,16 +131,16 @@ func (rh *roleHandler) HandleRoleGetRequest(w http.ResponseWriter, r *http.Reque
 	id := r.PathValue("id")
 	serviceRole, svcErr := rh.roleService.GetRoleWithPermissions(ctx, id)
 	if svcErr != nil {
-		handleError(w, svcErr)
+		handleError(ctx, w, svcErr)
 		return
 	}
 
 	// Convert service response to HTTP response
 	role := rh.toHTTPRoleResponse(serviceRole)
 
-	sysutils.WriteSuccessResponse(w, http.StatusOK, role)
+	sysutils.WriteSuccessResponse(ctx, w, http.StatusOK, role)
 
-	logger.Debug("Successfully retrieved role", log.String("role id", id))
+	logger.Debug(ctx, "Successfully retrieved role", log.String("role id", id))
 }
 
 // HandleRolePutRequest handles the update role request.
@@ -143,7 +151,12 @@ func (rh *roleHandler) HandleRolePutRequest(w http.ResponseWriter, r *http.Reque
 	id := r.PathValue("id")
 	updateRequest, err := sysutils.DecodeJSONBody[UpdateRoleRequest](r)
 	if err != nil {
-		handleError(w, &ErrorInvalidRequestFormat)
+		var valErr *sysutils.ValidationError
+		if errors.As(err, &valErr) {
+			sysutils.WriteStructuredErrorResponse(w, http.StatusBadRequest, "Validation Failed", valErr.Errors)
+			return
+		}
+		handleError(ctx, w, &ErrorInvalidRequestFormat)
 		return
 	}
 
@@ -154,16 +167,16 @@ func (rh *roleHandler) HandleRolePutRequest(w http.ResponseWriter, r *http.Reque
 
 	serviceRole, svcErr := rh.roleService.UpdateRoleWithPermissions(ctx, id, serviceRequest)
 	if svcErr != nil {
-		handleError(w, svcErr)
+		handleError(ctx, w, svcErr)
 		return
 	}
 
 	// Convert service response to HTTP response
 	role := rh.toHTTPRoleResponse(serviceRole)
 
-	sysutils.WriteSuccessResponse(w, http.StatusOK, role)
+	sysutils.WriteSuccessResponse(ctx, w, http.StatusOK, role)
 
-	logger.Debug("Successfully updated role", log.String("role id", id))
+	logger.Debug(ctx, "Successfully updated role", log.String("role id", id))
 }
 
 // HandleRoleDeleteRequest handles the delete role request.
@@ -174,12 +187,12 @@ func (rh *roleHandler) HandleRoleDeleteRequest(w http.ResponseWriter, r *http.Re
 	id := r.PathValue("id")
 	svcErr := rh.roleService.DeleteRole(ctx, id)
 	if svcErr != nil {
-		handleError(w, svcErr)
+		handleError(ctx, w, svcErr)
 		return
 	}
 
-	sysutils.WriteSuccessResponse(w, http.StatusNoContent, nil)
-	logger.Debug("Successfully deleted role", log.String("role id", id))
+	sysutils.WriteSuccessResponse(ctx, w, http.StatusNoContent, nil)
+	logger.Debug(ctx, "Successfully deleted role", log.String("role id", id))
 }
 
 // HandleRoleAssignmentsGetRequest handles the get role assignments request.
@@ -190,7 +203,7 @@ func (rh *roleHandler) HandleRoleAssignmentsGetRequest(w http.ResponseWriter, r 
 	id := r.PathValue("id")
 	limit, offset, svcErr := parsePaginationParams(r.URL.Query())
 	if svcErr != nil {
-		handleError(w, svcErr)
+		handleError(ctx, w, svcErr)
 		return
 	}
 
@@ -201,7 +214,7 @@ func (rh *roleHandler) HandleRoleAssignmentsGetRequest(w http.ResponseWriter, r 
 	assigneeType := r.URL.Query().Get("type")
 	if assigneeType != "" && assigneeType != string(AssigneeTypeUser) && assigneeType != string(AssigneeTypeGroup) &&
 		assigneeType != string(AssigneeTypeApp) && assigneeType != string(AssigneeTypeAgent) {
-		handleError(w, &ErrorInvalidAssigneeType)
+		handleError(ctx, w, &ErrorInvalidAssigneeType)
 		return
 	}
 
@@ -213,7 +226,7 @@ func (rh *roleHandler) HandleRoleAssignmentsGetRequest(w http.ResponseWriter, r 
 		serviceResponse, svcErr = rh.assignmentService.GetRoleAssignments(ctx, id, limit, offset, includeDisplay)
 	}
 	if svcErr != nil {
-		handleError(w, svcErr)
+		handleError(ctx, w, svcErr)
 		return
 	}
 
@@ -231,9 +244,9 @@ func (rh *roleHandler) HandleRoleAssignmentsGetRequest(w http.ResponseWriter, r 
 		Links:        serviceResponse.Links,
 	}
 
-	sysutils.WriteSuccessResponse(w, http.StatusOK, assignmentListResponse)
+	sysutils.WriteSuccessResponse(ctx, w, http.StatusOK, assignmentListResponse)
 
-	logger.Debug("Successfully retrieved role assignments", log.String("role id", id),
+	logger.Debug(ctx, "Successfully retrieved role assignments", log.String("role id", id),
 		log.Int("limit", limit), log.Int("offset", offset),
 		log.Bool("includeDisplay", includeDisplay),
 		log.String("assigneeType", assigneeType),
@@ -249,7 +262,7 @@ func (rh *roleHandler) HandleRoleAddAssignmentsRequest(w http.ResponseWriter, r 
 	id := r.PathValue("id")
 	assignmentsRequest, err := sysutils.DecodeJSONBody[AssignmentsRequest](r)
 	if err != nil {
-		handleError(w, &ErrorInvalidRequestFormat)
+		handleError(ctx, w, &ErrorInvalidRequestFormat)
 		return
 	}
 
@@ -260,12 +273,12 @@ func (rh *roleHandler) HandleRoleAddAssignmentsRequest(w http.ResponseWriter, r 
 
 	svcErr := rh.assignmentService.AddAssignments(ctx, id, serviceRequest)
 	if svcErr != nil {
-		handleError(w, svcErr)
+		handleError(ctx, w, svcErr)
 		return
 	}
 
-	sysutils.WriteSuccessResponse(w, http.StatusNoContent, nil)
-	logger.Debug("Successfully added assignments to role", log.String("role id", id))
+	sysutils.WriteSuccessResponse(ctx, w, http.StatusNoContent, nil)
+	logger.Debug(ctx, "Successfully added assignments to role", log.String("role id", id))
 }
 
 // HandleRoleRemoveAssignmentsRequest handles the remove assignments from role request.
@@ -276,7 +289,7 @@ func (rh *roleHandler) HandleRoleRemoveAssignmentsRequest(w http.ResponseWriter,
 	id := r.PathValue("id")
 	assignmentsRequest, err := sysutils.DecodeJSONBody[AssignmentsRequest](r)
 	if err != nil {
-		handleError(w, &ErrorInvalidRequestFormat)
+		handleError(ctx, w, &ErrorInvalidRequestFormat)
 		return
 	}
 
@@ -287,19 +300,19 @@ func (rh *roleHandler) HandleRoleRemoveAssignmentsRequest(w http.ResponseWriter,
 
 	svcErr := rh.assignmentService.RemoveAssignments(ctx, id, serviceRequest)
 	if svcErr != nil {
-		handleError(w, svcErr)
+		handleError(ctx, w, svcErr)
 		return
 	}
 
-	sysutils.WriteSuccessResponse(w, http.StatusNoContent, nil)
-	logger.Debug("Successfully removed assignments from role", log.String("role id", id))
+	sysutils.WriteSuccessResponse(ctx, w, http.StatusNoContent, nil)
+	logger.Debug(ctx, "Successfully removed assignments from role", log.String("role id", id))
 }
 
 // handleError handles service errors and returns appropriate HTTP responses.
-func handleError(w http.ResponseWriter,
-	svcErr *serviceerror.ServiceError) {
+func handleError(ctx context.Context, w http.ResponseWriter,
+	svcErr *tidcommon.ServiceError) {
 	statusCode := http.StatusInternalServerError
-	if svcErr.Type == serviceerror.ClientErrorType {
+	if svcErr.Type == tidcommon.ClientErrorType {
 		switch svcErr.Code {
 		case ErrorRoleNotFound.Code:
 			statusCode = http.StatusNotFound
@@ -322,7 +335,7 @@ func handleError(w http.ResponseWriter,
 		Description: svcErr.ErrorDescription,
 	}
 
-	sysutils.WriteErrorResponse(w, statusCode, errResp)
+	sysutils.WriteErrorResponse(ctx, w, statusCode, errResp)
 }
 
 // sanitizeCreateRoleRequest sanitizes the create role request input.
@@ -403,7 +416,7 @@ func (rh *roleHandler) sanitizeAssignmentsRequest(request *AssignmentsRequest) A
 }
 
 // parsePaginationParams parses limit and offset query parameters from the request.
-func parsePaginationParams(query url.Values) (int, int, *serviceerror.ServiceError) {
+func parsePaginationParams(query url.Values) (int, int, *tidcommon.ServiceError) {
 	limit := 0
 	offset := 0
 

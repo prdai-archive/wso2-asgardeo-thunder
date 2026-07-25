@@ -19,14 +19,17 @@
 package agent
 
 import (
+	"context"
+	"errors"
 	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
 
+	tidcommon "github.com/thunder-id/thunderid/pkg/thunderidengine/common"
+
 	"github.com/thunder-id/thunderid/internal/agent/model"
 	"github.com/thunder-id/thunderid/internal/system/error/apierror"
-	"github.com/thunder-id/thunderid/internal/system/error/serviceerror"
 	"github.com/thunder-id/thunderid/internal/system/log"
 	sysutils "github.com/thunder-id/thunderid/internal/system/utils"
 )
@@ -48,13 +51,13 @@ func (h *agentHandler) HandleAgentListRequest(w http.ResponseWriter, r *http.Req
 
 	limit, offset, svcErr := parsePaginationParams(r.URL.Query())
 	if svcErr != nil {
-		writeServiceError(w, svcErr)
+		writeServiceError(ctx, w, svcErr)
 		return
 	}
 
 	filters, svcErr := parseFilterParams(r.URL.Query())
 	if svcErr != nil {
-		writeServiceError(w, svcErr)
+		writeServiceError(ctx, w, svcErr)
 		return
 	}
 
@@ -62,12 +65,12 @@ func (h *agentHandler) HandleAgentListRequest(w http.ResponseWriter, r *http.Req
 
 	resp, svcErr := h.service.GetAgentList(ctx, limit, offset, filters, includeDisplay)
 	if svcErr != nil {
-		writeServiceError(w, svcErr)
+		writeServiceError(ctx, w, svcErr)
 		return
 	}
 
-	sysutils.WriteSuccessResponse(w, http.StatusOK, resp)
-	logger.Debug("Agent list returned",
+	sysutils.WriteSuccessResponse(ctx, w, http.StatusOK, resp)
+	logger.Debug(ctx, "Agent list returned",
 		log.Int("limit", limit), log.Int("offset", offset),
 		log.Int("totalResults", resp.TotalResults), log.Int("count", resp.Count))
 }
@@ -78,7 +81,12 @@ func (h *agentHandler) HandleAgentPostRequest(w http.ResponseWriter, r *http.Req
 
 	req, err := sysutils.DecodeJSONBody[model.CreateAgentRequest](r)
 	if err != nil {
-		writeServiceError(w, &ErrorInvalidRequestFormat)
+		var valErr *sysutils.ValidationError
+		if errors.As(err, &valErr) {
+			sysutils.WriteStructuredErrorResponse(w, http.StatusBadRequest, "Validation Failed", valErr.Errors)
+			return
+		}
+		writeServiceError(ctx, w, &ErrorInvalidRequestFormat)
 		return
 	}
 
@@ -96,10 +104,10 @@ func (h *agentHandler) HandleAgentPostRequest(w http.ResponseWriter, r *http.Req
 
 	resp, svcErr := h.service.CreateAgent(ctx, agent)
 	if svcErr != nil {
-		writeServiceError(w, svcErr)
+		writeServiceError(ctx, w, svcErr)
 		return
 	}
-	sysutils.WriteSuccessResponse(w, http.StatusCreated, resp)
+	sysutils.WriteSuccessResponse(ctx, w, http.StatusCreated, resp)
 }
 
 // HandleAgentGetRequest handles GET /agents/{id}.
@@ -107,17 +115,17 @@ func (h *agentHandler) HandleAgentGetRequest(w http.ResponseWriter, r *http.Requ
 	ctx := r.Context()
 	id := r.PathValue("id")
 	if id == "" {
-		writeServiceError(w, &ErrorMissingAgentID)
+		writeServiceError(ctx, w, &ErrorMissingAgentID)
 		return
 	}
 	includeDisplay := r.URL.Query().Get(sysutils.QueryParamInclude) == sysutils.IncludeValueDisplay
 
 	resp, svcErr := h.service.GetAgent(ctx, id, includeDisplay)
 	if svcErr != nil {
-		writeServiceError(w, svcErr)
+		writeServiceError(ctx, w, svcErr)
 		return
 	}
-	sysutils.WriteSuccessResponse(w, http.StatusOK, resp)
+	sysutils.WriteSuccessResponse(ctx, w, http.StatusOK, resp)
 }
 
 // HandleAgentPutRequest handles PUT /agents/{id}.
@@ -125,22 +133,27 @@ func (h *agentHandler) HandleAgentPutRequest(w http.ResponseWriter, r *http.Requ
 	ctx := r.Context()
 	id := r.PathValue("id")
 	if id == "" {
-		writeServiceError(w, &ErrorMissingAgentID)
+		writeServiceError(ctx, w, &ErrorMissingAgentID)
 		return
 	}
 
 	req, err := sysutils.DecodeJSONBody[model.UpdateAgentRequest](r)
 	if err != nil {
-		writeServiceError(w, &ErrorInvalidRequestFormat)
+		var valErr *sysutils.ValidationError
+		if errors.As(err, &valErr) {
+			sysutils.WriteStructuredErrorResponse(w, http.StatusBadRequest, "Validation Failed", valErr.Errors)
+			return
+		}
+		writeServiceError(ctx, w, &ErrorInvalidRequestFormat)
 		return
 	}
 
 	resp, svcErr := h.service.UpdateAgent(ctx, id, req)
 	if svcErr != nil {
-		writeServiceError(w, svcErr)
+		writeServiceError(ctx, w, svcErr)
 		return
 	}
-	sysutils.WriteSuccessResponse(w, http.StatusOK, resp)
+	sysutils.WriteSuccessResponse(ctx, w, http.StatusOK, resp)
 }
 
 // HandleAgentDeleteRequest handles DELETE /agents/{id}.
@@ -148,14 +161,14 @@ func (h *agentHandler) HandleAgentDeleteRequest(w http.ResponseWriter, r *http.R
 	ctx := r.Context()
 	id := r.PathValue("id")
 	if id == "" {
-		writeServiceError(w, &ErrorMissingAgentID)
+		writeServiceError(ctx, w, &ErrorMissingAgentID)
 		return
 	}
 	if svcErr := h.service.DeleteAgent(ctx, id); svcErr != nil {
-		writeServiceError(w, svcErr)
+		writeServiceError(ctx, w, svcErr)
 		return
 	}
-	sysutils.WriteSuccessResponse(w, http.StatusNoContent, nil)
+	sysutils.WriteSuccessResponse(ctx, w, http.StatusNoContent, nil)
 }
 
 // HandleAgentGroupsRequest handles GET /agents/{id}/groups.
@@ -163,25 +176,47 @@ func (h *agentHandler) HandleAgentGroupsRequest(w http.ResponseWriter, r *http.R
 	ctx := r.Context()
 	id := r.PathValue("id")
 	if id == "" {
-		writeServiceError(w, &ErrorMissingAgentID)
+		writeServiceError(ctx, w, &ErrorMissingAgentID)
 		return
 	}
 	limit, offset, svcErr := parsePaginationParams(r.URL.Query())
 	if svcErr != nil {
-		writeServiceError(w, svcErr)
+		writeServiceError(ctx, w, svcErr)
 		return
 	}
 
 	resp, svcErr := h.service.GetAgentGroups(ctx, id, limit, offset)
 	if svcErr != nil {
-		writeServiceError(w, svcErr)
+		writeServiceError(ctx, w, svcErr)
 		return
 	}
-	sysutils.WriteSuccessResponse(w, http.StatusOK, resp)
+	sysutils.WriteSuccessResponse(ctx, w, http.StatusOK, resp)
+}
+
+// HandleAgentRolesRequest handles GET /agents/{id}/roles.
+func (h *agentHandler) HandleAgentRolesRequest(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	id := r.PathValue("id")
+	if id == "" {
+		writeServiceError(ctx, w, &ErrorMissingAgentID)
+		return
+	}
+	limit, offset, svcErr := parsePaginationParams(r.URL.Query())
+	if svcErr != nil {
+		writeServiceError(ctx, w, svcErr)
+		return
+	}
+
+	resp, svcErr := h.service.GetAgentRoles(ctx, id, limit, offset)
+	if svcErr != nil {
+		writeServiceError(ctx, w, svcErr)
+		return
+	}
+	sysutils.WriteSuccessResponse(ctx, w, http.StatusOK, resp)
 }
 
 // parsePaginationParams parses limit and offset query parameters.
-func parsePaginationParams(query url.Values) (int, int, *serviceerror.ServiceError) {
+func parsePaginationParams(query url.Values) (int, int, *tidcommon.ServiceError) {
 	limit := 0
 	offset := 0
 	if v := query.Get("limit"); v != "" {
@@ -203,7 +238,7 @@ func parsePaginationParams(query url.Values) (int, int, *serviceerror.ServiceErr
 
 // parseFilterParams parses the filter query parameter using the same simple eq syntax used
 // across other resources (attribute eq "value").
-func parseFilterParams(query url.Values) (map[string]interface{}, *serviceerror.ServiceError) {
+func parseFilterParams(query url.Values) (map[string]interface{}, *tidcommon.ServiceError) {
 	if !query.Has("filter") {
 		return map[string]interface{}{}, nil
 	}
@@ -228,9 +263,9 @@ func parseFilterParams(query url.Values) (map[string]interface{}, *serviceerror.
 }
 
 // writeServiceError converts a service error into the appropriate HTTP error response.
-func writeServiceError(w http.ResponseWriter, svcErr *serviceerror.ServiceError) {
+func writeServiceError(ctx context.Context, w http.ResponseWriter, svcErr *tidcommon.ServiceError) {
 	statusCode := http.StatusInternalServerError
-	if svcErr.Type == serviceerror.ClientErrorType {
+	if svcErr.Type == tidcommon.ClientErrorType {
 		switch svcErr.Code {
 		case ErrorAgentNotFound.Code:
 			statusCode = http.StatusNotFound
@@ -250,5 +285,5 @@ func writeServiceError(w http.ResponseWriter, svcErr *serviceerror.ServiceError)
 		Message:     svcErr.Error,
 		Description: svcErr.ErrorDescription,
 	}
-	sysutils.WriteErrorResponse(w, statusCode, errResp)
+	sysutils.WriteErrorResponse(ctx, w, statusCode, errResp)
 }

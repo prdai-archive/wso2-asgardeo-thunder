@@ -20,16 +20,16 @@ package tokenservice
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"slices"
 	"strings"
 
 	"github.com/thunder-id/thunderid/internal/attributecache"
-	inboundmodel "github.com/thunder-id/thunderid/internal/inboundclient/model"
+	oauthconfig "github.com/thunder-id/thunderid/internal/oauth/config"
 	"github.com/thunder-id/thunderid/internal/oauth/oauth2/constants"
 	"github.com/thunder-id/thunderid/internal/oauth/oauth2/model"
-	"github.com/thunder-id/thunderid/internal/ou"
-	"github.com/thunder-id/thunderid/internal/system/config"
+	"github.com/thunder-id/thunderid/pkg/thunderidengine/providers"
 )
 
 // ParseScopes parses a space-separated scope string into a slice of scope strings.
@@ -56,21 +56,22 @@ func JoinScopes(scopes []string) string {
 }
 
 // ResolveTokenConfig resolves the token configuration from the OAuth app or falls back to global config.
-func ResolveTokenConfig(oauthApp *inboundmodel.OAuthClient, tokenType TokenType) *TokenConfig {
-	conf := config.GetServerRuntime().Config
-
+// accessValidityPeriod is the token subject's configured access-token validity (0 to use the
+// global default); it is only consulted for TokenTypeAccess.
+func ResolveTokenConfig(
+	cfg oauthconfig.Config, oauthApp *providers.OAuthClient, tokenType TokenType,
+	accessValidityPeriod int64,
+) *TokenConfig {
 	tokenConfig := &TokenConfig{
-		Issuer:         conf.JWT.Issuer,
-		ValidityPeriod: conf.JWT.ValidityPeriod,
+		Issuer:         cfg.JWT.Issuer,
+		ValidityPeriod: cfg.JWT.ValidityPeriod,
 	}
 
 	// Override with token-type specific configuration if available
 	switch tokenType {
 	case TokenTypeAccess:
-		if oauthApp != nil && oauthApp.Token != nil && oauthApp.Token.AccessToken != nil {
-			if oauthApp.Token.AccessToken.ValidityPeriod > 0 {
-				tokenConfig.ValidityPeriod = oauthApp.Token.AccessToken.ValidityPeriod
-			}
+		if accessValidityPeriod > 0 {
+			tokenConfig.ValidityPeriod = accessValidityPeriod
 		}
 	case TokenTypeID:
 		if oauthApp != nil && oauthApp.Token != nil && oauthApp.Token.IDToken != nil {
@@ -79,8 +80,8 @@ func ResolveTokenConfig(oauthApp *inboundmodel.OAuthClient, tokenType TokenType)
 			}
 		}
 	case TokenTypeRefresh:
-		if conf.OAuth.RefreshToken.ValidityPeriod > 0 {
-			tokenConfig.ValidityPeriod = conf.OAuth.RefreshToken.ValidityPeriod
+		if cfg.OAuth.RefreshToken.ValidityPeriod > 0 {
+			tokenConfig.ValidityPeriod = cfg.OAuth.RefreshToken.ValidityPeriod
 		}
 		if oauthApp != nil && oauthApp.Token != nil && oauthApp.Token.RefreshToken != nil {
 			if oauthApp.Token.RefreshToken.ValidityPeriod > 0 {
@@ -246,11 +247,6 @@ func ExtractUserAttributes(claims map[string]interface{}) map[string]interface{}
 	}
 
 	return userAttributes
-}
-
-// isSelfIssuer reports whether the given issuer is the server's own configured issuer.
-func isSelfIssuer(issuer string) bool {
-	return issuer == config.GetServerRuntime().Config.JWT.Issuer
 }
 
 // FetchUserAttributes fetches user attributes and merges default claims and groups into the return map.
@@ -426,12 +422,46 @@ func buildClaimsFromRequest(
 	return result
 }
 
+// ReservedAccessTokenClaimNames returns the claim names set by the token builder itself.
+// Configured attribute allow-lists (userAttributes, clientAttributes) must not be allowed to use these.
+func ReservedAccessTokenClaimNames() map[string]bool {
+	reserved := getStandardJWTClaims()
+	reserved["grant_type"] = true
+	reserved["aci"] = true
+	reserved["cnf"] = true
+	reserved[constants.ClaimOUID] = true
+	reserved[constants.ClaimOUName] = true
+	reserved[constants.ClaimOUHandle] = true
+	reserved[constants.ClaimClaimsRequest] = true
+	reserved[constants.ClaimClaimsLocales] = true
+	return reserved
+}
+
+// FilterAttributesByAllowList returns the subset of attrs whose keys are listed in the given
+// sub-config's Attributes allow-list. Returns an empty map when the sub-config or its allow-list
+// is empty. Used by grant handlers to resolve a user subject's access token attributes.
+func FilterAttributesByAllowList(
+	attrs map[string]interface{}, subConfig *providers.AccessTokenSubConfig,
+) map[string]interface{} {
+	filtered := make(map[string]interface{})
+	if subConfig == nil || len(subConfig.Attributes) == 0 {
+		return filtered
+	}
+	for _, attr := range subConfig.Attributes {
+		if val, ok := attrs[attr]; ok {
+			filtered[attr] = val
+		}
+	}
+	return filtered
+}
+
 // BuildClientAttributes gathers all OAuth client/application-scoped attributes that should be added
 // to an access token for the given OAuth application.
 func BuildClientAttributes(
 	ctx context.Context,
-	oauthApp *inboundmodel.OAuthClient,
-	ouService ou.OrganizationUnitServiceInterface,
+	oauthApp *providers.OAuthClient,
+	ouService providers.OrganizationUnitProvider,
+	actorProvider providers.ActorProvider,
 ) (map[string]interface{}, error) {
 	claims := make(map[string]interface{})
 
@@ -443,23 +473,109 @@ func BuildClientAttributes(
 		claims[k] = v
 	}
 
+	entity, err := fetchClientEntity(oauthApp, actorProvider)
+	if err != nil {
+		return nil, err
+	}
+
+	entityClaims, err := resolveClientEntityAttributes(oauthApp, entity)
+	if err != nil {
+		return nil, err
+	}
+	for k, v := range entityClaims {
+		claims[k] = v
+	}
+
+	// Merge system attributes last so they win over a colliding schema attribute.
+	systemClaims, err := resolveClientSystemAttributes(oauthApp, entity)
+	if err != nil {
+		return nil, err
+	}
+	for k, v := range systemClaims {
+		claims[k] = v
+	}
+
+	groupRoleClaims, err := resolveClientGroupRoleClaims(oauthApp, actorProvider)
+	if err != nil {
+		return nil, err
+	}
+	for k, v := range groupRoleClaims {
+		claims[k] = v
+	}
+
 	if len(claims) == 0 {
 		return nil, nil
 	}
 	return claims, nil
 }
 
-// resolveClientOUAttributes returns the OAuth client/application's organization unit claims
-// (ouId, ouName, ouHandle) when the app has an associated OU.
-func resolveClientOUAttributes(
-	ctx context.Context,
-	oauthApp *inboundmodel.OAuthClient,
-	ouService ou.OrganizationUnitServiceInterface,
-) (map[string]interface{}, error) {
-	if oauthApp == nil || oauthApp.OUID == "" {
+// isClientOUClaim reports whether name is one of the OU claims resolved from the OU service
+// (not from the entity).
+func isClientOUClaim(name string) bool {
+	return name == constants.ClaimOUID || name == constants.ClaimOUName || name == constants.ClaimOUHandle
+}
+
+// resolvedWithoutEntity reports whether name is a claim resolved from a source other than the
+// entity record (OU service, or the actor's group/role assignments).
+func resolvedWithoutEntity(name string) bool {
+	return isClientOUClaim(name) ||
+		name == constants.UserAttributeGroups || name == constants.UserAttributeRoles
+}
+
+// fetchClientEntity loads the backing entity for the OAuth client once, so the schema- and
+// system-attribute resolvers can share it. Returns nil when no requested attribute needs the
+// entity: an empty allow-list, or one that lists only claims resolved elsewhere (OU, groups, roles).
+func fetchClientEntity(
+	oauthApp *providers.OAuthClient,
+	actorProvider providers.ActorProvider,
+) (*providers.Entity, error) {
+	if oauthApp == nil || actorProvider == nil {
 		return nil, nil
 	}
-	if ouService == nil {
+
+	needsEntity := false
+	for _, name := range clientConfigAttributeNames(oauthApp) {
+		if !resolvedWithoutEntity(name) {
+			needsEntity = true
+			break
+		}
+	}
+	if !needsEntity {
+		return nil, nil
+	}
+
+	entity, svcErr := actorProvider.GetActor(oauthApp.ID)
+	if svcErr != nil {
+		return nil, fmt.Errorf("failed to fetch entity %s for client attributes: %s", oauthApp.ID, svcErr.Error)
+	}
+	return entity, nil
+}
+
+// clientConfigAttributeNames returns the client-token attribute allow-list, or nil when unset.
+func clientConfigAttributeNames(oauthApp *providers.OAuthClient) []string {
+	if oauthApp == nil || oauthApp.Token == nil || oauthApp.Token.AccessToken == nil ||
+		oauthApp.Token.AccessToken.ClientConfig == nil {
+		return nil
+	}
+	return oauthApp.Token.AccessToken.ClientConfig.Attributes
+}
+
+// resolveClientOUAttributes returns the OAuth client's organization unit claims (ouId, ouName,
+// ouHandle) selected by ClientConfig.Attributes. Opt-in for every client (agent and application).
+func resolveClientOUAttributes(
+	ctx context.Context,
+	oauthApp *providers.OAuthClient,
+	ouService providers.OrganizationUnitProvider,
+) (map[string]interface{}, error) {
+	if oauthApp == nil || oauthApp.OUID == "" || ouService == nil {
+		return nil, nil
+	}
+
+	attrNames := clientConfigAttributeNames(oauthApp)
+	wantOUID := slices.Contains(attrNames, constants.ClaimOUID)
+	wantOUName := slices.Contains(attrNames, constants.ClaimOUName)
+	wantOUHandle := slices.Contains(attrNames, constants.ClaimOUHandle)
+	if !wantOUID && !wantOUName && !wantOUHandle {
 		return nil, nil
 	}
 
@@ -469,9 +585,126 @@ func resolveClientOUAttributes(
 			oauthApp.OUID, oauthApp.ID, svcErr.Error)
 	}
 
-	return map[string]interface{}{
-		constants.ClaimOUID:     orgUnit.ID,
-		constants.ClaimOUName:   orgUnit.Name,
-		constants.ClaimOUHandle: orgUnit.Handle,
-	}, nil
+	claims := make(map[string]interface{})
+	if wantOUID {
+		claims[constants.ClaimOUID] = orgUnit.ID
+	}
+	if wantOUName && orgUnit.Name != "" {
+		claims[constants.ClaimOUName] = orgUnit.Name
+	}
+	if wantOUHandle && orgUnit.Handle != "" {
+		claims[constants.ClaimOUHandle] = orgUnit.Handle
+	}
+	return claims, nil
+}
+
+// resolveClientEntityAttributes returns the subset of the OAuth client's own schema attributes
+// selected by ClientConfig.Attributes. Resolves generically off Entity.Attributes regardless of
+// EntityCategory — populated only for Agent entities (the only category with a schema and
+// stored attributes); a no-op for plain Application clients, which have neither.
+func resolveClientEntityAttributes(
+	oauthApp *providers.OAuthClient,
+	entity *providers.Entity,
+) (map[string]interface{}, error) {
+	if entity == nil || len(entity.Attributes) == 0 {
+		return nil, nil
+	}
+
+	var allAttrs map[string]interface{}
+	if err := json.Unmarshal(entity.Attributes, &allAttrs); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal entity attributes for %s: %w", oauthApp.ID, err)
+	}
+
+	reserved := ReservedAccessTokenClaimNames()
+	filtered := make(map[string]interface{})
+	for _, name := range clientConfigAttributeNames(oauthApp) {
+		if reserved[name] {
+			continue
+		}
+		if val, ok := allAttrs[name]; ok {
+			filtered[name] = val
+		}
+	}
+	return filtered, nil
+}
+
+// resolveClientSystemAttributes returns the agent system attributes (name, owner) selected by
+// ClientConfig.Attributes, read from Entity.SystemAttributes. Restricted to agent entities so an
+// application client can never surface these claims regardless of its stored allow-list.
+func resolveClientSystemAttributes(
+	oauthApp *providers.OAuthClient,
+	entity *providers.Entity,
+) (map[string]interface{}, error) {
+	if entity == nil || entity.Category != providers.EntityCategoryAgent || len(entity.SystemAttributes) == 0 {
+		return nil, nil
+	}
+
+	var sysAttrs map[string]interface{}
+	if err := json.Unmarshal(entity.SystemAttributes, &sysAttrs); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal entity system attributes for %s: %w", oauthApp.ID, err)
+	}
+
+	filtered := make(map[string]interface{})
+	for _, name := range clientConfigAttributeNames(oauthApp) {
+		if !constants.SurfaceableClientSystemClaims[name] {
+			continue
+		}
+		if val, ok := sysAttrs[name]; ok {
+			filtered[name] = val
+		}
+	}
+	return filtered, nil
+}
+
+// resolveClientGroupRoleClaims returns the client's groups and/or roles claims selected by
+// ClientConfig.Attributes. Groups come from the actor's transitive memberships; roles are resolved
+// from those groups plus direct assignments. The shared group lookup runs once for both.
+func resolveClientGroupRoleClaims(
+	oauthApp *providers.OAuthClient,
+	actorProvider providers.ActorProvider,
+) (map[string]interface{}, error) {
+	if oauthApp == nil || actorProvider == nil {
+		return nil, nil
+	}
+
+	attrNames := clientConfigAttributeNames(oauthApp)
+	wantGroups := slices.Contains(attrNames, constants.UserAttributeGroups)
+	wantRoles := slices.Contains(attrNames, constants.UserAttributeRoles)
+	if !wantGroups && !wantRoles {
+		return nil, nil
+	}
+
+	groups, svcErr := actorProvider.GetActorGroups(oauthApp.ID)
+	if svcErr != nil {
+		return nil, fmt.Errorf("failed to fetch groups for client %s: %s", oauthApp.ID, svcErr.Error)
+	}
+
+	claims := make(map[string]interface{})
+	if wantGroups {
+		names := make([]string, 0, len(groups))
+		for _, g := range groups {
+			if g.Name != "" {
+				names = append(names, g.Name)
+			}
+		}
+		if len(names) > 0 {
+			claims[constants.UserAttributeGroups] = names
+		}
+	}
+	if wantRoles {
+		groupIDs := make([]string, 0, len(groups))
+		for _, g := range groups {
+			if g.ID != "" {
+				groupIDs = append(groupIDs, g.ID)
+			}
+		}
+		roles, roleErr := actorProvider.GetActorRoles(oauthApp.ID, groupIDs)
+		if roleErr != nil {
+			return nil, fmt.Errorf("failed to fetch roles for client %s: %s", oauthApp.ID, roleErr.Error)
+		}
+		if len(roles) > 0 {
+			claims[constants.UserAttributeRoles] = roles
+		}
+	}
+	return claims, nil
 }

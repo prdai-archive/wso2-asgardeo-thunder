@@ -64,20 +64,20 @@ coverage:
         enabled: true
         target: 60%
         threshold: 1%
-        informational: true
+        informational: false
       backend-unit:
         flags:
           - backend-unit
         target: 60%
         threshold: 1%
-        informational: true
+        informational: false
       backend-integration:
         flags:
           - backend-integration-sqlite
           - backend-integration-postgres
         target: 60%
         threshold: 1%
-        informational: true
+        informational: false
       backend-combined:
         flags:
           - backend-unit
@@ -97,24 +97,32 @@ coverage:
           - frontend-apps-gate-unit
         target: auto
         threshold: 1%
-        informational: true
+        informational: false
       frontend-apps-console-unit:
         flags:
           - frontend-apps-console-unit
         target: 60%
         threshold: 1%
-        informational: true
+        informational: false
       frontend-apps-gate-unit:
         flags:
           - frontend-apps-gate-unit
         target: 60%
         threshold: 1%
-        informational: true
+        informational: false
     patch:
       default:
         target: 80%
         threshold: 1%
         informational: false
+
+bundle_analysis:
+  # Comment-only: post an informational status and PR comment showing bundle-size
+  # changes for the gate and console apps, but never fail/block a PR.
+  # To start blocking later, set `status: true` and add a `bundle_change_threshold`.
+  status: informational
+  # Flag the comment with a warning when a bundle grows by more than 5%.
+  warning_threshold: "5%"
 
 ignore:
   - "backend/tests/**"

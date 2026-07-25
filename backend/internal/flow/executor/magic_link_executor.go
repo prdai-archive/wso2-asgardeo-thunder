@@ -23,65 +23,72 @@ import (
 	"slices"
 	"strconv"
 
-	authncm "github.com/thunder-id/thunderid/internal/authn/common"
+	tidcommon "github.com/thunder-id/thunderid/pkg/thunderidengine/common"
+	"github.com/thunder-id/thunderid/pkg/thunderidengine/providers"
+
 	"github.com/thunder-id/thunderid/internal/authn/magiclink"
 	authnprovidermgr "github.com/thunder-id/thunderid/internal/authnprovider/manager"
 	"github.com/thunder-id/thunderid/internal/entityprovider"
 	"github.com/thunder-id/thunderid/internal/flow/common"
 	"github.com/thunder-id/thunderid/internal/flow/core"
-	"github.com/thunder-id/thunderid/internal/system/error/serviceerror"
 	"github.com/thunder-id/thunderid/internal/system/jose/jwt"
 	"github.com/thunder-id/thunderid/internal/system/log"
 	"github.com/thunder-id/thunderid/internal/system/utils"
 )
 
-// magicLinkAuthExecutor implements the ExecutorInterface for Magic Link authentication.
-type magicLinkAuthExecutor struct {
-	core.ExecutorInterface
+// magicLinkExecutor implements the ExecutorInterface for Magic Link authentication.
+type magicLinkExecutor struct {
+	providers.Executor
 	identifyingExecutorInterface
 	entityProvider   entityprovider.EntityProviderInterface
 	magicLinkService magiclink.MagicLinkAuthnServiceInterface
-	authnProvider    authnprovidermgr.AuthnProviderManagerInterface
+	authnProvider    providers.AuthnProviderManager
 	logger           *log.Logger
 }
 
-var _ core.ExecutorInterface = (*magicLinkAuthExecutor)(nil)
-var _ identifyingExecutorInterface = (*magicLinkAuthExecutor)(nil)
+var _ providers.Executor = (*magicLinkExecutor)(nil)
+var _ identifyingExecutorInterface = (*magicLinkExecutor)(nil)
 
 // newMagicLinkExecutorResponse creates a new instance of ExecutorResponse for Magic Link authentication.
-func newMagicLinkExecutorResponse() *common.ExecutorResponse {
-	return &common.ExecutorResponse{
+func newMagicLinkExecutorResponse() *providers.ExecutorResponse {
+	return &providers.ExecutorResponse{
 		AdditionalData: make(map[string]string),
 		RuntimeData:    make(map[string]string),
 		ForwardedData:  make(map[string]interface{}),
 	}
 }
 
-// newMagicLinkAuthExecutor creates a new instance of MagicLinkAuthExecutor.
-func newMagicLinkAuthExecutor(
+// newMagicLinkExecutor creates a new instance of MagicLinkExecutor.
+func newMagicLinkExecutor(
 	flowFactory core.FlowFactoryInterface,
 	magicLinkService magiclink.MagicLinkAuthnServiceInterface,
-	authnProvider authnprovidermgr.AuthnProviderManagerInterface,
+	authnProvider providers.AuthnProviderManager,
 	entityProvider entityprovider.EntityProviderInterface,
-) *magicLinkAuthExecutor {
-	defaultInputs := []common.Input{{
+) *magicLinkExecutor {
+	defaultInputs := []providers.Input{{
 		Ref:        "magic_link_token_input",
 		Identifier: userInputMagicLinkToken,
-		Type:       common.InputTypeHidden,
+		Type:       providers.InputTypeHidden,
 		Required:   true,
 	}}
-	var prerequisites []common.Input
+	var prerequisites []providers.Input
 
-	logger := log.GetLogger().With(log.String(log.LoggerKeyComponentName, "MagicLinkAuthExecutor"),
-		log.String(log.LoggerKeyExecutorName, ExecutorNameMagicLinkAuth))
+	logger := log.GetLogger().With(log.String(log.LoggerKeyComponentName, "MagicLinkExecutor"),
+		log.String(log.LoggerKeyExecutorName, ExecutorNameMagicLink))
 
-	identifyExec := newIdentifyingExecutor(ExecutorNameMagicLinkAuth, defaultInputs, prerequisites,
+	identifyExec := newIdentifyingExecutor(ExecutorNameMagicLink, defaultInputs, prerequisites,
 		flowFactory, entityProvider)
-	base := flowFactory.CreateExecutor(ExecutorNameMagicLinkAuth, common.ExecutorTypeAuthentication,
-		defaultInputs, prerequisites)
+	base := flowFactory.CreateExecutor(ExecutorNameMagicLink, providers.ExecutorTypeAuthentication,
+		defaultInputs, prerequisites, &providers.ExecutorMeta{
+			SupportedModes: []string{ExecutorModeGenerate, ExecutorModeVerify},
+			SupportedProperties: []providers.ExecutorSupportedProperties{
+				{Property: propertyKeyTokenExpiry},
+				{Property: propertyKeyMagicLinkURL},
+			},
+		})
 
-	return &magicLinkAuthExecutor{
-		ExecutorInterface:            base,
+	return &magicLinkExecutor{
+		Executor:                     base,
 		identifyingExecutorInterface: identifyExec,
 		entityProvider:               entityProvider,
 		magicLinkService:             magicLinkService,
@@ -91,14 +98,15 @@ func newMagicLinkAuthExecutor(
 }
 
 // Execute executes the Magic Link authentication logic.
-func (m *magicLinkAuthExecutor) Execute(ctx *core.NodeContext) (*common.ExecutorResponse, error) {
+func (m *magicLinkExecutor) Execute(ctx *providers.NodeContext) (*providers.ExecutorResponse, error) {
 	logger := m.logger.With(log.String(log.LoggerKeyExecutionID, ctx.ExecutionID))
-	logger.Debug("Executing Magic Link authentication executor")
+	logger.Debug(ctx.Context, "Executing Magic Link authentication executor")
 
 	execResp := newMagicLinkExecutorResponse()
+	execResp.AuthUser = ctx.AuthUser
 
-	if !m.ValidatePrerequisites(ctx, execResp) {
-		logger.Debug("Prerequisites not met for Magic Link authentication executor")
+	if !m.ValidatePrerequisites(ctx, execResp, m.authnProvider) {
+		logger.Debug(ctx.Context, "Prerequisites not met for Magic Link authentication executor")
 		return execResp, nil
 	}
 
@@ -112,22 +120,36 @@ func (m *magicLinkAuthExecutor) Execute(ctx *core.NodeContext) (*common.Executor
 	}
 }
 
+// GetExecutionPolicy returns the execution policy for the given mode.
+// The verify mode skips challenge token validation because the magicLink token itself serves as the challenge.
+func (m *magicLinkExecutor) GetExecutionPolicy(mode string) *providers.ExecutionPolicy {
+	if mode == ExecutorModeVerify {
+		return &providers.ExecutionPolicy{
+			SkipChallengeValidation: true,
+			AllowSegmentRestart:     false,
+		}
+	}
+	return nil
+}
+
 // executeGenerate handles the generation of the magic link
-func (m *magicLinkAuthExecutor) executeGenerate(ctx *core.NodeContext) (*common.ExecutorResponse, error) {
+func (m *magicLinkExecutor) executeGenerate(ctx *providers.NodeContext) (*providers.ExecutorResponse, error) {
 	logger := m.logger.With(log.String(log.LoggerKeyExecutionID, ctx.ExecutionID))
 	execResp, err := m.InitiateMagicLink(ctx, logger)
 	if err != nil {
 		return execResp, err
 	}
-	logger.Debug("Magic link generation completed", log.String("status", string(execResp.Status)))
+	logger.Debug(ctx.Context, "Magic link generation completed",
+		log.String("status", string(execResp.Status)))
 	return execResp, nil
 }
 
 // InitiateMagicLink performs the core logic for generating a magic link
-func (m *magicLinkAuthExecutor) InitiateMagicLink(ctx *core.NodeContext,
-	logger *log.Logger) (*common.ExecutorResponse, error) {
+func (m *magicLinkExecutor) InitiateMagicLink(ctx *providers.NodeContext,
+	logger *log.Logger) (*providers.ExecutorResponse, error) {
 	execResp := newMagicLinkExecutorResponse()
-	isRegistration := ctx.FlowType == common.FlowTypeRegistration
+	execResp.AuthUser = ctx.AuthUser
+	isRegistration := ctx.FlowType == providers.FlowTypeRegistration
 	searchAttrs := m.buildUserSearchAttributes(ctx)
 
 	// 1. Resolve the destination attribute name
@@ -142,31 +164,32 @@ func (m *magicLinkAuthExecutor) InitiateMagicLink(ctx *core.NodeContext,
 		if destValue == "" {
 			return execResp, fmt.Errorf("%s is required for magic link registration", destAttr)
 		}
-		userID, identifyErr := m.IdentifyUser(searchAttrs, execResp)
+		userID, identifyErr := m.IdentifyUser(ctx.Context, searchAttrs, execResp)
 		if identifyErr != nil {
 			return execResp, fmt.Errorf("failed to identify user: %w", identifyErr)
 		}
 		if userID != nil && *userID != "" {
 			// ANTI-ENUMERATION: Pretend it succeeded but skip sending the magic link.
-			logger.Debug("Registration attempted for existing user. Skipping delivery to prevent enumeration.")
+			logger.Debug(ctx.Context,
+				"Registration attempted for existing user. Skipping delivery to prevent enumeration.")
 			execResp.RuntimeData[common.RuntimeKeySkipDelivery] = dataValueTrue
-			execResp.Status = common.ExecComplete
+			execResp.Status = providers.ExecComplete
 			return execResp, nil
 		}
 		subject = destValue
 	} else {
 		var userID string
-		if ctx.AuthenticatedUser.IsAuthenticated {
-			userID = m.GetUserIDFromContext(ctx)
+		if ctx.AuthUser.IsAuthenticated() {
+			userID = m.GetUserIDFromContext(ctx, execResp, m.authnProvider)
 			if userID == "" {
 				return execResp, errors.New("user ID is empty in the context")
 			}
 		} else {
 			identifiedUserID, providerErr := m.entityProvider.IdentifyEntity(searchAttrs)
 			if providerErr != nil || identifiedUserID == nil || *identifiedUserID == "" {
-				logger.Debug("User not found, completing without delivery for anti-enumeration")
+				logger.Debug(ctx.Context, "User not found, completing without delivery for anti-enumeration")
 				execResp.RuntimeData[common.RuntimeKeySkipDelivery] = dataValueTrue
-				execResp.Status = common.ExecComplete
+				execResp.Status = providers.ExecComplete
 				return execResp, nil
 			}
 			userID = *identifiedUserID
@@ -180,13 +203,19 @@ func (m *magicLinkAuthExecutor) InitiateMagicLink(ctx *core.NodeContext,
 	expirySeconds := m.getTokenExpiry(ctx)
 	magicLinkURL := m.getMagicLinkURL(ctx)
 
+	queryParams := map[string]string{
+		"id":            ctx.ExecutionID,
+		"applicationId": ctx.Application.ID,
+		"type":          string(ctx.FlowType),
+	}
+
 	generatedURL, svcErr := m.magicLinkService.GenerateMagicLink(
-		ctx.Context, subject, expirySeconds, map[string]string{"id": ctx.ExecutionID}, claims, magicLinkURL)
+		ctx.Context, subject, expirySeconds, queryParams, claims, magicLinkURL)
 
 	if svcErr != nil {
-		if svcErr.Type == serviceerror.ClientErrorType {
-			execResp.Status = common.ExecFailure
-			execResp.FailureReason = svcErr.ErrorDescription.DefaultValue
+		if svcErr.Type == tidcommon.ClientErrorType {
+			execResp.Status = providers.ExecFailure
+			execResp.Error = &ErrMagicLinkGeneration
 			return execResp, nil
 		}
 		return execResp, errors.New("failed to generate magic link")
@@ -202,16 +231,16 @@ func (m *magicLinkAuthExecutor) InitiateMagicLink(ctx *core.NodeContext,
 		"appName":       ctx.Application.Name,
 	}
 
-	execResp.Status = common.ExecComplete
+	execResp.Status = providers.ExecComplete
 	return execResp, nil
 }
 
 // getTokenExpiry returns the magic link token expiry in seconds from node properties,
 // falling back to the default if not configured or invalid.
-func (m *magicLinkAuthExecutor) getTokenExpiry(ctx *core.NodeContext) int64 {
+func (m *magicLinkExecutor) getTokenExpiry(ctx *providers.NodeContext) int64 {
 	if ctx.NodeProperties != nil {
 		if val, ok := ctx.NodeProperties[propertyKeyTokenExpiry]; ok {
-			if str, valid := val.(string); valid && str != "" {
+			if str := utils.ConvertInterfaceValueToString(val); str != "" {
 				if parsed, err := strconv.ParseInt(str, 10, 64); err == nil && parsed > 0 {
 					return parsed
 				}
@@ -224,7 +253,7 @@ func (m *magicLinkAuthExecutor) getTokenExpiry(ctx *core.NodeContext) int64 {
 
 // getMagicLinkURL returns the magic link URL prefix from node properties,
 // returning nil if not configured.
-func (m *magicLinkAuthExecutor) getMagicLinkURL(ctx *core.NodeContext) string {
+func (m *magicLinkExecutor) getMagicLinkURL(ctx *providers.NodeContext) string {
 	if ctx.NodeProperties != nil {
 		if val, ok := ctx.NodeProperties[propertyKeyMagicLinkURL]; ok {
 			if str, valid := val.(string); valid && str != "" {
@@ -237,7 +266,7 @@ func (m *magicLinkAuthExecutor) getMagicLinkURL(ctx *core.NodeContext) string {
 
 // buildUserSearchAttributes collects search attributes from node inputs,
 // looking in user inputs, runtime data, and forwarded data.
-func (m *magicLinkAuthExecutor) buildUserSearchAttributes(ctx *core.NodeContext) map[string]interface{} {
+func (m *magicLinkExecutor) buildUserSearchAttributes(ctx *providers.NodeContext) map[string]interface{} {
 	attrs := make(map[string]interface{})
 	identifiers := make(map[string]struct{})
 
@@ -277,41 +306,22 @@ func isSearchableIdentifier(identifier string) bool {
 	return true
 }
 
-// getAuthenticatedUser retrieves the authenticated user details from the user provider.
-func (m *magicLinkAuthExecutor) getAuthenticatedUser(
-	userID string) (*authncm.AuthenticatedUser, error) {
-	if userID == "" {
-		return nil, errors.New("user ID is empty")
-	}
-
-	user, err := m.entityProvider.GetEntity(userID)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get user: %w", err)
-	}
-
-	return &authncm.AuthenticatedUser{
-		IsAuthenticated: true,
-		UserID:          user.ID,
-		UserType:        user.Type,
-		OUID:            user.OUID,
-	}, nil
-}
-
 // executeVerify handles the verification of the magic link token
-func (m *magicLinkAuthExecutor) executeVerify(ctx *core.NodeContext) (*common.ExecutorResponse, error) {
+func (m *magicLinkExecutor) executeVerify(ctx *providers.NodeContext) (*providers.ExecutorResponse, error) {
 	logger := m.logger.With(log.String(log.LoggerKeyExecutionID, ctx.ExecutionID))
 	execResp := newMagicLinkExecutorResponse()
+	execResp.AuthUser = ctx.AuthUser
 
 	if !m.HasRequiredInputs(ctx, execResp) {
-		logger.Debug("Required inputs for Magic Link verification are not provided")
-		execResp.Status = common.ExecUserInputRequired
+		logger.Debug(ctx.Context, "Required inputs for Magic Link verification are not provided")
+		execResp.Status = providers.ExecUserInputRequired
 		return execResp, nil
 	}
 
 	token := ctx.UserInputs[userInputMagicLinkToken]
 
 	subjectAttribute := ""
-	if ctx.FlowType == common.FlowTypeRegistration {
+	if ctx.FlowType == providers.FlowTypeRegistration {
 		subjectAttribute = ctx.RuntimeData[common.RuntimeKeyMagicLinkDestinationAttribute]
 		if subjectAttribute == "" {
 			return execResp, errors.New("magic link destination attribute missing from runtime data")
@@ -325,81 +335,66 @@ func (m *magicLinkAuthExecutor) executeVerify(ctx *core.NodeContext) (*common.Ex
 		},
 	}
 
-	newAuthUser, authnResult, svcErr := m.authnProvider.AuthenticateUser(
-		ctx.Context, nil, creds, nil, nil, ctx.AuthUser)
+	newAuthUser, authenticatedClaims, svcErr := m.authnProvider.AuthenticateUser(
+		ctx.Context, nil, creds, nil, nil, execResp.AuthUser)
+	execResp.AuthUser = newAuthUser
 	if svcErr != nil {
 		if svcErr.Code == authnprovidermgr.ErrorAuthenticationFailed.Code {
-			execResp.Status = common.ExecFailure
-			execResp.FailureReason = svcErr.ErrorDescription.DefaultValue
+			execResp.Status = providers.ExecFailure
+			execResp.Error = svcErr
 			return execResp, nil
 		}
 		return execResp, fmt.Errorf("failed to verify magic link: %s", svcErr.ErrorDescription.DefaultValue)
 	}
-	execResp.AuthUser = newAuthUser
+	for key, value := range authenticatedClaims {
+		execResp.RuntimeData[key] = utils.ConvertInterfaceValueToString(value)
+	}
 
-	tokenJTI, failure := m.validateFlowClaims(ctx, token, logger)
-	if failure != "" {
-		execResp.Status = common.ExecFailure
-		execResp.FailureReason = failure
+	tokenJTI, execErr := m.validateFlowClaims(ctx, token, logger)
+	if execErr != nil {
+		execResp.Status = providers.ExecFailure
+		execResp.Error = execErr
 		return execResp, nil
 	}
 	execResp.RuntimeData[common.RuntimeKeyMagicLinkUsedJti] = tokenJTI
 
-	if ctx.FlowType == common.FlowTypeRegistration {
-		if authnResult.IsExistingUser {
-			logger.Debug("User already exists during magic link registration verification.")
-			execResp.Status = common.ExecFailure
-			execResp.FailureReason = "Invalid registration state"
-			return execResp, nil
-		}
-		execResp.Status = common.ExecComplete
-		return execResp, nil
-	}
-
-	userID := authnResult.UserID
-	authenticatedUser, err := m.getAuthenticatedUser(userID)
-	if err != nil {
-		return execResp, fmt.Errorf("failed to get authenticated user details: %w", err)
-	}
-	execResp.AuthenticatedUser = *authenticatedUser
-
-	execResp.Status = common.ExecComplete
-	logger.Debug("Magic link verify completed successfully")
+	execResp.Status = providers.ExecComplete
+	logger.Debug(ctx.Context, "Magic link verify completed successfully")
 	return execResp, nil
 }
 
 // validateFlowClaims checks executionId and JTI claims in the magic link JWT token.
 // These are flow-specific concerns and not part of the auth provider contract.
-func (m *magicLinkAuthExecutor) validateFlowClaims(ctx *core.NodeContext,
-	token string, logger *log.Logger) (string, string) {
+func (m *magicLinkExecutor) validateFlowClaims(ctx *providers.NodeContext,
+	token string, logger *log.Logger) (string, *tidcommon.ServiceError) {
 	payload, decodeErr := jwt.DecodeJWTPayload(token)
 	if decodeErr != nil {
-		logger.Debug("Failed to decode magic link token", log.Error(decodeErr))
-		return "", failureReasonInvalidMagicLink
+		logger.Debug(ctx.Context, "Failed to decode magic link token", log.Error(decodeErr))
+		return "", &ErrInvalidMagicLinkToken
 	}
 
 	executionIDClaim := utils.ConvertInterfaceValueToString(payload["executionId"])
 	if executionIDClaim == "" || executionIDClaim != ctx.ExecutionID {
-		logger.Debug("Magic link token executionId mismatch")
-		return "", failureReasonInvalidMagicLink
+		logger.Debug(ctx.Context, "Magic link token executionId mismatch")
+		return "", &ErrInvalidMagicLinkToken
 	}
 
 	jtiClaim := utils.ConvertInterfaceValueToString(payload["jti"])
 	if jtiClaim == "" {
-		return "", failureReasonInvalidMagicLink
+		return "", &ErrInvalidMagicLinkToken
 	}
 	if usedJti, exists := ctx.RuntimeData[common.RuntimeKeyMagicLinkUsedJti]; exists && usedJti == jtiClaim {
-		logger.Debug("Magic link token has already been used", log.String("jti", jtiClaim))
-		return "", "Magic link has already been used"
+		logger.Debug(ctx.Context, "Magic link token has already been used", log.String("jti", jtiClaim))
+		return "", &ErrInvalidMagicLinkToken
 	}
 
-	logger.Debug("Magic link token validated successfully")
-	return jtiClaim, ""
+	logger.Debug(ctx.Context, "Magic link token validated successfully")
+	return jtiClaim, nil
 }
 
 // resolveDestinationAttribute infers the destination attribute from the first configured node input.
 // Falls back to "email" if none is configured or if the first input is invalid.
-func (m *magicLinkAuthExecutor) resolveDestinationAttribute(ctx *core.NodeContext) string {
+func (m *magicLinkExecutor) resolveDestinationAttribute(ctx *providers.NodeContext) string {
 	// Explicitly check ONLY the first input (index 0) to prevent multi-input ambiguity
 	if len(ctx.NodeInputs) > 0 {
 		firstInput := ctx.NodeInputs[0]

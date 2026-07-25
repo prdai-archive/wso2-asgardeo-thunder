@@ -20,6 +20,7 @@ package log
 
 import (
 	"bytes"
+	"context"
 	"io"
 	"log/slog"
 	"os"
@@ -29,14 +30,13 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/suite"
 
-	"github.com/thunder-id/thunderid/internal/system/constants"
+	sysContext "github.com/thunder-id/thunderid/internal/system/context"
 )
 
 type LogTestSuite struct {
 	suite.Suite
-	originalLogLevel string
-	originalStdout   *os.File
-	buffer           *bytes.Buffer
+	originalStdout *os.File
+	buffer         *bytes.Buffer
 }
 
 func TestLogSuite(t *testing.T) {
@@ -44,9 +44,6 @@ func TestLogSuite(t *testing.T) {
 }
 
 func (suite *LogTestSuite) SetupTest() {
-	// Save original environment variable
-	suite.originalLogLevel = os.Getenv(constants.LogLevelEnvironmentVariable)
-
 	// Capture stdout
 	suite.originalStdout = os.Stdout
 	suite.buffer = &bytes.Buffer{}
@@ -62,12 +59,6 @@ func (suite *LogTestSuite) SetupTest() {
 }
 
 func (suite *LogTestSuite) TearDownTest() {
-	// Restore original environment variable
-	err := os.Setenv(constants.LogLevelEnvironmentVariable, suite.originalLogLevel)
-	if err != nil {
-		suite.T().Errorf("Failed to restore environment variable: %v", err)
-	}
-
 	// Restore stdout
 	os.Stdout = suite.originalStdout
 
@@ -76,44 +67,34 @@ func (suite *LogTestSuite) TearDownTest() {
 	once = sync.Once{}
 }
 
-func (suite *LogTestSuite) TestInitLoggerWithEnvironmentVariable() {
-	testCases := []struct {
-		name     string
-		logLevel string
-		isValid  bool
-	}{
-		{"DefaultLevel", "", true},
-		{"DebugLevel", "debug", true},
-		{"InfoLevel", "info", true},
-		{"WarnLevel", "warn", true},
-		{"ErrorLevel", "error", true},
-		{"InvalidLevel", "unknown", false},
-	}
+func (suite *LogTestSuite) TestInitLoggerUsesDefaultLevel() {
+	logger = nil
+	once = sync.Once{}
 
-	for _, tc := range testCases {
-		suite.T().Run(tc.name, func(t *testing.T) {
-			logger = nil
-			once = sync.Once{}
+	assert.NotPanics(suite.T(), func() {
+		_ = GetLogger()
+	})
+	// The logger boots at the default level (info), so debug is not enabled.
+	assert.False(suite.T(), GetLogger().IsDebugEnabled())
+}
 
-			if tc.logLevel != "" {
-				err := os.Setenv(constants.LogLevelEnvironmentVariable, tc.logLevel)
-				assert.NoError(t, err)
-			} else {
-				err := os.Unsetenv(constants.LogLevelEnvironmentVariable)
-				assert.NoError(t, err)
-			}
+func (suite *LogTestSuite) TestSetLevel() {
+	logger = nil
+	once = sync.Once{}
+	log := GetLogger()
 
-			if tc.isValid {
-				assert.NotPanics(t, func() {
-					_ = GetLogger()
-				})
-			} else {
-				assert.Panics(t, func() {
-					_ = GetLogger()
-				})
-			}
-		})
-	}
+	err := log.SetLevel("debug")
+	assert.NoError(suite.T(), err)
+	assert.True(suite.T(), log.IsDebugEnabled())
+
+	err = log.SetLevel("error")
+	assert.NoError(suite.T(), err)
+	assert.False(suite.T(), log.IsDebugEnabled())
+
+	// An invalid level returns an error and leaves the level unchanged.
+	err = log.SetLevel("bogus")
+	assert.Error(suite.T(), err)
+	assert.False(suite.T(), log.IsDebugEnabled())
 }
 
 func (suite *LogTestSuite) TestParseLogLevel() {
@@ -147,9 +128,6 @@ func (suite *LogTestSuite) TestParseLogLevel() {
 func (suite *LogTestSuite) TestLogMethods() {
 	var buf bytes.Buffer
 
-	err := os.Setenv(constants.LogLevelEnvironmentVariable, "debug")
-	assert.NoError(suite.T(), err)
-
 	logger = nil
 	once = sync.Once{}
 
@@ -162,10 +140,11 @@ func (suite *LogTestSuite) TestLogMethods() {
 	}
 	log := logger
 
-	log.Debug("Debug message", Field{Key: "test", Value: "debug"})
-	log.Info("Info message", Field{Key: "test", Value: "info"})
-	log.Warn("Warning message", Field{Key: "test", Value: "warn"})
-	log.Error("Error message", Field{Key: "test", Value: "error"})
+	ctx := context.Background()
+	log.Debug(ctx, "Debug message", Field{Key: "test", Value: "debug"})
+	log.Info(ctx, "Info message", Field{Key: "test", Value: "info"})
+	log.Warn(ctx, "Warning message", Field{Key: "test", Value: "warn"})
+	log.Error(ctx, "Error message", Field{Key: "test", Value: "error"})
 
 	output := buf.String()
 	assert.Contains(suite.T(), output, "Debug message")
@@ -197,7 +176,7 @@ func (suite *LogTestSuite) TestLoggerWith() {
 	contextLogger := log.With(Field{Key: "context", Value: "test"})
 	assert.NotNil(suite.T(), contextLogger)
 
-	contextLogger.Info("Context log message")
+	contextLogger.Info(context.Background(), "Context log message")
 
 	output := buf.String()
 	assert.Contains(suite.T(), output, "context=test")
@@ -322,6 +301,145 @@ func (suite *LogTestSuite) TestMaskedMap() {
 		MaskedMap("filters", input)
 		assert.Equal(t, "alice@example.com", input["email"])
 	})
+}
+
+// newContextTestLogger creates a Logger backed by a contextHandler writing to buf.
+func newContextTestLogger(buf *bytes.Buffer) *Logger {
+	handlerOptions := &slog.HandlerOptions{
+		Level: slog.LevelDebug,
+	}
+	return &Logger{
+		internal: slog.New(&contextHandler{Handler: slog.NewTextHandler(buf, handlerOptions)}),
+	}
+}
+
+func (suite *LogTestSuite) TestContextLogMethodsWithTraceID() {
+	var buf bytes.Buffer
+	log := newContextTestLogger(&buf)
+
+	ctx := sysContext.WithTraceID(context.Background(), "test-trace-123")
+
+	log.Debug(ctx, "Debug message", Field{Key: "test", Value: "debug"})
+	log.Info(ctx, "Info message", Field{Key: "test", Value: "info"})
+	log.Warn(ctx, "Warning message", Field{Key: "test", Value: "warn"})
+	log.Error(ctx, "Error message", Field{Key: "test", Value: "error"})
+
+	output := buf.String()
+	assert.Contains(suite.T(), output, "Debug message")
+	assert.Contains(suite.T(), output, "Info message")
+	assert.Contains(suite.T(), output, "Warning message")
+	assert.Contains(suite.T(), output, "Error message")
+
+	lines := bytes.Split(bytes.TrimSpace(buf.Bytes()), []byte("\n"))
+	assert.Equal(suite.T(), 4, len(lines))
+	for _, line := range lines {
+		assert.Contains(suite.T(), string(line), LoggerKeyTraceID+"=test-trace-123")
+	}
+}
+
+func (suite *LogTestSuite) TestContextLogMethodsWithoutTraceID() {
+	var buf bytes.Buffer
+	log := newContextTestLogger(&buf)
+
+	ctx := context.Background()
+
+	log.Debug(ctx, "Debug message")
+	log.Info(ctx, "Info message")
+	log.Warn(ctx, "Warning message")
+	log.Error(ctx, "Error message")
+
+	output := buf.String()
+	assert.Contains(suite.T(), output, "Info message")
+	assert.NotContains(suite.T(), output, LoggerKeyTraceID+"=")
+}
+
+func (suite *LogTestSuite) TestContextHandlerPreservedByWith() {
+	var buf bytes.Buffer
+	log := newContextTestLogger(&buf)
+
+	ctx := sysContext.WithTraceID(context.Background(), "test-trace-456")
+
+	derivedLogger := log.With(Field{Key: "component", Value: "TestComponent"})
+	derivedLogger.Info(ctx, "Derived log message")
+
+	output := buf.String()
+	assert.Contains(suite.T(), output, "Derived log message")
+	assert.Contains(suite.T(), output, "component=TestComponent")
+	assert.Contains(suite.T(), output, LoggerKeyTraceID+"=test-trace-456")
+}
+
+func (suite *LogTestSuite) TestContextHandlerPreservedByWithGroup() {
+	var buf bytes.Buffer
+	handlerOptions := &slog.HandlerOptions{
+		Level: slog.LevelDebug,
+	}
+	internal := slog.New(&contextHandler{Handler: slog.NewTextHandler(&buf, handlerOptions)})
+
+	ctx := sysContext.WithTraceID(context.Background(), "test-trace-789")
+
+	internal.WithGroup("group").InfoContext(ctx, "Grouped log message", slog.String("key", "value"))
+
+	output := buf.String()
+	assert.Contains(suite.T(), output, "Grouped log message")
+	assert.Contains(suite.T(), output, "group.key=value")
+	assert.Contains(suite.T(), output, LoggerKeyTraceID+"=test-trace-789")
+}
+
+func (suite *LogTestSuite) TestGetLoggerUsesContextHandler() {
+	logger = nil
+	once = sync.Once{}
+
+	log := GetLogger()
+	_, ok := log.internal.Handler().(*contextHandler)
+	assert.True(suite.T(), ok, "GetLogger should wrap the handler with contextHandler")
+}
+
+func (suite *LogTestSuite) TestServerErrorWriterWrite() {
+	var buf bytes.Buffer
+	log := newContextTestLogger(&buf)
+	w := &serverErrorWriter{logger: log}
+
+	input := []byte("http: TLS handshake error from 127.0.0.1:56960: remote error: tls: unknown certificate\n")
+	n, err := w.Write(input)
+
+	assert.NoError(suite.T(), err)
+	assert.Equal(suite.T(), len(input), n)
+
+	output := buf.String()
+	assert.Contains(suite.T(), output, "level=WARN")
+	assert.Contains(suite.T(), output, "http: TLS handshake error from 127.0.0.1:56960")
+	// The trailing newline should be trimmed from the logged message.
+	assert.NotContains(suite.T(), output, "certificate\\n")
+}
+
+func (suite *LogTestSuite) TestServerErrorWriterRespectsLevel() {
+	var buf bytes.Buffer
+	log := newContextTestLogger(&buf)
+	log.levelVar = new(slog.LevelVar)
+	log.levelVar.Set(slog.LevelError)
+	log.internal = slog.New(&contextHandler{Handler: slog.NewTextHandler(&buf,
+		&slog.HandlerOptions{Level: log.levelVar})})
+	w := &serverErrorWriter{logger: log}
+
+	_, err := w.Write([]byte("some server error"))
+
+	assert.NoError(suite.T(), err)
+	// WARN is below the ERROR threshold, so nothing should be emitted.
+	assert.Empty(suite.T(), buf.String())
+}
+
+func (suite *LogTestSuite) TestNewServerErrorLog() {
+	var buf bytes.Buffer
+	log := newContextTestLogger(&buf)
+
+	errorLog := NewServerErrorLog(log)
+	assert.NotNil(suite.T(), errorLog)
+
+	errorLog.Print("connection reset by peer")
+
+	output := buf.String()
+	assert.Contains(suite.T(), output, "level=WARN")
+	assert.Contains(suite.T(), output, "connection reset by peer")
 }
 
 func (suite *LogTestSuite) TestConvertFields() {

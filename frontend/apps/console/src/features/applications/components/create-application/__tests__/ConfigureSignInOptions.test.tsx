@@ -17,14 +17,21 @@
  */
 
 import userEvent from '@testing-library/user-event';
-import {render, screen} from '@thunderid/test-utils';
+import {
+  AuthenticatorTypes,
+  IdentityProviderTypes,
+  getConnectionIcon,
+  useIdentityProviders,
+  type IdentityProvider,
+} from '@thunderid/configure-connections';
+import {render, screen, within} from '@thunderid/test-utils';
+import type {JSX} from 'react';
 import {describe, it, expect, beforeEach, vi} from 'vitest';
 import ApplicationCreateProvider from '../../../contexts/ApplicationCreate/ApplicationCreateProvider';
+import useApplicationCreateContext from '../../../hooks/useApplicationCreateContext';
 import ConfigureSignInOptions, {
   type ConfigureSignInOptionsProps,
 } from '../configure-signin-options/ConfigureSignInOptions';
-import {AuthenticatorTypes} from '@/features/integrations/models/authenticators';
-import {IdentityProviderTypes, type IdentityProvider} from '@/features/integrations/models/identity-provider';
 
 // Mock react-i18next
 vi.mock('react-i18next', () => ({
@@ -49,8 +56,11 @@ vi.mock('react-i18next', () => ({
 }));
 
 // Mock the dependencies
-vi.mock('@/features/integrations/api/useIdentityProviders');
-vi.mock('@/features/integrations/utils/getIntegrationIcon');
+vi.mock('@thunderid/configure-connections', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@thunderid/configure-connections')>()),
+  useIdentityProviders: vi.fn(),
+  getConnectionIcon: vi.fn(),
+}));
 vi.mock('@/features/flows/api/useGetFlows');
 
 // Mock useGetApplications
@@ -78,8 +88,6 @@ vi.mock('@thunderid/contexts', async (importOriginal) => {
   };
 });
 
-const {default: useIdentityProviders} = await import('@/features/integrations/api/useIdentityProviders');
-const {default: getIntegrationIcon} = await import('@/features/integrations/utils/getIntegrationIcon');
 const {default: useGetFlows} = await import('@/features/flows/api/useGetFlows');
 const {default: useGetApplications} = await import('../../../api/useGetApplications');
 
@@ -103,14 +111,14 @@ describe('ConfigureSignInOptions', () => {
 
   const defaultProps: ConfigureSignInOptionsProps = {
     integrations: {
-      [AuthenticatorTypes.BASIC_AUTH]: true,
+      [AuthenticatorTypes.CREDENTIALS_AUTH]: true,
     },
     onIntegrationToggle: mockOnIntegrationToggle,
   };
 
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.mocked(getIntegrationIcon).mockReturnValue(<div>Icon</div>);
+    vi.mocked(getConnectionIcon).mockReturnValue(<div>Icon</div>);
     // Default mock: no applications
     vi.mocked(useGetApplications).mockReturnValue({
       data: {
@@ -227,7 +235,7 @@ describe('ConfigureSignInOptions', () => {
 
     renderComponent({
       integrations: {
-        [AuthenticatorTypes.BASIC_AUTH]: true,
+        [AuthenticatorTypes.CREDENTIALS_AUTH]: true,
       },
     });
 
@@ -282,7 +290,7 @@ describe('ConfigureSignInOptions', () => {
       await user.click(usernamePasswordButton);
     }
 
-    expect(mockOnIntegrationToggle).toHaveBeenCalledWith(AuthenticatorTypes.BASIC_AUTH);
+    expect(mockOnIntegrationToggle).toHaveBeenCalledWith(AuthenticatorTypes.CREDENTIALS_AUTH);
   });
 
   it('should call onIntegrationToggle when clicking provider list item', async () => {
@@ -330,7 +338,7 @@ describe('ConfigureSignInOptions', () => {
 
     renderComponent({
       integrations: {
-        [AuthenticatorTypes.BASIC_AUTH]: true,
+        [AuthenticatorTypes.CREDENTIALS_AUTH]: true,
         'google-idp': true,
         'github-idp': false,
       },
@@ -369,8 +377,8 @@ describe('ConfigureSignInOptions', () => {
 
     renderComponent();
 
-    // Google and GitHub use direct icons, not getIntegrationIcon
-    // Other providers (if any) would use getIntegrationIcon
+    // Google and GitHub use direct icons, not getConnectionIcon
+    // Other providers (if any) would use getConnectionIcon
     expect(screen.getByText('Google')).toBeInTheDocument();
     expect(screen.getByText('GitHub')).toBeInTheDocument();
   });
@@ -483,7 +491,7 @@ describe('ConfigureSignInOptions', () => {
 
     const {rerender} = renderComponent({
       integrations: {
-        [AuthenticatorTypes.BASIC_AUTH]: true,
+        [AuthenticatorTypes.CREDENTIALS_AUTH]: true,
         'google-idp': true,
       },
     });
@@ -493,7 +501,7 @@ describe('ConfigureSignInOptions', () => {
 
     rerender({
       integrations: {
-        [AuthenticatorTypes.BASIC_AUTH]: true,
+        [AuthenticatorTypes.CREDENTIALS_AUTH]: true,
         'google-idp': true,
       },
     });
@@ -658,7 +666,7 @@ describe('ConfigureSignInOptions', () => {
 
       renderComponent({
         integrations: {
-          [AuthenticatorTypes.BASIC_AUTH]: true,
+          [AuthenticatorTypes.CREDENTIALS_AUTH]: true,
         },
       });
 
@@ -677,7 +685,7 @@ describe('ConfigureSignInOptions', () => {
 
       renderComponent({
         integrations: {
-          [AuthenticatorTypes.BASIC_AUTH]: false,
+          [AuthenticatorTypes.CREDENTIALS_AUTH]: false,
           'google-idp': false,
           'github-idp': false,
         },
@@ -705,7 +713,7 @@ describe('ConfigureSignInOptions', () => {
       // Select username/password
       rerender({
         integrations: {
-          [AuthenticatorTypes.BASIC_AUTH]: true,
+          [AuthenticatorTypes.CREDENTIALS_AUTH]: true,
         },
       });
 
@@ -728,7 +736,7 @@ describe('ConfigureSignInOptions', () => {
 
       renderComponent({
         integrations: {
-          [AuthenticatorTypes.BASIC_AUTH]: true,
+          [AuthenticatorTypes.CREDENTIALS_AUTH]: true,
         },
         onReadyChange,
       });
@@ -907,6 +915,117 @@ describe('ConfigureSignInOptions', () => {
       expect(
         screen.getByText('You can always change these settings later in the application settings.'),
       ).toBeInTheDocument();
+    });
+  });
+
+  describe('Custom flow selection (issue #2959)', () => {
+    const customFlow = {
+      id: 'custom-flow-id',
+      handle: 'custom-passwordless',
+      name: 'Custom Passwordless',
+      flowType: 'AUTHENTICATION',
+      activeVersion: 1,
+      createdAt: '2026-01-01T00:00:00Z',
+      updatedAt: '2026-01-01T00:00:00Z',
+    };
+
+    const WiredHarness = ({onReadyChange = undefined}: {onReadyChange?: (isReady: boolean) => void}): JSX.Element => {
+      const {integrations, toggleIntegration, selectedAuthFlow} = useApplicationCreateContext();
+      return (
+        <>
+          <span data-testid="selected-flow-id">{selectedAuthFlow?.id ?? ''}</span>
+          <ConfigureSignInOptions
+            integrations={integrations}
+            onIntegrationToggle={toggleIntegration}
+            onReadyChange={onReadyChange}
+          />
+        </>
+      );
+    };
+
+    const renderWired = (onReadyChange?: (isReady: boolean) => void) =>
+      render(
+        <ApplicationCreateProvider>
+          <WiredHarness onReadyChange={onReadyChange} />
+        </ApplicationCreateProvider>,
+      );
+
+    const usernamePasswordSwitch = (): HTMLElement => {
+      const item = screen.getByText('Username & Password').closest('li');
+      if (!item) {
+        throw new Error('Username & Password list item not found');
+      }
+      return within(item).getByRole('switch');
+    };
+
+    beforeEach(() => {
+      vi.mocked(useIdentityProviders).mockReturnValue({
+        data: mockIdentityProviders,
+        isLoading: false,
+        error: null,
+      } as ReturnType<typeof useIdentityProviders>);
+
+      vi.mocked(useGetFlows).mockReturnValue({
+        data: {
+          totalResults: 1,
+          startIndex: 1,
+          count: 1,
+          flows: [customFlow],
+          links: [],
+        },
+        isLoading: false,
+        isError: false,
+        isSuccess: true,
+        isFetching: false,
+        isStale: false,
+        isPending: false,
+        error: null,
+        status: 'success',
+        fetchStatus: 'idle',
+      } as unknown as ReturnType<typeof useGetFlows>);
+    });
+
+    it('unselects all integration toggles when a custom flow is selected', async () => {
+      const user = userEvent.setup();
+      renderWired();
+
+      expect(usernamePasswordSwitch()).toBeChecked();
+
+      await user.click(screen.getByRole('combobox'));
+      await user.click(await screen.findByText('Custom Passwordless'));
+
+      expect(usernamePasswordSwitch()).not.toBeChecked();
+      expect(screen.getByTestId('selected-flow-id')).toHaveTextContent('custom-flow-id');
+    });
+
+    it('keeps the step ready (Continue enabled) with all toggles off once a flow is selected', async () => {
+      const user = userEvent.setup();
+      const onReadyChange = vi.fn();
+      renderWired(onReadyChange);
+
+      await user.click(screen.getByRole('combobox'));
+      await user.click(await screen.findByText('Custom Passwordless'));
+
+      expect(usernamePasswordSwitch()).not.toBeChecked();
+      expect(onReadyChange).toHaveBeenLastCalledWith(true);
+    });
+
+    it('clears the selected flow and returns to toggle-driven mode when a method is re-enabled', async () => {
+      const user = userEvent.setup();
+      const onReadyChange = vi.fn();
+      renderWired(onReadyChange);
+
+      await user.click(screen.getByRole('combobox'));
+      await user.click(await screen.findByText('Custom Passwordless'));
+      expect(usernamePasswordSwitch()).not.toBeChecked();
+      expect(screen.getByTestId('selected-flow-id')).toHaveTextContent('custom-flow-id');
+
+      await user.click(screen.getByText('Username & Password'));
+
+      expect(usernamePasswordSwitch()).toBeChecked();
+      expect(screen.getByTestId('selected-flow-id')).toHaveTextContent('');
+      expect(screen.getByRole('combobox')).toHaveValue('');
+      expect(onReadyChange).toHaveBeenLastCalledWith(true);
     });
   });
 });

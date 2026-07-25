@@ -37,8 +37,8 @@ server:
 
 
 tls:
-  cert_file: "repository/resources/security/server.cert"
-  key_file: "repository/resources/security/server.key"
+  cert_file: "config/certs/server.cert"
+  key_file: "config/certs/server.key"
 
 database:
 "@
@@ -56,22 +56,33 @@ if ($DbType -eq "postgres") {
     path: ""
     options: ""
 
-  runtime:
+  runtime_transient:
     type: postgres
     hostname: localhost
     port: 5432
-    name: runtimedb
+    name: runtime_transient
     username: dbuser
     password: dbpassword
     sslmode: disable
     path: ""
     options: ""
 
-  user:
+  entity:
     type: postgres
     hostname: localhost
     port: 5432
-    name: userdb
+    name: entitydb
+    username: dbuser
+    password: dbpassword
+    sslmode: disable
+    path: ""
+    options: ""
+
+  runtime_persistent:
+    type: postgres
+    hostname: localhost
+    port: 5432
+    name: runtime_persistent
     username: dbuser
     password: dbpassword
     sslmode: disable
@@ -88,10 +99,10 @@ if ($DbType -eq "postgres") {
     username: ""
     password: ""
     sslmode: ""
-    path: "repository/database/configdb.db"
+    path: "database/configdb.db"
     options: "cache=shared"
 
-  runtime:
+  runtime_transient:
     type: sqlite
     hostname: ""
     port: 0
@@ -99,10 +110,10 @@ if ($DbType -eq "postgres") {
     username: ""
     password: ""
     sslmode: ""
-    path: "repository/database/runtimedb.db"
+    path: "database/runtime_transient.db"
     options: "cache=shared"
 
-  user:
+  entity:
     type: sqlite
     hostname: ""
     port: 0
@@ -110,7 +121,18 @@ if ($DbType -eq "postgres") {
     username: ""
     password: ""
     sslmode: ""
-    path: "repository/database/userdb.db"
+    path: "database/entitydb.db"
+    options: "cache=shared"
+
+  runtime_persistent:
+    type: sqlite
+    hostname: ""
+    port: 0
+    name: ""
+    username: ""
+    password: ""
+    sslmode: ""
+    path: "database/runtime_persistent.db"
     options: "cache=shared"
 "@
 }
@@ -120,6 +142,9 @@ $footer = @"
 
 flow:
   max_version_history: 3
+
+server_config:
+  store: composite
 
 oauth:
   allow_wildcard_redirect_uri: true

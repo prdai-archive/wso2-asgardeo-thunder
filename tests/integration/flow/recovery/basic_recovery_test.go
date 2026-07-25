@@ -23,27 +23,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/suite"
 	"github.com/thunder-id/thunderid/tests/integration/flow/common"
 	"github.com/thunder-id/thunderid/tests/integration/testutils"
-	"github.com/stretchr/testify/suite"
 )
-
-const (
-	mockSMTPPort = 2525
-)
-
-// emailPatch configures Thunder to use the mock SMTP server.
-var emailPatch = map[string]interface{}{
-	"email": map[string]interface{}{
-		"smtp": map[string]interface{}{
-			"host":                  "localhost",
-			"port":                  mockSMTPPort,
-			"from_address":          "noreply@thunder.test",
-			"enable_start_tls":      false,
-			"enable_authentication": false,
-		},
-	},
-}
 
 // emailPatchRemove removes the email config to restore the original state.
 var emailPatchRemove = map[string]interface{}{
@@ -76,7 +59,8 @@ var (
 )
 
 // EmailLinkPasswordRecoveryTestSuite tests the email-link password recovery flow.
-// Refer to @backend/cmd/server/bootstrap/flows/recovery/recovery_flow_email.json for the flow configuration.
+// Refer to the email-link recovery flow (handle: default-flow)
+// in @backend/cmd/server/bootstrap/01-default-resources.yaml for the flow configuration.
 type EmailLinkPasswordRecoveryTestSuite struct {
 	suite.Suite
 	config         *common.TestSuiteConfig
@@ -125,9 +109,21 @@ func (ts *EmailLinkPasswordRecoveryTestSuite) SetupSuite() {
 	ts.testUserID = userID[0]
 
 	// Start mock SMTP server
-	ts.mockSMTP = testutils.NewMockSMTPServer(mockSMTPPort)
+	ts.mockSMTP = testutils.NewMockSMTPServer(0)
 	ts.Require().NoError(ts.mockSMTP.Start(), "Failed to start mock SMTP server")
 	time.Sleep(100 * time.Millisecond)
+
+	emailPatch := map[string]interface{}{
+		"email": map[string]interface{}{
+			"smtp": map[string]interface{}{
+				"host":                  "localhost",
+				"port":                  ts.mockSMTP.GetPort(),
+				"from_address":          "noreply@thunder.test",
+				"enable_start_tls":      false,
+				"enable_authentication": false,
+			},
+		},
+	}
 
 	// Patch deployment.yaml to point email at the mock SMTP server and restart
 	ts.Require().NoError(testutils.PatchDeploymentConfig(emailPatch), "Failed to patch email config")
@@ -140,9 +136,10 @@ func (ts *EmailLinkPasswordRecoveryTestSuite) SetupSuite() {
 	ts.recoveryFlowID = recoveryFlowID
 	ts.config.CreatedFlowIDs = append(ts.config.CreatedFlowIDs, recoveryFlowID)
 
-	authFlowID, err := testutils.GetFlowIDByHandle("default-basic-flow", "AUTHENTICATION")
-	ts.Require().NoError(err, "Failed to get default auth flow ID")
+	authFlowID, err := testutils.CreateIsolatedAuthFlow("basic-recovery-isolated-auth")
+	ts.Require().NoError(err, "Failed to create isolated auth flow")
 	ts.authFlowID = authFlowID
+	ts.config.CreatedFlowIDs = append(ts.config.CreatedFlowIDs, authFlowID)
 
 	// Create test application with both auth and recovery flows enabled
 	appID, err := testutils.CreateApplication(testutils.Application{
@@ -459,6 +456,13 @@ func buildEmailLinkPasswordRecoveryFlow() testutils.Flow {
 				"executor": map[string]interface{}{
 					"name": "EmailExecutor",
 					"mode": "send",
+					"inputs": []map[string]interface{}{
+						{
+							"identifier": "email",
+							"type":       "EMAIL_INPUT",
+							"required":   true,
+						},
+					},
 				},
 				"onSuccess": "email_sent_status",
 				"onFailure": "email_sent_status",

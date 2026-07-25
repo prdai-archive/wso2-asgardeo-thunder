@@ -19,13 +19,15 @@
 package layoutmgt
 
 import (
+	"context"
 	"net/http"
 	"net/url"
 	"strconv"
 
+	tidcommon "github.com/thunder-id/thunderid/pkg/thunderidengine/common"
+
 	serverconst "github.com/thunder-id/thunderid/internal/system/constants"
 	"github.com/thunder-id/thunderid/internal/system/error/apierror"
-	"github.com/thunder-id/thunderid/internal/system/error/serviceerror"
 	"github.com/thunder-id/thunderid/internal/system/log"
 	sysutils "github.com/thunder-id/thunderid/internal/system/utils"
 )
@@ -49,15 +51,16 @@ func newLayoutMgtHandler(layoutMgtService LayoutMgtServiceInterface) *layoutMgtH
 
 // HandleLayoutListRequest handles the list layout configurations request.
 func (lh *layoutMgtHandler) HandleLayoutListRequest(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
 	limit, offset, svcErr := parsePaginationParams(r.URL.Query())
 	if svcErr != nil {
-		handleError(w, svcErr)
+		handleError(ctx, w, svcErr)
 		return
 	}
 
-	layoutList, svcErr := lh.layoutMgtService.GetLayoutList(limit, offset)
+	layoutList, svcErr := lh.layoutMgtService.GetLayoutList(ctx, limit, offset)
 	if svcErr != nil {
-		handleError(w, svcErr)
+		handleError(ctx, w, svcErr)
 		return
 	}
 
@@ -82,9 +85,9 @@ func (lh *layoutMgtHandler) HandleLayoutListRequest(w http.ResponseWriter, r *ht
 		Links:        toHTTPLinks(layoutList.Links),
 	}
 
-	sysutils.WriteSuccessResponse(w, http.StatusOK, layoutListResponse)
+	sysutils.WriteSuccessResponse(ctx, w, http.StatusOK, layoutListResponse)
 
-	lh.logger.Debug("Successfully listed layout configurations with pagination",
+	lh.logger.Debug(ctx, "Successfully listed layout configurations with pagination",
 		log.Int("limit", limit), log.Int("offset", offset),
 		log.Int("totalResults", layoutListResponse.TotalResults),
 		log.Int("count", layoutListResponse.Count))
@@ -92,15 +95,21 @@ func (lh *layoutMgtHandler) HandleLayoutListRequest(w http.ResponseWriter, r *ht
 
 // HandleLayoutPostRequest handles the create layout configuration request.
 func (lh *layoutMgtHandler) HandleLayoutPostRequest(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
 	createRequest, err := sysutils.DecodeJSONBody[CreateLayoutRequest](r)
 	if err != nil {
-		handleError(w, &ErrorInvalidLayoutData)
+		handleError(ctx, w, &ErrorInvalidLayoutData)
 		return
 	}
 
-	createdLayout, svcErr := lh.layoutMgtService.CreateLayout(*createRequest)
+	createdLayout, svcErr := lh.layoutMgtService.CreateLayout(ctx, CreateLayoutRequestWithID{
+		Handle:      createRequest.Handle,
+		DisplayName: createRequest.DisplayName,
+		Description: createRequest.Description,
+		Layout:      createRequest.Layout,
+	})
 	if svcErr != nil {
-		handleError(w, svcErr)
+		handleError(ctx, w, svcErr)
 		return
 	}
 
@@ -115,17 +124,19 @@ func (lh *layoutMgtHandler) HandleLayoutPostRequest(w http.ResponseWriter, r *ht
 		IsReadOnly:  createdLayout.IsReadOnly,
 	}
 
-	sysutils.WriteSuccessResponse(w, http.StatusCreated, layoutResponse)
+	sysutils.WriteSuccessResponse(ctx, w, http.StatusCreated, layoutResponse)
 
-	lh.logger.Debug("Successfully created layout configuration", log.String("id", createdLayout.ID))
+	lh.logger.Debug(ctx, "Successfully created layout configuration",
+		log.String("id", createdLayout.ID))
 }
 
 // HandleLayoutGetRequest handles the get layout configuration request.
 func (lh *layoutMgtHandler) HandleLayoutGetRequest(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
 	id := r.PathValue("id")
-	layout, svcErr := lh.layoutMgtService.GetLayout(id)
+	layout, svcErr := lh.layoutMgtService.GetLayout(ctx, id)
 	if svcErr != nil {
-		handleError(w, svcErr)
+		handleError(ctx, w, svcErr)
 		return
 	}
 
@@ -140,23 +151,24 @@ func (lh *layoutMgtHandler) HandleLayoutGetRequest(w http.ResponseWriter, r *htt
 		IsReadOnly:  layout.IsReadOnly,
 	}
 
-	sysutils.WriteSuccessResponse(w, http.StatusOK, layoutResponse)
+	sysutils.WriteSuccessResponse(ctx, w, http.StatusOK, layoutResponse)
 
-	lh.logger.Debug("Successfully retrieved layout configuration", log.String("id", id))
+	lh.logger.Debug(ctx, "Successfully retrieved layout configuration", log.String("id", id))
 }
 
 // HandleLayoutPutRequest handles the update layout configuration request.
 func (lh *layoutMgtHandler) HandleLayoutPutRequest(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
 	id := r.PathValue("id")
 	updateRequest, err := sysutils.DecodeJSONBody[UpdateLayoutRequest](r)
 	if err != nil {
-		handleError(w, &ErrorInvalidLayoutData)
+		handleError(ctx, w, &ErrorInvalidLayoutData)
 		return
 	}
 
-	updatedLayout, svcErr := lh.layoutMgtService.UpdateLayout(id, *updateRequest)
+	updatedLayout, svcErr := lh.layoutMgtService.UpdateLayout(ctx, id, *updateRequest)
 	if svcErr != nil {
-		handleError(w, svcErr)
+		handleError(ctx, w, svcErr)
 		return
 	}
 
@@ -171,26 +183,46 @@ func (lh *layoutMgtHandler) HandleLayoutPutRequest(w http.ResponseWriter, r *htt
 		IsReadOnly:  updatedLayout.IsReadOnly,
 	}
 
-	sysutils.WriteSuccessResponse(w, http.StatusOK, layoutResponse)
+	sysutils.WriteSuccessResponse(ctx, w, http.StatusOK, layoutResponse)
 
-	lh.logger.Debug("Successfully updated layout configuration", log.String("id", id))
+	lh.logger.Debug(ctx, "Successfully updated layout configuration", log.String("id", id))
 }
 
 // HandleLayoutDeleteRequest handles the delete layout configuration request.
 func (lh *layoutMgtHandler) HandleLayoutDeleteRequest(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
 	id := r.PathValue("id")
-	svcErr := lh.layoutMgtService.DeleteLayout(id)
+	svcErr := lh.layoutMgtService.DeleteLayout(ctx, id)
 	if svcErr != nil {
-		handleError(w, svcErr)
+		handleError(ctx, w, svcErr)
 		return
 	}
 
-	sysutils.WriteSuccessResponse(w, http.StatusNoContent, nil)
-	lh.logger.Debug("Successfully deleted layout configuration", log.String("id", id))
+	sysutils.WriteSuccessResponse(ctx, w, http.StatusNoContent, nil)
+	lh.logger.Debug(ctx, "Successfully deleted layout configuration", log.String("id", id))
+}
+
+// HandleLayoutUsagesGetRequest handles the get layout usages request.
+func (lh *layoutMgtHandler) HandleLayoutUsagesGetRequest(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	limit, offset, svcErr := parsePaginationParams(r.URL.Query())
+	if svcErr != nil {
+		handleError(r.Context(), w, svcErr)
+		return
+	}
+
+	result, svcErr := lh.layoutMgtService.GetLayoutUsages(r.Context(), id, limit, offset)
+	if svcErr != nil {
+		handleError(r.Context(), w, svcErr)
+		return
+	}
+
+	sysutils.WriteSuccessResponse(r.Context(), w, http.StatusOK, result)
+	lh.logger.Debug(r.Context(), "Successfully retrieved layout usages", log.String("id", id))
 }
 
 // parsePaginationParams parses limit and offset query parameters from the request.
-func parsePaginationParams(query url.Values) (int, int, *serviceerror.ServiceError) {
+func parsePaginationParams(query url.Values) (int, int, *tidcommon.ServiceError) {
 	limit := 0
 	offset := 0
 
@@ -227,9 +259,9 @@ func toHTTPLinks(links []Link) []LinkResponse {
 }
 
 // handleError handles service errors and returns appropriate HTTP responses.
-func handleError(w http.ResponseWriter, svcErr *serviceerror.ServiceError) {
+func handleError(ctx context.Context, w http.ResponseWriter, svcErr *tidcommon.ServiceError) {
 	statusCode := http.StatusInternalServerError
-	if svcErr.Type == serviceerror.ClientErrorType {
+	if svcErr.Type == tidcommon.ClientErrorType {
 		switch svcErr.Code {
 		case ErrorLayoutNotFound.Code:
 			statusCode = http.StatusNotFound
@@ -248,5 +280,5 @@ func handleError(w http.ResponseWriter, svcErr *serviceerror.ServiceError) {
 		Description: svcErr.ErrorDescription,
 	}
 
-	sysutils.WriteErrorResponse(w, statusCode, errResp)
+	sysutils.WriteErrorResponse(ctx, w, statusCode, errResp)
 }

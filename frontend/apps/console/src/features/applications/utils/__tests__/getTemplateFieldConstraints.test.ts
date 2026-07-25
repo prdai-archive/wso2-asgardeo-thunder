@@ -68,4 +68,14 @@ describe('getTemplateFieldConstraints', () => {
 
     expect(constraints?.oauth2?.tokenEndpointAuthMethod).toBeDefined();
   });
+
+  it('returns null for the "custom" template (no field constraints)', () => {
+    expect(getTemplateFieldConstraints('custom')).toBeNull();
+  });
+
+  it('returns pkceRequired constraint as readOnly true with value true for the "mcp-client" template', () => {
+    const constraints = getTemplateFieldConstraints('mcp-client');
+
+    expect(constraints?.oauth2?.pkceRequired).toEqual({readOnly: true, value: true});
+  });
 });

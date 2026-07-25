@@ -30,6 +30,8 @@ import (
 	inboundmodel "github.com/thunder-id/thunderid/internal/inboundclient/model"
 	"github.com/thunder-id/thunderid/internal/system/config"
 	"github.com/thunder-id/thunderid/internal/system/database/provider"
+	"github.com/thunder-id/thunderid/internal/system/resourcedependency"
+	"github.com/thunder-id/thunderid/pkg/thunderidengine/providers"
 	"github.com/thunder-id/thunderid/tests/mocks/database/providermock"
 )
 
@@ -112,7 +114,7 @@ func (suite *InboundClientStoreTestSuite) TestBuildInboundClientFromRow_Success(
 		"properties":                   string(blobBytes),
 	}
 
-	result, err := buildInboundClientFromRow(row)
+	result, err := buildInboundClientFromRow(context.Background(), row)
 
 	suite.NoError(err)
 	suite.NotNil(result)
@@ -138,7 +140,7 @@ func (suite *InboundClientStoreTestSuite) TestBuildInboundClientFromRow_InvalidI
 		"entity_id": 123, // Invalid type
 	}
 
-	result, err := buildInboundClientFromRow(row)
+	result, err := buildInboundClientFromRow(context.Background(), row)
 
 	suite.Error(err)
 	suite.Nil(result)
@@ -158,7 +160,7 @@ func (suite *InboundClientStoreTestSuite) TestBuildInboundClientFromRow_MinimalR
 		"properties":                   nil,
 	}
 
-	result, err := buildInboundClientFromRow(row)
+	result, err := buildInboundClientFromRow(context.Background(), row)
 
 	suite.NoError(err)
 	suite.NotNil(result)
@@ -177,7 +179,7 @@ func (suite *InboundClientStoreTestSuite) TestBuildInboundClientFromRow_MinimalR
 // --- Tests for buildOAuthProfileFromRow ---
 
 func (suite *InboundClientStoreTestSuite) TestBuildOAuthProfileFromRow_Success() {
-	cfg := inboundmodel.OAuthProfile{
+	cfg := providers.OAuthProfile{
 		RedirectURIs:            []string{"https://example.com/callback"},
 		GrantTypes:              []string{"authorization_code"},
 		ResponseTypes:           []string{"code"},
@@ -225,7 +227,7 @@ func (suite *InboundClientStoreTestSuite) TestBuildOAuthProfileFromRow_Malformed
 }
 
 func (suite *InboundClientStoreTestSuite) TestMarshalOAuthProfile_WithAcrValues() {
-	profile := &inboundmodel.OAuthProfile{
+	profile := &providers.OAuthProfile{
 		RedirectURIs: []string{"https://example.com/callback"},
 		GrantTypes:   []string{"authorization_code"},
 		AcrValues:    []string{"urn:thunder:acr:password", "urn:thunder:acr:generated-code"},
@@ -247,7 +249,7 @@ func (suite *InboundClientStoreTestSuite) TestMarshalOAuthProfile_WithAcrValues(
 }
 
 func (suite *InboundClientStoreTestSuite) TestMarshalOAuthProfile_WithEmptyAcrValues() {
-	profile := &inboundmodel.OAuthProfile{
+	profile := &providers.OAuthProfile{
 		RedirectURIs: []string{"https://example.com/callback"},
 		GrantTypes:   []string{"authorization_code"},
 		AcrValues:    []string{},
@@ -263,7 +265,7 @@ func (suite *InboundClientStoreTestSuite) TestMarshalOAuthProfile_WithEmptyAcrVa
 }
 
 func (suite *InboundClientStoreTestSuite) TestMarshalOAuthProfile_WithNilAcrValues() {
-	profile := &inboundmodel.OAuthProfile{
+	profile := &providers.OAuthProfile{
 		RedirectURIs: []string{"https://example.com/callback"},
 		AcrValues:    nil,
 	}
@@ -278,7 +280,7 @@ func (suite *InboundClientStoreTestSuite) TestMarshalOAuthProfile_WithNilAcrValu
 }
 
 func (suite *InboundClientStoreTestSuite) TestBuildOAuthProfileFromRow_WithAcrValues() {
-	cfg := inboundmodel.OAuthProfile{
+	cfg := providers.OAuthProfile{
 		RedirectURIs:            []string{"https://example.com/callback"},
 		GrantTypes:              []string{"authorization_code"},
 		ResponseTypes:           []string{"code"},
@@ -303,7 +305,7 @@ func (suite *InboundClientStoreTestSuite) TestBuildOAuthProfileFromRow_WithAcrVa
 }
 
 func (suite *InboundClientStoreTestSuite) TestBuildOAuthProfileFromRow_WithSingleAcrValue() {
-	cfg := inboundmodel.OAuthProfile{
+	cfg := providers.OAuthProfile{
 		RedirectURIs: []string{"https://example.com/callback"},
 		GrantTypes:   []string{"authorization_code"},
 		AcrValues:    []string{"urn:thunder:acr:password"},
@@ -323,7 +325,7 @@ func (suite *InboundClientStoreTestSuite) TestBuildOAuthProfileFromRow_WithSingl
 }
 
 func (suite *InboundClientStoreTestSuite) TestBuildOAuthProfileFromRow_WithoutAcrValues() {
-	cfg := inboundmodel.OAuthProfile{
+	cfg := providers.OAuthProfile{
 		RedirectURIs: []string{"https://example.com/callback"},
 		GrantTypes:   []string{"authorization_code"},
 	}
@@ -344,7 +346,7 @@ func (suite *InboundClientStoreTestSuite) TestBuildOAuthProfileFromRow_WithoutAc
 func (suite *InboundClientStoreTestSuite) TestAcrValues_RoundTrip() {
 	acrs := []string{"urn:thunder:acr:password", "urn:thunder:acr:generated-code"}
 
-	profile := &inboundmodel.OAuthProfile{
+	profile := &providers.OAuthProfile{
 		RedirectURIs:            []string{"https://example.com/callback"},
 		GrantTypes:              []string{"authorization_code"},
 		ResponseTypes:           []string{"code"},
@@ -541,7 +543,7 @@ func (suite *InboundClientStoreTestSuite) TestCreateProfile() {
 		suite.mockDBClient.On("ExecuteContext", mock.Anything, queryCreateInboundClient,
 			mock.Anything, mock.Anything, mock.Anything, mock.Anything,
 			mock.Anything, mock.Anything, mock.Anything, mock.Anything,
-			mock.Anything, mock.Anything).
+			mock.Anything, mock.Anything, mock.Anything, mock.Anything).
 			Return(int64(1), nil).Once()
 
 		err := suite.store.CreateInboundClient(context.Background(), client)
@@ -563,7 +565,7 @@ func (suite *InboundClientStoreTestSuite) TestCreateOAuthProfile() {
 		suite.mockDBClient.On("ExecuteContext", mock.Anything, queryCreateOAuthProfile,
 			testEntityID, mock.Anything, testServerID).Return(int64(1), nil).Once()
 
-		err := suite.store.CreateOAuthProfile(context.Background(), testEntityID, &inboundmodel.OAuthProfile{})
+		err := suite.store.CreateOAuthProfile(context.Background(), testEntityID, &providers.OAuthProfile{})
 		suite.NoError(err)
 	})
 }
@@ -576,7 +578,7 @@ func (suite *InboundClientStoreTestSuite) TestUpdateProfile() {
 		suite.mockDBClient.On("ExecuteContext", mock.Anything, queryUpdateInboundClientByEntityID,
 			mock.Anything, mock.Anything, mock.Anything, mock.Anything,
 			mock.Anything, mock.Anything, mock.Anything, mock.Anything,
-			mock.Anything, mock.Anything).
+			mock.Anything, mock.Anything, mock.Anything, mock.Anything).
 			Return(int64(1), nil).Once()
 
 		err := suite.store.UpdateInboundClient(context.Background(), client)
@@ -590,7 +592,7 @@ func (suite *InboundClientStoreTestSuite) TestUpdateOAuthProfile() {
 		suite.mockDBClient.On("ExecuteContext", mock.Anything, queryUpdateOAuthProfileByEntityID,
 			testEntityID, mock.Anything, testServerID).Return(int64(1), nil).Once()
 
-		err := suite.store.UpdateOAuthProfile(context.Background(), testEntityID, &inboundmodel.OAuthProfile{})
+		err := suite.store.UpdateOAuthProfile(context.Background(), testEntityID, &providers.OAuthProfile{})
 		suite.NoError(err)
 	})
 }
@@ -684,7 +686,7 @@ func (suite *InboundClientStoreTestSuite) TestGetInboundClientByEntityID() {
 
 func (suite *InboundClientStoreTestSuite) TestGetOAuthProfileByEntityID() {
 	suite.Run("returns OAuth config when found", func() {
-		cfg := inboundmodel.OAuthProfile{RedirectURIs: []string{"https://example.com/cb"}, PKCERequired: true}
+		cfg := providers.OAuthProfile{RedirectURIs: []string{"https://example.com/cb"}, PKCERequired: true}
 		cfgBytes, _ := json.Marshal(cfg)
 		mockRow := map[string]interface{}{
 			"entity_id":    testEntityID,
@@ -715,4 +717,126 @@ func (suite *InboundClientStoreTestSuite) TestGetOAuthProfileByEntityID() {
 func (suite *InboundClientStoreTestSuite) TestIsDeclarative_AlwaysFalse() {
 	suite.False(suite.store.IsDeclarative(context.Background(), "any-id"))
 	suite.False(suite.store.IsDeclarative(context.Background(), ""))
+}
+
+func (suite *InboundClientStoreTestSuite) TestGetEntityIDsByThemeID() {
+	suite.Run("db client error", func() {
+		suite.mockDBProvider.On("GetConfigDBClient").
+			Return((*providermock.DBClientInterfaceMock)(nil), errors.New("db unavailable")).Once()
+
+		ids, total, err := suite.store.GetEntityIDsByReference(
+			context.Background(), resourcedependency.ResourceTypeTheme, "theme-1", 10, 0)
+		suite.Error(err)
+		suite.Nil(ids)
+		suite.Equal(0, total)
+	})
+
+	suite.Run("count query error", func() {
+		suite.mockDBProvider.On("GetConfigDBClient").Return(suite.mockDBClient, nil).Once()
+		suite.mockDBClient.On("QueryContext", mock.Anything, queryGetEntityIDsByThemeIDCount,
+			"theme-1", testServerID).Return(nil, errors.New("count query failed")).Once()
+
+		ids, total, err := suite.store.GetEntityIDsByReference(
+			context.Background(), resourcedependency.ResourceTypeTheme, "theme-1", 10, 0)
+		suite.Error(err)
+		suite.Nil(ids)
+		suite.Equal(0, total)
+	})
+
+	suite.Run("list query error", func() {
+		suite.mockDBProvider.On("GetConfigDBClient").Return(suite.mockDBClient, nil).Once()
+		suite.mockDBClient.On("QueryContext", mock.Anything, queryGetEntityIDsByThemeIDCount,
+			"theme-1", testServerID).
+			Return([]map[string]interface{}{{"total": int64(2)}}, nil).Once()
+		suite.mockDBClient.On("QueryContext", mock.Anything, queryGetEntityIDsByThemeID,
+			"theme-1", testServerID, 10, 0).
+			Return(nil, errors.New("list query failed")).Once()
+
+		ids, total, err := suite.store.GetEntityIDsByReference(
+			context.Background(), resourcedependency.ResourceTypeTheme, "theme-1", 10, 0)
+		suite.Error(err)
+		suite.Nil(ids)
+		suite.Equal(0, total)
+	})
+
+	suite.Run("invalid entity_id type in row", func() {
+		suite.mockDBProvider.On("GetConfigDBClient").Return(suite.mockDBClient, nil).Once()
+		suite.mockDBClient.On("QueryContext", mock.Anything, queryGetEntityIDsByThemeIDCount,
+			"theme-1", testServerID).
+			Return([]map[string]interface{}{{"total": int64(1)}}, nil).Once()
+		suite.mockDBClient.On("QueryContext", mock.Anything, queryGetEntityIDsByThemeID,
+			"theme-1", testServerID, 10, 0).
+			Return([]map[string]interface{}{{"entity_id": 12345}}, nil).Once()
+
+		ids, total, err := suite.store.GetEntityIDsByReference(
+			context.Background(), resourcedependency.ResourceTypeTheme, "theme-1", 10, 0)
+		suite.Error(err)
+		suite.Nil(ids)
+		suite.Equal(0, total)
+	})
+
+	suite.Run("returns ids and total", func() {
+		suite.mockDBProvider.On("GetConfigDBClient").Return(suite.mockDBClient, nil).Once()
+		suite.mockDBClient.On("QueryContext", mock.Anything, queryGetEntityIDsByThemeIDCount,
+			"theme-1", testServerID).
+			Return([]map[string]interface{}{{"total": int64(2)}}, nil).Once()
+		suite.mockDBClient.On("QueryContext", mock.Anything, queryGetEntityIDsByThemeID,
+			"theme-1", testServerID, 10, 0).
+			Return([]map[string]interface{}{
+				{"entity_id": "app-1"},
+				{"entity_id": "app-2"},
+			}, nil).Once()
+
+		ids, total, err := suite.store.GetEntityIDsByReference(
+			context.Background(), resourcedependency.ResourceTypeTheme, "theme-1", 10, 0)
+		suite.NoError(err)
+		suite.Equal(2, total)
+		suite.Equal([]string{"app-1", "app-2"}, ids)
+	})
+
+	suite.Run("empty count result defaults to zero", func() {
+		suite.mockDBProvider.On("GetConfigDBClient").Return(suite.mockDBClient, nil).Once()
+		suite.mockDBClient.On("QueryContext", mock.Anything, queryGetEntityIDsByThemeIDCount,
+			"theme-1", testServerID).
+			Return([]map[string]interface{}{}, nil).Once()
+		suite.mockDBClient.On("QueryContext", mock.Anything, queryGetEntityIDsByThemeID,
+			"theme-1", testServerID, 10, 0).
+			Return([]map[string]interface{}{}, nil).Once()
+
+		ids, total, err := suite.store.GetEntityIDsByReference(
+			context.Background(), resourcedependency.ResourceTypeTheme, "theme-1", 10, 0)
+		suite.NoError(err)
+		suite.Equal(0, total)
+		suite.Empty(ids)
+	})
+}
+
+func (suite *InboundClientStoreTestSuite) TestGetEntityIDsByReference_Flow() {
+	suite.Run("uses flow queries and repeats the id across slots", func() {
+		suite.mockDBProvider.On("GetConfigDBClient").Return(suite.mockDBClient, nil).Once()
+		suite.mockDBClient.On("QueryContext", mock.Anything, queryGetEntityIDsByFlowIDCount,
+			"flow-1", "flow-1", "flow-1", "flow-1", testServerID).
+			Return([]map[string]interface{}{{"total": int64(2)}}, nil).Once()
+		suite.mockDBClient.On("QueryContext", mock.Anything, queryGetEntityIDsByFlowID,
+			"flow-1", "flow-1", "flow-1", "flow-1", testServerID, 10, 0).
+			Return([]map[string]interface{}{
+				{"entity_id": "app-1"},
+				{"entity_id": "app-2"},
+			}, nil).Once()
+
+		ids, total, err := suite.store.GetEntityIDsByReference(
+			context.Background(), resourcedependency.ResourceTypeFlow, "flow-1", 10, 0)
+		suite.NoError(err)
+		suite.Equal(2, total)
+		suite.Equal([]string{"app-1", "app-2"}, ids)
+	})
+}
+
+func (suite *InboundClientStoreTestSuite) TestGetEntityIDsByReference_UnknownTypeSkipsDB() {
+	ids, total, err := suite.store.GetEntityIDsByReference(
+		context.Background(), "unknownReferenceType", "ref-1", 10, 0)
+	suite.NoError(err)
+	suite.Equal(0, total)
+	suite.Empty(ids)
+	suite.mockDBProvider.AssertNotCalled(suite.T(), "GetConfigDBClient")
 }

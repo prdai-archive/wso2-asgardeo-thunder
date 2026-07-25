@@ -63,6 +63,13 @@ vi.mock('../../../../constants/token-constants', () => ({
     DEFAULT_TOKEN_ATTRIBUTES: ['aud', 'exp', 'iat', 'iss', 'sub'],
     USER_INFO_DEFAULT_ATTRIBUTES: ['sub'],
     ADDITIONAL_USER_ATTRIBUTES: ['ouHandle'],
+    ID_TOKEN_RESPONSE_TYPES: ['JWT', 'JWE', 'NESTED_JWT'],
+    ID_TOKEN_ENCRYPTION_ALGS: ['RSA-OAEP', 'RSA-OAEP-256'],
+    ID_TOKEN_ENCRYPTION_ENCS: ['A128CBC-HS256', 'A256GCM'],
+    USER_INFO_RESPONSE_TYPES: ['JSON', 'JWS', 'JWE', 'NESTED_JWT'],
+    USER_INFO_SIGNING_ALGS: ['RS256', 'RS512'],
+    USER_INFO_ENCRYPTION_ALGS: ['RSA-OAEP', 'RSA-OAEP-256'],
+    USER_INFO_ENCRYPTION_ENCS: ['A128CBC-HS256', 'A256GCM'],
   },
 }));
 
@@ -80,9 +87,9 @@ describe('TokenUserAttributesSection', () => {
     it('renders the settings card with correct title for native mode', () => {
       render(<TokenUserAttributesSection {...baseProps} sharedAttributes={[]} />);
 
-      expect(screen.getByTestId('card-title')).toHaveTextContent('User Attributes');
+      expect(screen.getByTestId('card-title')).toHaveTextContent('Token Attributes & Response');
       expect(screen.getByTestId('card-description')).toHaveTextContent(
-        'Configure the user attributes to include in your tokens & user info response',
+        'Configure the response types and user attributes included in your tokens and user info responses',
       );
     });
 
@@ -98,7 +105,25 @@ describe('TokenUserAttributesSection', () => {
         />,
       );
 
-      expect(screen.getByTestId('card-title')).toHaveTextContent('User Attributes');
+      expect(screen.getByTestId('card-title')).toHaveTextContent('Token Attributes & Response');
+    });
+
+    it('drops the "user info responses" mention from the description when showUserInfoTab is false', () => {
+      render(
+        <TokenUserAttributesSection
+          {...baseProps}
+          accessTokenAttributes={[]}
+          idTokenAttributes={[]}
+          activeTab="access"
+          onTabChange={vi.fn()}
+          showUserInfoTab={false}
+          entityLabel="agent"
+        />,
+      );
+
+      expect(screen.getByTestId('card-description')).toHaveTextContent(
+        'Configure the response types and user attributes included in the tokens issued to this agent.',
+      );
     });
   });
 
@@ -351,6 +376,203 @@ describe('TokenUserAttributesSection', () => {
       // email is a pending addition and activeTab=id, so it should appear in id preview too
       // because isPendingTab = (activeTab === tokenType) = ('id' === 'id') = true
       expect(payload).toContain('email');
+    });
+
+    it('renders only two tabs when showUserInfoTab is false (agents)', () => {
+      render(<TokenUserAttributesSection {...oauthProps} showUserInfoTab={false} />);
+
+      expect(screen.getByRole('tab', {name: /access token/i})).toBeInTheDocument();
+      expect(screen.getByRole('tab', {name: /id token/i})).toBeInTheDocument();
+      expect(screen.queryByRole('tab', {name: /user info endpoint/i})).not.toBeInTheDocument();
+      expect(screen.getAllByRole('tab')).toHaveLength(2);
+    });
+
+    it('does not render the User Info panel when showUserInfoTab is false, even if activeTab is "userinfo"', () => {
+      render(<TokenUserAttributesSection {...oauthProps} showUserInfoTab={false} activeTab="userinfo" />);
+
+      expect(screen.queryByText('Use same attributes as ID Token')).not.toBeInTheDocument();
+    });
+
+    it('maps tab clicks to only the two visible tabs when showUserInfoTab is false', async () => {
+      const user = userEvent.setup();
+      const onTabChange = vi.fn();
+
+      render(<TokenUserAttributesSection {...oauthProps} showUserInfoTab={false} onTabChange={onTabChange} />);
+
+      await user.click(screen.getByRole('tab', {name: /id token/i}));
+
+      expect(onTabChange).toHaveBeenCalledWith('id');
+    });
+
+    it('does not include the act claim in the access token preview by default', () => {
+      render(<TokenUserAttributesSection {...oauthProps} activeTab="access" />);
+
+      const payload = screen.getByTestId('jwt-preview-payload').textContent ?? '';
+      expect(payload).not.toContain('"act"');
+    });
+
+    it('includes the act claim in the access token preview when showActorClaim is true (agents)', () => {
+      render(<TokenUserAttributesSection {...oauthProps} activeTab="access" showActorClaim />);
+
+      const payload = screen.getByTestId('jwt-preview-payload').textContent ?? '';
+      expect(payload).toContain('"act"');
+      expect(payload).toContain('agent-id');
+    });
+
+    it('does not include the act claim in the ID token preview even when showActorClaim is true', () => {
+      render(<TokenUserAttributesSection {...oauthProps} activeTab="id" showActorClaim />);
+
+      const payload = screen.getByTestId('jwt-preview-payload').textContent ?? '';
+      expect(payload).not.toContain('"act"');
+    });
+
+    it('shows an explanation of the act claim on the access token tab when showActorClaim is true', () => {
+      render(<TokenUserAttributesSection {...oauthProps} activeTab="access" showActorClaim entityLabel="agent" />);
+
+      expect(
+        screen.getByText(/identifies this agent as the party acting on behalf of the subject/i),
+      ).toBeInTheDocument();
+    });
+
+    it('does not show the act claim explanation when showActorClaim is false', () => {
+      render(<TokenUserAttributesSection {...oauthProps} activeTab="access" />);
+
+      expect(
+        screen.queryByText(/identifies this agent as the party acting on behalf of the subject/i),
+      ).not.toBeInTheDocument();
+    });
+  });
+
+  describe('ID Token response format', () => {
+    it('renders response type select in ID Token tab', () => {
+      render(
+        <TokenUserAttributesSection
+          {...baseProps}
+          accessTokenAttributes={[]}
+          idTokenAttributes={[]}
+          userInfoAttributes={[]}
+          activeTab="id"
+          onTabChange={vi.fn()}
+          onIdTokenConfigChange={vi.fn()}
+        />,
+      );
+
+      expect(screen.getByText('Response Format')).toBeInTheDocument();
+      expect(screen.getByText('Response Type')).toBeInTheDocument();
+    });
+
+    it('shows encryption fields when ID token response type is JWE', () => {
+      render(
+        <TokenUserAttributesSection
+          {...baseProps}
+          accessTokenAttributes={[]}
+          idTokenAttributes={[]}
+          userInfoAttributes={[]}
+          activeTab="id"
+          onTabChange={vi.fn()}
+          idTokenResponseType="JWE"
+          onIdTokenConfigChange={vi.fn()}
+        />,
+      );
+
+      expect(screen.getByText('Encryption Algorithm')).toBeInTheDocument();
+      expect(screen.getByText('Content Encryption')).toBeInTheDocument();
+    });
+
+    it('does not show encryption fields when ID token response type is JWT', () => {
+      render(
+        <TokenUserAttributesSection
+          {...baseProps}
+          accessTokenAttributes={[]}
+          idTokenAttributes={[]}
+          userInfoAttributes={[]}
+          activeTab="id"
+          onTabChange={vi.fn()}
+          idTokenResponseType="JWT"
+          onIdTokenConfigChange={vi.fn()}
+        />,
+      );
+
+      expect(screen.queryByText('Encryption Algorithm')).not.toBeInTheDocument();
+    });
+  });
+
+  describe('UserInfo response format', () => {
+    it('renders response type select in UserInfo tab', () => {
+      render(
+        <TokenUserAttributesSection
+          {...baseProps}
+          accessTokenAttributes={[]}
+          idTokenAttributes={[]}
+          userInfoAttributes={[]}
+          activeTab="userinfo"
+          onTabChange={vi.fn()}
+          isUserInfoCustomAttributes
+          onToggleUserInfo={vi.fn()}
+          onUserInfoConfigChange={vi.fn()}
+        />,
+      );
+
+      expect(screen.getByText('Response Format')).toBeInTheDocument();
+    });
+
+    it('shows signing algorithm when UserInfo response type is JWS', () => {
+      render(
+        <TokenUserAttributesSection
+          {...baseProps}
+          accessTokenAttributes={[]}
+          idTokenAttributes={[]}
+          userInfoAttributes={[]}
+          activeTab="userinfo"
+          onTabChange={vi.fn()}
+          isUserInfoCustomAttributes
+          onToggleUserInfo={vi.fn()}
+          userInfoResponseType="JWS"
+          onUserInfoConfigChange={vi.fn()}
+        />,
+      );
+
+      expect(screen.getByText('Signing Algorithm')).toBeInTheDocument();
+    });
+
+    it('shows encryption fields when UserInfo response type is JWE', () => {
+      render(
+        <TokenUserAttributesSection
+          {...baseProps}
+          accessTokenAttributes={[]}
+          idTokenAttributes={[]}
+          userInfoAttributes={[]}
+          activeTab="userinfo"
+          onTabChange={vi.fn()}
+          isUserInfoCustomAttributes
+          onToggleUserInfo={vi.fn()}
+          userInfoResponseType="JWE"
+          onUserInfoConfigChange={vi.fn()}
+        />,
+      );
+
+      expect(screen.getByText('Encryption Algorithm')).toBeInTheDocument();
+      expect(screen.getByText('Content Encryption')).toBeInTheDocument();
+    });
+
+    it('does not show algorithm fields when UserInfo response type is JSON', () => {
+      render(
+        <TokenUserAttributesSection
+          {...baseProps}
+          accessTokenAttributes={[]}
+          idTokenAttributes={[]}
+          userInfoAttributes={[]}
+          activeTab="userinfo"
+          onTabChange={vi.fn()}
+          isUserInfoCustomAttributes
+          onToggleUserInfo={vi.fn()}
+          userInfoResponseType="JSON"
+          onUserInfoConfigChange={vi.fn()}
+        />,
+      );
+
+      expect(screen.queryByText('Signing Algorithm')).not.toBeInTheDocument();
+      expect(screen.queryByText('Encryption Algorithm')).not.toBeInTheDocument();
     });
   });
 

@@ -26,7 +26,6 @@ import (
 	"strings"
 	"time"
 
-	inboundmodel "github.com/thunder-id/thunderid/internal/inboundclient/model"
 	"github.com/thunder-id/thunderid/internal/oauth/oauth2/constants"
 	"github.com/thunder-id/thunderid/internal/oauth/oauth2/dpop"
 	"github.com/thunder-id/thunderid/internal/oauth/oauth2/granthandlers"
@@ -34,8 +33,8 @@ import (
 	"github.com/thunder-id/thunderid/internal/oauth/scope"
 	sysContext "github.com/thunder-id/thunderid/internal/system/context"
 	"github.com/thunder-id/thunderid/internal/system/log"
-	"github.com/thunder-id/thunderid/internal/system/observability"
 	"github.com/thunder-id/thunderid/internal/system/observability/event"
+	"github.com/thunder-id/thunderid/pkg/thunderidengine/providers"
 )
 
 // TokenServiceInterface defines the interface for OAuth 2.0 token processing.
@@ -43,7 +42,7 @@ type TokenServiceInterface interface {
 	ProcessTokenRequest(
 		ctx context.Context,
 		tokenRequest *model.TokenRequest,
-		oauthApp *inboundmodel.OAuthClient,
+		oauthApp *providers.OAuthClient,
 	) (*model.TokenResponse, *model.ErrorResponse)
 }
 
@@ -51,7 +50,7 @@ type TokenServiceInterface interface {
 type tokenService struct {
 	grantHandlerProvider granthandlers.GrantHandlerProviderInterface
 	scopeValidator       scope.ScopeValidatorInterface
-	observabilitySvc     observability.ObservabilityServiceInterface
+	observabilitySvc     providers.ObservabilityProvider
 	dpopVerifier         dpop.VerifierInterface
 	tokenEndpoint        string
 	dpopRequired         bool
@@ -61,7 +60,7 @@ type tokenService struct {
 func newTokenService(
 	grantHandlerProvider granthandlers.GrantHandlerProviderInterface,
 	scopeValidator scope.ScopeValidatorInterface,
-	observabilitySvc observability.ObservabilityServiceInterface,
+	observabilitySvc providers.ObservabilityProvider,
 	dpopVerifier dpop.VerifierInterface,
 	tokenEndpoint string,
 	dpopRequired bool,
@@ -80,7 +79,7 @@ func newTokenService(
 func (ts *tokenService) ProcessTokenRequest(
 	ctx context.Context,
 	tokenRequest *model.TokenRequest,
-	oauthApp *inboundmodel.OAuthClient,
+	oauthApp *providers.OAuthClient,
 ) (*model.TokenResponse, *model.ErrorResponse) {
 	logger := log.GetLogger().With(log.String(log.LoggerKeyComponentName, "TokenService"))
 
@@ -102,7 +101,7 @@ func (ts *tokenService) ProcessTokenRequest(
 	}
 
 	// Validate grant_type value.
-	grantType := constants.GrantType(grantTypeStr)
+	grantType := providers.GrantType(grantTypeStr)
 	if !grantType.IsValid() {
 		publishTokenIssuanceFailedEvent(ts.observabilitySvc, ctx, clientID, grantTypeStr, scopeStr,
 			400, "Invalid grant_type parameter", startTime)
@@ -123,7 +122,7 @@ func (ts *tokenService) ProcessTokenRequest(
 				ErrorDescription: "Unsupported grant type",
 			}
 		}
-		logger.Error("Failed to get grant handler", log.Error(handlerErr))
+		logger.Error(ctx, "Failed to get grant handler", log.Error(handlerErr))
 		publishTokenIssuanceFailedEvent(ts.observabilitySvc, ctx, clientID, grantTypeStr, scopeStr,
 			500, "Failed to get grant handler", startTime)
 		return nil, &model.ErrorResponse{
@@ -195,14 +194,14 @@ func (ts *tokenService) ProcessTokenRequest(
 	}
 
 	// Issue refresh token if applicable.
-	if grantType == constants.GrantTypeAuthorizationCode &&
-		oauthApp.IsAllowedGrantType(constants.GrantTypeRefreshToken) {
-		logger.Debug("Issuing refresh token for the token request",
+	if grantType.IssuesRefreshToken() &&
+		oauthApp.IsAllowedGrantType(providers.GrantTypeRefreshToken) {
+		logger.Debug(ctx, "Issuing refresh token for the token request",
 			log.String("client_id", clientID), log.String("grant_type", grantTypeStr))
 
-		refreshGrantHandler, handlerErr := ts.grantHandlerProvider.GetGrantHandler(constants.GrantTypeRefreshToken)
+		refreshGrantHandler, handlerErr := ts.grantHandlerProvider.GetGrantHandler(providers.GrantTypeRefreshToken)
 		if handlerErr != nil {
-			logger.Error("Failed to get refresh grant handler", log.Error(handlerErr))
+			logger.Error(ctx, "Failed to get refresh grant handler", log.Error(handlerErr))
 			publishTokenIssuanceFailedEvent(ts.observabilitySvc, ctx, clientID, grantTypeStr, scopeStr,
 				500, "Failed to get refresh grant handler", startTime)
 			return nil, &model.ErrorResponse{
@@ -212,7 +211,7 @@ func (ts *tokenService) ProcessTokenRequest(
 		}
 		refreshGrantHandlerTyped, ok := refreshGrantHandler.(granthandlers.RefreshTokenGrantHandlerInterface)
 		if !ok {
-			logger.Error("Failed to cast refresh grant handler",
+			logger.Error(ctx, "Failed to cast refresh grant handler",
 				log.String("client_id", clientID), log.String("grant_type", grantTypeStr))
 			publishTokenIssuanceFailedEvent(ts.observabilitySvc, ctx, clientID, grantTypeStr, scopeStr,
 				500, "Internal Server Error", startTime)
@@ -232,6 +231,7 @@ func (ts *tokenService) ProcessTokenRequest(
 			tokenRespDTO.AccessToken.Subject, refreshAudiences,
 			grantTypeStr, tokenRespDTO.AccessToken.Scopes, tokenRespDTO.AccessToken.ClaimsRequest,
 			tokenRespDTO.AccessToken.ClaimsLocales, tokenRespDTO.AccessToken.AttributeCacheID,
+			tokenRespDTO.AccessToken.TokenFamilyID,
 		)
 		if refreshTokenError != nil && refreshTokenError.Error != "" {
 			publishTokenIssuanceFailedEvent(ts.observabilitySvc, ctx, clientID, grantTypeStr, scopeStr,
@@ -255,16 +255,19 @@ func (ts *tokenService) ProcessTokenRequest(
 	}
 
 	// For token exchange, determine the issued_token_type from the request.
-	if grantType == constants.GrantTypeTokenExchange {
+	if grantType == providers.GrantTypeTokenExchange {
 		requestedTokenType := tokenRequest.RequestedTokenType
-		if requestedTokenType == "" || requestedTokenType == string(constants.TokenTypeIdentifierAccessToken) {
+		switch {
+		case requestedTokenType == string(constants.TokenTypeIdentifierIDJAG):
+			tokenResponse.IssuedTokenType = string(constants.TokenTypeIdentifierIDJAG)
+		case requestedTokenType == "" || requestedTokenType == string(constants.TokenTypeIdentifierAccessToken):
 			tokenResponse.IssuedTokenType = string(constants.TokenTypeIdentifierAccessToken)
-		} else {
+		default:
 			tokenResponse.IssuedTokenType = string(constants.TokenTypeIdentifierJWT)
 		}
 	}
 
-	logger.Debug("Token generated successfully",
+	logger.Debug(ctx, "Token generated successfully",
 		log.String("client_id", clientID), log.String("grant_type", grantTypeStr))
 
 	ts.publishTokenIssuedEvent(ctx, clientID, grantTypeStr, scopes, startTime)
@@ -275,7 +278,7 @@ func (ts *tokenService) ProcessTokenRequest(
 // verifyDPoPProof validates the DPoP proof when present and stores the resulting jkt
 // in ctx for downstream grant handlers. A missing proof is rejected when the client
 // requires dpop-bound access tokens or oauth.dpop.required is true.
-func (ts *tokenService) verifyDPoPProof(ctx *context.Context, oauthApp *inboundmodel.OAuthClient) *model.ErrorResponse {
+func (ts *tokenService) verifyDPoPProof(ctx *context.Context, oauthApp *providers.OAuthClient) *model.ErrorResponse {
 	proof := dpop.GetProof(*ctx)
 	if proof == "" {
 		if (oauthApp != nil && oauthApp.DPoPBoundAccessTokens) || ts.dpopRequired {
@@ -318,12 +321,12 @@ func (ts *tokenService) publishTokenIssuanceStartedEvent(ctx context.Context, cl
 		string(event.EventTypeTokenIssuanceStarted),
 		event.ComponentAuthHandler,
 	).
-		WithStatus(event.StatusInProgress).
+		WithStatus(providers.StatusInProgress).
 		WithData(event.DataKey.ClientID, clientID).
 		WithData(event.DataKey.GrantType, grantType).
 		WithData(event.DataKey.Scope, scope)
 
-	ts.observabilitySvc.PublishEvent(evt)
+	ts.observabilitySvc.PublishEvent(ctx, evt)
 }
 
 func (ts *tokenService) publishTokenIssuedEvent(
@@ -340,18 +343,18 @@ func (ts *tokenService) publishTokenIssuedEvent(
 		string(event.EventTypeTokenIssued),
 		event.ComponentAuthHandler,
 	).
-		WithStatus(event.StatusSuccess).
+		WithStatus(providers.StatusSuccess).
 		WithData(event.DataKey.ClientID, clientID).
 		WithData(event.DataKey.GrantType, grantType).
 		WithData(event.DataKey.Scope, scope).
 		WithData(event.DataKey.DurationMs, fmt.Sprintf("%d", duration))
 
-	ts.observabilitySvc.PublishEvent(evt)
+	ts.observabilitySvc.PublishEvent(ctx, evt)
 }
 
 // publishTokenIssuanceFailedEvent is a package-level helper shared by tokenService and tokenHandler.
 func publishTokenIssuanceFailedEvent(
-	svc observability.ObservabilityServiceInterface,
+	svc providers.ObservabilityProvider,
 	ctx context.Context, clientID, grantType, scope string, statusCode int, message string, startTime int64,
 ) {
 	if svc == nil || !svc.IsEnabled() {
@@ -370,14 +373,16 @@ func publishTokenIssuanceFailedEvent(
 		string(event.EventTypeTokenIssuanceFailed),
 		event.ComponentAuthHandler,
 	).
-		WithStatus(event.StatusFailure).
+		WithStatus(providers.StatusFailure).
 		WithData(event.DataKey.ClientID, clientID).
 		WithData(event.DataKey.GrantType, grantType).
 		WithData(event.DataKey.Scope, scope).
-		WithData(event.DataKey.Error, message).
-		WithData(event.DataKey.ErrorCode, fmt.Sprintf("%d", statusCode)).
-		WithData(event.DataKey.ErrorType, errorType).
+		WithData(event.DataKey.Error, map[string]interface{}{
+			"code":    fmt.Sprintf("%d", statusCode),
+			"type":    errorType,
+			"message": message,
+		}).
 		WithData(event.DataKey.DurationMs, fmt.Sprintf("%d", duration))
 
-	svc.PublishEvent(evt)
+	svc.PublishEvent(ctx, evt)
 }

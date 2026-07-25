@@ -51,6 +51,11 @@ export interface BasicFlowDefinition {
    * Timestamp when the flow was last modified
    */
   updatedAt: string;
+
+  /**
+   * Whether the flow is read-only and cannot be modified or deleted.
+   */
+  isReadOnly?: boolean;
 }
 
 /**
@@ -254,6 +259,12 @@ export interface FlowNode {
     value: string;
     onSkip?: string;
   };
+  /**
+   * Cross-flow reference for CALL nodes. Carries the ID of the flow to invoke.
+   */
+  flow?: {
+    ref: string;
+  };
 }
 
 /**
@@ -336,4 +347,36 @@ export interface FlowDefinitionResponse {
    * Timestamp when the flow was last modified
    */
   updatedAt: string;
+
+  /**
+   * Whether the flow is read-only and cannot be modified or deleted.
+   */
+  isReadOnly?: boolean;
+}
+
+/**
+ * A single resource that references a flow.
+ */
+export interface FlowUsage {
+  resourceType: string;
+  id: string;
+  displayName: string;
+  behaviorOnDelete: 'fallback' | 'cascade';
+}
+
+/**
+ * Per-resource-type count of usages, keyed by resource type
+ * (e.g. `application`, `agent`). Null when the counts could not be determined.
+ */
+export type FlowUsagesSummary = Record<string, number> | null;
+
+/**
+ * Response for the flow usages endpoint.
+ * totalResults is null when usage data is unavailable; 0 means confirmed empty.
+ */
+export interface FlowUsagesResponse {
+  totalResults: number | null;
+  count: number;
+  summary: FlowUsagesSummary;
+  usages: FlowUsage[];
 }

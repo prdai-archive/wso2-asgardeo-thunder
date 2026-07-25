@@ -19,7 +19,6 @@
 package jws
 
 import (
-	"crypto/ecdh"
 	"crypto/ecdsa"
 	"crypto/ed25519"
 	"crypto/elliptic"
@@ -31,6 +30,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 
 	"github.com/thunder-id/thunderid/internal/system/cryptolib"
@@ -357,37 +357,27 @@ func (suite *JWSUtilsTestSuite) TestJWKToOKPPublicKeyInvalidKeyLength() {
 	assert.Contains(suite.T(), err.Error(), "invalid Ed25519 public key length")
 }
 
-func (suite *JWSUtilsTestSuite) TestGetECCurveInfoP256() {
-	curve, keySize, err := getECCurveInfo(P256)
+func (suite *JWSUtilsTestSuite) TestJWKToPublicKeyEC() {
+	xBytes := make([]byte, 32)
+	yBytes := make([]byte, 32)
+	suite.ecPublicKey.X.FillBytes(xBytes)
+	suite.ecPublicKey.Y.FillBytes(yBytes)
+
+	jwk := map[string]interface{}{
+		"kty": "EC",
+		"crv": "P-256",
+		"x":   base64.RawURLEncoding.EncodeToString(xBytes),
+		"y":   base64.RawURLEncoding.EncodeToString(yBytes),
+	}
+
+	publicKey, err := JWKToPublicKey(jwk)
 
 	assert.NoError(suite.T(), err)
-	assert.Equal(suite.T(), ecdh.P256(), curve)
-	assert.Equal(suite.T(), 32, keySize)
-}
-
-func (suite *JWSUtilsTestSuite) TestGetECCurveInfoP384() {
-	curve, keySize, err := getECCurveInfo(P384)
-
-	assert.NoError(suite.T(), err)
-	assert.Equal(suite.T(), ecdh.P384(), curve)
-	assert.Equal(suite.T(), 48, keySize)
-}
-
-func (suite *JWSUtilsTestSuite) TestGetECCurveInfoP521() {
-	curve, keySize, err := getECCurveInfo(P521)
-
-	assert.NoError(suite.T(), err)
-	assert.Equal(suite.T(), ecdh.P521(), curve)
-	assert.Equal(suite.T(), 66, keySize)
-}
-
-func (suite *JWSUtilsTestSuite) TestGetECCurveInfoUnsupported() {
-	curve, keySize, err := getECCurveInfo("P-999")
-
-	assert.Error(suite.T(), err)
-	assert.Nil(suite.T(), curve)
-	assert.Equal(suite.T(), 0, keySize)
-	assert.Contains(suite.T(), err.Error(), "unsupported EC curve")
+	assert.NotNil(suite.T(), publicKey)
+	ecKey, ok := publicKey.(*ecdsa.PublicKey)
+	assert.True(suite.T(), ok)
+	assert.Equal(suite.T(), suite.ecPublicKey.X, ecKey.X)
+	assert.Equal(suite.T(), suite.ecPublicKey.Y, ecKey.Y)
 }
 
 func (suite *JWSUtilsTestSuite) TestJWKToPublicKeyInvalidEC() {
@@ -437,4 +427,77 @@ func (suite *JWSUtilsTestSuite) TestIsValidJKT() {
 			assert.Equal(t, tc.want, IsValidJKT(tc.input))
 		})
 	}
+}
+
+func TestJWKToPublicKeyAKPRoundTrip(t *testing.T) {
+	for _, alg := range []cryptolib.Algorithm{
+		cryptolib.AlgorithmMLDSA44, cryptolib.AlgorithmMLDSA65, cryptolib.AlgorithmMLDSA87,
+	} {
+		signer, err := cryptolib.GenerateMLDSAKey(alg)
+		require.NoError(t, err)
+		pubBytes, ok := cryptolib.MLDSAPublicKeyBytes(signer.Public())
+		require.True(t, ok)
+
+		jwk := map[string]interface{}{
+			"kty": "AKP",
+			"alg": string(alg),
+			"pub": base64.RawURLEncoding.EncodeToString(pubBytes),
+		}
+
+		pub, err := JWKToPublicKey(jwk)
+		require.NoError(t, err, "AKP JWK should parse for %s", alg)
+
+		// A signature produced by the signer must verify against the parsed key.
+		signAlg, err := cryptolib.SignAlgorithmFor(alg)
+		require.NoError(t, err)
+		data := []byte("external issuer token")
+		sig, err := cryptolib.Generate(data, signAlg, signer)
+		require.NoError(t, err)
+		assert.NoError(t, cryptolib.Verify(data, sig, signAlg, pub))
+	}
+}
+
+func TestJWKToPublicKeyAKPMissingMembers(t *testing.T) {
+	_, err := JWKToPublicKey(map[string]interface{}{"kty": "AKP", "alg": "ML-DSA-65"})
+	assert.Error(t, err)
+
+	_, err = JWKToPublicKey(map[string]interface{}{"kty": "AKP", "pub": "AAAA"})
+	assert.Error(t, err)
+}
+
+func TestJWKToPublicKeyAKPInvalidPub(t *testing.T) {
+	_, err := JWKToPublicKey(map[string]interface{}{
+		"kty": "AKP", "alg": "ML-DSA-65", "pub": "not!base64url",
+	})
+	assert.Error(t, err)
+
+	// Correctly encoded but wrong-length public key.
+	_, err = JWKToPublicKey(map[string]interface{}{
+		"kty": "AKP", "alg": "ML-DSA-65", "pub": base64.RawURLEncoding.EncodeToString([]byte("too short")),
+	})
+	assert.Error(t, err)
+}
+
+func TestComputeJKTAKPMissingMembers(t *testing.T) {
+	_, err := ComputeJKT(map[string]interface{}{"kty": "AKP", "alg": "ML-DSA-65"})
+	assert.ErrorContains(t, err, "AKP JWK missing required members alg/pub")
+
+	_, err = ComputeJKT(map[string]interface{}{"kty": "AKP", "pub": "AAAA"})
+	assert.ErrorContains(t, err, "AKP JWK missing required members alg/pub")
+}
+
+func TestComputeJKTAKP(t *testing.T) {
+	signer, err := cryptolib.GenerateMLDSAKey(cryptolib.AlgorithmMLDSA65)
+	require.NoError(t, err)
+	pubBytes, ok := cryptolib.MLDSAPublicKeyBytes(signer.Public())
+	require.True(t, ok)
+
+	jwk := map[string]interface{}{
+		"kty": "AKP",
+		"alg": "ML-DSA-65",
+		"pub": base64.RawURLEncoding.EncodeToString(pubBytes),
+	}
+	jkt, err := ComputeJKT(jwk)
+	require.NoError(t, err)
+	assert.True(t, IsValidJKT(jkt))
 }

@@ -16,7 +16,7 @@
  * under the License.
  */
 
-import {render, screen, userEvent} from '@thunderid/test-utils';
+import {render, screen, userEvent, fireEvent} from '@thunderid/test-utils';
 import {afterEach, describe, expect, it, vi} from 'vitest';
 
 const mockNavigate = vi.fn();
@@ -51,6 +51,28 @@ vi.mock('@wso2/oxygen-ui-icons-react', async (importOriginal) => {
 vi.mock('@/assets/images/illustrations/how-solution-works.svg?react', () => ({
   default: () => <svg data-testid="illustration" />,
 }));
+
+vi.mock('@wso2/oxygen-ui', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@wso2/oxygen-ui')>();
+  return {
+    ...actual,
+    AppBreadcrumbs: ({items}: {items: {key: string; label: string; onClick?: () => void}[]}) => (
+      <nav>
+        {items.map((item) => (
+          <span
+            key={item.key}
+            onClick={item.onClick}
+            onKeyDown={(e: React.KeyboardEvent) => (e.key === 'Enter' || e.key === ' ') && item.onClick?.()}
+            role={item.onClick ? 'button' : undefined}
+            tabIndex={item.onClick ? 0 : undefined}
+          >
+            {item.label}
+          </span>
+        ))}
+      </nav>
+    ),
+  };
+});
 
 import CreateProjectPage from '../CreateProjectPage';
 
@@ -88,13 +110,13 @@ describe('CreateProjectPage', () => {
     expect(mockNavigate).toHaveBeenCalledWith('/home');
   });
 
-  it('navigates to /home when get started button is clicked', async () => {
+  it('navigates to /welcome/get-started when get started button is clicked', async () => {
     const user = userEvent.setup();
     render(<CreateProjectPage />);
 
     await user.click(screen.getByRole('button', {name: 'common:welcome.createProject.actions.getStarted'}));
 
-    expect(mockNavigate).toHaveBeenCalledWith('/home');
+    expect(mockNavigate).toHaveBeenCalledWith('/welcome/get-started');
   });
 
   it('renders breadcrumb with welcome header', () => {
@@ -108,6 +130,18 @@ describe('CreateProjectPage', () => {
 
     await user.click(screen.getByText('common:welcome.header'));
 
+    expect(mockNavigate).toHaveBeenCalledWith('/welcome');
+  });
+
+  it('navigates to /welcome on breadcrumb welcome Enter keypress', () => {
+    render(<CreateProjectPage />);
+    fireEvent.keyDown(screen.getByText('common:welcome.header'), {key: 'Enter'});
+    expect(mockNavigate).toHaveBeenCalledWith('/welcome');
+  });
+
+  it('navigates to /welcome on breadcrumb welcome Space keypress', () => {
+    render(<CreateProjectPage />);
+    fireEvent.keyDown(screen.getByText('common:welcome.header'), {key: ' '});
     expect(mockNavigate).toHaveBeenCalledWith('/welcome');
   });
 });

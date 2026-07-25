@@ -32,7 +32,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/thunder-id/thunderid/internal/system/i18n/core"
+	engineconfig "github.com/thunder-id/thunderid/pkg/thunderidengine/config"
+	"github.com/thunder-id/thunderid/pkg/thunderidengine/providers"
+
+	tidcommon "github.com/thunder-id/thunderid/pkg/thunderidengine/common"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
@@ -40,11 +43,12 @@ import (
 
 	certmodel "github.com/thunder-id/thunderid/internal/cert"
 	inboundmodel "github.com/thunder-id/thunderid/internal/inboundclient/model"
+	oauthconfig "github.com/thunder-id/thunderid/internal/oauth/config"
 	"github.com/thunder-id/thunderid/internal/oauth/oauth2/constants"
 	"github.com/thunder-id/thunderid/internal/oauth/oauth2/jwksresolver"
 	"github.com/thunder-id/thunderid/internal/system/config"
-	"github.com/thunder-id/thunderid/internal/system/error/serviceerror"
 	"github.com/thunder-id/thunderid/internal/system/jose/jwe"
+	"github.com/thunder-id/thunderid/internal/system/jose/jwt"
 	"github.com/thunder-id/thunderid/tests/mocks/httpmock"
 	"github.com/thunder-id/thunderid/tests/mocks/jose/jwemock"
 	"github.com/thunder-id/thunderid/tests/mocks/jose/jwtmock"
@@ -57,13 +61,14 @@ const (
 	testUserName     = "John Doe"
 	testAppID        = "app123"
 	testCacheID      = "test-cache-id"
+	testIDJAGAud     = "https://rs.example.com"
 )
 
 type TokenBuilderTestSuite struct {
 	suite.Suite
 	mockJWTService *jwtmock.JWTServiceInterfaceMock
 	builder        *tokenBuilder
-	oauthApp       *inboundmodel.OAuthClient
+	oauthApp       *providers.OAuthClient
 }
 
 func TestTokenBuilderTestSuite(t *testing.T) {
@@ -73,7 +78,7 @@ func TestTokenBuilderTestSuite(t *testing.T) {
 func (suite *TokenBuilderTestSuite) SetupTest() {
 	// Initialize Runtime for tests
 	testConfig := &config.Config{
-		JWT: config.JWTConfig{
+		JWT: engineconfig.JWTConfig{
 			Issuer:         "https://example.com",
 			ValidityPeriod: 3600,
 		},
@@ -82,15 +87,23 @@ func (suite *TokenBuilderTestSuite) SetupTest() {
 
 	suite.mockJWTService = jwtmock.NewJWTServiceInterfaceMock(suite.T())
 	suite.builder = &tokenBuilder{
+		cfg: oauthconfig.Config{
+			JWT: engineconfig.JWTConfig{
+				Issuer:         "https://example.com",
+				ValidityPeriod: 3600,
+			},
+		},
 		jwtService: suite.mockJWTService,
 	}
 
-	suite.oauthApp = &inboundmodel.OAuthClient{
+	suite.oauthApp = &providers.OAuthClient{
 		ClientID: "test-client",
-		Token: &inboundmodel.OAuthTokenConfig{
-			AccessToken: &inboundmodel.AccessTokenConfig{
-				ValidityPeriod: 3600,
-				UserAttributes: []string{"name"}, // Configure user attributes for tests
+		Token: &providers.OAuthTokenConfig{
+			AccessToken: &providers.AccessTokenConfig{
+				UserConfig: &providers.AccessTokenSubConfig{
+					ValidityPeriod: 3600,
+					Attributes:     []string{"name"}, // Configure user attributes for tests
+				},
 			},
 		},
 	}
@@ -98,7 +111,9 @@ func (suite *TokenBuilderTestSuite) SetupTest() {
 
 func (suite *TokenBuilderTestSuite) TestNewTokenBuilder() {
 	jwtService := jwtmock.NewJWTServiceInterfaceMock(suite.T())
-	builder := newTokenBuilder(jwtService, nil, nil)
+	builder := newTokenBuilder(oauthconfig.Config{
+		JWT: engineconfig.JWTConfig{Issuer: "https://example.com", ValidityPeriod: 3600},
+	}, jwtService, nil, nil)
 
 	assert.NotNil(suite.T(), builder)
 	assert.Implements(suite.T(), (*TokenBuilderInterface)(nil), builder)
@@ -106,13 +121,13 @@ func (suite *TokenBuilderTestSuite) TestNewTokenBuilder() {
 
 func (suite *TokenBuilderTestSuite) TestBuildAccessToken_Success_Basic() {
 	ctx := &AccessTokenBuildContext{
-		Subject:        "user123",
-		Audiences:      []string{"app123"},
-		ClientID:       "test-client",
-		Scopes:         []string{"read", "write"},
-		UserAttributes: map[string]interface{}{"name": testUserName},
-		GrantType:      string(constants.GrantTypeAuthorizationCode),
-		OAuthApp:       suite.oauthApp,
+		Subject:           "user123",
+		Audiences:         []string{"app123"},
+		ClientID:          "test-client",
+		Scopes:            []string{"read", "write"},
+		SubjectAttributes: map[string]interface{}{"name": testUserName},
+		GrantType:         string(providers.GrantTypeAuthorizationCode),
+		OAuthApp:          suite.oauthApp,
 	}
 
 	expectedToken := testAccessToken
@@ -126,7 +141,7 @@ func (suite *TokenBuilderTestSuite) TestBuildAccessToken_Success_Basic() {
 		mock.MatchedBy(func(claims map[string]interface{}) bool {
 			return claims["scope"] == "read write" &&
 				claims["client_id"] == "test-client" &&
-				claims["grant_type"] == string(constants.GrantTypeAuthorizationCode) &&
+				claims["grant_type"] == string(providers.GrantTypeAuthorizationCode) &&
 				claims["name"] == testUserName
 		}), mock.Anything, mock.Anything,
 	).Return(expectedToken, expectedIat, nil)
@@ -145,6 +160,144 @@ func (suite *TokenBuilderTestSuite) TestBuildAccessToken_Success_Basic() {
 	suite.mockJWTService.AssertExpectations(suite.T())
 }
 
+func (suite *TokenBuilderTestSuite) TestBuildAccessToken_ClientAttributes_MergesOUAndOwnClaims() {
+	ctx := &AccessTokenBuildContext{
+		Subject:   "agent123",
+		Audiences: []string{"agent123"},
+		ClientID:  "test-client",
+		Scopes:    []string{"read"},
+		GrantType: string(providers.GrantTypeClientCredentials),
+		OAuthApp:  suite.oauthApp,
+		SubjectAttributes: map[string]interface{}{
+			"ouId":          "ou-456",
+			"ouName":        "Engineering",
+			"ouHandle":      "eng",
+			"modelProvider": "anthropic",
+		},
+	}
+
+	expectedToken := testAccessToken
+	expectedIat := time.Now().Unix()
+
+	suite.mockJWTService.On("GenerateJWT",
+		mock.Anything,
+		"agent123",
+		"https://example.com",
+		int64(3600),
+		mock.MatchedBy(func(claims map[string]interface{}) bool {
+			return claims["ouId"] == "ou-456" && claims["ouName"] == "Engineering" &&
+				claims["ouHandle"] == "eng" && claims["modelProvider"] == "anthropic"
+		}), mock.Anything, mock.Anything,
+	).Return(expectedToken, expectedIat, nil)
+
+	result, err := suite.builder.BuildAccessToken(context.Background(), ctx)
+
+	assert.NoError(suite.T(), err)
+	assert.NotNil(suite.T(), result)
+	suite.mockJWTService.AssertExpectations(suite.T())
+}
+
+// A jwt-bearer-grant (ID-JAG) access token carries the source IdP issuer as the `idp` claim so
+// downstream consumers can distinguish a federated principal from a local one.
+func (suite *TokenBuilderTestSuite) TestBuildAccessToken_Success_WithSourceIDP() {
+	ctx := &AccessTokenBuildContext{
+		Subject:           "ext-user-123",
+		Audiences:         []string{"app123"},
+		ClientID:          "test-client",
+		Scopes:            []string{"read"},
+		SubjectAttributes: map[string]interface{}{},
+		GrantType:         string(providers.GrantTypeJWTBearer),
+		OAuthApp:          suite.oauthApp,
+		SourceIDP:         "https://idp.example.com",
+	}
+
+	expectedToken := testAccessToken
+	expectedIat := time.Now().Unix()
+
+	suite.mockJWTService.On("GenerateJWT",
+		mock.Anything,
+		"ext-user-123",
+		"https://example.com",
+		int64(3600),
+		mock.MatchedBy(func(claims map[string]interface{}) bool {
+			return claims[constants.ClaimIDP] == "https://idp.example.com"
+		}), mock.Anything, mock.Anything,
+	).Return(expectedToken, expectedIat, nil)
+
+	result, err := suite.builder.BuildAccessToken(context.Background(), ctx)
+
+	assert.NoError(suite.T(), err)
+	assert.NotNil(suite.T(), result)
+	suite.mockJWTService.AssertExpectations(suite.T())
+}
+
+func (suite *TokenBuilderTestSuite) TestBuildAccessToken_UserAttributes_EmbedsComputedOUClaims() {
+	oauthApp := &providers.OAuthClient{
+		ClientID: "test-client",
+		Token: &providers.OAuthTokenConfig{
+			AccessToken: &providers.AccessTokenConfig{
+				UserConfig: &providers.AccessTokenSubConfig{Attributes: []string{"email", "ouId"}},
+			},
+		},
+	}
+	ctx := &AccessTokenBuildContext{
+		Subject:           "user123",
+		Audiences:         []string{"app123"},
+		ClientID:          "test-client",
+		Scopes:            []string{"read"},
+		SubjectAttributes: map[string]interface{}{"email": "a@b.com", "ouId": "ou-789"},
+		GrantType:         string(providers.GrantTypeAuthorizationCode),
+		OAuthApp:          oauthApp,
+		ValidityPeriod:    oauthApp.UserAccessTokenConfig().ValidityPeriodOrZero(),
+	}
+
+	suite.mockJWTService.On("GenerateJWT",
+		mock.Anything, "user123", "https://example.com", int64(3600),
+		mock.MatchedBy(func(claims map[string]interface{}) bool {
+			return claims["email"] == "a@b.com" && claims["ouId"] == "ou-789"
+		}), mock.Anything, mock.Anything,
+	).Return(testAccessToken, time.Now().Unix(), nil)
+
+	result, err := suite.builder.BuildAccessToken(context.Background(), ctx)
+
+	assert.NoError(suite.T(), err)
+	assert.NotNil(suite.T(), result)
+	suite.mockJWTService.AssertExpectations(suite.T())
+}
+
+// The `idp` claim is only emitted when SourceIDP is set, so ordinary grants do not carry it.
+func (suite *TokenBuilderTestSuite) TestBuildAccessToken_Success_NoSourceIDPOmitsClaim() {
+	ctx := &AccessTokenBuildContext{
+		Subject:           "user123",
+		Audiences:         []string{"app123"},
+		ClientID:          "test-client",
+		Scopes:            []string{"read"},
+		SubjectAttributes: map[string]interface{}{},
+		GrantType:         string(providers.GrantTypeAuthorizationCode),
+		OAuthApp:          suite.oauthApp,
+	}
+
+	expectedToken := testAccessToken
+	expectedIat := time.Now().Unix()
+
+	suite.mockJWTService.On("GenerateJWT",
+		mock.Anything,
+		"user123",
+		"https://example.com",
+		int64(3600),
+		mock.MatchedBy(func(claims map[string]interface{}) bool {
+			_, hasIDP := claims[constants.ClaimIDP]
+			return !hasIDP
+		}), mock.Anything, mock.Anything,
+	).Return(expectedToken, expectedIat, nil)
+
+	result, err := suite.builder.BuildAccessToken(context.Background(), ctx)
+
+	assert.NoError(suite.T(), err)
+	assert.NotNil(suite.T(), result)
+	suite.mockJWTService.AssertExpectations(suite.T())
+}
+
 func (suite *TokenBuilderTestSuite) TestBuildAccessToken_Success_WithActorClaim() {
 	actorClaims := &SubjectTokenClaims{
 		Sub:            "actor123",
@@ -155,14 +308,14 @@ func (suite *TokenBuilderTestSuite) TestBuildAccessToken_Success_WithActorClaim(
 	}
 
 	ctx := &AccessTokenBuildContext{
-		Subject:        "user123",
-		Audiences:      []string{"app123"},
-		ClientID:       "test-client",
-		Scopes:         []string{"read"},
-		UserAttributes: map[string]interface{}{},
-		GrantType:      string(constants.GrantTypeTokenExchange),
-		OAuthApp:       suite.oauthApp,
-		ActorClaims:    actorClaims,
+		Subject:           "user123",
+		Audiences:         []string{"app123"},
+		ClientID:          "test-client",
+		Scopes:            []string{"read"},
+		SubjectAttributes: map[string]interface{}{},
+		GrantType:         string(providers.GrantTypeTokenExchange),
+		OAuthApp:          suite.oauthApp,
+		ActorClaims:       actorClaims,
 	}
 
 	expectedToken := testAccessToken
@@ -198,14 +351,14 @@ func (suite *TokenBuilderTestSuite) TestBuildAccessToken_Success_WithNestedActor
 	}
 
 	ctx := &AccessTokenBuildContext{
-		Subject:        "user123",
-		Audiences:      []string{"app123"},
-		ClientID:       "test-client",
-		Scopes:         []string{"read"},
-		UserAttributes: map[string]interface{}{},
-		GrantType:      string(constants.GrantTypeTokenExchange),
-		OAuthApp:       suite.oauthApp,
-		ActorClaims:    nestedActorClaims,
+		Subject:           "user123",
+		Audiences:         []string{"app123"},
+		ClientID:          "test-client",
+		Scopes:            []string{"read"},
+		SubjectAttributes: map[string]interface{}{},
+		GrantType:         string(providers.GrantTypeTokenExchange),
+		OAuthApp:          suite.oauthApp,
+		ActorClaims:       nestedActorClaims,
 	}
 
 	expectedToken := testAccessToken
@@ -231,13 +384,13 @@ func (suite *TokenBuilderTestSuite) TestBuildAccessToken_Success_WithNestedActor
 
 func (suite *TokenBuilderTestSuite) TestBuildAccessToken_Success_EmptyScopes() {
 	ctx := &AccessTokenBuildContext{
-		Subject:        "user123",
-		Audiences:      []string{"app123"},
-		ClientID:       "test-client",
-		Scopes:         []string{},
-		UserAttributes: map[string]interface{}{},
-		GrantType:      string(constants.GrantTypeAuthorizationCode),
-		OAuthApp:       suite.oauthApp,
+		Subject:           "user123",
+		Audiences:         []string{"app123"},
+		ClientID:          "test-client",
+		Scopes:            []string{},
+		SubjectAttributes: map[string]interface{}{},
+		GrantType:         string(providers.GrantTypeAuthorizationCode),
+		OAuthApp:          suite.oauthApp,
 	}
 
 	expectedToken := testAccessToken
@@ -263,13 +416,13 @@ func (suite *TokenBuilderTestSuite) TestBuildAccessToken_Success_EmptyScopes() {
 
 func (suite *TokenBuilderTestSuite) TestBuildAccessToken_Success_EmptyClientID() {
 	ctx := &AccessTokenBuildContext{
-		Subject:        "user123",
-		Audiences:      []string{"app123"},
-		ClientID:       "",
-		Scopes:         []string{"read"},
-		UserAttributes: map[string]interface{}{},
-		GrantType:      string(constants.GrantTypeAuthorizationCode),
-		OAuthApp:       suite.oauthApp,
+		Subject:           "user123",
+		Audiences:         []string{"app123"},
+		ClientID:          "",
+		Scopes:            []string{"read"},
+		SubjectAttributes: map[string]interface{}{},
+		GrantType:         string(providers.GrantTypeAuthorizationCode),
+		OAuthApp:          suite.oauthApp,
 	}
 
 	expectedToken := testAccessToken
@@ -295,13 +448,13 @@ func (suite *TokenBuilderTestSuite) TestBuildAccessToken_Success_EmptyClientID()
 
 func (suite *TokenBuilderTestSuite) TestBuildAccessToken_Success_EmptyGrantType() {
 	ctx := &AccessTokenBuildContext{
-		Subject:        "user123",
-		Audiences:      []string{"app123"},
-		ClientID:       "test-client",
-		Scopes:         []string{"read"},
-		UserAttributes: map[string]interface{}{},
-		GrantType:      "",
-		OAuthApp:       suite.oauthApp,
+		Subject:           "user123",
+		Audiences:         []string{"app123"},
+		ClientID:          "test-client",
+		Scopes:            []string{"read"},
+		SubjectAttributes: map[string]interface{}{},
+		GrantType:         "",
+		OAuthApp:          suite.oauthApp,
 	}
 
 	expectedToken := testAccessToken
@@ -326,23 +479,26 @@ func (suite *TokenBuilderTestSuite) TestBuildAccessToken_Success_EmptyGrantType(
 }
 
 func (suite *TokenBuilderTestSuite) TestBuildAccessToken_Success_CustomValidityPeriod() {
-	customOAuthApp := &inboundmodel.OAuthClient{
+	customOAuthApp := &providers.OAuthClient{
 		ClientID: "test-client",
-		Token: &inboundmodel.OAuthTokenConfig{
-			AccessToken: &inboundmodel.AccessTokenConfig{
-				ValidityPeriod: 7200,
+		Token: &providers.OAuthTokenConfig{
+			AccessToken: &providers.AccessTokenConfig{
+				UserConfig: &providers.AccessTokenSubConfig{
+					ValidityPeriod: 7200,
+				},
 			},
 		},
 	}
 
 	ctx := &AccessTokenBuildContext{
-		Subject:        "user123",
-		Audiences:      []string{"app123"},
-		ClientID:       "test-client",
-		Scopes:         []string{"read"},
-		UserAttributes: map[string]interface{}{},
-		GrantType:      string(constants.GrantTypeAuthorizationCode),
-		OAuthApp:       customOAuthApp,
+		Subject:           "user123",
+		Audiences:         []string{"app123"},
+		ClientID:          "test-client",
+		Scopes:            []string{"read"},
+		SubjectAttributes: map[string]interface{}{},
+		GrantType:         string(providers.GrantTypeAuthorizationCode),
+		OAuthApp:          customOAuthApp,
+		ValidityPeriod:    customOAuthApp.UserAccessTokenConfig().ValidityPeriodOrZero(),
 	}
 
 	expectedToken := testAccessToken
@@ -374,13 +530,13 @@ func (suite *TokenBuilderTestSuite) TestBuildAccessToken_Error_NilContext() {
 
 func (suite *TokenBuilderTestSuite) TestBuildAccessToken_Error_JWTGenerationFailed() {
 	ctx := &AccessTokenBuildContext{
-		Subject:        "user123",
-		Audiences:      []string{"app123"},
-		ClientID:       "test-client",
-		Scopes:         []string{"read"},
-		UserAttributes: map[string]interface{}{},
-		GrantType:      string(constants.GrantTypeAuthorizationCode),
-		OAuthApp:       suite.oauthApp,
+		Subject:           "user123",
+		Audiences:         []string{"app123"},
+		ClientID:          "test-client",
+		Scopes:            []string{"read"},
+		SubjectAttributes: map[string]interface{}{},
+		GrantType:         string(providers.GrantTypeAuthorizationCode),
+		OAuthApp:          suite.oauthApp,
 	}
 
 	suite.mockJWTService.On("GenerateJWT",
@@ -389,13 +545,13 @@ func (suite *TokenBuilderTestSuite) TestBuildAccessToken_Error_JWTGenerationFail
 		"https://example.com",
 		int64(3600),
 		mock.Anything, mock.Anything, mock.Anything,
-	).Return("", int64(0), &serviceerror.ServiceError{
-		Type: serviceerror.ServerErrorType,
+	).Return("", int64(0), &tidcommon.ServiceError{
+		Type: tidcommon.ServerErrorType,
 		Code: "JWT_GENERATION_FAILED",
-		Error: core.I18nMessage{
+		Error: tidcommon.I18nMessage{
 			Key: "error.test.jwt_generation_failed", DefaultValue: "JWT generation failed",
 		},
-		ErrorDescription: core.I18nMessage{
+		ErrorDescription: tidcommon.I18nMessage{
 			Key: "error.test.failed_to_generate_jwt_token", DefaultValue: "Failed to generate JWT token",
 		},
 	})
@@ -410,14 +566,14 @@ func (suite *TokenBuilderTestSuite) TestBuildAccessToken_Error_JWTGenerationFail
 
 func (suite *TokenBuilderTestSuite) TestBuildAccessToken_Success_WithClaimsLocales() {
 	ctx := &AccessTokenBuildContext{
-		Subject:        "user123",
-		Audiences:      []string{"app123"},
-		ClientID:       "test-client",
-		Scopes:         []string{"openid", "profile"},
-		UserAttributes: map[string]interface{}{"name": testUserName},
-		GrantType:      string(constants.GrantTypeAuthorizationCode),
-		OAuthApp:       suite.oauthApp,
-		ClaimsLocales:  "en-US fr-CA ja",
+		Subject:           "user123",
+		Audiences:         []string{"app123"},
+		ClientID:          "test-client",
+		Scopes:            []string{"openid", "profile"},
+		SubjectAttributes: map[string]interface{}{"name": testUserName},
+		GrantType:         string(providers.GrantTypeAuthorizationCode),
+		OAuthApp:          suite.oauthApp,
+		ClaimsLocales:     "en-US fr-CA ja",
 	}
 
 	expectedToken := testAccessToken
@@ -431,7 +587,7 @@ func (suite *TokenBuilderTestSuite) TestBuildAccessToken_Success_WithClaimsLocal
 		mock.MatchedBy(func(claims map[string]interface{}) bool {
 			return claims["scope"] == "openid profile" &&
 				claims["client_id"] == "test-client" &&
-				claims["grant_type"] == string(constants.GrantTypeAuthorizationCode) &&
+				claims["grant_type"] == string(providers.GrantTypeAuthorizationCode) &&
 				claims["name"] == testUserName &&
 				claims["claims_locales"] == "en-US fr-CA ja"
 		}), mock.Anything, mock.Anything,
@@ -450,14 +606,14 @@ func (suite *TokenBuilderTestSuite) TestBuildAccessToken_Success_WithDPoPJkt() {
 	const testJkt = "0ZcOCORZNYy-DWpqq30jZyJGHTN0d2HglBV3uiguA4I"
 
 	ctx := &AccessTokenBuildContext{
-		Subject:        "user123",
-		Audiences:      []string{"app123"},
-		ClientID:       "test-client",
-		Scopes:         []string{"read"},
-		UserAttributes: map[string]any{},
-		GrantType:      string(constants.GrantTypeAuthorizationCode),
-		OAuthApp:       suite.oauthApp,
-		DPoPJkt:        testJkt,
+		Subject:           "user123",
+		Audiences:         []string{"app123"},
+		ClientID:          "test-client",
+		Scopes:            []string{"read"},
+		SubjectAttributes: map[string]any{},
+		GrantType:         string(providers.GrantTypeAuthorizationCode),
+		OAuthApp:          suite.oauthApp,
+		DPoPJkt:           testJkt,
 	}
 
 	suite.mockJWTService.On("GenerateJWT",
@@ -481,13 +637,13 @@ func (suite *TokenBuilderTestSuite) TestBuildAccessToken_Success_WithDPoPJkt() {
 
 func (suite *TokenBuilderTestSuite) TestBuildAccessToken_Success_WithoutDPoPJkt_BearerType() {
 	ctx := &AccessTokenBuildContext{
-		Subject:        "user123",
-		Audiences:      []string{"app123"},
-		ClientID:       "test-client",
-		Scopes:         []string{"read"},
-		UserAttributes: map[string]any{},
-		GrantType:      string(constants.GrantTypeAuthorizationCode),
-		OAuthApp:       suite.oauthApp,
+		Subject:           "user123",
+		Audiences:         []string{"app123"},
+		ClientID:          "test-client",
+		Scopes:            []string{"read"},
+		SubjectAttributes: map[string]any{},
+		GrantType:         string(providers.GrantTypeAuthorizationCode),
+		OAuthApp:          suite.oauthApp,
 	}
 
 	suite.mockJWTService.On("GenerateJWT",
@@ -510,12 +666,14 @@ func (suite *TokenBuilderTestSuite) TestBuildAccessToken_Success_WithoutDPoPJkt_
 
 func (suite *TokenBuilderTestSuite) TestBuildRefreshToken_Success_Basic() {
 	// Create OAuth app with user attributes configured
-	oauthAppWithUserAttrs := &inboundmodel.OAuthClient{
+	oauthAppWithUserAttrs := &providers.OAuthClient{
 		ClientID: "test-client",
-		Token: &inboundmodel.OAuthTokenConfig{
-			AccessToken: &inboundmodel.AccessTokenConfig{
-				ValidityPeriod: 3600,
-				UserAttributes: []string{"name"}, // Configure user attributes
+		Token: &providers.OAuthTokenConfig{
+			AccessToken: &providers.AccessTokenConfig{
+				UserConfig: &providers.AccessTokenSubConfig{
+					ValidityPeriod: 3600,
+					Attributes:     []string{"name"}, // Configure user attributes
+				},
 			},
 		},
 	}
@@ -523,7 +681,7 @@ func (suite *TokenBuilderTestSuite) TestBuildRefreshToken_Success_Basic() {
 	ctx := &RefreshTokenBuildContext{
 		ClientID:             "test-client",
 		Scopes:               []string{"read", "write"},
-		GrantType:            string(constants.GrantTypeAuthorizationCode),
+		GrantType:            string(providers.GrantTypeAuthorizationCode),
 		AccessTokenSubject:   "user123",
 		AccessTokenAudiences: []string{"app123"},
 		AttributeCacheID:     testCacheID,
@@ -542,7 +700,7 @@ func (suite *TokenBuilderTestSuite) TestBuildRefreshToken_Success_Basic() {
 			return claims["scope"] == "read write" &&
 				claims["access_token_sub"] == "user123" &&
 				reflect.DeepEqual(claims["access_token_aud"], []string{testAppID}) &&
-				claims["grant_type"] == string(constants.GrantTypeAuthorizationCode) &&
+				claims["grant_type"] == string(providers.GrantTypeAuthorizationCode) &&
 				claims["aci"] == testCacheID
 		}), mock.Anything, mock.Anything,
 	).Return(expectedToken, expectedIat, nil)
@@ -566,7 +724,7 @@ func (suite *TokenBuilderTestSuite) TestBuildRefreshToken_Success_WithDPoPJkt() 
 	ctx := &RefreshTokenBuildContext{
 		ClientID:             "test-client",
 		Scopes:               []string{"read"},
-		GrantType:            string(constants.GrantTypeAuthorizationCode),
+		GrantType:            string(providers.GrantTypeAuthorizationCode),
 		AccessTokenSubject:   "user123",
 		AccessTokenAudiences: []string{"app123"},
 		OAuthApp:             suite.oauthApp,
@@ -594,7 +752,7 @@ func (suite *TokenBuilderTestSuite) TestBuildRefreshToken_Success_WithoutDPoPJkt
 	ctx := &RefreshTokenBuildContext{
 		ClientID:             "test-client",
 		Scopes:               []string{"read"},
-		GrantType:            string(constants.GrantTypeAuthorizationCode),
+		GrantType:            string(providers.GrantTypeAuthorizationCode),
 		AccessTokenSubject:   "user123",
 		AccessTokenAudiences: []string{"app123"},
 		OAuthApp:             suite.oauthApp,
@@ -618,11 +776,39 @@ func (suite *TokenBuilderTestSuite) TestBuildRefreshToken_Success_WithoutDPoPJkt
 	suite.mockJWTService.AssertExpectations(suite.T())
 }
 
+func (suite *TokenBuilderTestSuite) TestBuildRefreshToken_Success_WithActorSub() {
+	ctx := &RefreshTokenBuildContext{
+		ClientID:             "test-client",
+		Scopes:               []string{"read"},
+		GrantType:            string(providers.GrantTypeAuthorizationCode),
+		AccessTokenSubject:   "user123",
+		AccessTokenAudiences: []string{"app123"},
+		OAuthApp:             suite.oauthApp,
+		ActorSub:             "act-entity-id",
+	}
+
+	suite.mockJWTService.On("GenerateJWT",
+		mock.Anything,
+		"test-client",
+		"https://example.com",
+		int64(3600),
+		mock.MatchedBy(func(claims map[string]interface{}) bool {
+			return claims["act_sub"] == "act-entity-id"
+		}), mock.Anything, mock.Anything,
+	).Return(testRefreshToken, time.Now().Unix(), nil)
+
+	result, err := suite.builder.BuildRefreshToken(context.Background(), ctx)
+
+	assert.NoError(suite.T(), err)
+	assert.NotNil(suite.T(), result)
+	suite.mockJWTService.AssertExpectations(suite.T())
+}
+
 func (suite *TokenBuilderTestSuite) TestBuildRefreshToken_Success_WithoutUserAttributes() {
 	ctx := &RefreshTokenBuildContext{
 		ClientID:             "test-client",
 		Scopes:               []string{"read"},
-		GrantType:            string(constants.GrantTypeAuthorizationCode),
+		GrantType:            string(providers.GrantTypeAuthorizationCode),
 		AccessTokenSubject:   "user123",
 		AccessTokenAudiences: []string{"app123"},
 		AttributeCacheID:     "",
@@ -654,7 +840,7 @@ func (suite *TokenBuilderTestSuite) TestBuildRefreshToken_Success_WithNilOAuthAp
 	ctx := &RefreshTokenBuildContext{
 		ClientID:             "test-client",
 		Scopes:               []string{"read"},
-		GrantType:            string(constants.GrantTypeAuthorizationCode),
+		GrantType:            string(providers.GrantTypeAuthorizationCode),
 		AccessTokenSubject:   "user123",
 		AccessTokenAudiences: []string{"app123"},
 		AttributeCacheID:     testCacheID,
@@ -685,7 +871,7 @@ func (suite *TokenBuilderTestSuite) TestBuildRefreshToken_Success_EmptyScopes() 
 	ctx := &RefreshTokenBuildContext{
 		ClientID:             "test-client",
 		Scopes:               []string{},
-		GrantType:            string(constants.GrantTypeAuthorizationCode),
+		GrantType:            string(providers.GrantTypeAuthorizationCode),
 		AccessTokenSubject:   "user123",
 		AccessTokenAudiences: []string{"app123"},
 		AttributeCacheID:     "",
@@ -714,17 +900,17 @@ func (suite *TokenBuilderTestSuite) TestBuildRefreshToken_Success_EmptyScopes() 
 }
 
 func (suite *TokenBuilderTestSuite) TestBuildRefreshToken_Success_WithTokenConfig() {
-	customOAuthApp := &inboundmodel.OAuthClient{
+	customOAuthApp := &providers.OAuthClient{
 		ClientID: "test-client",
-		Token: &inboundmodel.OAuthTokenConfig{
-			AccessToken: &inboundmodel.AccessTokenConfig{},
+		Token: &providers.OAuthTokenConfig{
+			AccessToken: &providers.AccessTokenConfig{},
 		},
 	}
 
 	ctx := &RefreshTokenBuildContext{
 		ClientID:             "test-client",
 		Scopes:               []string{"read"},
-		GrantType:            string(constants.GrantTypeAuthorizationCode),
+		GrantType:            string(providers.GrantTypeAuthorizationCode),
 		AccessTokenSubject:   "user123",
 		AccessTokenAudiences: []string{"app123"},
 		AttributeCacheID:     "",
@@ -750,9 +936,9 @@ func (suite *TokenBuilderTestSuite) TestBuildRefreshToken_Success_WithTokenConfi
 }
 
 func (suite *TokenBuilderTestSuite) TestBuildRefreshToken_Success_WithNilAccessToken() {
-	oauthAppWithNilAccessToken := &inboundmodel.OAuthClient{
+	oauthAppWithNilAccessToken := &providers.OAuthClient{
 		ClientID: "test-client",
-		Token: &inboundmodel.OAuthTokenConfig{
+		Token: &providers.OAuthTokenConfig{
 			// Token exists but AccessToken is nil
 			AccessToken: nil,
 		},
@@ -761,7 +947,7 @@ func (suite *TokenBuilderTestSuite) TestBuildRefreshToken_Success_WithNilAccessT
 	ctx := &RefreshTokenBuildContext{
 		ClientID:             "test-client",
 		Scopes:               []string{"read"},
-		GrantType:            string(constants.GrantTypeAuthorizationCode),
+		GrantType:            string(providers.GrantTypeAuthorizationCode),
 		AccessTokenSubject:   "user123",
 		AccessTokenAudiences: []string{"app123"},
 		AttributeCacheID:     testCacheID,
@@ -800,7 +986,7 @@ func (suite *TokenBuilderTestSuite) TestBuildRefreshToken_Error_JWTGenerationFai
 	ctx := &RefreshTokenBuildContext{
 		ClientID:             "test-client",
 		Scopes:               []string{"read"},
-		GrantType:            string(constants.GrantTypeAuthorizationCode),
+		GrantType:            string(providers.GrantTypeAuthorizationCode),
 		AccessTokenSubject:   "user123",
 		AccessTokenAudiences: []string{"app123"},
 		AttributeCacheID:     "",
@@ -813,13 +999,13 @@ func (suite *TokenBuilderTestSuite) TestBuildRefreshToken_Error_JWTGenerationFai
 		"https://example.com",
 		int64(3600),
 		mock.Anything, mock.Anything, mock.Anything,
-	).Return("", int64(0), &serviceerror.ServiceError{
-		Type: serviceerror.ServerErrorType,
+	).Return("", int64(0), &tidcommon.ServiceError{
+		Type: tidcommon.ServerErrorType,
 		Code: "JWT_GENERATION_FAILED",
-		Error: core.I18nMessage{
+		Error: tidcommon.I18nMessage{
 			Key: "error.test.jwt_generation_failed", DefaultValue: "JWT generation failed",
 		},
-		ErrorDescription: core.I18nMessage{
+		ErrorDescription: tidcommon.I18nMessage{
 			Key: "error.test.failed_to_generate_jwt_token", DefaultValue: "Failed to generate JWT token",
 		},
 	})
@@ -836,7 +1022,7 @@ func (suite *TokenBuilderTestSuite) TestBuildRefreshToken_Success_WithClaimsLoca
 	ctx := &RefreshTokenBuildContext{
 		ClientID:             "test-client",
 		Scopes:               []string{"openid", "profile"},
-		GrantType:            string(constants.GrantTypeAuthorizationCode),
+		GrantType:            string(providers.GrantTypeAuthorizationCode),
 		AccessTokenSubject:   "user123",
 		AccessTokenAudiences: []string{"app123"},
 		AttributeCacheID:     "",
@@ -856,7 +1042,7 @@ func (suite *TokenBuilderTestSuite) TestBuildRefreshToken_Success_WithClaimsLoca
 			return claims["scope"] == "openid profile" &&
 				claims["access_token_sub"] == "user123" &&
 				reflect.DeepEqual(claims["access_token_aud"], []string{testAppID}) &&
-				claims["grant_type"] == string(constants.GrantTypeAuthorizationCode) &&
+				claims["grant_type"] == string(providers.GrantTypeAuthorizationCode) &&
 				claims["access_token_claims_locales"] == "en-US fr-CA ja"
 		}), mock.Anything, mock.Anything,
 	).Return(expectedToken, expectedIat, nil)
@@ -1006,10 +1192,10 @@ func (suite *TokenBuilderTestSuite) TestBuildIDToken_Success_NoAuthTime() {
 }
 
 func (suite *TokenBuilderTestSuite) TestBuildIDToken_Success_WithScopeClaims() {
-	oauthAppWithScopeClaims := &inboundmodel.OAuthClient{
+	oauthAppWithScopeClaims := &providers.OAuthClient{
 		ClientID: "test-client",
-		Token: &inboundmodel.OAuthTokenConfig{
-			IDToken: &inboundmodel.IDTokenConfig{
+		Token: &providers.OAuthTokenConfig{
+			IDToken: &providers.IDTokenConfig{
 				ValidityPeriod: 3600,
 				UserAttributes: []string{"name", "email"},
 			},
@@ -1049,10 +1235,10 @@ func (suite *TokenBuilderTestSuite) TestBuildIDToken_Success_WithScopeClaims() {
 }
 
 func (suite *TokenBuilderTestSuite) TestBuildIDToken_Success_WithStandardOIDCScopes() {
-	oauthAppWithUserAttrs := &inboundmodel.OAuthClient{
+	oauthAppWithUserAttrs := &providers.OAuthClient{
 		ClientID: "test-client",
-		Token: &inboundmodel.OAuthTokenConfig{
-			IDToken: &inboundmodel.IDTokenConfig{
+		Token: &providers.OAuthTokenConfig{
+			IDToken: &providers.IDTokenConfig{
 				ValidityPeriod: 3600,
 				UserAttributes: []string{"name", "email"},
 			},
@@ -1120,10 +1306,10 @@ func (suite *TokenBuilderTestSuite) TestBuildIDToken_Success_NoUserAttributes() 
 }
 
 func (suite *TokenBuilderTestSuite) TestBuildIDToken_Success_EmptyUserAttributes() {
-	oauthAppWithEmptyUserAttrs := &inboundmodel.OAuthClient{
+	oauthAppWithEmptyUserAttrs := &providers.OAuthClient{
 		ClientID: "test-client",
-		Token: &inboundmodel.OAuthTokenConfig{
-			IDToken: &inboundmodel.IDTokenConfig{
+		Token: &providers.OAuthTokenConfig{
+			IDToken: &providers.IDTokenConfig{
 				UserAttributes: []string{},
 			},
 		},
@@ -1161,10 +1347,10 @@ func (suite *TokenBuilderTestSuite) TestBuildIDToken_Success_EmptyUserAttributes
 }
 
 func (suite *TokenBuilderTestSuite) TestBuildIDToken_Success_CustomValidityPeriod() {
-	oauthAppWithCustomValidity := &inboundmodel.OAuthClient{
+	oauthAppWithCustomValidity := &providers.OAuthClient{
 		ClientID: "test-client",
-		Token: &inboundmodel.OAuthTokenConfig{
-			IDToken: &inboundmodel.IDTokenConfig{
+		Token: &providers.OAuthTokenConfig{
+			IDToken: &providers.IDTokenConfig{
 				ValidityPeriod: 7200,
 			},
 		},
@@ -1198,6 +1384,54 @@ func (suite *TokenBuilderTestSuite) TestBuildIDToken_Success_CustomValidityPerio
 	suite.mockJWTService.AssertExpectations(suite.T())
 }
 
+func (suite *TokenBuilderTestSuite) TestBuildIDToken_NeverIncludesActClaim() {
+	oauthAppOptedIntoActor := &providers.OAuthClient{
+		ClientID: "test-client",
+		Token: &providers.OAuthTokenConfig{
+			IDToken: &providers.IDTokenConfig{
+				ValidityPeriod: 3600,
+				UserAttributes: []string{"name", "email"},
+			},
+		},
+		ScopeClaims: map[string][]string{
+			"profile": {"name", "email"},
+		},
+	}
+
+	ctx := &IDTokenBuildContext{
+		Subject:  "user123",
+		Audience: "app123",
+		Scopes:   []string{"openid", "profile"},
+		UserAttributes: map[string]interface{}{
+			"sub":   "user123",
+			"name":  testUserName,
+			"email": "john@example.com",
+		},
+		AuthTime: time.Now().Unix(),
+		OAuthApp: oauthAppOptedIntoActor,
+	}
+
+	var capturedClaims map[string]interface{}
+	suite.mockJWTService.On("GenerateJWT",
+		mock.Anything,
+		"user123",
+		"https://example.com",
+		int64(3600),
+		mock.MatchedBy(func(claims map[string]interface{}) bool {
+			capturedClaims = claims
+			return true
+		}), mock.Anything, mock.Anything,
+	).Return(testIDToken, time.Now().Unix(), nil)
+
+	result, err := suite.builder.BuildIDToken(context.Background(), ctx)
+
+	assert.NoError(suite.T(), err)
+	assert.NotNil(suite.T(), result)
+	_, hasAct := capturedClaims["act"]
+	assert.False(suite.T(), hasAct, "ID token claims must never include the act actor claim")
+	suite.mockJWTService.AssertExpectations(suite.T())
+}
+
 func (suite *TokenBuilderTestSuite) TestBuildIDToken_Error_NilContext() {
 	result, err := suite.builder.BuildIDToken(context.Background(), nil)
 
@@ -1222,13 +1456,13 @@ func (suite *TokenBuilderTestSuite) TestBuildIDToken_Error_JWTGenerationFailed()
 		"https://example.com",
 		int64(3600),
 		mock.Anything, mock.Anything, mock.Anything,
-	).Return("", int64(0), &serviceerror.ServiceError{
-		Type: serviceerror.ServerErrorType,
+	).Return("", int64(0), &tidcommon.ServiceError{
+		Type: tidcommon.ServerErrorType,
 		Code: "JWT_GENERATION_FAILED",
-		Error: core.I18nMessage{
+		Error: tidcommon.I18nMessage{
 			Key: "error.test.jwt_generation_failed", DefaultValue: "JWT generation failed",
 		},
-		ErrorDescription: core.I18nMessage{
+		ErrorDescription: tidcommon.I18nMessage{
 			Key: "error.test.failed_to_generate_jwt_token", DefaultValue: "Failed to generate JWT token",
 		},
 	})
@@ -1260,7 +1494,7 @@ func (suite *TokenBuilderTestSuite) TestBuildIDToken_Success_WithEncryption_Inli
 	const encryptedJWE = "a.b.c.d.e"
 
 	mockJWE.On("Encrypt",
-		mock.MatchedBy(func(payload []byte) bool {
+		mock.Anything, mock.MatchedBy(func(payload []byte) bool {
 			// Payload must be the signed JWS — three dot-separated parts.
 			return strings.Count(string(payload), ".") == 2
 		}),
@@ -1269,14 +1503,14 @@ func (suite *TokenBuilderTestSuite) TestBuildIDToken_Success_WithEncryption_Inli
 		jwe.ContentEncAlgorithm("A256GCM"),
 		"JWT",
 		mock.Anything,
-	).Return(encryptedJWE, (*serviceerror.ServiceError)(nil))
+	).Return(encryptedJWE, (*tidcommon.ServiceError)(nil))
 
-	oauthApp := &inboundmodel.OAuthClient{
+	oauthApp := &providers.OAuthClient{
 		ClientID: "test-client",
-		Token: &inboundmodel.OAuthTokenConfig{
-			IDToken: &inboundmodel.IDTokenConfig{
+		Token: &providers.OAuthTokenConfig{
+			IDToken: &providers.IDTokenConfig{
 				ValidityPeriod: 3600,
-				ResponseType:   inboundmodel.IDTokenResponseTypeJWE,
+				ResponseType:   providers.IDTokenResponseTypeJWE,
 				EncryptionAlg:  "RSA-OAEP-256",
 				EncryptionEnc:  "A256GCM",
 			},
@@ -1290,9 +1524,12 @@ func (suite *TokenBuilderTestSuite) TestBuildIDToken_Success_WithEncryption_Inli
 	suite.mockJWTService.On("GenerateJWT",
 		mock.Anything, "user123", "https://example.com", int64(3600),
 		mock.Anything, mock.Anything, mock.Anything,
-	).Return(signedJWS, time.Now().Unix(), (*serviceerror.ServiceError)(nil))
+	).Return(signedJWS, time.Now().Unix(), (*tidcommon.ServiceError)(nil))
 
 	builder := &tokenBuilder{
+		cfg: oauthconfig.Config{
+			JWT: engineconfig.JWTConfig{Issuer: "https://example.com", ValidityPeriod: 3600},
+		},
 		jwtService:   suite.mockJWTService,
 		jweService:   mockJWE,
 		jwksResolver: jwksresolver.Initialize(nil),
@@ -1320,12 +1557,12 @@ func (suite *TokenBuilderTestSuite) TestBuildIDToken_Error_EncryptionKeyNotFound
 
 	mockJWE := jwemock.NewJWEServiceInterfaceMock(suite.T())
 
-	oauthApp := &inboundmodel.OAuthClient{
+	oauthApp := &providers.OAuthClient{
 		ClientID: "test-client",
-		Token: &inboundmodel.OAuthTokenConfig{
-			IDToken: &inboundmodel.IDTokenConfig{
+		Token: &providers.OAuthTokenConfig{
+			IDToken: &providers.IDTokenConfig{
 				ValidityPeriod: 3600,
-				ResponseType:   inboundmodel.IDTokenResponseTypeJWE,
+				ResponseType:   providers.IDTokenResponseTypeJWE,
 				EncryptionAlg:  "RSA-OAEP-256",
 				EncryptionEnc:  "A256GCM",
 			},
@@ -1339,9 +1576,12 @@ func (suite *TokenBuilderTestSuite) TestBuildIDToken_Error_EncryptionKeyNotFound
 	suite.mockJWTService.On("GenerateJWT",
 		mock.Anything, "user123", "https://example.com", int64(3600),
 		mock.Anything, mock.Anything, mock.Anything,
-	).Return("header.payload.signature", time.Now().Unix(), (*serviceerror.ServiceError)(nil))
+	).Return("header.payload.signature", time.Now().Unix(), (*tidcommon.ServiceError)(nil))
 
 	builder := &tokenBuilder{
+		cfg: oauthconfig.Config{
+			JWT: engineconfig.JWTConfig{Issuer: "https://example.com", ValidityPeriod: 3600},
+		},
 		jwtService:   suite.mockJWTService,
 		jweService:   mockJWE,
 		jwksResolver: jwksresolver.Initialize(nil),
@@ -1367,28 +1607,28 @@ func (suite *TokenBuilderTestSuite) TestBuildIDToken_Error_EncryptionFailed() {
 	privateKey, _ := rsa.GenerateKey(rand.Reader, 2048)
 	pubJWKS := testRSAPublicKeyToJWKS(&privateKey.PublicKey, "enc")
 
-	encErr := &serviceerror.ServiceError{
-		Type: serviceerror.ServerErrorType,
+	encErr := &tidcommon.ServiceError{
+		Type: tidcommon.ServerErrorType,
 		Code: "JWE_ENCRYPT_FAILED",
-		Error: core.I18nMessage{
+		Error: tidcommon.I18nMessage{
 			Key: "error.jwe.encrypt_failed", DefaultValue: "JWE encryption failed",
 		},
 	}
 	mockJWE := jwemock.NewJWEServiceInterfaceMock(suite.T())
 	mockJWE.On("Encrypt",
-		mock.Anything, mock.Anything,
+		mock.Anything, mock.Anything, mock.Anything,
 		jwe.KeyEncAlgorithm("RSA-OAEP-256"),
 		jwe.ContentEncAlgorithm("A256GCM"),
 		"JWT",
 		mock.Anything,
 	).Return("", encErr)
 
-	oauthApp := &inboundmodel.OAuthClient{
+	oauthApp := &providers.OAuthClient{
 		ClientID: "test-client",
-		Token: &inboundmodel.OAuthTokenConfig{
-			IDToken: &inboundmodel.IDTokenConfig{
+		Token: &providers.OAuthTokenConfig{
+			IDToken: &providers.IDTokenConfig{
 				ValidityPeriod: 3600,
-				ResponseType:   inboundmodel.IDTokenResponseTypeJWE,
+				ResponseType:   providers.IDTokenResponseTypeJWE,
 				EncryptionAlg:  "RSA-OAEP-256",
 				EncryptionEnc:  "A256GCM",
 			},
@@ -1402,9 +1642,12 @@ func (suite *TokenBuilderTestSuite) TestBuildIDToken_Error_EncryptionFailed() {
 	suite.mockJWTService.On("GenerateJWT",
 		mock.Anything, "user123", "https://example.com", int64(3600),
 		mock.Anything, mock.Anything, mock.Anything,
-	).Return("header.payload.signature", time.Now().Unix(), (*serviceerror.ServiceError)(nil))
+	).Return("header.payload.signature", time.Now().Unix(), (*tidcommon.ServiceError)(nil))
 
 	builder := &tokenBuilder{
+		cfg: oauthconfig.Config{
+			JWT: engineconfig.JWTConfig{Issuer: "https://example.com", ValidityPeriod: 3600},
+		},
 		jwtService:   suite.mockJWTService,
 		jweService:   mockJWE,
 		jwksResolver: jwksresolver.Initialize(nil),
@@ -1443,19 +1686,19 @@ func (suite *TokenBuilderTestSuite) TestBuildIDToken_Success_WithEncryption_JWKS
 
 	mockJWE := jwemock.NewJWEServiceInterfaceMock(suite.T())
 	mockJWE.On("Encrypt",
-		mock.Anything, mock.Anything,
+		mock.Anything, mock.Anything, mock.Anything,
 		jwe.KeyEncAlgorithm("RSA-OAEP-256"),
 		jwe.ContentEncAlgorithm("A256GCM"),
 		"JWT",
 		mock.Anything,
-	).Return(encryptedJWE, (*serviceerror.ServiceError)(nil))
+	).Return(encryptedJWE, (*tidcommon.ServiceError)(nil))
 
-	oauthApp := &inboundmodel.OAuthClient{
+	oauthApp := &providers.OAuthClient{
 		ClientID: "test-client",
-		Token: &inboundmodel.OAuthTokenConfig{
-			IDToken: &inboundmodel.IDTokenConfig{
+		Token: &providers.OAuthTokenConfig{
+			IDToken: &providers.IDTokenConfig{
 				ValidityPeriod: 3600,
-				ResponseType:   inboundmodel.IDTokenResponseTypeJWE,
+				ResponseType:   providers.IDTokenResponseTypeJWE,
 				EncryptionAlg:  "RSA-OAEP-256",
 				EncryptionEnc:  "A256GCM",
 			},
@@ -1469,9 +1712,12 @@ func (suite *TokenBuilderTestSuite) TestBuildIDToken_Success_WithEncryption_JWKS
 	suite.mockJWTService.On("GenerateJWT",
 		mock.Anything, "user123", "https://example.com", int64(3600),
 		mock.Anything, mock.Anything, mock.Anything,
-	).Return("header.payload.signature", time.Now().Unix(), (*serviceerror.ServiceError)(nil))
+	).Return("header.payload.signature", time.Now().Unix(), (*tidcommon.ServiceError)(nil))
 
 	builder := &tokenBuilder{
+		cfg: oauthconfig.Config{
+			JWT: engineconfig.JWTConfig{Issuer: "https://example.com", ValidityPeriod: 3600},
+		},
 		jwtService:   suite.mockJWTService,
 		jweService:   mockJWE,
 		jwksResolver: jwksresolver.Initialize(mockHTTP),
@@ -1498,12 +1744,12 @@ func (suite *TokenBuilderTestSuite) TestBuildIDToken_Error_NilJWEService() {
 	privateKey, _ := rsa.GenerateKey(rand.Reader, 2048)
 	pubJWKS := testRSAPublicKeyToJWKS(&privateKey.PublicKey, "enc")
 
-	oauthApp := &inboundmodel.OAuthClient{
+	oauthApp := &providers.OAuthClient{
 		ClientID: "test-client",
-		Token: &inboundmodel.OAuthTokenConfig{
-			IDToken: &inboundmodel.IDTokenConfig{
+		Token: &providers.OAuthTokenConfig{
+			IDToken: &providers.IDTokenConfig{
 				ValidityPeriod: 3600,
-				ResponseType:   inboundmodel.IDTokenResponseTypeJWE,
+				ResponseType:   providers.IDTokenResponseTypeJWE,
 				EncryptionAlg:  "RSA-OAEP-256",
 				EncryptionEnc:  "A256GCM",
 			},
@@ -1517,9 +1763,12 @@ func (suite *TokenBuilderTestSuite) TestBuildIDToken_Error_NilJWEService() {
 	suite.mockJWTService.On("GenerateJWT",
 		mock.Anything, "user123", "https://example.com", int64(3600),
 		mock.Anything, mock.Anything, mock.Anything,
-	).Return("header.payload.signature", time.Now().Unix(), (*serviceerror.ServiceError)(nil))
+	).Return("header.payload.signature", time.Now().Unix(), (*tidcommon.ServiceError)(nil))
 
 	builder := &tokenBuilder{
+		cfg: oauthconfig.Config{
+			JWT: engineconfig.JWTConfig{Issuer: "https://example.com", ValidityPeriod: 3600},
+		},
 		jwtService: suite.mockJWTService,
 		jweService: nil,
 	}
@@ -1539,10 +1788,10 @@ func (suite *TokenBuilderTestSuite) TestBuildIDToken_Error_NilJWEService() {
 
 // TestBuildIDToken_NoEncryptionAlg verifies that the JWE block is skipped when EncryptionAlg is empty.
 func (suite *TokenBuilderTestSuite) TestBuildIDToken_NoEncryptionAlg() {
-	oauthApp := &inboundmodel.OAuthClient{
+	oauthApp := &providers.OAuthClient{
 		ClientID: "test-client",
-		Token: &inboundmodel.OAuthTokenConfig{
-			IDToken: &inboundmodel.IDTokenConfig{
+		Token: &providers.OAuthTokenConfig{
+			IDToken: &providers.IDTokenConfig{
 				ValidityPeriod: 3600,
 				EncryptionAlg:  "", // no encryption
 			},
@@ -1552,9 +1801,12 @@ func (suite *TokenBuilderTestSuite) TestBuildIDToken_NoEncryptionAlg() {
 	suite.mockJWTService.On("GenerateJWT",
 		mock.Anything, "user123", "https://example.com", int64(3600),
 		mock.Anything, mock.Anything, mock.Anything,
-	).Return("header.payload.signature", time.Now().Unix(), (*serviceerror.ServiceError)(nil))
+	).Return("header.payload.signature", time.Now().Unix(), (*tidcommon.ServiceError)(nil))
 
 	builder := &tokenBuilder{
+		cfg: oauthconfig.Config{
+			JWT: engineconfig.JWTConfig{Issuer: "https://example.com", ValidityPeriod: 3600},
+		},
 		jwtService: suite.mockJWTService,
 		jweService: nil,
 	}
@@ -1574,12 +1826,12 @@ func (suite *TokenBuilderTestSuite) TestBuildIDToken_NoEncryptionAlg() {
 
 // TestBuildIDToken_Error_UnsupportedCertType verifies error propagation when cert type is unsupported.
 func (suite *TokenBuilderTestSuite) TestBuildIDToken_Error_UnsupportedCertType() {
-	oauthApp := &inboundmodel.OAuthClient{
+	oauthApp := &providers.OAuthClient{
 		ClientID: "test-client",
-		Token: &inboundmodel.OAuthTokenConfig{
-			IDToken: &inboundmodel.IDTokenConfig{
+		Token: &providers.OAuthTokenConfig{
+			IDToken: &providers.IDTokenConfig{
 				ValidityPeriod: 3600,
-				ResponseType:   inboundmodel.IDTokenResponseTypeJWE,
+				ResponseType:   providers.IDTokenResponseTypeJWE,
 				EncryptionAlg:  "RSA-OAEP-256",
 				EncryptionEnc:  "A256GCM",
 			},
@@ -1595,9 +1847,12 @@ func (suite *TokenBuilderTestSuite) TestBuildIDToken_Error_UnsupportedCertType()
 	suite.mockJWTService.On("GenerateJWT",
 		mock.Anything, "user123", "https://example.com", int64(3600),
 		mock.Anything, mock.Anything, mock.Anything,
-	).Return("header.payload.signature", time.Now().Unix(), (*serviceerror.ServiceError)(nil))
+	).Return("header.payload.signature", time.Now().Unix(), (*tidcommon.ServiceError)(nil))
 
 	builder := &tokenBuilder{
+		cfg: oauthconfig.Config{
+			JWT: engineconfig.JWTConfig{Issuer: "https://example.com", ValidityPeriod: 3600},
+		},
 		jwtService:   suite.mockJWTService,
 		jweService:   mockJWE,
 		jwksResolver: jwksresolver.Initialize(nil),
@@ -1614,6 +1869,235 @@ func (suite *TokenBuilderTestSuite) TestBuildIDToken_Error_UnsupportedCertType()
 	assert.Nil(suite.T(), result)
 	assert.Contains(suite.T(), err.Error(), "failed to resolve ID token encryption key")
 	mockJWE.AssertNotCalled(suite.T(), "Encrypt")
+	suite.mockJWTService.AssertExpectations(suite.T())
+}
+
+// ============================================================================
+// BuildIDJAG Tests (draft-ietf-oauth-identity-assertion-authz-grant)
+// ============================================================================
+
+func (suite *TokenBuilderTestSuite) TestBuildIDJAG_Success() {
+	scopeStr := JoinScopes([]string{"read", "write"})
+	ctx := &IDJAGBuildContext{
+		Subject:  "user123",
+		Audience: testIDJAGAud,
+		ClientID: suite.oauthApp.ClientID,
+		Scopes:   []string{"read", "write"},
+		OAuthApp: suite.oauthApp,
+	}
+
+	expectedToken := "test-id-jag"
+	expectedIat := time.Now().Unix()
+
+	suite.mockJWTService.On("GenerateJWT",
+		mock.Anything,
+		"user123",
+		"https://example.com",
+		providers.DefaultIDJAGValidityPeriod,
+		mock.MatchedBy(func(claims map[string]interface{}) bool {
+			return claims["aud"] == testIDJAGAud &&
+				claims["client_id"] == suite.oauthApp.ClientID &&
+				claims["scope"] == scopeStr
+		}),
+		jwt.TokenTypeIDJAG,
+		mock.Anything,
+	).Return(expectedToken, expectedIat, nil)
+
+	result, err := suite.builder.BuildIDJAG(context.Background(), ctx)
+
+	assert.NoError(suite.T(), err)
+	assert.NotNil(suite.T(), result)
+	assert.Equal(suite.T(), expectedToken, result.Token)
+	assert.Equal(suite.T(), constants.TokenTypeNA, result.TokenType)
+	assert.Equal(suite.T(), expectedIat, result.IssuedAt)
+	assert.Equal(suite.T(), providers.DefaultIDJAGValidityPeriod, result.ExpiresIn)
+	assert.Equal(suite.T(), []string{"read", "write"}, result.Scopes)
+	assert.Equal(suite.T(), suite.oauthApp.ClientID, result.ClientID)
+	assert.Equal(suite.T(), "user123", result.Subject)
+	assert.Equal(suite.T(), []string{testIDJAGAud}, result.Audiences)
+	suite.mockJWTService.AssertExpectations(suite.T())
+}
+
+func (suite *TokenBuilderTestSuite) TestBuildIDJAG_CustomValidityPeriod() {
+	suite.oauthApp.Token.IDJAG = &providers.IDJAGConfig{
+		AllowedAudiences: []string{testIDJAGAud},
+		ValidityPeriod:   600,
+	}
+	ctx := &IDJAGBuildContext{
+		Subject:  "user123",
+		Audience: testIDJAGAud,
+		ClientID: suite.oauthApp.ClientID,
+		OAuthApp: suite.oauthApp,
+	}
+
+	suite.mockJWTService.On("GenerateJWT",
+		mock.Anything,
+		"user123",
+		"https://example.com",
+		int64(600),
+		mock.Anything,
+		jwt.TokenTypeIDJAG,
+		mock.Anything,
+	).Return("test-id-jag", time.Now().Unix(), nil)
+
+	result, err := suite.builder.BuildIDJAG(context.Background(), ctx)
+
+	assert.NoError(suite.T(), err)
+	assert.NotNil(suite.T(), result)
+	assert.Equal(suite.T(), int64(600), result.ExpiresIn)
+	suite.mockJWTService.AssertExpectations(suite.T())
+}
+
+func (suite *TokenBuilderTestSuite) TestBuildIDJAG_EmptyScope_OmitsScopeClaim() {
+	ctx := &IDJAGBuildContext{
+		Subject:  "user123",
+		Audience: testIDJAGAud,
+		ClientID: suite.oauthApp.ClientID,
+		OAuthApp: suite.oauthApp,
+	}
+
+	suite.mockJWTService.On("GenerateJWT",
+		mock.Anything,
+		"user123",
+		"https://example.com",
+		providers.DefaultIDJAGValidityPeriod,
+		mock.MatchedBy(func(claims map[string]interface{}) bool {
+			_, hasScope := claims["scope"]
+			return !hasScope && claims["aud"] == testIDJAGAud
+		}),
+		jwt.TokenTypeIDJAG,
+		mock.Anything,
+	).Return("test-id-jag", time.Now().Unix(), nil)
+
+	result, err := suite.builder.BuildIDJAG(context.Background(), ctx)
+
+	assert.NoError(suite.T(), err)
+	assert.NotNil(suite.T(), result)
+	assert.Empty(suite.T(), result.Scopes)
+	suite.mockJWTService.AssertExpectations(suite.T())
+}
+
+func (suite *TokenBuilderTestSuite) TestBuildIDJAG_SingleResource_ClaimIsString() {
+	ctx := &IDJAGBuildContext{
+		Subject:   "user123",
+		Audience:  testIDJAGAud,
+		ClientID:  suite.oauthApp.ClientID,
+		Resources: []string{"https://rs01.example.com"},
+		OAuthApp:  suite.oauthApp,
+	}
+
+	suite.mockJWTService.On("GenerateJWT",
+		mock.Anything,
+		"user123",
+		"https://example.com",
+		providers.DefaultIDJAGValidityPeriod,
+		mock.MatchedBy(func(claims map[string]interface{}) bool {
+			resource, ok := claims["resource"].(string)
+			return ok && resource == "https://rs01.example.com"
+		}),
+		jwt.TokenTypeIDJAG,
+		mock.Anything,
+	).Return("test-id-jag", time.Now().Unix(), nil)
+
+	result, err := suite.builder.BuildIDJAG(context.Background(), ctx)
+
+	assert.NoError(suite.T(), err)
+	assert.NotNil(suite.T(), result)
+	suite.mockJWTService.AssertExpectations(suite.T())
+}
+
+func (suite *TokenBuilderTestSuite) TestBuildIDJAG_MultipleResources_ClaimIsArray() {
+	resources := []string{"https://rs01.example.com", "https://rs02.example.com"}
+	ctx := &IDJAGBuildContext{
+		Subject:   "user123",
+		Audience:  testIDJAGAud,
+		ClientID:  suite.oauthApp.ClientID,
+		Resources: resources,
+		OAuthApp:  suite.oauthApp,
+	}
+
+	suite.mockJWTService.On("GenerateJWT",
+		mock.Anything,
+		"user123",
+		"https://example.com",
+		providers.DefaultIDJAGValidityPeriod,
+		mock.MatchedBy(func(claims map[string]interface{}) bool {
+			resourceClaim, ok := claims["resource"].([]string)
+			return ok && assert.ObjectsAreEqual(resources, resourceClaim)
+		}),
+		jwt.TokenTypeIDJAG,
+		mock.Anything,
+	).Return("test-id-jag", time.Now().Unix(), nil)
+
+	result, err := suite.builder.BuildIDJAG(context.Background(), ctx)
+
+	assert.NoError(suite.T(), err)
+	assert.NotNil(suite.T(), result)
+	suite.mockJWTService.AssertExpectations(suite.T())
+}
+
+func (suite *TokenBuilderTestSuite) TestBuildIDJAG_NoResources_OmitsResourceClaim() {
+	ctx := &IDJAGBuildContext{
+		Subject:  "user123",
+		Audience: testIDJAGAud,
+		ClientID: suite.oauthApp.ClientID,
+		OAuthApp: suite.oauthApp,
+	}
+
+	suite.mockJWTService.On("GenerateJWT",
+		mock.Anything,
+		"user123",
+		"https://example.com",
+		providers.DefaultIDJAGValidityPeriod,
+		mock.MatchedBy(func(claims map[string]interface{}) bool {
+			_, hasResource := claims["resource"]
+			return !hasResource
+		}),
+		jwt.TokenTypeIDJAG,
+		mock.Anything,
+	).Return("test-id-jag", time.Now().Unix(), nil)
+
+	result, err := suite.builder.BuildIDJAG(context.Background(), ctx)
+
+	assert.NoError(suite.T(), err)
+	assert.NotNil(suite.T(), result)
+	suite.mockJWTService.AssertExpectations(suite.T())
+}
+
+func (suite *TokenBuilderTestSuite) TestBuildIDJAG_Error_NilContext() {
+	result, err := suite.builder.BuildIDJAG(context.Background(), nil)
+
+	assert.Error(suite.T(), err)
+	assert.Nil(suite.T(), result)
+	assert.Contains(suite.T(), err.Error(), "build context cannot be nil")
+}
+
+func (suite *TokenBuilderTestSuite) TestBuildIDJAG_Error_JWTGenerationFailed() {
+	ctx := &IDJAGBuildContext{
+		Subject:  "user123",
+		Audience: testIDJAGAud,
+		ClientID: suite.oauthApp.ClientID,
+		OAuthApp: suite.oauthApp,
+	}
+
+	suite.mockJWTService.On("GenerateJWT",
+		mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything,
+	).Return("", int64(0), &tidcommon.ServiceError{
+		Type: tidcommon.ServerErrorType,
+		Code: "JWT_GENERATION_FAILED",
+		Error: tidcommon.I18nMessage{
+			Key: "error.test.jwt_generation_failed", DefaultValue: "JWT generation failed",
+		},
+		ErrorDescription: tidcommon.I18nMessage{
+			Key: "error.test.failed_to_generate_jwt_token", DefaultValue: "Failed to generate JWT token",
+		},
+	})
+
+	result, err := suite.builder.BuildIDJAG(context.Background(), ctx)
+
+	assert.Error(suite.T(), err)
+	assert.Nil(suite.T(), result)
+	assert.Contains(suite.T(), err.Error(), "failed to generate ID-JAG")
 	suite.mockJWTService.AssertExpectations(suite.T())
 }
 

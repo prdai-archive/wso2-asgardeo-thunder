@@ -16,6 +16,12 @@
  * under the License.
  */
 
+import {
+  AuthenticatorTypes,
+  IdentityProviderTypes,
+  useIdentityProviders,
+  type IdentityProvider,
+} from '@thunderid/configure-connections';
 import {Typography, Stack, CircularProgress, Alert, Box, useTheme} from '@wso2/oxygen-ui';
 import {Lightbulb} from '@wso2/oxygen-ui-icons-react';
 import type {JSX} from 'react';
@@ -27,10 +33,7 @@ import useGetFlows from '../../../../flows/api/useGetFlows';
 import {FlowType} from '../../../../flows/models/flows';
 import {type BasicFlowDefinition} from '../../../../flows/models/responses';
 import findMatchingFlowForIntegrations from '../../../../flows/utils/findMatchingFlowForIntegrations';
-import useIdentityProviders from '../../../../integrations/api/useIdentityProviders';
 import useApplicationCreateContext from '../../../hooks/useApplicationCreateContext';
-import {AuthenticatorTypes} from '@/features/integrations/models/authenticators';
-import {type IdentityProvider, IdentityProviderTypes} from '@/features/integrations/models/identity-provider';
 
 /**
  * Props for the {@link ConfigureSignInOptions} component.
@@ -130,7 +133,7 @@ export default function ConfigureSignInOptions({
 }: ConfigureSignInOptionsProps): JSX.Element {
   const {t} = useTranslation();
   const theme = useTheme();
-  const {selectedAuthFlow, setSelectedAuthFlow} = useApplicationCreateContext();
+  const {selectedAuthFlow, setSelectedAuthFlow, setIntegrations} = useApplicationCreateContext();
 
   const {data, isLoading, error} = useIdentityProviders();
   const {
@@ -153,8 +156,8 @@ export default function ConfigureSignInOptions({
         .filter(([, enabled]) => enabled)
         .map(([integrationId]) => {
           // Handle basic auth
-          if (integrationId === AuthenticatorTypes.BASIC_AUTH) {
-            return AuthenticatorTypes.BASIC_AUTH;
+          if (integrationId === AuthenticatorTypes.CREDENTIALS_AUTH) {
+            return AuthenticatorTypes.CREDENTIALS_AUTH;
           }
 
           // Find the provider to get its type
@@ -257,6 +260,10 @@ export default function ConfigureSignInOptions({
       availableFlows?.find((flow: BasicFlowDefinition) => flow.id === flowId) ?? null;
 
     setSelectedAuthFlow(selectedFlow);
+
+    if (selectedFlow) {
+      setIntegrations({});
+    }
   };
 
   const handleClearFlowSelection = (): void => {

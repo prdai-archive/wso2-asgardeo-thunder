@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2025, WSO2 LLC. (https://www.wso2.com).
+ * Copyright (c) 2025-2026, WSO2 LLC. (https://www.wso2.com).
  *
  * WSO2 LLC. licenses this file to you under the Apache License,
  * Version 2.0 (the "License"); you may not use this file except
@@ -22,7 +22,6 @@ package security
 import (
 	"context"
 	"net/http"
-	"os"
 	"regexp"
 
 	"github.com/thunder-id/thunderid/internal/system/log"
@@ -35,27 +34,37 @@ type SecurityServiceInterface interface {
 	Process(r *http.Request) (context.Context, error)
 }
 
+// RevocationEnforcerInterface rejects tokens whose jti or token family id is on the deny list. It is
+// the read-only seam the security layer uses to consult the Resource Server's revocation cache
+// without depending on its implementation.
+type RevocationEnforcerInterface interface {
+	// EnsureNotRevoked returns a non-nil error when the token's jti or its token family id has been
+	// revoked. Empty identifiers are each a no-op.
+	EnsureNotRevoked(ctx context.Context, jti, tokenFamilyID string) error
+}
+
 // securityService orchestrates authentication and authorization for HTTP requests.
 type securityService struct {
 	authenticators         []AuthenticatorInterface
+	revocationEnforcer     RevocationEnforcerInterface
 	logger                 *log.Logger
 	compiledPaths          []*regexp.Regexp
 	compiledAPIPermissions []compiledAPIPermission
-	skipSecurity           bool
 }
 
 // newSecurityService creates a new instance of the security service.
 //
 // Parameters:
 //   - authenticators: A slice of AuthenticatorInterface implementations to handle request authentication.
+//   - revocationEnforcer: Consulted after authentication to reject revoked tokens.
 //   - publicPaths: A slice of string patterns representing paths that are exempt from authentication.
 //   - apiPermissions: An ordered slice of API permission entries used for authorization.
 //
 // Returns:
 //   - *securityService: A pointer to the created securityService instance.
 //   - error: An error if any of the provided path patterns are invalid and cannot be compiled.
-func newSecurityService(authenticators []AuthenticatorInterface, publicPaths []string,
-	apiPermissions []apiPermissionEntry) (*securityService, error) {
+func newSecurityService(authenticators []AuthenticatorInterface, revocationEnforcer RevocationEnforcerInterface,
+	publicPaths []string, apiPermissions []apiPermissionEntry) (*securityService, error) {
 	compiledPaths, err := compilePathPatterns(publicPaths)
 	if err != nil {
 		return nil, err
@@ -66,35 +75,21 @@ func newSecurityService(authenticators []AuthenticatorInterface, publicPaths []s
 		return nil, err
 	}
 
-	// Check if security enforcement should be skipped via environment variable
-	skipSecurity := os.Getenv("SKIP_SECURITY") == "true"
-
 	logger := log.GetLogger().With(log.String(log.LoggerKeyComponentName, loggerComponentName))
-
-	if skipSecurity {
-		logger.Warn("============================================================")
-		logger.Warn("|       WARNING: SECURITY ENFORCEMENT DISABLED             |")
-		logger.Warn("|                                                          |")
-		logger.Warn("|        SKIP_SECURITY is set to 'true'            |")
-		logger.Warn("|  This is NOT RECOMMENDED for production environments!    |")
-		logger.Warn("| Endpoints accessible without auth, but tokens processed  |")
-		logger.Warn("|                                                          |")
-		logger.Warn("============================================================")
-	}
 
 	return &securityService{
 		authenticators:         authenticators,
+		revocationEnforcer:     revocationEnforcer,
 		logger:                 logger,
 		compiledPaths:          compiledPaths,
 		compiledAPIPermissions: compiledPerms,
-		skipSecurity:           skipSecurity,
 	}, nil
 }
 
 // Process handles the complete security flow: authentication and authorization.
 // Returns an enriched context on success, or an error if authentication or authorization fails.
 func (s *securityService) Process(r *http.Request) (context.Context, error) {
-	isPublic := s.isPublicPath(r.URL.Path)
+	isPublic := s.isPublicPath(r.Context(), r.URL.Path)
 
 	// Check if the request is options (CORS preflight)
 	if r.Method == http.MethodOptions {
@@ -112,24 +107,33 @@ func (s *securityService) Process(r *http.Request) (context.Context, error) {
 
 	// If no authenticator found
 	if authenticator == nil {
-		return s.handleAuthError(r.Context(), r.URL.Path, errNoHandlerFound, isPublic, s.skipSecurity)
+		return s.handleAuthError(r.Context(), isPublic, errNoHandlerFound)
 	}
 
 	// Authenticate the request
 	securityCtx, err := authenticator.Authenticate(r)
 	if err != nil {
-		return s.handleAuthError(r.Context(), r.URL.Path, err, isPublic, s.skipSecurity)
+		return s.handleAuthError(r.Context(), isPublic, err)
 	}
 
 	// Add authentication context to request context if available
 	ctx := r.Context()
 	if securityCtx != nil {
 		ctx = withSecurityContext(ctx, securityCtx)
+
+		// Reject the request when the presented token has been revoked. This runs after successful
+		// authentication and is format-agnostic: it enforces on the token's jti and its token family
+		// id. A revoked token is surfaced as an invalid token (RFC 6750 §3.1) so the response does not
+		// disclose that the token was specifically revoked.
+		if err := s.revocationEnforcer.EnsureNotRevoked(ctx, securityCtx.revocationID,
+			securityCtx.tokenFamilyID); err != nil {
+			return s.handleAuthError(ctx, isPublic, errInvalidToken)
+		}
 	}
 
 	// Authorize the authenticated principal based on the permissions carried in the security context.
 	if err := s.authorize(r.WithContext(ctx)); err != nil {
-		return s.handleAuthError(ctx, r.URL.Path, err, isPublic, s.skipSecurity)
+		return s.handleAuthError(ctx, isPublic, err)
 	}
 
 	return ctx, nil
@@ -170,9 +174,9 @@ func (s *securityService) getRequiredPermissionForAPI(method, path string) strin
 }
 
 // isPublicPath checks if the given request path matches any of the configured public path patterns.
-func (s *securityService) isPublicPath(requestPath string) bool {
+func (s *securityService) isPublicPath(ctx context.Context, requestPath string) bool {
 	if len(requestPath) > maxPublicPathLength {
-		s.logger.Warn("Path length exceeds maximum allowed length",
+		s.logger.Warn(ctx, "Path length exceeds maximum allowed length",
 			log.Int("limit", maxPublicPathLength),
 			log.Int("length", len(requestPath)))
 		return false
@@ -187,26 +191,16 @@ func (s *securityService) isPublicPath(requestPath string) bool {
 	return false
 }
 
-// handleAuthError handles authentication/authorization errors based on whether
-// the path is public or security is skipped.
+// handleAuthError grants access to public paths (as an internal runtime caller)
+// and otherwise propagates the authentication/authorization error.
 func (s *securityService) handleAuthError(
 	ctx context.Context,
-	path string,
-	err error,
 	isPublic bool,
-	skipSecurity bool,
+	err error,
 ) (context.Context, error) {
 	if isPublic {
 		// Mark the context as a runtime caller so that the authorization layer can grant access.
 		return WithRuntimeContext(ctx), nil
-	}
-
-	if skipSecurity {
-		s.logger.Debug(
-			"Proceeding without authentication/authorization enforcement as skipSecurity is enabled",
-			log.Error(err),
-			log.String("path", path))
-		return withSecuritySkipped(ctx), nil
 	}
 
 	return nil, err

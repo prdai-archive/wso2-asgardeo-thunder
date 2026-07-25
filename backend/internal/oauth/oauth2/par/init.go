@@ -22,54 +22,43 @@ import (
 	"context"
 	"net/http"
 
-	authnprovidermgr "github.com/thunder-id/thunderid/internal/authnprovider/manager"
-	"github.com/thunder-id/thunderid/internal/inboundclient"
+	oauthconfig "github.com/thunder-id/thunderid/internal/oauth/config"
 	"github.com/thunder-id/thunderid/internal/oauth/oauth2/clientauth"
 	"github.com/thunder-id/thunderid/internal/oauth/oauth2/discovery"
 	"github.com/thunder-id/thunderid/internal/oauth/oauth2/dpop"
-	"github.com/thunder-id/thunderid/internal/resource"
-	"github.com/thunder-id/thunderid/internal/system/config"
-	"github.com/thunder-id/thunderid/internal/system/database/provider"
 	"github.com/thunder-id/thunderid/internal/system/jose/jwt"
 	"github.com/thunder-id/thunderid/internal/system/middleware"
+	"github.com/thunder-id/thunderid/pkg/thunderidengine/providers"
 )
 
 // Initialize initializes the PAR handler and registers its routes.
 // Returns the PARServiceInterface so the authorization endpoint can resolve request_uri parameters.
 func Initialize(
 	mux *http.ServeMux,
-	inboundClient inboundclient.InboundClientServiceInterface,
-	authnProvider authnprovidermgr.AuthnProviderManagerInterface,
+	actorProvider providers.ActorProvider,
+	authnProvider providers.AuthnProviderManager,
 	jwtService jwt.JWTServiceInterface,
 	discoveryService discovery.DiscoveryServiceInterface,
-	resourceService resource.ResourceServiceInterface,
+	resourceService providers.ResourceServerProvider,
 	dpopVerifier dpop.VerifierInterface,
+	cfg oauthconfig.Config,
+	storeProvider providers.RuntimeStoreProvider,
 ) PARServiceInterface {
-	store := initializePARStore()
-	parSvc := newPARService(store, resourceService)
+	store := newPARRequestStore(storeProvider)
+	parSvc := newPARService(store, resourceService, cfg)
 	parEndpoint := discoveryService.GetOAuth2AuthorizationServerMetadata(
 		context.Background()).PushedAuthorizationRequestEndpoint
 	handler := newPARHandler(parSvc, dpopVerifier, parEndpoint)
-	registerRoutes(mux, handler, inboundClient, authnProvider, jwtService, discoveryService)
+	registerRoutes(mux, handler, actorProvider, authnProvider, jwtService, discoveryService)
 	return parSvc
-}
-
-// initializePARStore selects the PAR store implementation based on the configured runtime DB type.
-func initializePARStore() parStoreInterface {
-	deploymentID := config.GetServerRuntime().Config.Server.Identifier
-
-	if config.GetServerRuntime().Config.Database.Runtime.Type == provider.DataSourceTypeRedis {
-		return newRedisPARRequestStore(provider.GetRedisProvider(), deploymentID)
-	}
-	return newPARRequestStore(deploymentID)
 }
 
 // registerRoutes registers the PAR endpoint route with client authentication middleware.
 func registerRoutes(
 	mux *http.ServeMux,
 	handler parHandlerInterface,
-	inboundClient inboundclient.InboundClientServiceInterface,
-	authnProvider authnprovidermgr.AuthnProviderManagerInterface,
+	actorProvider providers.ActorProvider,
+	authnProvider providers.AuthnProviderManager,
 	jwtService jwt.JWTServiceInterface,
 	discoveryService discovery.DiscoveryServiceInterface,
 ) {
@@ -80,9 +69,8 @@ func registerRoutes(
 		MaxAge:           600,
 	}
 
-	metadata := discoveryService.GetOAuth2AuthorizationServerMetadata(context.Background())
-	endpointURL := metadata.PushedAuthorizationRequestEndpoint
-	clientAuthMiddleware := clientauth.ClientAuthMiddleware(inboundClient, authnProvider, jwtService, endpointURL)
+	issuer := discoveryService.GetOAuth2AuthorizationServerMetadata(context.Background()).Issuer
+	clientAuthMiddleware := clientauth.ClientAuthMiddleware(actorProvider, authnProvider, jwtService, issuer)
 	wrappedHandler := clientAuthMiddleware(http.HandlerFunc(handler.HandlePARRequest))
 
 	pattern, corsHandler := middleware.WithCORS(

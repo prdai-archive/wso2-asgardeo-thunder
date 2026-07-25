@@ -26,16 +26,16 @@ import (
 	"slices"
 	"strings"
 
+	tidcommon "github.com/thunder-id/thunderid/pkg/thunderidengine/common"
+
 	"github.com/thunder-id/thunderid/internal/notification/common"
 	"github.com/thunder-id/thunderid/internal/system/cmodels"
-	"github.com/thunder-id/thunderid/internal/system/error/serviceerror"
-	"github.com/thunder-id/thunderid/internal/system/i18n/core"
 )
 
 var matchString = regexp.MatchString
 
 // validateNotificationSender validates the notification sender data.
-func validateNotificationSender(sender common.NotificationSenderDTO) *serviceerror.ServiceError {
+func validateNotificationSender(sender common.NotificationSenderDTO) *tidcommon.ServiceError {
 	if sender.Name == "" {
 		return &ErrorInvalidSenderName
 	}
@@ -49,7 +49,7 @@ func validateNotificationSender(sender common.NotificationSenderDTO) *serviceerr
 }
 
 // validateMessageNotificationSender validates a message notification sender.
-func validateMessageNotificationSender(sender common.NotificationSenderDTO) *serviceerror.ServiceError {
+func validateMessageNotificationSender(sender common.NotificationSenderDTO) *tidcommon.ServiceError {
 	if sender.Provider == "" {
 		return &ErrorInvalidProvider
 	}
@@ -61,7 +61,7 @@ func validateMessageNotificationSender(sender common.NotificationSenderDTO) *ser
 
 	if err := validateMessageNotificationSenderProperties(sender); err != nil {
 		svcErr := ErrorInvalidRequestFormat
-		svcErr.ErrorDescription = core.I18nMessage{
+		svcErr.ErrorDescription = tidcommon.I18nMessage{
 			Key:          "error.notificationservice.sender_property_validation_failed_description",
 			DefaultValue: err.Error(),
 		}
@@ -75,6 +75,20 @@ func validateMessageNotificationSender(sender common.NotificationSenderDTO) *ser
 func validateMessageNotificationSenderProperties(sender common.NotificationSenderDTO) error {
 	if len(sender.Properties) == 0 {
 		return errors.New("message notification sender properties cannot be empty")
+	}
+
+	for _, prop := range sender.Properties {
+		if prop.GetName() == common.SenderPropertySupportedChannels {
+			val, err := prop.GetValue()
+			if err != nil {
+				return errors.New("failed to read supported channels property")
+			}
+			// A message sender currently only supports the "sms" channel.
+			if val != string(common.ChannelTypeSMS) {
+				return fmt.Errorf("invalid supported channel: %s", val)
+			}
+			break
+		}
 	}
 
 	switch sender.Provider {
@@ -190,4 +204,19 @@ func validateSenderProperties(properties []cmodels.Property, requiredProperties 
 		}
 	}
 	return nil
+}
+
+// applyDefaultSenderProperties applies default properties to the notification sender.
+func applyDefaultSenderProperties(sender *common.NotificationSenderDTO) {
+	hasSupportedChannels := false
+	for _, prop := range sender.Properties {
+		if prop.GetName() == common.SenderPropertySupportedChannels {
+			hasSupportedChannels = true
+			break
+		}
+	}
+	if !hasSupportedChannels {
+		prop, _ := cmodels.NewProperty(common.SenderPropertySupportedChannels, string(common.ChannelTypeSMS), false)
+		sender.Properties = append(sender.Properties, *prop)
+	}
 }

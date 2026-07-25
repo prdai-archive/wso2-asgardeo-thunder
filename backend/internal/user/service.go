@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2025, WSO2 LLC. (https://www.wso2.com).
+ * Copyright (c) 2025-2026, WSO2 LLC. (https://www.wso2.com).
  *
  * WSO2 LLC. licenses this file to you under the Apache License,
  * Version 2.0 (the "License"); you may not use this file except
@@ -25,14 +25,18 @@ import (
 	"errors"
 	"fmt"
 	"path"
+	"sort"
 	"strings"
+
+	tidcommon "github.com/thunder-id/thunderid/pkg/thunderidengine/common"
+	"github.com/thunder-id/thunderid/pkg/thunderidengine/providers"
 
 	"github.com/thunder-id/thunderid/internal/entity"
 	"github.com/thunder-id/thunderid/internal/entitytype"
 	oupkg "github.com/thunder-id/thunderid/internal/ou"
 	serverconst "github.com/thunder-id/thunderid/internal/system/constants"
-	"github.com/thunder-id/thunderid/internal/system/error/serviceerror"
 	"github.com/thunder-id/thunderid/internal/system/log"
+	"github.com/thunder-id/thunderid/internal/system/resourcedependency"
 	"github.com/thunder-id/thunderid/internal/system/security"
 	"github.com/thunder-id/thunderid/internal/system/sysauthz"
 	"github.com/thunder-id/thunderid/internal/system/utils"
@@ -43,31 +47,35 @@ const loggerComponentName = "UserService"
 // UserServiceInterface defines the interface for the user service.
 type UserServiceInterface interface {
 	GetUserList(ctx context.Context, limit, offset int,
-		filters map[string]interface{}, includeDisplay bool) (*UserListResponse, *serviceerror.ServiceError)
+		filters map[string]interface{}, includeDisplay bool) (*UserListResponse, *tidcommon.ServiceError)
 	GetUsersByPath(ctx context.Context, handlePath string, limit, offset int,
-		filters map[string]interface{}, includeDisplay bool) (*UserListResponse, *serviceerror.ServiceError)
-	CreateUser(ctx context.Context, user *User) (*User, *serviceerror.ServiceError)
+		filters map[string]interface{}, includeDisplay bool) (*UserListResponse, *tidcommon.ServiceError)
+	CreateUser(ctx context.Context, user *User) (*User, *tidcommon.ServiceError)
 	CreateUserByPath(ctx context.Context, handlePath string,
-		request CreateUserByPathRequest) (*User, *serviceerror.ServiceError)
-	GetUser(ctx context.Context, userID string, includeDisplay bool) (*User, *serviceerror.ServiceError)
+		request CreateUserByPathRequest) (*User, *tidcommon.ServiceError)
+	GetUser(ctx context.Context, userID string, includeDisplay bool) (*User, *tidcommon.ServiceError)
 	GetUserGroups(ctx context.Context, userID string,
-		limit, offset int) (*UserGroupListResponse, *serviceerror.ServiceError)
-	UpdateUser(ctx context.Context, userID string, user *User) (*User, *serviceerror.ServiceError)
+		limit, offset int) (*UserGroupListResponse, *tidcommon.ServiceError)
+	UpdateUser(ctx context.Context, userID string, user *User) (*User, *tidcommon.ServiceError)
 	UpdateUserAttributes(ctx context.Context, userID string,
-		attributes json.RawMessage) (*User, *serviceerror.ServiceError)
+		attributes json.RawMessage) (*User, *tidcommon.ServiceError)
 	UpdateUserCredentials(ctx context.Context, userID string,
-		credentials json.RawMessage) *serviceerror.ServiceError
-	DeleteUser(ctx context.Context, userID string) *serviceerror.ServiceError
-	ResolveUserOUHandle(ctx context.Context, user *User) *serviceerror.ServiceError
+		credentials json.RawMessage) *tidcommon.ServiceError
+	DeleteUser(ctx context.Context, userID string) *tidcommon.ServiceError
+	ResolveUserOUHandle(ctx context.Context, user *User) *tidcommon.ServiceError
+	SetDependencyRegistry(r resourcedependency.Registry)
+	GetUserUsages(ctx context.Context, userID string) (
+		*resourcedependency.DependenciesResponse, *tidcommon.ServiceError)
 }
 
 // userService is the default implementation of the UserServiceInterface.
 type userService struct {
-	authzService      sysauthz.SystemAuthorizationServiceInterface
-	entityService     entity.EntityServiceInterface
-	ouService         oupkg.OrganizationUnitServiceInterface
-	entityTypeService entitytype.EntityTypeServiceInterface
-	uuidGenerator     func() (string, error)
+	authzService       sysauthz.SystemAuthorizationServiceInterface
+	entityService      entity.EntityServiceInterface
+	ouService          oupkg.OrganizationUnitServiceInterface
+	entityTypeService  entitytype.EntityTypeServiceInterface
+	uuidGenerator      func() (string, error)
+	dependencyRegistry resourcedependency.Registry
 }
 
 // newUserService creates a new instance of userService with injected dependencies.
@@ -88,7 +96,7 @@ func newUserService(
 
 // GetUserList retrieves a list of users with pagination and filtering.
 func (us *userService) GetUserList(ctx context.Context, limit, offset int,
-	filters map[string]interface{}, includeDisplay bool) (*UserListResponse, *serviceerror.ServiceError) {
+	filters map[string]interface{}, includeDisplay bool) (*UserListResponse, *tidcommon.ServiceError) {
 	logger := log.GetLogger().With(log.String(log.LoggerKeyComponentName, loggerComponentName))
 
 	if err := validatePaginationParams(limit, offset); err != nil {
@@ -99,8 +107,9 @@ func (us *userService) GetUserList(ctx context.Context, limit, offset int,
 	accessible, svcErr := us.authzService.GetAccessibleResources(
 		ctx, security.ActionListUsers, security.ResourceTypeOU)
 	if svcErr != nil {
-		logger.Error("Failed to resolve accessible resources for listing users", log.Any("error", svcErr))
-		return nil, &serviceerror.InternalServerError
+		logger.Error(ctx, "Failed to resolve accessible resources for listing users",
+			log.Any("error", svcErr))
+		return nil, &tidcommon.InternalServerError
 	}
 
 	// Unfiltered path: system-level caller — return all users.
@@ -116,15 +125,15 @@ func (us *userService) GetUserList(ctx context.Context, limit, offset int,
 func (us *userService) listAllUsers(
 	ctx context.Context, limit, offset int, filters map[string]interface{},
 	includeDisplay bool, logger *log.Logger,
-) (*UserListResponse, *serviceerror.ServiceError) {
-	totalCount, err := us.entityService.GetEntityListCount(ctx, entity.EntityCategoryUser, filters)
+) (*UserListResponse, *tidcommon.ServiceError) {
+	totalCount, err := us.entityService.GetEntityListCount(ctx, providers.EntityCategoryUser, filters)
 	if err != nil {
-		return nil, logErrorAndReturnServerError(logger, "Failed to get user list count", err)
+		return nil, logErrorAndReturnServerError(ctx, logger, "Failed to get user list count", err)
 	}
 
-	entities, err := us.entityService.GetEntityList(ctx, entity.EntityCategoryUser, limit, offset, filters)
+	entities, err := us.entityService.GetEntityList(ctx, providers.EntityCategoryUser, limit, offset, filters)
 	if err != nil {
-		return nil, logErrorAndReturnServerError(logger, "Failed to get user list", err)
+		return nil, logErrorAndReturnServerError(ctx, logger, "Failed to get user list", err)
 	}
 
 	users := entitiesToUsers(entities)
@@ -140,22 +149,22 @@ func (us *userService) listAllUsers(
 func (us *userService) listUsersByOUIDs(
 	ctx context.Context, ouIDs []string, limit, offset int, filters map[string]interface{},
 	includeDisplay bool, logger *log.Logger,
-) (*UserListResponse, *serviceerror.ServiceError) {
+) (*UserListResponse, *tidcommon.ServiceError) {
 	displayQuery := utils.DisplayQueryParam(includeDisplay)
 
 	if len(ouIDs) == 0 {
 		return buildUserListResponse([]User{}, 0, limit, offset, displayQuery), nil
 	}
 
-	totalCount, err := us.entityService.GetEntityListCountByOUIDs(ctx, entity.EntityCategoryUser, ouIDs, filters)
+	totalCount, err := us.entityService.GetEntityListCountByOUIDs(ctx, providers.EntityCategoryUser, ouIDs, filters)
 	if err != nil {
-		return nil, logErrorAndReturnServerError(logger, "Failed to get user list count", err)
+		return nil, logErrorAndReturnServerError(ctx, logger, "Failed to get user list count", err)
 	}
 
 	entities, err := us.entityService.GetEntityListByOUIDs(
-		ctx, entity.EntityCategoryUser, ouIDs, limit, offset, filters)
+		ctx, providers.EntityCategoryUser, ouIDs, limit, offset, filters)
 	if err != nil {
-		return nil, logErrorAndReturnServerError(logger, "Failed to get user list", err)
+		return nil, logErrorAndReturnServerError(ctx, logger, "Failed to get user list", err)
 	}
 
 	users := entitiesToUsers(entities)
@@ -182,9 +191,9 @@ func buildUserListResponse(users []User, totalCount, limit, offset int, displayQ
 func (us *userService) GetUsersByPath(
 	ctx context.Context, handlePath string, limit, offset int, filters map[string]interface{},
 	includeDisplay bool,
-) (*UserListResponse, *serviceerror.ServiceError) {
+) (*UserListResponse, *tidcommon.ServiceError) {
 	logger := log.GetLogger().With(log.String(log.LoggerKeyComponentName, loggerComponentName))
-	logger.Debug("Getting users by path", log.String("path", handlePath))
+	logger.Debug(ctx, "Getting users by path", log.String("path", handlePath))
 
 	serviceError := validateAndProcessHandlePath(handlePath)
 	if serviceError != nil {
@@ -193,11 +202,11 @@ func (us *userService) GetUsersByPath(
 
 	ou, svcErr := us.ouService.GetOrganizationUnitByPath(ctx, handlePath)
 	if svcErr != nil {
-		return nil, mapOUServiceError(
+		return nil, mapOUServiceError(ctx,
 			svcErr,
 			logger,
 			"resolving organization unit by path",
-			map[string]*serviceerror.ServiceError{
+			map[string]*tidcommon.ServiceError{
 				oupkg.ErrorOrganizationUnitNotFound.Code: &ErrorOrganizationUnitNotFound,
 				oupkg.ErrorInvalidHandlePath.Code:        &ErrorInvalidHandlePath,
 			},
@@ -217,11 +226,11 @@ func (us *userService) GetUsersByPath(
 
 	ouResponse, svcErr := us.ouService.GetOrganizationUnitUsers(ctx, oUID, limit, offset, false)
 	if svcErr != nil {
-		return nil, mapOUServiceError(
+		return nil, mapOUServiceError(ctx,
 			svcErr,
 			logger,
 			"listing organization unit users",
-			map[string]*serviceerror.ServiceError{
+			map[string]*tidcommon.ServiceError{
 				oupkg.ErrorOrganizationUnitNotFound.Code: &ErrorOrganizationUnitNotFound,
 				oupkg.ErrorInvalidLimit.Code:             &ErrorInvalidLimit,
 				oupkg.ErrorInvalidOffset.Code:            &ErrorInvalidOffset,
@@ -244,7 +253,8 @@ func (us *userService) GetUsersByPath(
 		}
 		fetchedEntities, err := us.entityService.GetEntitiesByIDs(ctx, userIDs)
 		if err != nil {
-			logger.Warn("Failed to batch fetch users for display names, skipping display resolution", log.Error(err))
+			logger.Warn(ctx, "Failed to batch fetch users for display names, skipping display resolution",
+				log.Error(err))
 			// Fall back to bare IDs without display — partial display is worse than none.
 			users = make([]User, len(ouResponse.Users))
 			for i, ouUser := range ouResponse.Users {
@@ -298,7 +308,7 @@ func (us *userService) GetUsersByPath(
 }
 
 // CreateUser creates the user.
-func (us *userService) CreateUser(ctx context.Context, user *User) (*User, *serviceerror.ServiceError) {
+func (us *userService) CreateUser(ctx context.Context, user *User) (*User, *tidcommon.ServiceError) {
 	logger := log.GetLogger().With(log.String(log.LoggerKeyComponentName, loggerComponentName))
 
 	if user == nil {
@@ -320,8 +330,8 @@ func (us *userService) CreateUser(ctx context.Context, user *User) (*User, *serv
 	if user.ID == "" {
 		user.ID, err = us.uuidGenerator()
 		if err != nil {
-			logger.Error("Failed to generate UUID", log.Error(err))
-			return nil, &serviceerror.InternalServerError
+			logger.Error(ctx, "Failed to generate UUID", log.Error(err))
+			return nil, &tidcommon.InternalServerError
 		}
 	}
 
@@ -331,22 +341,23 @@ func (us *userService) CreateUser(ctx context.Context, user *User) (*User, *serv
 		if svcErr := mapEntityError(err); svcErr != nil {
 			return nil, svcErr
 		}
-		return nil, logErrorAndReturnServerError(logger, "Failed to create user", err)
+		return nil, logErrorAndReturnServerError(ctx, logger, "Failed to create user", err)
 	}
 
 	// Sync cleaned attributes back — entity service removed credential fields from Attributes.
 	user.Attributes = created.Attributes
 
-	logger.Debug("Successfully created user", log.MaskedString(log.LoggerKeyUserID, user.ID))
+	logger.Debug(ctx, "Successfully created user", log.MaskedString(log.LoggerKeyUserID, user.ID))
 	return user, nil
 }
 
 // CreateUserByPath creates a new user under the organization unit specified by the handle path.
 func (us *userService) CreateUserByPath(
 	ctx context.Context, handlePath string, request CreateUserByPathRequest,
-) (*User, *serviceerror.ServiceError) {
+) (*User, *tidcommon.ServiceError) {
 	logger := log.GetLogger().With(log.String(log.LoggerKeyComponentName, loggerComponentName))
-	logger.Debug("Creating user by path", log.String("path", handlePath), log.String("type", request.Type))
+	logger.Debug(ctx, "Creating user by path",
+		log.String("path", handlePath), log.String("type", request.Type))
 
 	serviceError := validateAndProcessHandlePath(handlePath)
 	if serviceError != nil {
@@ -355,11 +366,11 @@ func (us *userService) CreateUserByPath(
 
 	ou, svcErr := us.ouService.GetOrganizationUnitByPath(ctx, handlePath)
 	if svcErr != nil {
-		return nil, mapOUServiceError(
+		return nil, mapOUServiceError(ctx,
 			svcErr,
 			logger,
 			"resolving organization unit by path",
-			map[string]*serviceerror.ServiceError{
+			map[string]*tidcommon.ServiceError{
 				oupkg.ErrorOrganizationUnitNotFound.Code: &ErrorOrganizationUnitNotFound,
 				oupkg.ErrorInvalidHandlePath.Code:        &ErrorInvalidHandlePath,
 			},
@@ -379,9 +390,9 @@ func (us *userService) CreateUserByPath(
 // GetUser retrieves a user by ID.
 func (us *userService) GetUser(
 	ctx context.Context, userID string, includeDisplay bool,
-) (*User, *serviceerror.ServiceError) {
+) (*User, *tidcommon.ServiceError) {
 	logger := log.GetLogger().With(log.String(log.LoggerKeyComponentName, loggerComponentName))
-	logger.Debug("Retrieving user", log.MaskedString(log.LoggerKeyUserID, userID))
+	logger.Debug(ctx, "Retrieving user", log.MaskedString(log.LoggerKeyUserID, userID))
 
 	if userID == "" {
 		return nil, &ErrorMissingUserID
@@ -390,13 +401,13 @@ func (us *userService) GetUser(
 	e, err := us.entityService.GetEntity(ctx, userID)
 	if err != nil {
 		if errors.Is(err, entity.ErrEntityNotFound) {
-			logger.Debug("User not found", log.MaskedString(log.LoggerKeyUserID, userID))
+			logger.Debug(ctx, "User not found", log.MaskedString(log.LoggerKeyUserID, userID))
 			return nil, &ErrorUserNotFound
 		}
-		return nil, logErrorAndReturnServerError(logger, "Failed to retrieve user", err,
+		return nil, logErrorAndReturnServerError(ctx, logger, "Failed to retrieve user", err,
 			log.MaskedString(log.LoggerKeyUserID, userID))
 	}
-	if e.Category != entity.EntityCategoryUser {
+	if e.Category != providers.EntityCategoryUser {
 		return nil, &ErrorUserNotFound
 	}
 	user := entityToUser(e)
@@ -414,20 +425,20 @@ func (us *userService) GetUser(
 
 		handleMap, svcErr := us.ouService.GetOrganizationUnitHandlesByIDs(ctx, []string{user.OUID})
 		if svcErr != nil {
-			logger.Warn("Failed to resolve OU handle for user, skipping",
+			logger.Warn(ctx, "Failed to resolve OU handle for user, skipping",
 				log.Any("error", svcErr))
 		} else if handle, ok := handleMap[user.OUID]; ok {
 			user.OUHandle = handle
 		}
 	}
 
-	logger.Debug("Successfully retrieved user", log.MaskedString(log.LoggerKeyUserID, userID))
+	logger.Debug(ctx, "Successfully retrieved user", log.MaskedString(log.LoggerKeyUserID, userID))
 	return &user, nil
 }
 
 // GetUserGroups retrieves groups of a user with pagination.
 func (as *userService) GetUserGroups(ctx context.Context, userID string, limit, offset int) (
-	*UserGroupListResponse, *serviceerror.ServiceError) {
+	*UserGroupListResponse, *tidcommon.ServiceError) {
 	logger := log.GetLogger().With(log.String(log.LoggerKeyComponentName, loggerComponentName))
 
 	if userID == "" {
@@ -442,13 +453,13 @@ func (as *userService) GetUserGroups(ctx context.Context, userID string, limit, 
 	userEntity, err := as.entityService.GetEntity(ctx, userID)
 	if err != nil {
 		if errors.Is(err, entity.ErrEntityNotFound) {
-			logger.Debug("User not found", log.MaskedString(log.LoggerKeyUserID, userID))
+			logger.Debug(ctx, "User not found", log.MaskedString(log.LoggerKeyUserID, userID))
 			return nil, &ErrorUserNotFound
 		}
-		return nil, logErrorAndReturnServerError(logger, "Failed to retrieve user", err,
+		return nil, logErrorAndReturnServerError(ctx, logger, "Failed to retrieve user", err,
 			log.MaskedString(log.LoggerKeyUserID, userID))
 	}
-	if userEntity.Category != entity.EntityCategoryUser {
+	if userEntity.Category != providers.EntityCategoryUser {
 		return nil, &ErrorUserNotFound
 	}
 
@@ -460,15 +471,16 @@ func (as *userService) GetUserGroups(ctx context.Context, userID string, limit, 
 
 	totalCount, err := as.entityService.GetGroupCountForEntity(ctx, userID)
 	if err != nil {
-		logger.Error("Failed to get group count for user",
+		logger.Error(ctx, "Failed to get group count for user",
 			log.MaskedString(log.LoggerKeyUserID, userID), log.Error(err))
-		return nil, &serviceerror.InternalServerError
+		return nil, &tidcommon.InternalServerError
 	}
 
 	entityGroups, err := as.entityService.GetEntityGroups(ctx, userID, limit, offset)
 	if err != nil {
-		logger.Error("Failed to get user groups", log.MaskedString(log.LoggerKeyUserID, userID), log.Error(err))
-		return nil, &serviceerror.InternalServerError
+		logger.Error(ctx, "Failed to get user groups",
+			log.MaskedString(log.LoggerKeyUserID, userID), log.Error(err))
+		return nil, &tidcommon.InternalServerError
 	}
 	path := fmt.Sprintf("/users/%s/groups", userID)
 	links := utils.BuildPaginationLinks(path, limit, offset, totalCount, "")
@@ -486,9 +498,9 @@ func (as *userService) GetUserGroups(ctx context.Context, userID string, limit, 
 
 // UpdateUser update the user for given user id.
 func (us *userService) UpdateUser(
-	ctx context.Context, userID string, user *User) (*User, *serviceerror.ServiceError) {
+	ctx context.Context, userID string, user *User) (*User, *tidcommon.ServiceError) {
 	logger := log.GetLogger().With(log.String(log.LoggerKeyComponentName, loggerComponentName))
-	logger.Debug("Updating user", log.MaskedString(log.LoggerKeyUserID, userID))
+	logger.Debug(ctx, "Updating user", log.MaskedString(log.LoggerKeyUserID, userID))
 
 	if userID == "" {
 		return nil, &ErrorMissingUserID
@@ -502,13 +514,13 @@ func (us *userService) UpdateUser(
 	existingEntity, err := us.entityService.GetEntity(ctx, userID)
 	if err != nil {
 		if errors.Is(err, entity.ErrEntityNotFound) {
-			logger.Debug("User not found", log.MaskedString(log.LoggerKeyUserID, userID))
+			logger.Debug(ctx, "User not found", log.MaskedString(log.LoggerKeyUserID, userID))
 			return nil, &ErrorUserNotFound
 		}
-		return nil, logErrorAndReturnServerError(logger, "Failed to retrieve user", err,
+		return nil, logErrorAndReturnServerError(ctx, logger, "Failed to retrieve user", err,
 			log.MaskedString(log.LoggerKeyUserID, userID))
 	}
-	if existingEntity.Category != entity.EntityCategoryUser {
+	if existingEntity.Category != providers.EntityCategoryUser {
 		return nil, &ErrorUserNotFound
 	}
 	existingUser := entityToUser(existingEntity)
@@ -541,29 +553,55 @@ func (us *userService) UpdateUser(
 		return nil, svcErr
 	}
 
-	// Entity service handles schema validation, credential extraction from attributes,
-	// hashing, merging with existing credentials, and entity update.
+	// Reject credential fields: this endpoint is for attribute and user metadata updates only.
+	// Credentials must go through the dedicated update-credentials endpoint.
+	if len(user.Attributes) > 0 {
+		schemaCredentialInfos, svcErr := us.entityTypeService.GetAttributes(ctx,
+			entitytype.TypeCategoryUser, user.Type, true, false, false)
+		if svcErr != nil {
+			if svcErr.Code == entitytype.ErrorEntityTypeNotFound.Code {
+				return nil, &ErrorEntityTypeNotFound
+			}
+			return nil, logErrorAndReturnServerError(ctx, logger, "Failed to get credential attributes from schema",
+				fmt.Errorf("schema service error: %s", svcErr.ErrorDescription.DefaultValue),
+				log.MaskedString(log.LoggerKeyUserID, userID))
+		}
+		if len(schemaCredentialInfos) > 0 {
+			var attrs map[string]any
+			if err := json.Unmarshal(user.Attributes, &attrs); err != nil {
+				return nil, &ErrorInvalidRequestFormat
+			}
+			for _, credInfo := range schemaCredentialInfos {
+				if _, ok := attrs[credInfo.Attribute]; ok {
+					return nil, &ErrorCredentialUpdateNotAllowed
+				}
+			}
+		}
+	}
+
 	e := userToEntity(user)
 	e.SystemAttributes = existingEntity.SystemAttributes
-	_, err = us.entityService.UpdateEntity(ctx, userID, e)
+	updated, err := us.entityService.UpdateEntity(ctx, userID, e)
 	if err != nil {
 		if svcErr := mapEntityError(err); svcErr != nil {
 			return nil, svcErr
 		}
-		return nil, logErrorAndReturnServerError(logger, "Failed to update user", err,
+		return nil, logErrorAndReturnServerError(ctx, logger, "Failed to update user", err,
 			log.MaskedString(log.LoggerKeyUserID, userID))
 	}
 
-	logger.Debug("Successfully updated user", log.MaskedString(log.LoggerKeyUserID, userID))
+	// Sync cleaned attributes back — entity service removed credential fields from Attributes.
+	user.Attributes = updated.Attributes
+	logger.Debug(ctx, "Successfully updated user", log.MaskedString(log.LoggerKeyUserID, userID))
 	return user, nil
 }
 
 // UpdateUserAttributes updates only the attributes of a user while preserving immutable fields.
 func (us *userService) UpdateUserAttributes(
 	ctx context.Context, userID string, attributes json.RawMessage,
-) (*User, *serviceerror.ServiceError) {
+) (*User, *tidcommon.ServiceError) {
 	logger := log.GetLogger().With(log.String(log.LoggerKeyComponentName, loggerComponentName))
-	logger.Debug("Updating user attributes", log.MaskedString(log.LoggerKeyUserID, userID))
+	logger.Debug(ctx, "Updating user attributes", log.MaskedString(log.LoggerKeyUserID, userID))
 
 	if strings.TrimSpace(userID) == "" {
 		return nil, &ErrorMissingUserID
@@ -577,13 +615,13 @@ func (us *userService) UpdateUserAttributes(
 	existingEntity, getErr := us.entityService.GetEntity(ctx, userID)
 	if getErr != nil {
 		if errors.Is(getErr, entity.ErrEntityNotFound) {
-			logger.Debug("User not found", log.MaskedString(log.LoggerKeyUserID, userID))
+			logger.Debug(ctx, "User not found", log.MaskedString(log.LoggerKeyUserID, userID))
 			return nil, &ErrorUserNotFound
 		}
-		return nil, logErrorAndReturnServerError(logger, "Failed to get user", getErr,
+		return nil, logErrorAndReturnServerError(ctx, logger, "Failed to get user", getErr,
 			log.MaskedString(log.LoggerKeyUserID, userID))
 	}
-	if existingEntity.Category != entity.EntityCategoryUser {
+	if existingEntity.Category != providers.EntityCategoryUser {
 		return nil, &ErrorUserNotFound
 	}
 	existingUser := entityToUser(existingEntity)
@@ -591,8 +629,8 @@ func (us *userService) UpdateUserAttributes(
 	// Reject credential fields here: this endpoint is for attribute updates only.
 	// Credentials must go through UpdateUserCredentials, which enforces its own authz and validation.
 	if us.entityTypeService == nil {
-		logger.Error("Entity type service is not configured for user operations")
-		return nil, &serviceerror.InternalServerError
+		logger.Error(ctx, "Entity type service is not configured for user operations")
+		return nil, &tidcommon.InternalServerError
 	}
 	schemaCredentialInfos, svcErr := us.entityTypeService.GetAttributes(ctx,
 		entitytype.TypeCategoryUser, existingUser.Type, true, false, false)
@@ -600,7 +638,7 @@ func (us *userService) UpdateUserAttributes(
 		if svcErr.Code == entitytype.ErrorEntityTypeNotFound.Code {
 			return nil, &ErrorEntityTypeNotFound
 		}
-		return nil, logErrorAndReturnServerError(logger, "Failed to get credential attributes from schema",
+		return nil, logErrorAndReturnServerError(ctx, logger, "Failed to get credential attributes from schema",
 			fmt.Errorf("schema service error: %s", svcErr.ErrorDescription.DefaultValue),
 			log.MaskedString(log.LoggerKeyUserID, userID))
 	}
@@ -633,11 +671,11 @@ func (us *userService) UpdateUserAttributes(
 		if svcErr := mapEntityError(err); svcErr != nil {
 			return nil, svcErr
 		}
-		return nil, logErrorAndReturnServerError(logger, "Failed to update user attributes", err,
+		return nil, logErrorAndReturnServerError(ctx, logger, "Failed to update user attributes", err,
 			log.MaskedString(log.LoggerKeyUserID, userID))
 	}
 
-	logger.Debug("Successfully updated user attributes", log.MaskedString(log.LoggerKeyUserID, userID))
+	logger.Debug(ctx, "Successfully updated user attributes", log.MaskedString(log.LoggerKeyUserID, userID))
 	return &existingUser, nil
 }
 
@@ -646,9 +684,9 @@ func (us *userService) UpdateUserCredentials(
 	ctx context.Context,
 	userID string,
 	credentials json.RawMessage,
-) *serviceerror.ServiceError {
+) *tidcommon.ServiceError {
 	logger := log.GetLogger().With(log.String(log.LoggerKeyComponentName, loggerComponentName))
-	logger.Debug("Updating user credentials", log.MaskedString(log.LoggerKeyUserID, userID))
+	logger.Debug(ctx, "Updating user credentials", log.MaskedString(log.LoggerKeyUserID, userID))
 
 	if strings.TrimSpace(userID) == "" {
 		return &ErrorAuthenticationFailed
@@ -661,7 +699,7 @@ func (us *userService) UpdateUserCredentials(
 	// Parse credentials to extract credential types
 	var credentialsMap map[string]json.RawMessage
 	if err := json.Unmarshal(credentials, &credentialsMap); err != nil {
-		logger.Debug("Failed to parse credentials", log.Error(err))
+		logger.Debug(ctx, "Failed to parse credentials", log.Error(err))
 		return &ErrorInvalidRequestFormat
 	}
 
@@ -669,17 +707,25 @@ func (us *userService) UpdateUserCredentials(
 		return &ErrorMissingCredentials
 	}
 
+	// Reject system-managed credential types (e.g., passkey). Only schema-defined
+	// credentials may be updated through this endpoint.
+	for credTypeStr := range credentialsMap {
+		if CredentialType(credTypeStr).IsSystemManaged() {
+			return &ErrorInvalidCredential
+		}
+	}
+
 	// Fetch user outside the transaction to resolve the OU ID for the authorization check.
 	existingEntity, err := us.entityService.GetEntity(ctx, userID)
 	if err != nil {
 		if errors.Is(err, entity.ErrEntityNotFound) {
-			logger.Debug("User not found", log.MaskedString(log.LoggerKeyUserID, userID))
+			logger.Debug(ctx, "User not found", log.MaskedString(log.LoggerKeyUserID, userID))
 			return &ErrorUserNotFound
 		}
-		return logErrorAndReturnServerError(logger, "Failed to retrieve user", err,
+		return logErrorAndReturnServerError(ctx, logger, "Failed to retrieve user", err,
 			log.MaskedString(log.LoggerKeyUserID, userID))
 	}
-	if existingEntity.Category != entity.EntityCategoryUser {
+	if existingEntity.Category != providers.EntityCategoryUser {
 		return &ErrorUserNotFound
 	}
 	existingUser := entityToUser(existingEntity)
@@ -711,27 +757,27 @@ func (us *userService) UpdateUserCredentials(
 
 	plaintextJSON, err := json.Marshal(plaintextCreds)
 	if err != nil {
-		return logErrorAndReturnServerError(logger, "Failed to marshal credentials", err,
+		return logErrorAndReturnServerError(ctx, logger, "Failed to marshal credentials", err,
 			log.MaskedString(log.LoggerKeyUserID, userID))
 	}
 	if err = us.entityService.UpdateCredentials(ctx, userID, plaintextJSON); err != nil {
 		if svcErr := mapEntityError(err); svcErr != nil {
 			return svcErr
 		}
-		return logErrorAndReturnServerError(logger, "Failed to update user credentials", err,
+		return logErrorAndReturnServerError(ctx, logger, "Failed to update user credentials", err,
 			log.MaskedString(log.LoggerKeyUserID, userID))
 	}
 
-	logger.Debug("Successfully updated user credentials",
+	logger.Debug(ctx, "Successfully updated user credentials",
 		log.MaskedString(log.LoggerKeyUserID, userID),
 		log.Int("credentialTypesCount", len(credentialsMap)))
 	return nil
 }
 
 // DeleteUser delete the user for given user id.
-func (us *userService) DeleteUser(ctx context.Context, userID string) *serviceerror.ServiceError {
+func (us *userService) DeleteUser(ctx context.Context, userID string) *tidcommon.ServiceError {
 	logger := log.GetLogger().With(log.String(log.LoggerKeyComponentName, loggerComponentName))
-	logger.Debug("Deleting user", log.MaskedString(log.LoggerKeyUserID, userID))
+	logger.Debug(ctx, "Deleting user", log.MaskedString(log.LoggerKeyUserID, userID))
 
 	if userID == "" {
 		return &ErrorMissingUserID
@@ -741,13 +787,13 @@ func (us *userService) DeleteUser(ctx context.Context, userID string) *serviceer
 	existingEntity, err := us.entityService.GetEntity(ctx, userID)
 	if err != nil {
 		if errors.Is(err, entity.ErrEntityNotFound) {
-			logger.Debug("User not found", log.MaskedString(log.LoggerKeyUserID, userID))
+			logger.Debug(ctx, "User not found", log.MaskedString(log.LoggerKeyUserID, userID))
 			return &ErrorUserNotFound
 		}
-		return logErrorAndReturnServerError(logger, "Failed to retrieve user", err,
+		return logErrorAndReturnServerError(ctx, logger, "Failed to retrieve user", err,
 			log.MaskedString(log.LoggerKeyUserID, userID))
 	}
-	if existingEntity.Category != entity.EntityCategoryUser {
+	if existingEntity.Category != providers.EntityCategoryUser {
 		return &ErrorUserNotFound
 	}
 	existingUser := entityToUser(existingEntity)
@@ -763,18 +809,139 @@ func (us *userService) DeleteUser(ctx context.Context, userID string) *serviceer
 		return svcErr
 	}
 
-	err = us.entityService.DeleteEntity(ctx, userID)
-	if err != nil {
-		if errors.Is(err, entity.ErrEntityNotFound) {
-			logger.Debug("User not found", log.MaskedString(log.LoggerKeyUserID, userID))
-			return &ErrorUserNotFound
-		}
-		return logErrorAndReturnServerError(logger, "Failed to delete user", err,
+	// Refuse deletion while other resources block it (e.g. agents owned by the user).
+	if svcErr := us.ensureNoBlockingDependencies(ctx, userID, logger); svcErr != nil {
+		return svcErr
+	}
+
+	// Remove dependents that must be deleted with the user (e.g. role assignments). Run before the
+	// entity delete so a cleanup failure aborts the operation and leaves the user retriable. The
+	// registry is guaranteed non-nil here because ensureNoBlockingDependencies fails closed otherwise.
+	if _, err = us.dependencyRegistry.CascadeDelete(ctx, resourcedependency.ResourceTypeUser, userID); err != nil {
+		return logErrorAndReturnServerError(ctx, logger, "Failed to cascade-delete user dependencies", err,
 			log.MaskedString(log.LoggerKeyUserID, userID))
 	}
 
-	logger.Debug("Successfully deleted user", log.MaskedString(log.LoggerKeyUserID, userID))
+	err = us.entityService.DeleteEntity(ctx, userID)
+	if err != nil {
+		if errors.Is(err, entity.ErrEntityNotFound) {
+			logger.Debug(ctx, "User not found", log.MaskedString(log.LoggerKeyUserID, userID))
+			return &ErrorUserNotFound
+		}
+		return logErrorAndReturnServerError(ctx, logger, "Failed to delete user", err,
+			log.MaskedString(log.LoggerKeyUserID, userID))
+	}
+
+	logger.Debug(ctx, "Successfully deleted user", log.MaskedString(log.LoggerKeyUserID, userID))
 	return nil
+}
+
+// ensureNoBlockingDependencies refuses deletion when other resources depend on the user in a way
+// that forbids it (behaviorOnDelete == restrict), such as agents that list the user as their owner.
+// Because deletion is destructive, it fails closed: if dependency data cannot be determined, the
+// deletion is refused rather than allowed.
+func (us *userService) ensureNoBlockingDependencies(
+	ctx context.Context, userID string, logger *log.Logger) *tidcommon.ServiceError {
+	if us.dependencyRegistry == nil {
+		logger.Error(ctx, "Dependency registry not set; refusing to delete user",
+			log.MaskedString(log.LoggerKeyUserID, userID))
+		return &tidcommon.InternalServerError
+	}
+
+	deps, err := us.dependencyRegistry.GetDependencies(ctx, resourcedependency.ResourceTypeUser, userID)
+	if err != nil {
+		return logErrorAndReturnServerError(ctx, logger, "Failed to evaluate user dependencies", err,
+			log.MaskedString(log.LoggerKeyUserID, userID))
+	}
+	// Fail closed: nil TotalResults means a provider failed to report, so usage is unknown.
+	if deps == nil || deps.TotalResults == nil {
+		logger.Error(ctx, "User dependency data unavailable; refusing to delete user",
+			log.MaskedString(log.LoggerKeyUserID, userID))
+		return &tidcommon.InternalServerError
+	}
+
+	blocking := resourcedependency.BlockingUsages(deps)
+	if len(blocking) == 0 {
+		return nil
+	}
+
+	logger.Debug(ctx, "User has blocking dependencies; deletion refused",
+		log.MaskedString(log.LoggerKeyUserID, userID), log.Int("blockingCount", len(blocking)))
+	return tidcommon.CustomServiceError(ErrorUserHasBlockingDependencies, tidcommon.I18nMessage{
+		Key: "error.userservice.user_has_blocking_dependencies_description",
+		DefaultValue: fmt.Sprintf(
+			"The user cannot be deleted because %s depend on it. Remove or reassign them first.",
+			summarizeBlockingUsages(blocking)),
+	})
+}
+
+// summarizeBlockingUsages renders a deterministic, human-readable summary of blocking dependencies
+// grouped by resource type, e.g. "2 agent(s)".
+func summarizeBlockingUsages(usages []resourcedependency.ResourceDependency) string {
+	counts := make(map[string]int)
+	for _, u := range usages {
+		counts[u.ResourceType]++
+	}
+	types := make([]string, 0, len(counts))
+	for rt := range counts {
+		types = append(types, rt)
+	}
+	sort.Strings(types)
+	parts := make([]string, 0, len(types))
+	for _, rt := range types {
+		parts = append(parts, fmt.Sprintf("%d %s(s)", counts[rt], rt))
+	}
+	return strings.Join(parts, ", ")
+}
+
+// SetDependencyRegistry injects the dependency registry. Called by servicemanager after the
+// provider services are initialized to avoid a cyclic import.
+func (us *userService) SetDependencyRegistry(r resourcedependency.Registry) {
+	us.dependencyRegistry = r
+}
+
+// GetUserUsages returns the resources that reference this user, such as agents that list the user
+// as their owner. It is informational — it drives the pre-delete confirmation dialog and does not
+// gate deletion on the server.
+func (us *userService) GetUserUsages(
+	ctx context.Context, userID string,
+) (*resourcedependency.DependenciesResponse, *tidcommon.ServiceError) {
+	logger := log.GetLogger().With(log.String(log.LoggerKeyComponentName, loggerComponentName))
+
+	if userID == "" {
+		return nil, &ErrorMissingUserID
+	}
+
+	existingEntity, err := us.entityService.GetEntity(ctx, userID)
+	if err != nil {
+		if errors.Is(err, entity.ErrEntityNotFound) {
+			return nil, &ErrorUserNotFound
+		}
+		return nil, logErrorAndReturnServerError(ctx, logger, "Failed to retrieve user", err,
+			log.MaskedString(log.LoggerKeyUserID, userID))
+	}
+	if existingEntity.Category != providers.EntityCategoryUser {
+		return nil, &ErrorUserNotFound
+	}
+
+	if us.dependencyRegistry == nil {
+		logger.Warn(ctx, "Dependency registry not set; returning unknown dependencies",
+			log.MaskedString(log.LoggerKeyUserID, userID))
+		return &resourcedependency.DependenciesResponse{
+			TotalResults: nil,
+			Count:        0,
+			Summary:      nil,
+			Usages:       []resourcedependency.ResourceDependency{},
+		}, nil
+	}
+
+	result, err := us.dependencyRegistry.GetDependencies(ctx, resourcedependency.ResourceTypeUser, userID)
+	if err != nil {
+		return nil, logErrorAndReturnServerError(ctx, logger, "Failed to get user usages", err,
+			log.MaskedString(log.LoggerKeyUserID, userID))
+	}
+
+	return result, nil
 }
 
 // populateUserDisplayNames resolves display names for a slice of users in-place.
@@ -810,7 +977,7 @@ func (us *userService) populateOUHandles(ctx context.Context, users []User, logg
 
 	handleMap, svcErr := us.ouService.GetOrganizationUnitHandlesByIDs(ctx, ouIDs)
 	if svcErr != nil {
-		logger.Warn("Failed to resolve OU handles, skipping", log.Any("error", svcErr))
+		logger.Warn(ctx, "Failed to resolve OU handles, skipping", log.Any("error", svcErr))
 		return
 	}
 
@@ -824,7 +991,7 @@ func (us *userService) populateOUHandles(ctx context.Context, users []User, logg
 // validateOrganizationUnitForUserType ensures that the organization unit ID is valid and belongs to the user type.
 func (us *userService) validateOrganizationUnitForUserType(
 	ctx context.Context, userType, oUID string, logger *log.Logger,
-) *serviceerror.ServiceError {
+) *tidcommon.ServiceError {
 	if strings.TrimSpace(userType) == "" {
 		return &ErrorEntityTypeNotFound
 	}
@@ -834,17 +1001,17 @@ func (us *userService) validateOrganizationUnitForUserType(
 	}
 
 	if us.ouService == nil {
-		logger.Error("Organization unit service is not configured for user operations")
-		return &serviceerror.InternalServerError
+		logger.Error(ctx, "Organization unit service is not configured for user operations")
+		return &tidcommon.InternalServerError
 	}
 
 	exists, svcErr := us.ouService.IsOrganizationUnitExists(ctx, oUID)
 	if svcErr != nil {
-		return mapOUServiceError(
+		return mapOUServiceError(ctx,
 			svcErr,
 			logger,
 			"verifying organization unit existence",
-			map[string]*serviceerror.ServiceError{
+			map[string]*tidcommon.ServiceError{
 				oupkg.ErrorOrganizationUnitNotFound.Code: &ErrorOrganizationUnitNotFound,
 				oupkg.ErrorInvalidRequestFormat.Code:     &ErrorInvalidOUID,
 				oupkg.ErrorMissingOUID.Code:              &ErrorInvalidOUID,
@@ -857,8 +1024,8 @@ func (us *userService) validateOrganizationUnitForUserType(
 	}
 
 	if us.entityTypeService == nil {
-		logger.Error("Entity type service is not configured for user operations")
-		return &serviceerror.InternalServerError
+		logger.Error(ctx, "Entity type service is not configured for user operations")
+		return &tidcommon.InternalServerError
 	}
 
 	entityType, svcErr := us.entityTypeService.GetEntityTypeByName(ctx,
@@ -867,14 +1034,14 @@ func (us *userService) validateOrganizationUnitForUserType(
 		if svcErr.Code == entitytype.ErrorEntityTypeNotFound.Code {
 			return &ErrorEntityTypeNotFound
 		}
-		logger.Error("Failed to retrieve user type",
+		logger.Error(ctx, "Failed to retrieve user type",
 			log.String("userType", userType), log.Any("error", svcErr))
-		return &serviceerror.InternalServerError
+		return &tidcommon.InternalServerError
 	}
 
 	if entityType == nil {
-		logger.Error("Entity type service returned nil response", log.String("userType", userType))
-		return &serviceerror.InternalServerError
+		logger.Error(ctx, "Entity type service returned nil response", log.String("userType", userType))
+		return &tidcommon.InternalServerError
 	}
 
 	if entityType.OUID == oUID {
@@ -883,11 +1050,11 @@ func (us *userService) validateOrganizationUnitForUserType(
 
 	isParent, svcErr := us.ouService.IsParent(ctx, entityType.OUID, oUID)
 	if svcErr != nil {
-		return mapOUServiceError(
+		return mapOUServiceError(ctx,
 			svcErr,
 			logger,
 			"validating organization unit hierarchy",
-			map[string]*serviceerror.ServiceError{
+			map[string]*tidcommon.ServiceError{
 				oupkg.ErrorOrganizationUnitNotFound.Code: &ErrorOrganizationUnitNotFound,
 			},
 			log.String("userType", userType),
@@ -897,7 +1064,7 @@ func (us *userService) validateOrganizationUnitForUserType(
 	}
 
 	if !isParent {
-		logger.Debug("Organization unit mismatch for user type",
+		logger.Debug(ctx, "Organization unit mismatch for user type",
 			log.String("userType", userType),
 			log.String("oUID", oUID),
 			log.String("schemaOUID", entityType.OUID))
@@ -908,7 +1075,7 @@ func (us *userService) validateOrganizationUnitForUserType(
 }
 
 // validateAndProcessHandlePath validates and processes the handle path.
-func validateAndProcessHandlePath(handlePath string) *serviceerror.ServiceError {
+func validateAndProcessHandlePath(handlePath string) *tidcommon.ServiceError {
 	if strings.TrimSpace(handlePath) == "" {
 		return &ErrorInvalidHandlePath
 	}
@@ -927,7 +1094,7 @@ func validateAndProcessHandlePath(handlePath string) *serviceerror.ServiceError 
 }
 
 // validatePaginationParams validates pagination parameters.
-func validatePaginationParams(limit, offset int) *serviceerror.ServiceError {
+func validatePaginationParams(limit, offset int) *tidcommon.ServiceError {
 	if limit < 1 || limit > serverconst.MaxPageSize {
 		return &ErrorInvalidLimit
 	}
@@ -938,23 +1105,23 @@ func validatePaginationParams(limit, offset int) *serviceerror.ServiceError {
 }
 
 // logErrorAndReturnServerError logs the error and returns a server error.
-func logErrorAndReturnServerError(
+func logErrorAndReturnServerError(ctx context.Context,
 	logger *log.Logger,
 	message string,
 	err error,
 	additionalFields ...log.Field,
-) *serviceerror.ServiceError {
+) *tidcommon.ServiceError {
 	fields := additionalFields
 	if err != nil {
 		fields = append(fields, log.Error(err))
 	}
-	logger.Error(message, fields...)
-	return &serviceerror.InternalServerError
+	logger.Error(ctx, message, fields...)
+	return &tidcommon.InternalServerError
 }
 
 // mapEntityError maps entity service errors to user service errors.
 // Returns nil if the error is not a recognized entity error.
-func mapEntityError(err error) *serviceerror.ServiceError {
+func mapEntityError(err error) *tidcommon.ServiceError {
 	switch {
 	case errors.Is(err, entity.ErrEntityNotFound):
 		return &ErrorUserNotFound
@@ -972,13 +1139,13 @@ func mapEntityError(err error) *serviceerror.ServiceError {
 }
 
 // mapOUServiceError converts organization unit service errors to user service errors.
-func mapOUServiceError(
-	svcErr *serviceerror.ServiceError,
+func mapOUServiceError(ctx context.Context,
+	svcErr *tidcommon.ServiceError,
 	logger *log.Logger,
 	context string,
-	mappings map[string]*serviceerror.ServiceError,
+	mappings map[string]*tidcommon.ServiceError,
 	fields ...log.Field,
-) *serviceerror.ServiceError {
+) *tidcommon.ServiceError {
 	if svcErr == nil {
 		return nil
 	}
@@ -987,31 +1154,32 @@ func mapOUServiceError(
 		return mappedErr
 	}
 
-	if svcErr.Type == serviceerror.ClientErrorType {
+	if svcErr.Type == tidcommon.ClientErrorType {
 		logFields := append([]log.Field{}, fields...)
 		logFields = append(logFields, log.Any("error", svcErr))
-		logger.Error(fmt.Sprintf("Unexpected organization unit client error while %s", context), logFields...)
-		return &serviceerror.InternalServerError
+		logger.Error(ctx, fmt.Sprintf("Unexpected organization unit client error while %s", context),
+			logFields...)
+		return &tidcommon.InternalServerError
 	}
 
 	logFields := append([]log.Field{}, fields...)
 	logFields = append(logFields, log.Any("error", svcErr))
-	logger.Error(fmt.Sprintf("Organization unit service error while %s", context), logFields...)
-	return &serviceerror.InternalServerError
+	logger.Error(ctx, fmt.Sprintf("Organization unit service error while %s", context), logFields...)
+	return &tidcommon.InternalServerError
 }
 
 // checkUserDeclarative checks if a user is declarative and returns an error if it is.
 func (us *userService) checkUserDeclarative(
 	ctx context.Context, userID string, logger *log.Logger,
-) *serviceerror.ServiceError {
+) *tidcommon.ServiceError {
 	isDeclarative, err := us.entityService.IsEntityDeclarative(ctx, userID)
 	if err != nil {
 		if errors.Is(err, entity.ErrEntityNotFound) {
 			return &ErrorUserNotFound
 		}
-		logger.Error("Failed to check if user is declarative",
+		logger.Error(ctx, "Failed to check if user is declarative",
 			log.MaskedString(log.LoggerKeyUserID, userID), log.Error(err))
-		return &serviceerror.InternalServerError
+		return &tidcommon.InternalServerError
 	}
 	if isDeclarative {
 		return &ErrorCannotModifyDeclarativeResource
@@ -1022,18 +1190,18 @@ func (us *userService) checkUserDeclarative(
 // checkUserAccess validates that the caller is authorized to perform the given action on a user.
 func (us *userService) checkUserAccess(
 	ctx context.Context, action security.Action, ouID string, resourceID string,
-) *serviceerror.ServiceError {
+) *tidcommon.ServiceError {
 	logger := log.GetLogger().With(log.String(log.LoggerKeyComponentName, loggerComponentName))
 
 	allowed, svcErr := us.authzService.IsActionAllowed(ctx, action,
 		&sysauthz.ActionContext{ResourceType: security.ResourceTypeUser, OUID: ouID, ResourceID: resourceID})
 	if svcErr != nil {
-		logger.Error("Failed to check authorization for action",
+		logger.Error(ctx, "Failed to check authorization for action",
 			log.String("action", string(action)), log.Any("error", svcErr))
-		return &serviceerror.InternalServerError
+		return &tidcommon.InternalServerError
 	}
 	if !allowed {
-		return &serviceerror.ErrorUnauthorized
+		return &tidcommon.ErrorUnauthorized
 	}
 	return nil
 }
@@ -1049,16 +1217,16 @@ func buildTreePaginationLinks(handlePath string, limit, offset, totalResults int
 // If both ou_id and ou_handle are provided, ou_id wins and a warning is logged.
 func (us *userService) ResolveUserOUHandle(
 	ctx context.Context, user *User,
-) *serviceerror.ServiceError {
+) *tidcommon.ServiceError {
 	if user.OUID != "" && user.OUHandle != "" {
 		logger := log.GetLogger().With(log.String(log.LoggerKeyComponentName, loggerComponentName))
-		logger.Warn("Both ou_id and ou_handle provided for user; ou_handle ignored",
+		logger.Warn(ctx, "Both ouId and ouHandle provided for user; ouHandle ignored",
 			log.MaskedString(log.LoggerKeyUserID, user.ID))
 		return nil
 	}
 	if user.OUID == "" && user.OUHandle != "" {
 		if us.ouService == nil {
-			return &serviceerror.InternalServerError
+			return &tidcommon.InternalServerError
 		}
 		ou, svcErr := us.ouService.GetOrganizationUnitByPath(
 			security.WithRuntimeContext(ctx), user.OUHandle)

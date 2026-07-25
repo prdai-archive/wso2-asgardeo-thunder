@@ -58,10 +58,6 @@ spec:
           value: {{ .Values.cache.size | quote }}
         - key: CACHE_TTL
           value: {{ .Values.cache.ttl | quote }}
-        - key: CONSENT_ENABLED
-          value: {{ .Values.consent.enabled | quote }}
-        - key: CONSENT_BASE_URL
-          value: {{ .Values.consent.baseUrl | quote }}
         - key: GATE_CLIENT_BASE
           value: {{ .Values.gate.clientBase | quote }}
         - key: CONSOLE_CLIENT_BASE
@@ -70,18 +66,18 @@ spec:
           value: {{ .Values.console.clientId | quote }}
         - key: CONSOLE_SCOPES
           value: {{ .Values.console.scopes | quote }}
-        - key: CORS_ALLOWED_ORIGINS
-          value: {{ .Values.cors.allowed_origins | toJson | quote }}
         - key: GATE_CLIENT_PORT
           value: {{ .Values.gate.port | quote }}
         - key: GATE_CLIENT_SCHEME
           value: {{ .Values.gate.scheme | quote }}
         - key: DB_CONFIG_PATH
-          value: {{ .Values.database.config.path | default "repository/database/config.db" | quote }}
-        - key: DB_RUNTIME_PATH
-          value: {{ .Values.database.runtime.path | default "repository/database/runtime.db" | quote }}
-        - key: DB_USER_PATH
-          value: {{ .Values.database.user.path | default "repository/database/user.db" | quote }}
+          value: {{ .Values.database.config.path | default "database/configdb.db" | quote }}
+        - key: DB_RUNTIME_TRANSIENT_PATH
+          value: {{ .Values.database.runtime_transient.path | default "database/runtime_transient.db" | quote }}
+        - key: DB_ENTITY_PATH
+          value: {{ .Values.database.entity.path | default "database/entitydb.db" | quote }}
+        - key: DB_RUNTIME_PERSISTENT_PATH
+          value: {{ .Values.database.runtime_persistent.path | default "database/runtime_persistent.db" | quote }}
         - key: CRYPTO_ENCRYPTION_KEY
           value: {{ .Values.crypto.encryption.key | quote }}
     endpoints:

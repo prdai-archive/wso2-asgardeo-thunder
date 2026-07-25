@@ -19,25 +19,17 @@
 package executor
 
 import (
-	i18ncore "github.com/thunder-id/thunderid/internal/system/i18n/core"
+	tidcommon "github.com/thunder-id/thunderid/pkg/thunderidengine/common"
+	"github.com/thunder-id/thunderid/pkg/thunderidengine/providers"
 
-	"encoding/json"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/suite"
 
-	authncm "github.com/thunder-id/thunderid/internal/authn/common"
 	"github.com/thunder-id/thunderid/internal/authn/passkey"
-	authnprovidermgr "github.com/thunder-id/thunderid/internal/authnprovider/manager"
-	"github.com/thunder-id/thunderid/internal/entityprovider"
-	"github.com/thunder-id/thunderid/internal/flow/common"
-	"github.com/thunder-id/thunderid/internal/flow/core"
-	"github.com/thunder-id/thunderid/internal/system/error/serviceerror"
-	"github.com/thunder-id/thunderid/tests/mocks/authn/passkeymock"
 	"github.com/thunder-id/thunderid/tests/mocks/authnprovider/managermock"
-	"github.com/thunder-id/thunderid/tests/mocks/entityprovidermock"
 	"github.com/thunder-id/thunderid/tests/mocks/flow/coremock"
 )
 
@@ -51,13 +43,17 @@ const (
 	testCredentialIDValue = "credential-id-xyz"
 )
 
+func newPasskeyAuthenticatedUser() providers.AuthUser {
+	var authUser providers.AuthUser
+	_ = authUser.UnmarshalJSON([]byte(`{"default":{"entityReferenceToken":"tok","attributeToken":"tok"}}`))
+	return authUser
+}
+
 type PasskeyAuthExecutorTestSuite struct {
 	suite.Suite
-	mockPasskeyService *passkeymock.WebAuthnAuthnServiceInterfaceMock
-	mockAuthnProvider  *managermock.AuthnProviderManagerInterfaceMock
-	mockFlowFactory    *coremock.FlowFactoryInterfaceMock
-	mockEntityProvider *entityprovidermock.EntityProviderInterfaceMock
-	executor           *passkeyAuthExecutor
+	mockAuthnProvider *managermock.AuthnProviderManagerMock
+	mockFlowFactory   *coremock.FlowFactoryInterfaceMock
+	executor          *passkeyAuthExecutor
 }
 
 func TestPasskeyAuthExecutorSuite(t *testing.T) {
@@ -65,64 +61,56 @@ func TestPasskeyAuthExecutorSuite(t *testing.T) {
 }
 
 func (suite *PasskeyAuthExecutorTestSuite) SetupTest() {
-	suite.mockPasskeyService = passkeymock.NewWebAuthnAuthnServiceInterfaceMock(suite.T())
-	suite.mockAuthnProvider = managermock.NewAuthnProviderManagerInterfaceMock(suite.T())
+	suite.mockAuthnProvider = managermock.NewAuthnProviderManagerMock(suite.T())
 	suite.mockFlowFactory = coremock.NewFlowFactoryInterfaceMock(suite.T())
-	suite.mockEntityProvider = entityprovidermock.NewEntityProviderInterfaceMock(suite.T())
-
-	// Create mock identifying executor
-	identifyingMock := createMockIdentifyingExecutor(suite.T())
-	suite.mockFlowFactory.On("CreateExecutor", ExecutorNameIdentifying, common.ExecutorTypeUtility,
-		mock.Anything, mock.Anything).Return(identifyingMock).Maybe()
 
 	// Create mock passkey executor base
 	mockExec := createMockPasskeyAuthExecutor(suite.T())
-	suite.mockFlowFactory.On("CreateExecutor", ExecutorNamePasskeyAuth, common.ExecutorTypeAuthentication,
-		mock.Anything, mock.Anything).Return(mockExec)
+	suite.mockFlowFactory.On("CreateExecutor", ExecutorNamePasskeyAuth, providers.ExecutorTypeAuthentication,
+		mock.Anything, mock.Anything, mock.Anything).Return(mockExec)
 
-	suite.executor = newPasskeyAuthExecutor(suite.mockFlowFactory,
-		suite.mockPasskeyService, suite.mockAuthnProvider, suite.mockEntityProvider)
+	suite.executor = newPasskeyAuthExecutor(suite.mockFlowFactory, suite.mockAuthnProvider)
 }
 
-func createMockPasskeyAuthExecutor(t *testing.T) core.ExecutorInterface {
+func createMockPasskeyAuthExecutor(t *testing.T) providers.Executor {
 	mockExec := coremock.NewExecutorInterfaceMock(t)
 	mockExec.On("GetName").Return(ExecutorNamePasskeyAuth).Maybe()
-	mockExec.On("GetType").Return(common.ExecutorTypeAuthentication).Maybe()
-	mockExec.On("GetDefaultInputs").Return([]common.Input{
+	mockExec.On("GetType").Return(providers.ExecutorTypeAuthentication).Maybe()
+	mockExec.On("GetDefaultInputs").Return([]providers.Input{
 		{Identifier: inputCredentialID, Type: "string", Required: true},
 		{Identifier: inputClientDataJSON, Type: "string", Required: true},
 		{Identifier: inputAuthenticatorData, Type: "string", Required: true},
 		{Identifier: inputSignature, Type: "string", Required: true},
 		{Identifier: inputUserHandle, Type: "string", Required: false},
 	}).Maybe()
-	mockExec.On("GetPrerequisites").Return([]common.Input{
+	mockExec.On("GetPrerequisites").Return([]providers.Input{
 		{Identifier: userAttributeUserID, Type: "string", Required: true},
 	}).Maybe()
-	mockExec.On("GetRequiredInputs", mock.Anything).Return([]common.Input{
+	mockExec.On("GetRequiredInputs", mock.Anything).Return([]providers.Input{
 		{Identifier: inputCredentialID, Type: "string", Required: true},
 		{Identifier: inputClientDataJSON, Type: "string", Required: true},
 		{Identifier: inputAuthenticatorData, Type: "string", Required: true},
 		{Identifier: inputSignature, Type: "string", Required: true},
 	}).Maybe()
 	mockExec.On("HasRequiredInputs", mock.Anything, mock.Anything).Return(
-		func(ctx *core.NodeContext, execResp *common.ExecutorResponse) bool {
+		func(ctx *providers.NodeContext, execResp *providers.ExecutorResponse) bool {
 			// Check if all required inputs are present
 			requiredInputs := []string{inputCredentialID, inputClientDataJSON, inputAuthenticatorData, inputSignature}
 			for _, input := range requiredInputs {
 				if _, exists := ctx.UserInputs[input]; !exists {
-					execResp.Status = common.ExecUserInputRequired
+					execResp.Status = providers.ExecUserInputRequired
 					return false
 				}
 			}
 			return true
 		}).Maybe()
-	mockExec.On("ValidatePrerequisites", mock.Anything, mock.Anything).Return(true).Maybe()
-	mockExec.On("GetUserIDFromContext", mock.Anything).Return(
-		func(ctx *core.NodeContext) string {
-			// Check AuthenticatedUser first, then RuntimeData, then UserInputs
-			if ctx.AuthenticatedUser.UserID != "" {
-				return ctx.AuthenticatedUser.UserID
-			}
+	mockExec.On("ValidatePrerequisites", mock.Anything, mock.Anything, mock.Anything).Return(true).Maybe()
+	mockExec.On("GetUserIDFromContext", mock.Anything, mock.Anything, mock.Anything).Return(
+		func(
+			ctx *providers.NodeContext,
+			execResp *providers.ExecutorResponse,
+			_ providers.AuthnProviderManager,
+		) string {
 			if userID, ok := ctx.RuntimeData[userAttributeUserID]; ok {
 				return userID
 			}
@@ -135,8 +123,8 @@ func createMockPasskeyAuthExecutor(t *testing.T) core.ExecutorInterface {
 }
 
 // Helper to create a node context with common properties
-func createPasskeyNodeContext(mode string, flowType common.FlowType) *core.NodeContext {
-	return &core.NodeContext{
+func createPasskeyNodeContext(mode string, flowType providers.FlowType) *providers.NodeContext {
+	return &providers.NodeContext{
 		ExecutionID:  testPasskeyFlowID,
 		FlowType:     flowType,
 		ExecutorMode: mode,
@@ -151,12 +139,11 @@ func createPasskeyNodeContext(mode string, flowType common.FlowType) *core.NodeC
 
 func (suite *PasskeyAuthExecutorTestSuite) TestNewPasskeyAuthExecutor() {
 	assert.NotNil(suite.T(), suite.executor)
-	assert.NotNil(suite.T(), suite.executor.passkeyService)
-	assert.NotNil(suite.T(), suite.executor.entityProvider)
+	assert.NotNil(suite.T(), suite.executor.authnProvider)
 }
 
 func (suite *PasskeyAuthExecutorTestSuite) TestExecute_InvalidMode() {
-	ctx := createPasskeyNodeContext("invalid_mode", common.FlowTypeAuthentication)
+	ctx := createPasskeyNodeContext("invalid_mode", providers.FlowTypeAuthentication)
 	ctx.RuntimeData[userAttributeUserID] = testPasskeyUserID
 
 	resp, err := suite.executor.Execute(ctx)
@@ -167,7 +154,7 @@ func (suite *PasskeyAuthExecutorTestSuite) TestExecute_InvalidMode() {
 }
 
 func (suite *PasskeyAuthExecutorTestSuite) TestExecuteChallenge_Success() {
-	ctx := createPasskeyNodeContext(passkeyExecutorModeChallenge, common.FlowTypeAuthentication)
+	ctx := createPasskeyNodeContext(passkeyExecutorModeChallenge, providers.FlowTypeAuthentication)
 	ctx.RuntimeData[userAttributeUserID] = testPasskeyUserID
 
 	expectedStartData := &passkey.PasskeyAuthenticationStartData{
@@ -177,22 +164,22 @@ func (suite *PasskeyAuthExecutorTestSuite) TestExecuteChallenge_Success() {
 		},
 	}
 
-	suite.mockPasskeyService.On("StartAuthentication", mock.Anything, mock.MatchedBy(
+	suite.mockAuthnProvider.On("InitiateAuthentication", mock.Anything, passkey.CredentialType, mock.MatchedBy(
 		func(req *passkey.PasskeyAuthenticationStartRequest) bool {
 			return req.UserID == testPasskeyUserID && req.RelyingPartyID == testRelyingPartyID
-		})).Return(expectedStartData, nil)
+		}), mock.Anything).Return(expectedStartData, nil)
 
 	resp, err := suite.executor.Execute(ctx)
 
 	assert.NoError(suite.T(), err)
 	assert.NotNil(suite.T(), resp)
-	assert.Equal(suite.T(), common.ExecComplete, resp.Status)
+	assert.Equal(suite.T(), providers.ExecComplete, resp.Status)
 	assert.Equal(suite.T(), testSessionToken, resp.RuntimeData[runtimePasskeySessionToken])
 	assert.NotEmpty(suite.T(), resp.AdditionalData[runtimePasskeyChallenge])
 }
 
 func (suite *PasskeyAuthExecutorTestSuite) TestExecuteChallenge_MissingUserID() {
-	ctx := createPasskeyNodeContext(passkeyExecutorModeChallenge, common.FlowTypeAuthentication)
+	ctx := createPasskeyNodeContext(passkeyExecutorModeChallenge, providers.FlowTypeAuthentication)
 	// Not setting userID in RuntimeData - this triggers usernameless flow
 
 	expectedStartData := &passkey.PasskeyAuthenticationStartData{
@@ -202,24 +189,24 @@ func (suite *PasskeyAuthExecutorTestSuite) TestExecuteChallenge_MissingUserID() 
 		},
 	}
 
-	// Mock passkey service for usernameless authentication (empty UserID)
-	suite.mockPasskeyService.On("StartAuthentication", mock.Anything, mock.MatchedBy(
+	// Mock authn provider for usernameless authentication (empty UserID)
+	suite.mockAuthnProvider.On("InitiateAuthentication", mock.Anything, passkey.CredentialType, mock.MatchedBy(
 		func(req *passkey.PasskeyAuthenticationStartRequest) bool {
 			return req.UserID == "" && req.RelyingPartyID == testRelyingPartyID
-		})).Return(expectedStartData, nil)
+		}), mock.Anything).Return(expectedStartData, nil)
 
 	resp, err := suite.executor.Execute(ctx)
 
 	// Usernameless flow should succeed
 	assert.NoError(suite.T(), err)
 	assert.NotNil(suite.T(), resp)
-	assert.Equal(suite.T(), common.ExecComplete, resp.Status)
+	assert.Equal(suite.T(), providers.ExecComplete, resp.Status)
 	assert.Equal(suite.T(), testSessionToken, resp.RuntimeData[runtimePasskeySessionToken])
 	assert.NotEmpty(suite.T(), resp.AdditionalData[runtimePasskeyChallenge])
 }
 
 func (suite *PasskeyAuthExecutorTestSuite) TestExecuteChallenge_MissingRelyingPartyID() {
-	ctx := createPasskeyNodeContext(passkeyExecutorModeChallenge, common.FlowTypeAuthentication)
+	ctx := createPasskeyNodeContext(passkeyExecutorModeChallenge, providers.FlowTypeAuthentication)
 	ctx.RuntimeData[userAttributeUserID] = testPasskeyUserID
 	ctx.NodeProperties = map[string]interface{}{} // Empty node properties
 
@@ -230,13 +217,14 @@ func (suite *PasskeyAuthExecutorTestSuite) TestExecuteChallenge_MissingRelyingPa
 }
 
 func (suite *PasskeyAuthExecutorTestSuite) TestExecuteChallenge_ServiceError_Client() {
-	ctx := createPasskeyNodeContext(passkeyExecutorModeChallenge, common.FlowTypeAuthentication)
+	ctx := createPasskeyNodeContext(passkeyExecutorModeChallenge, providers.FlowTypeAuthentication)
 	ctx.RuntimeData[userAttributeUserID] = testPasskeyUserID
 
-	suite.mockPasskeyService.On("StartAuthentication", mock.Anything, mock.Anything).Return(
-		nil, &serviceerror.ServiceError{
-			Type: serviceerror.ClientErrorType,
-			ErrorDescription: i18ncore.I18nMessage{
+	suite.mockAuthnProvider.On("InitiateAuthentication", mock.Anything, passkey.CredentialType,
+		mock.Anything, mock.Anything).Return(
+		nil, &tidcommon.ServiceError{
+			Type: tidcommon.ClientErrorType,
+			ErrorDescription: tidcommon.I18nMessage{
 				Key: "error.test.user_has_no_registered_passkeys", DefaultValue: "User has no registered passkeys",
 			},
 		})
@@ -245,18 +233,19 @@ func (suite *PasskeyAuthExecutorTestSuite) TestExecuteChallenge_ServiceError_Cli
 
 	assert.NoError(suite.T(), err)
 	assert.NotNil(suite.T(), resp)
-	assert.Equal(suite.T(), common.ExecFailure, resp.Status)
-	assert.Contains(suite.T(), resp.FailureReason, "User has no registered passkeys")
+	assert.Equal(suite.T(), providers.ExecFailure, resp.Status)
+	assert.Contains(suite.T(), resp.Error.ErrorDescription.DefaultValue, "User has no registered passkeys")
 }
 
 func (suite *PasskeyAuthExecutorTestSuite) TestExecuteChallenge_ServiceError_Server() {
-	ctx := createPasskeyNodeContext(passkeyExecutorModeChallenge, common.FlowTypeAuthentication)
+	ctx := createPasskeyNodeContext(passkeyExecutorModeChallenge, providers.FlowTypeAuthentication)
 	ctx.RuntimeData[userAttributeUserID] = testPasskeyUserID
 
-	suite.mockPasskeyService.On("StartAuthentication", mock.Anything, mock.Anything).Return(
-		nil, &serviceerror.ServiceError{
-			Type: serviceerror.ServerErrorType,
-			ErrorDescription: i18ncore.I18nMessage{
+	suite.mockAuthnProvider.On("InitiateAuthentication", mock.Anything, passkey.CredentialType,
+		mock.Anything, mock.Anything).Return(
+		nil, &tidcommon.ServiceError{
+			Type: tidcommon.ServerErrorType,
+			ErrorDescription: tidcommon.I18nMessage{
 				Key: "error.test.database_connection_failed", DefaultValue: "Database connection failed",
 			},
 		})
@@ -268,7 +257,7 @@ func (suite *PasskeyAuthExecutorTestSuite) TestExecuteChallenge_ServiceError_Ser
 }
 
 func (suite *PasskeyAuthExecutorTestSuite) TestExecuteVerify_Success() {
-	ctx := createPasskeyNodeContext(passkeyExecutorModeVerify, common.FlowTypeAuthentication)
+	ctx := createPasskeyNodeContext(passkeyExecutorModeVerify, providers.FlowTypeAuthentication)
 	ctx.RuntimeData[userAttributeUserID] = testPasskeyUserID
 	ctx.RuntimeData[runtimePasskeySessionToken] = testSessionToken
 	ctx.UserInputs = map[string]string{
@@ -279,33 +268,21 @@ func (suite *PasskeyAuthExecutorTestSuite) TestExecuteVerify_Success() {
 		inputUserHandle:        "user-handle",
 	}
 
-	authResp := &authnprovidermgr.AuthnBasicResult{
-		UserID: testPasskeyUserID,
-	}
+	authenticatedAuthUser := newPasskeyAuthenticatedUser()
 	suite.mockAuthnProvider.On("AuthenticateUser", mock.Anything, mock.Anything, mock.Anything,
-		mock.Anything, mock.Anything, mock.Anything).Return(authnprovidermgr.AuthUser{}, authResp, nil)
-
-	attrs := map[string]interface{}{"email": "test@example.com"}
-	attrsJSON, _ := json.Marshal(attrs)
-	testUser := &entityprovider.Entity{
-		ID:         testPasskeyUserID,
-		OUID:       "ou-123",
-		Type:       "INTERNAL",
-		Attributes: attrsJSON,
-	}
-	suite.mockEntityProvider.On("GetEntity", testPasskeyUserID).Return(testUser, nil)
+		mock.Anything, mock.Anything, mock.Anything).
+		Return(authenticatedAuthUser, providers.AuthenticatedClaims{}, nil)
 
 	resp, err := suite.executor.Execute(ctx)
 
 	assert.NoError(suite.T(), err)
 	assert.NotNil(suite.T(), resp)
-	assert.Equal(suite.T(), common.ExecComplete, resp.Status)
-	assert.True(suite.T(), resp.AuthenticatedUser.IsAuthenticated)
-	assert.Equal(suite.T(), testPasskeyUserID, resp.AuthenticatedUser.UserID)
+	assert.Equal(suite.T(), providers.ExecComplete, resp.Status)
+	assert.True(suite.T(), resp.AuthUser.IsAuthenticated())
 }
 
 func (suite *PasskeyAuthExecutorTestSuite) TestExecuteVerify_MissingInputs() {
-	ctx := createPasskeyNodeContext(passkeyExecutorModeVerify, common.FlowTypeAuthentication)
+	ctx := createPasskeyNodeContext(passkeyExecutorModeVerify, providers.FlowTypeAuthentication)
 	ctx.RuntimeData[userAttributeUserID] = testPasskeyUserID
 	ctx.RuntimeData[runtimePasskeySessionToken] = testSessionToken
 	// Empty UserInputs triggers UserInputRequired
@@ -314,11 +291,11 @@ func (suite *PasskeyAuthExecutorTestSuite) TestExecuteVerify_MissingInputs() {
 
 	assert.NoError(suite.T(), err)
 	assert.NotNil(suite.T(), resp)
-	assert.Equal(suite.T(), common.ExecUserInputRequired, resp.Status)
+	assert.Equal(suite.T(), providers.ExecUserInputRequired, resp.Status)
 }
 
 func (suite *PasskeyAuthExecutorTestSuite) TestExecuteVerify_MissingSessionToken() {
-	ctx := createPasskeyNodeContext(passkeyExecutorModeVerify, common.FlowTypeAuthentication)
+	ctx := createPasskeyNodeContext(passkeyExecutorModeVerify, providers.FlowTypeAuthentication)
 	ctx.RuntimeData[userAttributeUserID] = testPasskeyUserID
 	// Not setting session token
 	ctx.UserInputs = map[string]string{
@@ -335,7 +312,7 @@ func (suite *PasskeyAuthExecutorTestSuite) TestExecuteVerify_MissingSessionToken
 }
 
 func (suite *PasskeyAuthExecutorTestSuite) TestExecuteVerify_InvalidPasskey_ClientError() {
-	ctx := createPasskeyNodeContext(passkeyExecutorModeVerify, common.FlowTypeAuthentication)
+	ctx := createPasskeyNodeContext(passkeyExecutorModeVerify, providers.FlowTypeAuthentication)
 	ctx.RuntimeData[userAttributeUserID] = testPasskeyUserID
 	ctx.RuntimeData[runtimePasskeySessionToken] = testSessionToken
 	ctx.UserInputs = map[string]string{
@@ -347,9 +324,9 @@ func (suite *PasskeyAuthExecutorTestSuite) TestExecuteVerify_InvalidPasskey_Clie
 
 	suite.mockAuthnProvider.On("AuthenticateUser", mock.Anything, mock.Anything, mock.Anything,
 		mock.Anything, mock.Anything, mock.Anything).Return(
-		authnprovidermgr.AuthUser{}, (*authnprovidermgr.AuthnBasicResult)(nil), &serviceerror.ServiceError{
-			Type: serviceerror.ClientErrorType,
-			ErrorDescription: i18ncore.I18nMessage{
+		providers.AuthUser{}, (providers.AuthenticatedClaims)(nil), &tidcommon.ServiceError{
+			Type: tidcommon.ClientErrorType,
+			ErrorDescription: tidcommon.I18nMessage{
 				Key: "error.test.invalid_signature", DefaultValue: "Invalid signature",
 			},
 		})
@@ -358,8 +335,8 @@ func (suite *PasskeyAuthExecutorTestSuite) TestExecuteVerify_InvalidPasskey_Clie
 
 	assert.NoError(suite.T(), err)
 	assert.NotNil(suite.T(), resp)
-	assert.Equal(suite.T(), common.ExecUserInputRequired, resp.Status)
-	assert.Contains(suite.T(), resp.FailureReason, "invalid passkey credentials")
+	assert.Equal(suite.T(), providers.ExecUserInputRequired, resp.Status)
+	assert.Equal(suite.T(), ErrInvalidPasskey.Error.DefaultValue, resp.Error.Error.DefaultValue)
 	assert.NotEmpty(suite.T(), resp.Inputs)
 	inputIDs := make([]string, 0, len(resp.Inputs))
 	for _, input := range resp.Inputs {
@@ -372,7 +349,7 @@ func (suite *PasskeyAuthExecutorTestSuite) TestExecuteVerify_InvalidPasskey_Clie
 }
 
 func (suite *PasskeyAuthExecutorTestSuite) TestExecuteVerify_ServiceError_Server() {
-	ctx := createPasskeyNodeContext(passkeyExecutorModeVerify, common.FlowTypeAuthentication)
+	ctx := createPasskeyNodeContext(passkeyExecutorModeVerify, providers.FlowTypeAuthentication)
 	ctx.RuntimeData[userAttributeUserID] = testPasskeyUserID
 	ctx.RuntimeData[runtimePasskeySessionToken] = testSessionToken
 	ctx.UserInputs = map[string]string{
@@ -384,9 +361,9 @@ func (suite *PasskeyAuthExecutorTestSuite) TestExecuteVerify_ServiceError_Server
 
 	suite.mockAuthnProvider.On("AuthenticateUser", mock.Anything, mock.Anything, mock.Anything,
 		mock.Anything, mock.Anything, mock.Anything).Return(
-		authnprovidermgr.AuthUser{}, (*authnprovidermgr.AuthnBasicResult)(nil), &serviceerror.ServiceError{
-			Type:             serviceerror.ServerErrorType,
-			ErrorDescription: i18ncore.I18nMessage{Key: "error.test.database_error", DefaultValue: "Database error"},
+		providers.AuthUser{}, (providers.AuthenticatedClaims)(nil), &tidcommon.ServiceError{
+			Type:             tidcommon.ServerErrorType,
+			ErrorDescription: tidcommon.I18nMessage{Key: "error.test.database_error", DefaultValue: "Database error"},
 		})
 
 	_, err := suite.executor.Execute(ctx)
@@ -396,7 +373,7 @@ func (suite *PasskeyAuthExecutorTestSuite) TestExecuteVerify_ServiceError_Server
 }
 
 func (suite *PasskeyAuthExecutorTestSuite) TestExecuteRegisterStart_Success() {
-	ctx := createPasskeyNodeContext(passkeyExecutorModeRegStart, common.FlowTypeRegistration)
+	ctx := createPasskeyNodeContext(passkeyExecutorModeRegStart, providers.FlowTypeRegistration)
 	ctx.RuntimeData[userAttributeUserID] = testPasskeyUserID
 
 	expectedStartData := &passkey.PasskeyRegistrationStartData{
@@ -406,36 +383,36 @@ func (suite *PasskeyAuthExecutorTestSuite) TestExecuteRegisterStart_Success() {
 		},
 	}
 
-	suite.mockPasskeyService.On("StartRegistration", mock.Anything, mock.MatchedBy(
+	suite.mockAuthnProvider.On("InitiateEnrollment", mock.Anything, passkey.CredentialType, mock.MatchedBy(
 		func(req *passkey.PasskeyRegistrationStartRequest) bool {
 			return req.UserID == testPasskeyUserID &&
 				req.RelyingPartyID == testRelyingPartyID &&
 				req.RelyingPartyName == testRelyingPartyName
-		})).Return(expectedStartData, nil)
+		}), mock.Anything).Return(expectedStartData, nil)
 
 	resp, err := suite.executor.Execute(ctx)
 
 	assert.NoError(suite.T(), err)
 	assert.NotNil(suite.T(), resp)
-	assert.Equal(suite.T(), common.ExecComplete, resp.Status)
+	assert.Equal(suite.T(), providers.ExecComplete, resp.Status)
 	assert.Equal(suite.T(), testSessionToken, resp.RuntimeData[runtimePasskeySessionToken])
 	assert.NotEmpty(suite.T(), resp.AdditionalData[runtimePasskeyCreationOptions])
 }
 
 func (suite *PasskeyAuthExecutorTestSuite) TestExecuteRegisterStart_MissingUserID() {
-	ctx := createPasskeyNodeContext(passkeyExecutorModeRegStart, common.FlowTypeRegistration)
+	ctx := createPasskeyNodeContext(passkeyExecutorModeRegStart, providers.FlowTypeRegistration)
 	// Not setting userID
 
 	resp, err := suite.executor.Execute(ctx)
 
 	assert.NoError(suite.T(), err)
 	assert.NotNil(suite.T(), resp)
-	assert.Equal(suite.T(), common.ExecFailure, resp.Status)
-	assert.Contains(suite.T(), resp.FailureReason, "User ID is required")
+	assert.Equal(suite.T(), providers.ExecFailure, resp.Status)
+	assert.Equal(suite.T(), ErrUserIDRequiredForPasskeyReg.Error.DefaultValue, resp.Error.Error.DefaultValue)
 }
 
 func (suite *PasskeyAuthExecutorTestSuite) TestExecuteRegisterStart_MissingRelyingPartyID() {
-	ctx := createPasskeyNodeContext(passkeyExecutorModeRegStart, common.FlowTypeRegistration)
+	ctx := createPasskeyNodeContext(passkeyExecutorModeRegStart, providers.FlowTypeRegistration)
 	ctx.RuntimeData[userAttributeUserID] = testPasskeyUserID
 	ctx.NodeProperties = map[string]interface{}{} // Empty
 
@@ -446,30 +423,32 @@ func (suite *PasskeyAuthExecutorTestSuite) TestExecuteRegisterStart_MissingRelyi
 }
 
 func (suite *PasskeyAuthExecutorTestSuite) TestExecuteRegisterStart_ServiceError_Client() {
-	ctx := createPasskeyNodeContext(passkeyExecutorModeRegStart, common.FlowTypeRegistration)
+	ctx := createPasskeyNodeContext(passkeyExecutorModeRegStart, providers.FlowTypeRegistration)
 	ctx.RuntimeData[userAttributeUserID] = testPasskeyUserID
 
-	suite.mockPasskeyService.On("StartRegistration", mock.Anything, mock.Anything).Return(
-		nil, &serviceerror.ServiceError{
-			Type:             serviceerror.ClientErrorType,
-			ErrorDescription: i18ncore.I18nMessage{Key: "error.test.user_not_found", DefaultValue: "User not found"},
+	suite.mockAuthnProvider.On("InitiateEnrollment", mock.Anything, passkey.CredentialType,
+		mock.Anything, mock.Anything).Return(
+		nil, &tidcommon.ServiceError{
+			Type:             tidcommon.ClientErrorType,
+			ErrorDescription: tidcommon.I18nMessage{Key: "error.test.user_not_found", DefaultValue: "User not found"},
 		})
 
 	resp, err := suite.executor.Execute(ctx)
 
 	assert.NoError(suite.T(), err)
 	assert.NotNil(suite.T(), resp)
-	assert.Equal(suite.T(), common.ExecFailure, resp.Status)
+	assert.Equal(suite.T(), providers.ExecFailure, resp.Status)
 }
 
 func (suite *PasskeyAuthExecutorTestSuite) TestExecuteRegisterStart_ServiceError_Server() {
-	ctx := createPasskeyNodeContext(passkeyExecutorModeRegStart, common.FlowTypeRegistration)
+	ctx := createPasskeyNodeContext(passkeyExecutorModeRegStart, providers.FlowTypeRegistration)
 	ctx.RuntimeData[userAttributeUserID] = testPasskeyUserID
 
-	suite.mockPasskeyService.On("StartRegistration", mock.Anything, mock.Anything).Return(
-		nil, &serviceerror.ServiceError{
-			Type:             serviceerror.ServerErrorType,
-			ErrorDescription: i18ncore.I18nMessage{Key: "error.test.database_error", DefaultValue: "Database error"},
+	suite.mockAuthnProvider.On("InitiateEnrollment", mock.Anything, passkey.CredentialType,
+		mock.Anything, mock.Anything).Return(
+		nil, &tidcommon.ServiceError{
+			Type:             tidcommon.ServerErrorType,
+			ErrorDescription: tidcommon.I18nMessage{Key: "error.test.database_error", DefaultValue: "Database error"},
 		})
 
 	_, err := suite.executor.Execute(ctx)
@@ -479,7 +458,7 @@ func (suite *PasskeyAuthExecutorTestSuite) TestExecuteRegisterStart_ServiceError
 }
 
 func (suite *PasskeyAuthExecutorTestSuite) TestExecuteRegisterStart_DefaultRelyingPartyName() {
-	ctx := createPasskeyNodeContext(passkeyExecutorModeRegStart, common.FlowTypeRegistration)
+	ctx := createPasskeyNodeContext(passkeyExecutorModeRegStart, providers.FlowTypeRegistration)
 	ctx.RuntimeData[userAttributeUserID] = testPasskeyUserID
 	// Set only relyingPartyId, not relyingPartyName
 	ctx.NodeProperties = map[string]interface{}{
@@ -491,50 +470,46 @@ func (suite *PasskeyAuthExecutorTestSuite) TestExecuteRegisterStart_DefaultRelyi
 		PublicKeyCredentialCreationOptions: passkey.PublicKeyCredentialCreationOptions{},
 	}
 
-	suite.mockPasskeyService.On("StartRegistration", mock.Anything, mock.MatchedBy(
+	suite.mockAuthnProvider.On("InitiateEnrollment", mock.Anything, passkey.CredentialType, mock.MatchedBy(
 		func(req *passkey.PasskeyRegistrationStartRequest) bool {
 			// relyingPartyName should default to relyingPartyId
 			return req.RelyingPartyName == testRelyingPartyID
-		})).Return(expectedStartData, nil)
+		}), mock.Anything).Return(expectedStartData, nil)
 
 	resp, err := suite.executor.Execute(ctx)
 
 	assert.NoError(suite.T(), err)
-	assert.Equal(suite.T(), common.ExecComplete, resp.Status)
+	assert.Equal(suite.T(), providers.ExecComplete, resp.Status)
 }
 
 func (suite *PasskeyAuthExecutorTestSuite) TestExecuteRegisterFinish_Success_RegistrationFlow() {
-	ctx := createPasskeyNodeContext(passkeyExecutorModeRegFinish, common.FlowTypeRegistration)
+	ctx := createPasskeyNodeContext(passkeyExecutorModeRegFinish, providers.FlowTypeRegistration)
 	ctx.RuntimeData[userAttributeUserID] = testPasskeyUserID
 	ctx.RuntimeData[runtimePasskeySessionToken] = testSessionToken
 	ctx.UserInputs = map[string]string{
 		inputCredentialID:      testCredentialIDValue,
 		inputClientDataJSON:    "eyJ0eXBlIjoid2ViYXV0aG4uY3JlYXRlIn0",
 		inputAttestationObject: "attestation-object-data",
-		inputCredentialName:    "My Passkey",
 	}
 
-	finishData := &passkey.PasskeyRegistrationFinishData{
-		CredentialID:   testCredentialIDValue,
-		CredentialName: "My Passkey",
-		CreatedAt:      "2025-01-15T00:00:00Z",
-	}
-	suite.mockPasskeyService.On("FinishRegistration", mock.Anything, mock.Anything).Return(finishData, nil)
+	authUser := newPasskeyAuthenticatedUser()
+	claims := providers.AuthenticatedClaims{userAttributeUserID: testPasskeyUserID}
+	suite.mockAuthnProvider.On("Enroll", mock.Anything, mock.Anything, mock.Anything,
+		mock.Anything, mock.Anything, mock.Anything).Return(authUser, claims, nil)
 
 	resp, err := suite.executor.Execute(ctx)
 
 	assert.NoError(suite.T(), err)
 	assert.NotNil(suite.T(), resp)
-	assert.Equal(suite.T(), common.ExecComplete, resp.Status)
-	assert.Equal(suite.T(), testCredentialIDValue, resp.RuntimeData[runtimePasskeyCredentialID])
-	assert.Equal(suite.T(), "My Passkey", resp.RuntimeData[runtimePasskeyCredentialName])
+	assert.Equal(suite.T(), providers.ExecComplete, resp.Status)
+	// Completing enrollment authenticates the user and surfaces the claims.
+	assert.Equal(suite.T(), testPasskeyUserID, resp.RuntimeData[userAttributeUserID])
 	assert.Equal(suite.T(), "", resp.RuntimeData[runtimePasskeySessionToken]) // Should be cleared
-	// For registration flow, authenticated user should not be set
-	assert.False(suite.T(), resp.AuthenticatedUser.IsAuthenticated)
+	assert.True(suite.T(), resp.AuthUser.IsAuthenticated())
 }
 
 func (suite *PasskeyAuthExecutorTestSuite) TestExecuteRegisterFinish_Success_AuthenticationFlow() {
-	ctx := createPasskeyNodeContext(passkeyExecutorModeRegFinish, common.FlowTypeAuthentication)
+	ctx := createPasskeyNodeContext(passkeyExecutorModeRegFinish, providers.FlowTypeAuthentication)
 	ctx.RuntimeData[userAttributeUserID] = testPasskeyUserID
 	ctx.RuntimeData[runtimePasskeySessionToken] = testSessionToken
 	ctx.UserInputs = map[string]string{
@@ -543,34 +518,21 @@ func (suite *PasskeyAuthExecutorTestSuite) TestExecuteRegisterFinish_Success_Aut
 		inputAttestationObject: "attestation-object",
 	}
 
-	finishData := &passkey.PasskeyRegistrationFinishData{
-		CredentialID:   testCredentialIDValue,
-		CredentialName: "Passkey", // Default name
-		CreatedAt:      "2025-01-15T00:00:00Z",
-	}
-	suite.mockPasskeyService.On("FinishRegistration", mock.Anything, mock.Anything).Return(finishData, nil)
-
-	attrs := map[string]interface{}{"email": "test@example.com"}
-	attrsJSON, _ := json.Marshal(attrs)
-	testUser := &entityprovider.Entity{
-		ID:         testPasskeyUserID,
-		OUID:       "ou-123",
-		Type:       "INTERNAL",
-		Attributes: attrsJSON,
-	}
-	suite.mockEntityProvider.On("GetEntity", testPasskeyUserID).Return(testUser, nil)
+	authUser := newPasskeyAuthenticatedUser()
+	claims := providers.AuthenticatedClaims{userAttributeUserID: testPasskeyUserID}
+	suite.mockAuthnProvider.On("Enroll", mock.Anything, mock.Anything, mock.Anything,
+		mock.Anything, mock.Anything, mock.Anything).Return(authUser, claims, nil)
 
 	resp, err := suite.executor.Execute(ctx)
 
 	assert.NoError(suite.T(), err)
 	assert.NotNil(suite.T(), resp)
-	assert.Equal(suite.T(), common.ExecComplete, resp.Status)
-	assert.True(suite.T(), resp.AuthenticatedUser.IsAuthenticated)
-	assert.Equal(suite.T(), testPasskeyUserID, resp.AuthenticatedUser.UserID)
+	assert.Equal(suite.T(), providers.ExecComplete, resp.Status)
+	assert.True(suite.T(), resp.AuthUser.IsAuthenticated())
 }
 
 func (suite *PasskeyAuthExecutorTestSuite) TestExecuteRegisterFinish_MissingInputs() {
-	ctx := createPasskeyNodeContext(passkeyExecutorModeRegFinish, common.FlowTypeRegistration)
+	ctx := createPasskeyNodeContext(passkeyExecutorModeRegFinish, providers.FlowTypeRegistration)
 	ctx.RuntimeData[userAttributeUserID] = testPasskeyUserID
 	ctx.RuntimeData[runtimePasskeySessionToken] = testSessionToken
 	// Empty UserInputs — all required inputs are missing
@@ -579,7 +541,7 @@ func (suite *PasskeyAuthExecutorTestSuite) TestExecuteRegisterFinish_MissingInpu
 
 	assert.NoError(suite.T(), err)
 	assert.NotNil(suite.T(), resp)
-	assert.Equal(suite.T(), common.ExecUserInputRequired, resp.Status)
+	assert.Equal(suite.T(), providers.ExecUserInputRequired, resp.Status)
 	// All missing inputs must be listed so the client knows what to collect
 	assert.NotEmpty(suite.T(), resp.Inputs)
 	inputIDs := make([]string, 0, len(resp.Inputs))
@@ -592,7 +554,7 @@ func (suite *PasskeyAuthExecutorTestSuite) TestExecuteRegisterFinish_MissingInpu
 }
 
 func (suite *PasskeyAuthExecutorTestSuite) TestExecuteRegisterFinish_PartialInputs() {
-	ctx := createPasskeyNodeContext(passkeyExecutorModeRegFinish, common.FlowTypeRegistration)
+	ctx := createPasskeyNodeContext(passkeyExecutorModeRegFinish, providers.FlowTypeRegistration)
 	ctx.RuntimeData[userAttributeUserID] = testPasskeyUserID
 	ctx.RuntimeData[runtimePasskeySessionToken] = testSessionToken
 	// Provide credentialID but omit the other required inputs
@@ -604,7 +566,7 @@ func (suite *PasskeyAuthExecutorTestSuite) TestExecuteRegisterFinish_PartialInpu
 
 	assert.NoError(suite.T(), err)
 	assert.NotNil(suite.T(), resp)
-	assert.Equal(suite.T(), common.ExecUserInputRequired, resp.Status)
+	assert.Equal(suite.T(), providers.ExecUserInputRequired, resp.Status)
 	// The full input list is returned so the client can re-render the entire form
 	assert.NotEmpty(suite.T(), resp.Inputs)
 	inputIDs := make([]string, 0, len(resp.Inputs))
@@ -617,7 +579,7 @@ func (suite *PasskeyAuthExecutorTestSuite) TestExecuteRegisterFinish_PartialInpu
 }
 
 func (suite *PasskeyAuthExecutorTestSuite) TestExecuteRegisterFinish_MissingSessionToken() {
-	ctx := createPasskeyNodeContext(passkeyExecutorModeRegFinish, common.FlowTypeRegistration)
+	ctx := createPasskeyNodeContext(passkeyExecutorModeRegFinish, providers.FlowTypeRegistration)
 	ctx.RuntimeData[userAttributeUserID] = testPasskeyUserID
 	// Not setting session token
 	ctx.UserInputs = map[string]string{
@@ -633,7 +595,7 @@ func (suite *PasskeyAuthExecutorTestSuite) TestExecuteRegisterFinish_MissingSess
 }
 
 func (suite *PasskeyAuthExecutorTestSuite) TestExecuteRegisterFinish_ServiceError_Client() {
-	ctx := createPasskeyNodeContext(passkeyExecutorModeRegFinish, common.FlowTypeRegistration)
+	ctx := createPasskeyNodeContext(passkeyExecutorModeRegFinish, providers.FlowTypeRegistration)
 	ctx.RuntimeData[userAttributeUserID] = testPasskeyUserID
 	ctx.RuntimeData[runtimePasskeySessionToken] = testSessionToken
 	ctx.UserInputs = map[string]string{
@@ -642,10 +604,11 @@ func (suite *PasskeyAuthExecutorTestSuite) TestExecuteRegisterFinish_ServiceErro
 		inputAttestationObject: "invalid-attestation",
 	}
 
-	suite.mockPasskeyService.On("FinishRegistration", mock.Anything, mock.Anything).Return(
-		nil, &serviceerror.ServiceError{
-			Type: serviceerror.ClientErrorType,
-			ErrorDescription: i18ncore.I18nMessage{
+	suite.mockAuthnProvider.On("Enroll", mock.Anything, mock.Anything, mock.Anything,
+		mock.Anything, mock.Anything, mock.Anything).Return(
+		providers.AuthUser{}, nil, &tidcommon.ServiceError{
+			Type: tidcommon.ClientErrorType,
+			ErrorDescription: tidcommon.I18nMessage{
 				Key: "error.test.invalid_attestation_object", DefaultValue: "Invalid attestation object",
 			},
 		})
@@ -654,8 +617,8 @@ func (suite *PasskeyAuthExecutorTestSuite) TestExecuteRegisterFinish_ServiceErro
 
 	assert.NoError(suite.T(), err)
 	assert.NotNil(suite.T(), resp)
-	assert.Equal(suite.T(), common.ExecUserInputRequired, resp.Status)
-	assert.Contains(suite.T(), resp.FailureReason, "Invalid attestation object")
+	assert.Equal(suite.T(), providers.ExecUserInputRequired, resp.Status)
+	assert.Contains(suite.T(), resp.Error.ErrorDescription.DefaultValue, "Invalid attestation object")
 	// Client must receive the full input list so it can re-prompt the user
 	assert.NotEmpty(suite.T(), resp.Inputs)
 	inputIDs := make([]string, 0, len(resp.Inputs))
@@ -668,7 +631,7 @@ func (suite *PasskeyAuthExecutorTestSuite) TestExecuteRegisterFinish_ServiceErro
 }
 
 func (suite *PasskeyAuthExecutorTestSuite) TestExecuteRegisterFinish_ServiceError_Server() {
-	ctx := createPasskeyNodeContext(passkeyExecutorModeRegFinish, common.FlowTypeRegistration)
+	ctx := createPasskeyNodeContext(passkeyExecutorModeRegFinish, providers.FlowTypeRegistration)
 	ctx.RuntimeData[userAttributeUserID] = testPasskeyUserID
 	ctx.RuntimeData[runtimePasskeySessionToken] = testSessionToken
 	ctx.UserInputs = map[string]string{
@@ -677,10 +640,11 @@ func (suite *PasskeyAuthExecutorTestSuite) TestExecuteRegisterFinish_ServiceErro
 		inputAttestationObject: "attestation-object",
 	}
 
-	suite.mockPasskeyService.On("FinishRegistration", mock.Anything, mock.Anything).Return(
-		nil, &serviceerror.ServiceError{
-			Type:             serviceerror.ServerErrorType,
-			ErrorDescription: i18ncore.I18nMessage{Key: "error.test.database_error", DefaultValue: "Database error"},
+	suite.mockAuthnProvider.On("Enroll", mock.Anything, mock.Anything, mock.Anything,
+		mock.Anything, mock.Anything, mock.Anything).Return(
+		providers.AuthUser{}, nil, &tidcommon.ServiceError{
+			Type:             tidcommon.ServerErrorType,
+			ErrorDescription: tidcommon.I18nMessage{Key: "error.test.database_error", DefaultValue: "Database error"},
 		})
 
 	_, err := suite.executor.Execute(ctx)
@@ -690,7 +654,7 @@ func (suite *PasskeyAuthExecutorTestSuite) TestExecuteRegisterFinish_ServiceErro
 }
 
 func (suite *PasskeyAuthExecutorTestSuite) TestGetRelyingPartyID_FromNodeProperties() {
-	ctx := createPasskeyNodeContext(passkeyExecutorModeChallenge, common.FlowTypeAuthentication)
+	ctx := createPasskeyNodeContext(passkeyExecutorModeChallenge, providers.FlowTypeAuthentication)
 
 	rpID := suite.executor.getRelyingPartyID(ctx)
 
@@ -698,7 +662,7 @@ func (suite *PasskeyAuthExecutorTestSuite) TestGetRelyingPartyID_FromNodePropert
 }
 
 func (suite *PasskeyAuthExecutorTestSuite) TestGetRelyingPartyID_EmptyNodeProperties() {
-	ctx := createPasskeyNodeContext(passkeyExecutorModeChallenge, common.FlowTypeAuthentication)
+	ctx := createPasskeyNodeContext(passkeyExecutorModeChallenge, providers.FlowTypeAuthentication)
 	ctx.NodeProperties = nil
 
 	rpID := suite.executor.getRelyingPartyID(ctx)
@@ -707,7 +671,7 @@ func (suite *PasskeyAuthExecutorTestSuite) TestGetRelyingPartyID_EmptyNodeProper
 }
 
 func (suite *PasskeyAuthExecutorTestSuite) TestGetRelyingPartyName_FromNodeProperties() {
-	ctx := createPasskeyNodeContext(passkeyExecutorModeChallenge, common.FlowTypeAuthentication)
+	ctx := createPasskeyNodeContext(passkeyExecutorModeChallenge, providers.FlowTypeAuthentication)
 
 	rpName := suite.executor.getRelyingPartyName(ctx)
 
@@ -715,7 +679,7 @@ func (suite *PasskeyAuthExecutorTestSuite) TestGetRelyingPartyName_FromNodePrope
 }
 
 func (suite *PasskeyAuthExecutorTestSuite) TestGetRelyingPartyName_EmptyNodeProperties() {
-	ctx := createPasskeyNodeContext(passkeyExecutorModeChallenge, common.FlowTypeAuthentication)
+	ctx := createPasskeyNodeContext(passkeyExecutorModeChallenge, providers.FlowTypeAuthentication)
 	ctx.NodeProperties = nil
 
 	rpName := suite.executor.getRelyingPartyName(ctx)
@@ -724,7 +688,7 @@ func (suite *PasskeyAuthExecutorTestSuite) TestGetRelyingPartyName_EmptyNodeProp
 }
 
 func (suite *PasskeyAuthExecutorTestSuite) TestGetAuthenticatorSelection_FromNodeProperties() {
-	ctx := createPasskeyNodeContext(passkeyExecutorModeRegStart, common.FlowTypeRegistration)
+	ctx := createPasskeyNodeContext(passkeyExecutorModeRegStart, providers.FlowTypeRegistration)
 	ctx.NodeProperties["authenticatorSelection"] = map[string]interface{}{
 		"authenticatorAttachment": "platform",
 		"requireResidentKey":      true,
@@ -742,7 +706,7 @@ func (suite *PasskeyAuthExecutorTestSuite) TestGetAuthenticatorSelection_FromNod
 }
 
 func (suite *PasskeyAuthExecutorTestSuite) TestGetAuthenticatorSelection_NotConfigured() {
-	ctx := createPasskeyNodeContext(passkeyExecutorModeRegStart, common.FlowTypeRegistration)
+	ctx := createPasskeyNodeContext(passkeyExecutorModeRegStart, providers.FlowTypeRegistration)
 	// No authenticatorSelection in node properties
 
 	authSel := suite.executor.getAuthenticatorSelection(ctx)
@@ -751,7 +715,7 @@ func (suite *PasskeyAuthExecutorTestSuite) TestGetAuthenticatorSelection_NotConf
 }
 
 func (suite *PasskeyAuthExecutorTestSuite) TestGetAttestation_FromNodeProperties() {
-	ctx := createPasskeyNodeContext(passkeyExecutorModeRegStart, common.FlowTypeRegistration)
+	ctx := createPasskeyNodeContext(passkeyExecutorModeRegStart, providers.FlowTypeRegistration)
 	ctx.NodeProperties["attestation"] = "direct"
 
 	attestation := suite.executor.getAttestation(ctx)
@@ -760,7 +724,7 @@ func (suite *PasskeyAuthExecutorTestSuite) TestGetAttestation_FromNodeProperties
 }
 
 func (suite *PasskeyAuthExecutorTestSuite) TestGetAttestation_DefaultValue() {
-	ctx := createPasskeyNodeContext(passkeyExecutorModeRegStart, common.FlowTypeRegistration)
+	ctx := createPasskeyNodeContext(passkeyExecutorModeRegStart, providers.FlowTypeRegistration)
 	// No attestation in node properties
 
 	attestation := suite.executor.getAttestation(ctx)
@@ -769,7 +733,7 @@ func (suite *PasskeyAuthExecutorTestSuite) TestGetAttestation_DefaultValue() {
 }
 
 func (suite *PasskeyAuthExecutorTestSuite) TestGetAttestation_EmptyNodeProperties() {
-	ctx := createPasskeyNodeContext(passkeyExecutorModeRegStart, common.FlowTypeRegistration)
+	ctx := createPasskeyNodeContext(passkeyExecutorModeRegStart, providers.FlowTypeRegistration)
 	ctx.NodeProperties = nil
 
 	attestation := suite.executor.getAttestation(ctx)
@@ -777,101 +741,8 @@ func (suite *PasskeyAuthExecutorTestSuite) TestGetAttestation_EmptyNodePropertie
 	assert.Equal(suite.T(), "none", attestation)
 }
 
-func (suite *PasskeyAuthExecutorTestSuite) TestGetAuthenticatedUser_Success() {
-	ctx := createPasskeyNodeContext(passkeyExecutorModeVerify, common.FlowTypeAuthentication)
-	ctx.RuntimeData[userAttributeUserID] = testPasskeyUserID
-
-	execResp := &common.ExecutorResponse{
-		RuntimeData: map[string]string{
-			userAttributeUserID: testPasskeyUserID,
-		},
-	}
-
-	attrs := map[string]interface{}{"email": "test@example.com", "name": "Test User"}
-	attrsJSON, _ := json.Marshal(attrs)
-	testUser := &entityprovider.Entity{
-		ID:         testPasskeyUserID,
-		OUID:       "ou-123",
-		Type:       "INTERNAL",
-		Attributes: attrsJSON,
-	}
-	suite.mockEntityProvider.On("GetEntity", testPasskeyUserID).Return(testUser, nil)
-
-	authUser, err := suite.executor.getAuthenticatedUser(ctx, execResp)
-
-	assert.NoError(suite.T(), err)
-	assert.NotNil(suite.T(), authUser)
-	assert.True(suite.T(), authUser.IsAuthenticated)
-	assert.Equal(suite.T(), testPasskeyUserID, authUser.UserID)
-	assert.Equal(suite.T(), "ou-123", authUser.OUID)
-	assert.Equal(suite.T(), "INTERNAL", authUser.UserType)
-	assert.Equal(suite.T(), "test@example.com", authUser.Attributes["email"])
-}
-
-func (suite *PasskeyAuthExecutorTestSuite) TestGetAuthenticatedUser_UserNotFound() {
-	ctx := createPasskeyNodeContext(passkeyExecutorModeVerify, common.FlowTypeAuthentication)
-	ctx.RuntimeData[userAttributeUserID] = testPasskeyUserID
-
-	execResp := &common.ExecutorResponse{
-		RuntimeData: map[string]string{
-			userAttributeUserID: testPasskeyUserID,
-		},
-	}
-
-	suite.mockEntityProvider.On("GetEntity", testPasskeyUserID).Return(
-		nil, &entityprovider.EntityProviderError{
-			Code: entityprovider.ErrorCodeEntityNotFound, Message: "User not found",
-		})
-
-	authUser, err := suite.executor.getAuthenticatedUser(ctx, execResp)
-
-	assert.Error(suite.T(), err)
-	assert.Nil(suite.T(), authUser)
-	assert.Contains(suite.T(), err.Error(), "failed to get user details")
-}
-
-func (suite *PasskeyAuthExecutorTestSuite) TestGetAuthenticatedUser_InvalidJSON() {
-	ctx := createPasskeyNodeContext(passkeyExecutorModeVerify, common.FlowTypeAuthentication)
-	ctx.RuntimeData[userAttributeUserID] = testPasskeyUserID
-
-	execResp := &common.ExecutorResponse{
-		RuntimeData: map[string]string{
-			userAttributeUserID: testPasskeyUserID,
-		},
-	}
-
-	testUser := &entityprovider.Entity{
-		ID:         testPasskeyUserID,
-		OUID:       "ou-123",
-		Type:       "INTERNAL",
-		Attributes: json.RawMessage(`invalid json`),
-	}
-	suite.mockEntityProvider.On("GetEntity", testPasskeyUserID).Return(testUser, nil)
-
-	authUser, err := suite.executor.getAuthenticatedUser(ctx, execResp)
-
-	assert.Error(suite.T(), err)
-	assert.Nil(suite.T(), authUser)
-	assert.Contains(suite.T(), err.Error(), "failed to unmarshal user attributes")
-}
-
-func (suite *PasskeyAuthExecutorTestSuite) TestGetAuthenticatedUser_EmptyUserID() {
-	ctx := createPasskeyNodeContext(passkeyExecutorModeVerify, common.FlowTypeAuthentication)
-	// Not setting userID in RuntimeData
-
-	execResp := &common.ExecutorResponse{
-		RuntimeData: make(map[string]string),
-	}
-
-	authUser, err := suite.executor.getAuthenticatedUser(ctx, execResp)
-
-	assert.Error(suite.T(), err)
-	assert.Nil(suite.T(), authUser)
-	assert.Contains(suite.T(), err.Error(), "user ID is empty")
-}
-
 func (suite *PasskeyAuthExecutorTestSuite) TestGetRelyingPartyID_InvalidType() {
-	ctx := createPasskeyNodeContext(passkeyExecutorModeChallenge, common.FlowTypeAuthentication)
+	ctx := createPasskeyNodeContext(passkeyExecutorModeChallenge, providers.FlowTypeAuthentication)
 	// Set relyingPartyId as wrong type (int instead of string)
 	ctx.NodeProperties = map[string]interface{}{
 		"relyingPartyId": 12345, // Wrong type
@@ -883,7 +754,7 @@ func (suite *PasskeyAuthExecutorTestSuite) TestGetRelyingPartyID_InvalidType() {
 }
 
 func (suite *PasskeyAuthExecutorTestSuite) TestGetRelyingPartyID_EmptyStringValue() {
-	ctx := createPasskeyNodeContext(passkeyExecutorModeChallenge, common.FlowTypeAuthentication)
+	ctx := createPasskeyNodeContext(passkeyExecutorModeChallenge, providers.FlowTypeAuthentication)
 	ctx.NodeProperties = map[string]interface{}{
 		"relyingPartyId": "", // Empty string
 	}
@@ -894,7 +765,7 @@ func (suite *PasskeyAuthExecutorTestSuite) TestGetRelyingPartyID_EmptyStringValu
 }
 
 func (suite *PasskeyAuthExecutorTestSuite) TestGetRelyingPartyName_InvalidType() {
-	ctx := createPasskeyNodeContext(passkeyExecutorModeChallenge, common.FlowTypeAuthentication)
+	ctx := createPasskeyNodeContext(passkeyExecutorModeChallenge, providers.FlowTypeAuthentication)
 	ctx.NodeProperties = map[string]interface{}{
 		"relyingPartyName": 12345, // Wrong type
 	}
@@ -905,7 +776,7 @@ func (suite *PasskeyAuthExecutorTestSuite) TestGetRelyingPartyName_InvalidType()
 }
 
 func (suite *PasskeyAuthExecutorTestSuite) TestGetRelyingPartyName_EmptyStringValue() {
-	ctx := createPasskeyNodeContext(passkeyExecutorModeChallenge, common.FlowTypeAuthentication)
+	ctx := createPasskeyNodeContext(passkeyExecutorModeChallenge, providers.FlowTypeAuthentication)
 	ctx.NodeProperties = map[string]interface{}{
 		"relyingPartyName": "", // Empty string
 	}
@@ -916,7 +787,7 @@ func (suite *PasskeyAuthExecutorTestSuite) TestGetRelyingPartyName_EmptyStringVa
 }
 
 func (suite *PasskeyAuthExecutorTestSuite) TestGetAuthenticatorSelection_InvalidMapType() {
-	ctx := createPasskeyNodeContext(passkeyExecutorModeRegStart, common.FlowTypeRegistration)
+	ctx := createPasskeyNodeContext(passkeyExecutorModeRegStart, providers.FlowTypeRegistration)
 	// Set authenticatorSelection as wrong type (string instead of map)
 	ctx.NodeProperties["authenticatorSelection"] = "invalid"
 
@@ -926,7 +797,7 @@ func (suite *PasskeyAuthExecutorTestSuite) TestGetAuthenticatorSelection_Invalid
 }
 
 func (suite *PasskeyAuthExecutorTestSuite) TestGetAuthenticatorSelection_PartialFields() {
-	ctx := createPasskeyNodeContext(passkeyExecutorModeRegStart, common.FlowTypeRegistration)
+	ctx := createPasskeyNodeContext(passkeyExecutorModeRegStart, providers.FlowTypeRegistration)
 	// Set only some authenticatorSelection fields
 	ctx.NodeProperties["authenticatorSelection"] = map[string]interface{}{
 		"authenticatorAttachment": "cross-platform",
@@ -943,7 +814,7 @@ func (suite *PasskeyAuthExecutorTestSuite) TestGetAuthenticatorSelection_Partial
 }
 
 func (suite *PasskeyAuthExecutorTestSuite) TestGetAuthenticatorSelection_EmptyNodeProperties() {
-	ctx := createPasskeyNodeContext(passkeyExecutorModeRegStart, common.FlowTypeRegistration)
+	ctx := createPasskeyNodeContext(passkeyExecutorModeRegStart, providers.FlowTypeRegistration)
 	ctx.NodeProperties = nil
 
 	authSel := suite.executor.getAuthenticatorSelection(ctx)
@@ -952,7 +823,7 @@ func (suite *PasskeyAuthExecutorTestSuite) TestGetAuthenticatorSelection_EmptyNo
 }
 
 func (suite *PasskeyAuthExecutorTestSuite) TestGetAttestation_InvalidType() {
-	ctx := createPasskeyNodeContext(passkeyExecutorModeRegStart, common.FlowTypeRegistration)
+	ctx := createPasskeyNodeContext(passkeyExecutorModeRegStart, providers.FlowTypeRegistration)
 	ctx.NodeProperties["attestation"] = 12345 // Wrong type
 
 	attestation := suite.executor.getAttestation(ctx)
@@ -961,7 +832,7 @@ func (suite *PasskeyAuthExecutorTestSuite) TestGetAttestation_InvalidType() {
 }
 
 func (suite *PasskeyAuthExecutorTestSuite) TestGetAttestation_EmptyStringValue() {
-	ctx := createPasskeyNodeContext(passkeyExecutorModeRegStart, common.FlowTypeRegistration)
+	ctx := createPasskeyNodeContext(passkeyExecutorModeRegStart, providers.FlowTypeRegistration)
 	ctx.NodeProperties["attestation"] = "" // Empty string
 
 	attestation := suite.executor.getAttestation(ctx)
@@ -969,8 +840,8 @@ func (suite *PasskeyAuthExecutorTestSuite) TestGetAttestation_EmptyStringValue()
 	assert.Equal(suite.T(), "none", attestation) // Should return default
 }
 
-func (suite *PasskeyAuthExecutorTestSuite) TestExecuteVerify_GetAuthenticatedUserFails() {
-	ctx := createPasskeyNodeContext(passkeyExecutorModeVerify, common.FlowTypeAuthentication)
+func (suite *PasskeyAuthExecutorTestSuite) TestExecuteVerify_AuthenticateUserServerError() {
+	ctx := createPasskeyNodeContext(passkeyExecutorModeVerify, providers.FlowTypeAuthentication)
 	ctx.RuntimeData[userAttributeUserID] = testPasskeyUserID
 	ctx.RuntimeData[runtimePasskeySessionToken] = testSessionToken
 	ctx.UserInputs = map[string]string{
@@ -981,26 +852,21 @@ func (suite *PasskeyAuthExecutorTestSuite) TestExecuteVerify_GetAuthenticatedUse
 		inputUserHandle:        "user-handle",
 	}
 
-	authResp := &authnprovidermgr.AuthnBasicResult{
-		UserID: testPasskeyUserID,
-	}
 	suite.mockAuthnProvider.On("AuthenticateUser", mock.Anything, mock.Anything, mock.Anything,
-		mock.Anything, mock.Anything, mock.Anything).Return(authnprovidermgr.AuthUser{}, authResp, nil)
-
-	// Simulate user not found when getting authenticated user details
-	suite.mockEntityProvider.On("GetEntity", testPasskeyUserID).Return(
-		nil, &entityprovider.EntityProviderError{
-			Code: entityprovider.ErrorCodeEntityNotFound, Message: "User not found",
+		mock.Anything, mock.Anything, mock.Anything).Return(
+		providers.AuthUser{}, (providers.AuthenticatedClaims)(nil), &tidcommon.ServiceError{
+			Type:             tidcommon.ServerErrorType,
+			ErrorDescription: tidcommon.I18nMessage{Key: "error.test.internal_error", DefaultValue: "Internal error"},
 		})
 
 	_, err := suite.executor.Execute(ctx)
 
 	assert.Error(suite.T(), err)
-	assert.Contains(suite.T(), err.Error(), "failed to get authenticated user details")
+	assert.Contains(suite.T(), err.Error(), "failed to verify passkey")
 }
 
-func (suite *PasskeyAuthExecutorTestSuite) TestExecuteRegisterFinish_GetAuthenticatedUserFails_AuthFlow() {
-	ctx := createPasskeyNodeContext(passkeyExecutorModeRegFinish, common.FlowTypeAuthentication)
+func (suite *PasskeyAuthExecutorTestSuite) TestExecuteRegisterFinish_ServiceError_Server_AuthFlow() {
+	ctx := createPasskeyNodeContext(passkeyExecutorModeRegFinish, providers.FlowTypeAuthentication)
 	ctx.RuntimeData[userAttributeUserID] = testPasskeyUserID
 	ctx.RuntimeData[runtimePasskeySessionToken] = testSessionToken
 	ctx.UserInputs = map[string]string{
@@ -1009,32 +875,23 @@ func (suite *PasskeyAuthExecutorTestSuite) TestExecuteRegisterFinish_GetAuthenti
 		inputAttestationObject: "attestation-object",
 	}
 
-	finishData := &passkey.PasskeyRegistrationFinishData{
-		CredentialID:   testCredentialIDValue,
-		CredentialName: "Passkey",
-		CreatedAt:      "2025-01-15T00:00:00Z",
-	}
-	suite.mockPasskeyService.On("FinishRegistration", mock.Anything, mock.Anything).Return(finishData, nil)
-
-	// Simulate user not found when getting authenticated user details
-	suite.mockEntityProvider.On("GetEntity", testPasskeyUserID).Return(
-		nil, &entityprovider.EntityProviderError{
-			Code: entityprovider.ErrorCodeEntityNotFound, Message: "User not found",
+	suite.mockAuthnProvider.On("Enroll", mock.Anything, mock.Anything, mock.Anything,
+		mock.Anything, mock.Anything, mock.Anything).Return(
+		providers.AuthUser{}, nil, &tidcommon.ServiceError{
+			Type:             tidcommon.ServerErrorType,
+			ErrorDescription: tidcommon.I18nMessage{Key: "error.test.database_error", DefaultValue: "Database error"},
 		})
 
 	_, err := suite.executor.Execute(ctx)
 
 	assert.Error(suite.T(), err)
-	assert.Contains(suite.T(), err.Error(), "failed to get authenticated user details")
+	assert.Contains(suite.T(), err.Error(), "failed to finish passkey registration")
 }
 
-func (suite *PasskeyAuthExecutorTestSuite) TestExecuteChallenge_UserIDFromAuthenticatedUser() {
-	ctx := createPasskeyNodeContext(passkeyExecutorModeChallenge, common.FlowTypeAuthentication)
-	// Set userID in AuthenticatedUser instead of RuntimeData
-	ctx.AuthenticatedUser = authncm.AuthenticatedUser{
-		UserID:          testPasskeyUserID,
-		IsAuthenticated: true,
-	}
+func (suite *PasskeyAuthExecutorTestSuite) TestExecuteChallenge_UserIDFromUserInputs() {
+	ctx := createPasskeyNodeContext(passkeyExecutorModeChallenge, providers.FlowTypeAuthentication)
+	// Set userID in UserInputs instead of RuntimeData
+	ctx.UserInputs[userAttributeUserID] = testPasskeyUserID
 
 	expectedStartData := &passkey.PasskeyAuthenticationStartData{
 		SessionToken: testSessionToken,
@@ -1043,65 +900,36 @@ func (suite *PasskeyAuthExecutorTestSuite) TestExecuteChallenge_UserIDFromAuthen
 		},
 	}
 
-	suite.mockPasskeyService.On("StartAuthentication", mock.Anything, mock.MatchedBy(
+	suite.mockAuthnProvider.On("InitiateAuthentication", mock.Anything, passkey.CredentialType, mock.MatchedBy(
 		func(req *passkey.PasskeyAuthenticationStartRequest) bool {
 			return req.UserID == testPasskeyUserID && req.RelyingPartyID == testRelyingPartyID
-		})).Return(expectedStartData, nil)
+		}), mock.Anything).Return(expectedStartData, nil)
 
 	resp, err := suite.executor.Execute(ctx)
 
 	assert.NoError(suite.T(), err)
 	assert.NotNil(suite.T(), resp)
-	assert.Equal(suite.T(), common.ExecComplete, resp.Status)
+	assert.Equal(suite.T(), providers.ExecComplete, resp.Status)
 }
 
-func (suite *PasskeyAuthExecutorTestSuite) TestExecuteRegisterStart_UserIDFromAuthenticatedUser() {
-	ctx := createPasskeyNodeContext(passkeyExecutorModeRegStart, common.FlowTypeRegistration)
-	// Set userID in AuthenticatedUser
-	ctx.AuthenticatedUser = authncm.AuthenticatedUser{
-		UserID:          testPasskeyUserID,
-		IsAuthenticated: true,
-	}
+func (suite *PasskeyAuthExecutorTestSuite) TestExecuteRegisterStart_UserIDFromUserInputs() {
+	ctx := createPasskeyNodeContext(passkeyExecutorModeRegStart, providers.FlowTypeRegistration)
+	// Set userID in UserInputs instead of RuntimeData
+	ctx.UserInputs[userAttributeUserID] = testPasskeyUserID
 
 	expectedStartData := &passkey.PasskeyRegistrationStartData{
 		SessionToken:                       testSessionToken,
 		PublicKeyCredentialCreationOptions: passkey.PublicKeyCredentialCreationOptions{},
 	}
 
-	suite.mockPasskeyService.On("StartRegistration", mock.Anything, mock.MatchedBy(
+	suite.mockAuthnProvider.On("InitiateEnrollment", mock.Anything, passkey.CredentialType, mock.MatchedBy(
 		func(req *passkey.PasskeyRegistrationStartRequest) bool {
 			return req.UserID == testPasskeyUserID
-		})).Return(expectedStartData, nil)
+		}), mock.Anything).Return(expectedStartData, nil)
 
 	resp, err := suite.executor.Execute(ctx)
 
 	assert.NoError(suite.T(), err)
 	assert.NotNil(suite.T(), resp)
-	assert.Equal(suite.T(), common.ExecComplete, resp.Status)
-}
-
-func (suite *PasskeyAuthExecutorTestSuite) TestGetAuthenticatedUser_UserIDFromContext() {
-	ctx := createPasskeyNodeContext(passkeyExecutorModeVerify, common.FlowTypeAuthentication)
-	ctx.RuntimeData[userAttributeUserID] = testPasskeyUserID
-
-	// Empty runtime data in execResp, should fall back to context
-	execResp := &common.ExecutorResponse{
-		RuntimeData: make(map[string]string),
-	}
-
-	attrs := map[string]interface{}{"email": "test@example.com"}
-	attrsJSON, _ := json.Marshal(attrs)
-	testUser := &entityprovider.Entity{
-		ID:         testPasskeyUserID,
-		OUID:       "ou-123",
-		Type:       "INTERNAL",
-		Attributes: attrsJSON,
-	}
-	suite.mockEntityProvider.On("GetEntity", testPasskeyUserID).Return(testUser, nil)
-
-	authUser, err := suite.executor.getAuthenticatedUser(ctx, execResp)
-
-	assert.NoError(suite.T(), err)
-	assert.NotNil(suite.T(), authUser)
-	assert.Equal(suite.T(), testPasskeyUserID, authUser.UserID)
+	assert.Equal(suite.T(), providers.ExecComplete, resp.Status)
 }

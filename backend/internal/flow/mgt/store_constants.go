@@ -33,7 +33,8 @@ var (
 	// queryGetFlow is the query to retrieves a flow definition by its ID.
 	queryGetFlow = model.DBQuery{
 		ID: "FLQ-FLOW_MGT-02",
-		Query: `SELECT f.ID, f.HANDLE, f.NAME, f.FLOW_TYPE, f.ACTIVE_VERSION, fv.NODES, f.CREATED_AT, ` +
+		Query: `SELECT f.ID, f.HANDLE, f.NAME, f.FLOW_TYPE, f.ACTIVE_VERSION, ` +
+			`fv.NODES, fv.INTERCEPTORS, f.CREATED_AT, ` +
 			`f.UPDATED_AT FROM "FLOW" f INNER JOIN "FLOW_VERSION" fv ON f.ID = fv.FLOW_ID ` +
 			`AND f.DEPLOYMENT_ID = fv.DEPLOYMENT_ID AND f.ACTIVE_VERSION = fv.VERSION ` +
 			`WHERE f.ID = $1 AND f.DEPLOYMENT_ID = $2`,
@@ -55,6 +56,17 @@ var (
 		ID: "FLQ-FLOW_MGT-05",
 		Query: `SELECT ID, HANDLE, NAME, FLOW_TYPE, ACTIVE_VERSION, CREATED_AT, UPDATED_AT ` +
 			`FROM "FLOW" WHERE DEPLOYMENT_ID = $1 ORDER BY CREATED_AT DESC LIMIT $2 OFFSET $3`,
+	}
+
+	// queryListActiveFlowsWithNodes retrieves every flow's active version including its nodes, in a
+	// single query, for dependency lookups that must scan node definitions across all flows.
+	queryListActiveFlowsWithNodes = model.DBQuery{
+		ID: "FLQ-FLOW_MGT-19",
+		Query: `SELECT f.ID, f.HANDLE, f.NAME, f.FLOW_TYPE, f.ACTIVE_VERSION, ` +
+			`fv.NODES, fv.INTERCEPTORS, f.CREATED_AT, f.UPDATED_AT ` +
+			`FROM "FLOW" f INNER JOIN "FLOW_VERSION" fv ON f.ID = fv.FLOW_ID ` +
+			`AND f.DEPLOYMENT_ID = fv.DEPLOYMENT_ID AND f.ACTIVE_VERSION = fv.VERSION ` +
+			`WHERE f.DEPLOYMENT_ID = $1`,
 	}
 
 	// queryListFlowsWithType is the query to retrieves a list of flow definitions filtered by type.
@@ -84,21 +96,22 @@ var (
 
 	// queryInsertFlowVersion is the query to insert a new version of a flow.
 	queryInsertFlowVersion = model.DBQuery{
-		ID:    "FLQ-FLOW_MGT-10",
-		Query: `INSERT INTO "FLOW_VERSION" (FLOW_ID, VERSION, NODES, DEPLOYMENT_ID) VALUES ($1, $2, $3, $4)`,
+		ID: "FLQ-FLOW_MGT-10",
+		Query: `INSERT INTO "FLOW_VERSION" (FLOW_ID, VERSION, NODES, INTERCEPTORS, DEPLOYMENT_ID) ` +
+			`VALUES ($1, $2, $3, $4, $5)`,
 	}
 
 	// queryGetFlowVersion is the query to retrieve a specific version of a flow.
 	queryGetFlowVersion = model.DBQuery{
 		ID: "FLQ-FLOW_MGT-11",
-		Query: `SELECT VERSION, NODES, CREATED_AT FROM "FLOW_VERSION" WHERE ` +
+		Query: `SELECT VERSION, NODES, INTERCEPTORS, CREATED_AT FROM "FLOW_VERSION" WHERE ` +
 			`FLOW_ID = $1 AND VERSION = $2 AND DEPLOYMENT_ID = $3`,
 	}
 
 	// queryGetFlowVersionWithMetadata is the query to retrieve a specific version with flow metadata.
 	queryGetFlowVersionWithMetadata = model.DBQuery{
 		ID: "FLQ-FLOW_MGT-12",
-		Query: `SELECT f.ID, f.HANDLE, f.NAME, f.FLOW_TYPE, f.ACTIVE_VERSION, fv.VERSION, fv.NODES, ` +
+		Query: `SELECT f.ID, f.HANDLE, f.NAME, f.FLOW_TYPE, f.ACTIVE_VERSION, fv.VERSION, fv.NODES, fv.INTERCEPTORS, ` +
 			`fv.CREATED_AT FROM "FLOW" f INNER JOIN "FLOW_VERSION" fv ON f.ID = fv.FLOW_ID ` +
 			`AND f.DEPLOYMENT_ID = fv.DEPLOYMENT_ID WHERE f.ID = $1 AND fv.VERSION = $2 ` +
 			`AND f.DEPLOYMENT_ID = $3`,
@@ -135,7 +148,8 @@ var (
 	// queryGetFlowByHandle retrieves a flow definition by handle and flow type.
 	queryGetFlowByHandle = model.DBQuery{
 		ID: "FLQ-FLOW_MGT-18",
-		Query: `SELECT f.ID, f.HANDLE, f.NAME, f.FLOW_TYPE, f.ACTIVE_VERSION, fv.NODES, f.CREATED_AT, ` +
+		Query: `SELECT f.ID, f.HANDLE, f.NAME, f.FLOW_TYPE, f.ACTIVE_VERSION, ` +
+			`fv.NODES, fv.INTERCEPTORS, f.CREATED_AT, ` +
 			`f.UPDATED_AT FROM "FLOW" f INNER JOIN "FLOW_VERSION" fv ON f.ID = fv.FLOW_ID ` +
 			`AND f.DEPLOYMENT_ID = fv.DEPLOYMENT_ID AND f.ACTIVE_VERSION = fv.VERSION ` +
 			`WHERE f.HANDLE = $1 AND f.FLOW_TYPE = $2 AND f.DEPLOYMENT_ID = $3`,

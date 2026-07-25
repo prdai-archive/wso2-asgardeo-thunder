@@ -164,7 +164,7 @@ describe('FlowCreatePage', () => {
     navigateToTemplateStep();
     act(() => {
       (capturedTemplateProps.onTemplateChange as (t: unknown) => void)({
-        type: 'BASIC_AUTH',
+        type: 'CREDENTIALS_AUTH',
         flowType: 'AUTHENTICATION',
         config: {nodes: [{id: 'start'}]},
       });
@@ -188,6 +188,17 @@ describe('FlowCreatePage', () => {
 
       expect(screen.getByText('Flow Type')).toBeInTheDocument();
       expect(screen.getByText('Template')).toBeInTheDocument();
+    });
+
+    it('navigates back to Type step when Flow Type breadcrumb is clicked on Template step', () => {
+      render(<FlowCreatePage />);
+
+      navigateToTemplateStep();
+
+      // "Flow Type" is the first (non-last) breadcrumb — clicking it calls setCurrentStep
+      fireEvent.click(screen.getByRole('button', {name: 'Flow Type'}));
+
+      expect(screen.getByTestId('select-flow-type')).toBeInTheDocument();
     });
 
     it('should show Back button on the Template step', () => {

@@ -24,12 +24,10 @@ import (
 	"os"
 	"testing"
 
-	inboundmodel "github.com/thunder-id/thunderid/internal/inboundclient/model"
+	"github.com/thunder-id/thunderid/pkg/thunderidengine/providers"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"github.com/thunder-id/thunderid/internal/cert"
-	oauth2const "github.com/thunder-id/thunderid/internal/oauth/oauth2/constants"
 	"github.com/thunder-id/thunderid/internal/system/config"
 	dbmodel "github.com/thunder-id/thunderid/internal/system/database/model"
 	"github.com/thunder-id/thunderid/internal/system/database/provider"
@@ -59,9 +57,9 @@ func newInMemoryDataSource() config.DataSource {
 // in-memory SQLite database suitable for unit tests.
 func newTestDBConfig() config.DatabaseConfig {
 	return config.DatabaseConfig{
-		Config:  newInMemoryDataSource(),
-		Runtime: newInMemoryDataSource(),
-		User:    newInMemoryDataSource(),
+		Config:           newInMemoryDataSource(),
+		RuntimeTransient: newInMemoryDataSource(),
+		Entity:           newInMemoryDataSource(),
 	}
 }
 
@@ -160,6 +158,7 @@ func (suite *InitTestSuite) TestInitialize_WithDeclarativeResourcesDisabled() {
 		inboundclientmock.NewInboundClientServiceInterfaceMock(suite.T()),
 		nil, // ouService - not needed for this test
 		nil, // i18nService - not needed for this test
+		nil, // cryptoSvc - not needed for this test
 	)
 
 	// Assert
@@ -202,6 +201,7 @@ func (suite *InitTestSuite) TestInitialize_WithMCPServer() {
 		inboundclientmock.NewInboundClientServiceInterfaceMock(suite.T()),
 		nil, // ouService - not needed for this test
 		nil, // i18nService - not needed for this test
+		nil, // cryptoSvc - not needed for this test
 	)
 
 	// Assert
@@ -216,36 +216,36 @@ func (suite *InitTestSuite) TestParseToApplicationDTO_ValidYAML() {
 	yamlData := `
 name: test-app
 description: Test application
-auth_flow_id: test-auth-flow
-registration_flow_id: test-reg-flow
-is_registration_flow_enabled: true
+authFlowId: test-auth-flow
+registrationFlowId: test-reg-flow
+isRegistrationFlowEnabled: true
 url: https://example.com
-logo_url: https://example.com/logo.png
+logoUrl: https://example.com/logo.png
 assertion:
-  validity_period: 3600
-  user_attributes:
+  validityPeriod: 3600
+  userAttributes:
     - email
     - username
 certificate:
   type: JWKS
   value: test-cert-value
-inbound_auth_config:
+inboundAuthConfig:
   - type: oauth2
     config:
-      client_id: test-client-id
-      client_secret: test-client-secret
-      redirect_uris:
+      clientId: test-client-id
+      clientSecret: test-client-secret
+      redirectUris:
         - https://example.com/callback
-      grant_types:
+      grantTypes:
         - authorization_code
-      response_types:
+      responseTypes:
         - code
-      token_endpoint_auth_method: client_secret_basic
-      pkce_required: true
-      public_client: false
+      tokenEndpointAuthMethod: client_secret_basic
+      pkceRequired: true
+      publicClient: false
       token:
-        access_token:
-          validity_period: 3600
+        accessToken:
+          validityPeriod: 3600
 `
 
 	// Execute
@@ -267,14 +267,9 @@ inbound_auth_config:
 	// Note: ValidityPeriod and UserAttributes might be 0/nil if not properly parsed
 	// This could be due to YAML structure differences
 
-	// Verify certificate
-	assert.NotNil(suite.T(), appDTO.Certificate)
-	assert.Equal(suite.T(), cert.CertificateTypeJWKS, appDTO.Certificate.Type) // Using valid cert type
-	assert.Equal(suite.T(), "test-cert-value", appDTO.Certificate.Value)
-
 	// Verify inbound auth config
 	assert.Len(suite.T(), appDTO.InboundAuthConfig, 1)
-	assert.Equal(suite.T(), inboundmodel.OAuthInboundAuthType, appDTO.InboundAuthConfig[0].Type)
+	assert.Equal(suite.T(), providers.OAuthInboundAuthType, appDTO.InboundAuthConfig[0].Type)
 	assert.NotNil(suite.T(), appDTO.InboundAuthConfig[0].OAuthConfig)
 	assert.Equal(suite.T(), "test-client-id", appDTO.InboundAuthConfig[0].OAuthConfig.ClientID)
 	assert.Equal(
@@ -283,10 +278,10 @@ inbound_auth_config:
 		appDTO.InboundAuthConfig[0].OAuthConfig.RedirectURIs)
 	// Note: GrantTypes and ResponseTypes are typed constants, not plain strings
 	assert.Contains(suite.T(), appDTO.InboundAuthConfig[0].OAuthConfig.GrantTypes,
-		oauth2const.GrantType("authorization_code"))
+		providers.GrantType("authorization_code"))
 	assert.Contains(suite.T(), appDTO.InboundAuthConfig[0].OAuthConfig.ResponseTypes,
-		oauth2const.ResponseType("code"))
-	assert.Equal(suite.T(), oauth2const.TokenEndpointAuthMethod("client_secret_basic"),
+		providers.ResponseType("code"))
+	assert.Equal(suite.T(), providers.TokenEndpointAuthMethod("client_secret_basic"),
 		appDTO.InboundAuthConfig[0].OAuthConfig.TokenEndpointAuthMethod)
 	assert.True(suite.T(), appDTO.InboundAuthConfig[0].OAuthConfig.PKCERequired)
 	assert.False(suite.T(), appDTO.InboundAuthConfig[0].OAuthConfig.PublicClient)
@@ -302,7 +297,7 @@ func (suite *InitTestSuite) TestParseToApplicationDTO_MinimalYAML() {
 	yamlData := `
 name: minimal-app
 description: Minimal application
-is_registration_flow_enabled: false
+isRegistrationFlowEnabled: false
 `
 
 	// Execute
@@ -319,7 +314,6 @@ is_registration_flow_enabled: false
 	assert.Empty(suite.T(), appDTO.URL)
 	assert.Empty(suite.T(), appDTO.LogoURL)
 	assert.Nil(suite.T(), appDTO.Assertion)
-	assert.Nil(suite.T(), appDTO.Certificate)
 	assert.Empty(suite.T(), appDTO.InboundAuthConfig)
 }
 
@@ -328,15 +322,15 @@ func (suite *InitTestSuite) TestParseToApplicationDTO_WithNonOAuthInboundAuth() 
 	yamlData := `
 name: test-app
 description: Test application
-is_registration_flow_enabled: true
-inbound_auth_config:
+isRegistrationFlowEnabled: true
+inboundAuthConfig:
   - type: saml2
     config:
       issuer: test-saml-issuer
   - type: oauth2
     config:
-      client_id: test-client-id
-      client_secret: test-client-secret
+      clientId: test-client-id
+      clientSecret: test-client-secret
 `
 
 	// Execute
@@ -347,7 +341,7 @@ inbound_auth_config:
 	assert.NotNil(suite.T(), appDTO)
 	// Should only include OAuth config, SAML should be filtered out
 	assert.Len(suite.T(), appDTO.InboundAuthConfig, 1)
-	assert.Equal(suite.T(), inboundmodel.OAuthInboundAuthType, appDTO.InboundAuthConfig[0].Type)
+	assert.Equal(suite.T(), providers.OAuthInboundAuthType, appDTO.InboundAuthConfig[0].Type)
 	assert.Equal(suite.T(), "test-client-id", appDTO.InboundAuthConfig[0].OAuthConfig.ClientID)
 }
 
@@ -356,8 +350,8 @@ func (suite *InitTestSuite) TestParseToApplicationDTO_WithOAuthConfigWithoutConf
 	yamlData := `
 name: test-app
 description: Test application
-is_registration_flow_enabled: true
-inbound_auth_config:
+isRegistrationFlowEnabled: true
+inboundAuthConfig:
   - type: oauth2
 `
 
@@ -376,7 +370,7 @@ func (suite *InitTestSuite) TestParseToApplicationDTO_InvalidYAML() {
 	invalidYaml := `
 name: test-app
 description: Test application
-invalid_yaml_structure: [
+invalidYamlStructure: [
 `
 
 	// Execute
@@ -392,8 +386,8 @@ func (suite *InitTestSuite) TestParseToApplicationDTO_EmptyInboundAuthConfig() {
 	yamlData := `
 name: test-app
 description: Test application
-is_registration_flow_enabled: true
-inbound_auth_config: []
+isRegistrationFlowEnabled: true
+inboundAuthConfig: []
 `
 
 	// Execute
@@ -410,24 +404,24 @@ func (suite *InitTestSuite) TestParseToApplicationDTO_WithCompleteOAuthConfig() 
 	yamlData := `
 name: oauth-app
 description: OAuth application
-is_registration_flow_enabled: true
-inbound_auth_config:
+isRegistrationFlowEnabled: true
+inboundAuthConfig:
   - type: oauth2
     config:
-      client_id: oauth-client
-      client_secret: oauth-secret
-      redirect_uris:
+      clientId: oauth-client
+      clientSecret: oauth-secret
+      redirectUris:
         - https://app.example.com/callback
         - https://app.example.com/redirect
-      grant_types:
+      grantTypes:
         - authorization_code
         - refresh_token
-      response_types:
+      responseTypes:
         - code
         - token
-      token_endpoint_auth_method: client_secret_post
-      pkce_required: false
-      public_client: true
+      tokenEndpointAuthMethod: client_secret_post
+      pkceRequired: false
+      publicClient: true
 `
 
 	// Execute
@@ -445,11 +439,11 @@ inbound_auth_config:
 	assert.Equal(suite.T(), []string{"https://app.example.com/callback",
 		"https://app.example.com/redirect"}, oauthConfig.RedirectURIs)
 	// Using Contains for typed constants
-	assert.Contains(suite.T(), oauthConfig.GrantTypes, oauth2const.GrantType("authorization_code"))
-	assert.Contains(suite.T(), oauthConfig.GrantTypes, oauth2const.GrantType("refresh_token"))
-	assert.Contains(suite.T(), oauthConfig.ResponseTypes, oauth2const.ResponseType("code"))
-	assert.Contains(suite.T(), oauthConfig.ResponseTypes, oauth2const.ResponseType("token"))
-	assert.Equal(suite.T(), oauth2const.TokenEndpointAuthMethod("client_secret_post"),
+	assert.Contains(suite.T(), oauthConfig.GrantTypes, providers.GrantType("authorization_code"))
+	assert.Contains(suite.T(), oauthConfig.GrantTypes, providers.GrantType("refresh_token"))
+	assert.Contains(suite.T(), oauthConfig.ResponseTypes, providers.ResponseType("code"))
+	assert.Contains(suite.T(), oauthConfig.ResponseTypes, providers.ResponseType("token"))
+	assert.Equal(suite.T(), providers.TokenEndpointAuthMethod("client_secret_post"),
 		oauthConfig.TokenEndpointAuthMethod)
 	assert.False(suite.T(), oauthConfig.PKCERequired)
 	assert.True(suite.T(), oauthConfig.PublicClient)
@@ -463,13 +457,13 @@ func BenchmarkParseToApplicationDTO(b *testing.B) {
 	yamlData := `
 name: benchmark-app
 description: Benchmark application
-is_registration_flow_enabled: true
-inbound_auth_config:
+isRegistrationFlowEnabled: true
+inboundAuthConfig:
   - type: oauth2
     config:
-      client_id: benchmark-client
-      client_secret: benchmark-secret
-      redirect_uris:
+      clientId: benchmark-client
+      clientSecret: benchmark-secret
+      redirectUris:
         - https://example.com/callback
 `
 
@@ -488,8 +482,8 @@ func (suite *InitTestSuite) TestParseToApplicationDTO_WithSpecialCharacters() {
 name: "app-with-special-chars-!@#$%"
 description: "Description with 'quotes' and \"double quotes\""
 url: "https://example.com/path?param=value&other=123"
-logo_url: "https://cdn.example.com/logos/app-logo_v2.png"
-is_registration_flow_enabled: true
+logoUrl: "https://cdn.example.com/logos/app-logo_v2.png"
+isRegistrationFlowEnabled: true
 `
 
 	// Execute
@@ -511,17 +505,17 @@ func TestParseToApplicationDTO_Standalone(t *testing.T) {
 	yamlData := `
 name: test-app
 description: Test application
-is_registration_flow_enabled: true
-inbound_auth_config:
+isRegistrationFlowEnabled: true
+inboundAuthConfig:
   - type: oauth2
     config:
-      client_id: test-client-id
-      client_secret: test-client-secret
-      redirect_uris:
+      clientId: test-client-id
+      clientSecret: test-client-secret
+      redirectUris:
         - https://example.com/callback
-      grant_types:
+      grantTypes:
         - authorization_code
-      response_types:
+      responseTypes:
         - code
 `
 
@@ -535,7 +529,7 @@ inbound_auth_config:
 	assert.Equal(t, "Test application", appDTO.Description)
 	assert.True(t, appDTO.IsRegistrationFlowEnabled)
 	assert.Len(t, appDTO.InboundAuthConfig, 1)
-	assert.Equal(t, inboundmodel.OAuthInboundAuthType, appDTO.InboundAuthConfig[0].Type)
+	assert.Equal(t, providers.OAuthInboundAuthType, appDTO.InboundAuthConfig[0].Type)
 	assert.Equal(t, "test-client-id", appDTO.InboundAuthConfig[0].OAuthConfig.ClientID)
 }
 
@@ -544,7 +538,7 @@ func TestParseToApplicationDTO_InvalidYAML_Standalone(t *testing.T) {
 	invalidYaml := `
 name: test-app
 description: Test application
-invalid_yaml_structure: [
+invalidYamlStructure: [
 `
 
 	// Execute
@@ -598,6 +592,7 @@ func TestInitialize_Standalone(t *testing.T) {
 		inboundclientmock.NewInboundClientServiceInterfaceMock(t),
 		nil, // ouService - not needed for this test
 		nil, // i18nService - not needed for this test
+		nil, // cryptoSvc - not needed for this test
 	)
 
 	// Assert
@@ -618,7 +613,7 @@ func TestInitialize_WithDeclarativeResources_Standalone(t *testing.T) {
 
 	// Create a temporary directory structure for file-based runtime
 	tmpDir := t.TempDir()
-	confDir := tmpDir + "/repository/resources"
+	confDir := tmpDir + "/config/resources"
 	appDir := confDir + "/applications"
 
 	// Create the directory structure
@@ -648,6 +643,7 @@ func TestInitialize_WithDeclarativeResources_Standalone(t *testing.T) {
 		mockInboundClient,
 		nil, // ouService - not needed for this test
 		nil, // i18nService - not needed for this test
+		nil, // cryptoSvc - not needed for this test
 	)
 
 	// Assert
@@ -661,11 +657,11 @@ func (suite *InitTestSuite) TestParseToApplicationDTO_WithScopeClaims() {
 	yamlData := `
 id: "test-app-scope-claims"
 name: "App With Scope Claims"
-inbound_auth_config:
+inboundAuthConfig:
   - type: oauth2
     config:
-      client_id: "client-456"
-      scope_claims:
+      clientId: "client-456"
+      scopeClaims:
         profile:
           - "name"
           - "email"
@@ -698,10 +694,10 @@ func (suite *InitTestSuite) TestParseToApplicationDTO_WithScopes() {
 	yamlData := `
 id: "test-app-scopes"
 name: "App With Scopes"
-inbound_auth_config:
+inboundAuthConfig:
   - type: oauth2
     config:
-      client_id: "client-123"
+      clientId: "client-123"
       scopes:
         - "openid"
         - "profile"
@@ -728,12 +724,12 @@ func (suite *InitTestSuite) TestParseToApplicationDTO_WithUserInfo() {
 	yamlData := `
 id: "test-app-userinfo"
 name: "App With UserInfo"
-inbound_auth_config:
+inboundAuthConfig:
   - type: oauth2
     config:
-      client_id: "client-789"
-      user_info:
-        user_attributes:
+      clientId: "client-789"
+      userInfo:
+        userAttributes:
           - "sub"
           - "email"
           - "name"
@@ -760,31 +756,31 @@ func (suite *InitTestSuite) TestParseToApplicationDTO_WithAllOAuthFieldsIncludin
 	yamlData := `
 id: "test-app-complete"
 name: "Complete OAuth App"
-inbound_auth_config:
+inboundAuthConfig:
   - type: oauth2
     config:
-      client_id: "complete-client"
-      client_secret: "secret-value"
-      redirect_uris:
+      clientId: "complete-client"
+      clientSecret: "secret-value"
+      redirectUris:
         - "https://example.com/callback"
-      grant_types:
+      grantTypes:
         - "authorization_code"
-      response_types:
+      responseTypes:
         - "code"
-      token_endpoint_auth_method: "client_secret_basic"
-      pkce_required: true
-      public_client: false
+      tokenEndpointAuthMethod: "client_secret_basic"
+      pkceRequired: true
+      publicClient: false
       token:
-        id_token:
-          user_attributes:
+        idToken:
+          userAttributes:
             - "sub"
             - "email"
       scopes:
         - "openid"
-      user_info:
-        user_attributes:
+      userInfo:
+        userAttributes:
           - "profile"
-      scope_claims:
+      scopeClaims:
         profile:
           - "name"
 `
@@ -819,17 +815,17 @@ func (suite *InitTestSuite) TestParseToApplicationDTO_GithubIssue1445_CustomClai
 	yamlData := `
 id: "test-app-custom-claims"
 name: "App With Custom Claims"
-inbound_auth_config:
+inboundAuthConfig:
   - type: oauth2
     config:
-      client_id: "MY_APP"
+      clientId: "MY_APP"
       token:
-        id_token:
-          user_attributes:
+        idToken:
+          userAttributes:
             - "email"
             - "name"
             - "customClaim"
-      scope_claims:
+      scopeClaims:
         profile:
           - "name"
           - "customClaim"

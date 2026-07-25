@@ -16,9 +16,8 @@
  * under the License.
  */
 
+import {IdentityProviderTypes, type IdentityProviderType} from '@thunderid/configure-connections';
 import {ExecutionTypes} from '@/features/flows/models/steps';
-import type {IdentityProviderType} from '@/features/integrations/models/identity-provider';
-import {IdentityProviderTypes} from '@/features/integrations/models/identity-provider';
 
 /**
  * Maps executor names to their corresponding identity provider types.
@@ -46,6 +45,18 @@ export const FEDERATED_EXECUTORS = new Set<string>([
 export const SMS_OTP_MODES = [
   {value: 'send', translationKey: 'flows:core.executions.smsOtp.mode.send', displayLabel: 'Send SMS OTP'},
   {value: 'verify', translationKey: 'flows:core.executions.smsOtp.mode.verify', displayLabel: 'Verify SMS OTP'},
+] as const;
+
+/**
+ * Available modes for Magic Link executor.
+ */
+export const MAGIC_LINK_MODES = [
+  {
+    value: 'generate',
+    translationKey: 'flows:core.executions.magicLink.mode.generate',
+    displayLabel: 'Generate Magic Link',
+  },
+  {value: 'verify', translationKey: 'flows:core.executions.magicLink.mode.verify', displayLabel: 'Verify Magic Link'},
 ] as const;
 
 /**
@@ -129,4 +140,8 @@ export const EXECUTORS_WITH_FIXED_INPUTS = new Set<string>([
   ExecutionTypes.OAuthExecutor,
   ExecutionTypes.OIDCAuthExecutor,
   ExecutionTypes.ConsentExecutor,
+  ExecutionTypes.OpenID4VPVerify,
+  ExecutionTypes.SSOCheck,
+  ExecutionTypes.Session,
+  ExecutionTypes.SessionSignOut,
 ]);

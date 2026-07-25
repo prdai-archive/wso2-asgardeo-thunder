@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2025, WSO2 LLC. (https://www.wso2.com).
+ * Copyright (c) 2025-2026, WSO2 LLC. (https://www.wso2.com).
  *
  * WSO2 LLC. licenses this file to you under the Apache License,
  * Version 2.0 (the "License"); you may not use this file except
@@ -58,6 +58,13 @@ type Application struct {
 	Certificate               map[string]interface{}   `json:"certificate,omitempty"`
 	InboundAuthConfig         []map[string]interface{} `json:"inboundAuthConfig,omitempty"`
 	AssertionConfig           map[string]interface{}   `json:"assertion,omitempty"`
+	// Attestation is the client-level platform attestation config, set at the top level of the
+	// application independent of any OAuth profile.
+	Attestation map[string]interface{} `json:"attestation,omitempty"`
+	// Embedded creates a native app with no inbound OAuth profile — the canonical flow-native app
+	// that authenticates flow initiation with a Flow Secret. When set, no default OAuth config is
+	// synthesized.
+	Embedded bool `json:"-"`
 }
 
 // OrganizationUnit represents an organization unit in the system
@@ -109,11 +116,33 @@ type I18nMessage struct {
 	DefaultValue string `json:"defaultValue,omitempty"`
 }
 
+func (m *I18nMessage) UnmarshalJSON(data []byte) error {
+	var s string
+	if err := json.Unmarshal(data, &s); err == nil {
+		m.DefaultValue = s
+		return nil
+	}
+	type alias I18nMessage
+	var a alias
+	if err := json.Unmarshal(data, &a); err != nil {
+		return err
+	}
+	*m = I18nMessage(a)
+	return nil
+}
+
 // ErrorResponse represents an error response from the API
 type ErrorResponse struct {
 	Code        string      `json:"code"`
 	Message     I18nMessage `json:"message"`
 	Description I18nMessage `json:"description"`
+}
+
+// FlowExecutionError represents a structured error returned by flow execution.
+type FlowExecutionError struct {
+	Code        string      `json:"code,omitempty"`
+	Message     I18nMessage `json:"message,omitempty"`
+	Description I18nMessage `json:"description,omitempty"`
 }
 
 // AuthenticationResponse represents the response from an authentication request
@@ -191,7 +220,6 @@ type ResourceServer struct {
 	ID          string  `json:"id,omitempty"`
 	Name        string  `json:"name"`
 	Description string  `json:"description,omitempty"`
-	Handle      string  `json:"handle,omitempty"`
 	Identifier  string  `json:"identifier,omitempty"`
 	OUID        string  `json:"ouId"`
 	Delimiter   *string `json:"delimiter,omitempty"`
@@ -214,12 +242,12 @@ type ResourcePermissions struct {
 
 // FlowResponse represents the response from flow execution
 type FlowResponse struct {
-	ExecutionID   string    `json:"executionId"`
-	FlowStatus    string    `json:"flowStatus"`
-	Type          string    `json:"type"`
-	Data          *FlowData `json:"data,omitempty"`
-	Assertion     string    `json:"assertion,omitempty"`
-	FailureReason string    `json:"failureReason,omitempty"`
+	ExecutionID   string              `json:"executionId"`
+	FlowStatus    string              `json:"flowStatus"`
+	Type          string              `json:"type"`
+	Data          *FlowData           `json:"data,omitempty"`
+	Assertion     string              `json:"assertion,omitempty"`
+	Error         *FlowExecutionError `json:"error,omitempty"`
 }
 
 // FlowData represents the data returned by flow execution
@@ -247,13 +275,13 @@ type FlowAction struct {
 
 // FlowStep represents a single step in a flow execution
 type FlowStep struct {
-	ExecutionID    string    `json:"executionId"`
-	FlowStatus     string    `json:"flowStatus"`
-	Type           string    `json:"type"`
-	Data           *FlowData `json:"data,omitempty"`
-	Assertion      string    `json:"assertion,omitempty"`
-	FailureReason  string    `json:"failureReason,omitempty"`
-	ChallengeToken string    `json:"challengeToken,omitempty"`
+	ExecutionID    string              `json:"executionId"`
+	FlowStatus     string              `json:"flowStatus"`
+	Type           string              `json:"type"`
+	Data           *FlowData           `json:"data,omitempty"`
+	Assertion      string              `json:"assertion,omitempty"`
+	Error          *FlowExecutionError `json:"error,omitempty"`
+	ChallengeToken string              `json:"challengeToken,omitempty"`
 }
 
 // Flow represents a flow definition

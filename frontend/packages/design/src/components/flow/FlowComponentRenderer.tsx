@@ -24,6 +24,7 @@ import CopyableTextAdapter from './adapters/CopyableTextAdapter';
 import DividerAdapter from './adapters/DividerAdapter';
 import IconAdapter from './adapters/IconAdapter';
 import ImageAdapter from './adapters/ImageAdapter';
+import QrCodeAdapter from './adapters/QrCodeAdapter';
 import RichTextAdapter from './adapters/RichTextAdapter';
 import StackAdapter from './adapters/StackAdapter';
 import StandaloneTriggerAdapter from './adapters/StandaloneTriggerAdapter';
@@ -61,9 +62,6 @@ export default function FlowComponentRenderer({
   onValidate,
   maxImageSize,
   additionalData,
-  signUpFallbackUrl,
-  signInFallbackUrl,
-  forgotPasswordFallbackUrl,
 }: FlowComponentRendererProps): JSX.Element | null {
   const comp = component as FlowComponent;
 
@@ -74,15 +72,7 @@ export default function FlowComponentRenderer({
 
   // RICH_TEXT
   if (comp.type === 'RICH_TEXT') {
-    return (
-      <RichTextAdapter
-        component={comp}
-        resolve={resolve}
-        signUpFallbackUrl={signUpFallbackUrl}
-        signInFallbackUrl={signInFallbackUrl}
-        forgotPasswordFallbackUrl={forgotPasswordFallbackUrl}
-      />
-    );
+    return <RichTextAdapter component={comp} resolve={resolve} values={values} onSubmit={onSubmit} />;
   }
 
   // IMAGE
@@ -108,9 +98,6 @@ export default function FlowComponentRenderer({
         onInputChange={onInputChange}
         onSubmit={onSubmit}
         onValidate={onValidate}
-        signUpFallbackUrl={signUpFallbackUrl}
-        signInFallbackUrl={signInFallbackUrl}
-        forgotPasswordFallbackUrl={forgotPasswordFallbackUrl}
       />
     );
   }
@@ -161,9 +148,6 @@ export default function FlowComponentRenderer({
             onInputChange={onInputChange}
             onSubmit={onSubmit}
             onValidate={onValidate}
-            signUpFallbackUrl={signUpFallbackUrl}
-            signInFallbackUrl={signInFallbackUrl}
-            forgotPasswordFallbackUrl={forgotPasswordFallbackUrl}
           />
         </>
       );
@@ -181,9 +165,6 @@ export default function FlowComponentRenderer({
         onInputChange={onInputChange}
         onSubmit={onSubmit}
         onValidate={onValidate}
-        signUpFallbackUrl={signUpFallbackUrl}
-        signInFallbackUrl={signInFallbackUrl}
-        forgotPasswordFallbackUrl={forgotPasswordFallbackUrl}
       />
     );
   }
@@ -191,6 +172,11 @@ export default function FlowComponentRenderer({
   // COPYABLE_TEXT
   if (comp.type === 'COPYABLE_TEXT') {
     return <CopyableTextAdapter component={comp} resolve={resolve} additionalData={additionalData} />;
+  }
+
+  // QR_CODE
+  if (comp.type === 'QR_CODE') {
+    return <QrCodeAdapter component={comp} additionalData={additionalData} />;
   }
 
   // Standalone ACTION / TRIGGER (outside of a block)

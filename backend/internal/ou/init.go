@@ -22,6 +22,8 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/thunder-id/thunderid/pkg/thunderidengine/providers"
+
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/thunder-id/thunderid/internal/system/cache"
@@ -133,8 +135,8 @@ func wrapWithCache(
 	if cacheManager == nil {
 		return store
 	}
-	ouByIDCache := cache.GetCache[*OrganizationUnit](cacheManager, "OUByIDCache")
-	ouByHandleParentCache := cache.GetCache[*OrganizationUnit](cacheManager, "OUByHandleParentCache")
+	ouByIDCache := cache.GetCache[*providers.OrganizationUnit](cacheManager, "OUByIDCache")
+	ouByHandleParentCache := cache.GetCache[*providers.OrganizationUnit](cacheManager, "OUByHandleParentCache")
 	return newCacheBackedOUStore(store, ouByIDCache, ouByHandleParentCache)
 }
 
@@ -177,6 +179,8 @@ func registerRoutes(mux *http.ServeMux, ouHandler *organizationUnitHandler) {
 					ouHandler.HandleOUUsersListRequest(w, r)
 				case "groups":
 					ouHandler.HandleOUGroupsListRequest(w, r)
+				case "roles":
+					ouHandler.HandleOURolesListRequest(w, r)
 				default:
 					http.NotFound(w, r)
 				}
@@ -204,6 +208,7 @@ func registerRoutes(mux *http.ServeMux, ouHandler *organizationUnitHandler) {
 				"/ous":    ouHandler.HandleOUChildrenListByPathRequest,
 				"/users":  ouHandler.HandleOUUsersListByPathRequest,
 				"/groups": ouHandler.HandleOUGroupsListByPathRequest,
+				"/roles":  ouHandler.HandleOURolesListByPathRequest,
 			}
 
 			for suffix, handlerFunc := range handlers {

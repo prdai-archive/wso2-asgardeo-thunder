@@ -29,6 +29,7 @@ import (
 	"github.com/thunder-id/thunderid/tests/mocks/healthcheck/servicemock"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/suite"
 )
 
@@ -71,11 +72,11 @@ func (suite *HealthCheckHandlerTestSuite) TestHandleReadinessRequest_AllUp() {
 			Status:      model.StatusUp,
 		},
 		{
-			ServiceName: "RuntimeDB",
+			ServiceName: "RuntimeTransientDB",
 			Status:      model.StatusUp,
 		},
 		{
-			ServiceName: "UserDB",
+			ServiceName: "EntityDB",
 			Status:      model.StatusUp,
 		},
 	}
@@ -83,7 +84,7 @@ func (suite *HealthCheckHandlerTestSuite) TestHandleReadinessRequest_AllUp() {
 		Status:        model.StatusUp,
 		ServiceStatus: serviceStatus,
 	}
-	suite.mockService.On("CheckReadiness").Return(serverStatus)
+	suite.mockService.On("CheckReadiness", mock.Anything).Return(serverStatus)
 
 	// Call handler method
 	suite.handler.HandleReadinessRequest(rec, req)
@@ -113,11 +114,11 @@ func (suite *HealthCheckHandlerTestSuite) TestHandleReadinessRequest_Down() {
 			Status:      model.StatusUp,
 		},
 		{
-			ServiceName: "RuntimeDB",
+			ServiceName: "RuntimeTransientDB",
 			Status:      model.StatusDown,
 		},
 		{
-			ServiceName: "UserDB",
+			ServiceName: "EntityDB",
 			Status:      model.StatusDown,
 		},
 	}
@@ -125,7 +126,7 @@ func (suite *HealthCheckHandlerTestSuite) TestHandleReadinessRequest_Down() {
 		Status:        model.StatusDown,
 		ServiceStatus: serviceStatus,
 	}
-	suite.mockService.On("CheckReadiness").Return(serverStatus)
+	suite.mockService.On("CheckReadiness", mock.Anything).Return(serverStatus)
 
 	// Call handler method
 	suite.handler.HandleReadinessRequest(rec, req)

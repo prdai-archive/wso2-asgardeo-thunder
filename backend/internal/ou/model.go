@@ -20,77 +20,23 @@ package ou
 
 import (
 	"context"
-	"time"
 
+	"github.com/thunder-id/thunderid/internal/system/resourcedependency"
 	"github.com/thunder-id/thunderid/internal/system/utils"
 )
 
-// OrganizationUnitBasic represents the basic information of an organization unit.
-type OrganizationUnitBasic struct {
-	ID          string    `json:"id"`
-	Handle      string    `json:"handle"`
-	Name        string    `json:"name"`
-	Description string    `json:"description,omitempty"`
-	LogoURL     string    `json:"logoUrl,omitempty"`
-	IsReadOnly  bool      `json:"isReadOnly"`
-	CreatedAt   time.Time `json:"createdAt"`
-	UpdatedAt   time.Time `json:"updatedAt"`
-}
-
-// OrganizationUnit represents an organization unit.
-type OrganizationUnit struct {
-	ID              string    `json:"id" yaml:"id"`
-	Handle          string    `json:"handle" yaml:"handle"`
-	Name            string    `json:"name" yaml:"name"`
-	Description     string    `json:"description,omitempty" yaml:"description,omitempty"`
-	Parent          *string   `json:"parent" yaml:"parent"`
-	ThemeID         string    `json:"themeId,omitempty" yaml:"theme_id,omitempty"`
-	LayoutID        string    `json:"layoutId,omitempty" yaml:"layout_id,omitempty"`
-	LogoURL         string    `json:"logoUrl,omitempty" yaml:"logo_url,omitempty"`
-	TosURI          string    `json:"tosUri,omitempty" yaml:"tos_uri,omitempty"`
-	PolicyURI       string    `json:"policyUri,omitempty" yaml:"policy_uri,omitempty"`
-	CookiePolicyURI string    `json:"cookiePolicyUri,omitempty" yaml:"cookie_policy_uri,omitempty"`
-	CreatedAt       time.Time `json:"createdAt" yaml:"created_at"`
-	UpdatedAt       time.Time `json:"updatedAt" yaml:"updated_at"`
-}
-
 // OrganizationUnitRequest represents the request body for creating an organization unit.
 type OrganizationUnitRequest struct {
-	Handle          string  `json:"handle"`
-	Name            string  `json:"name"`
+	Handle          string  `json:"handle"                    native:"required,min=3,max=50"`
+	Name            string  `json:"name"                      native:"required,min=2,max=100"`
 	Description     string  `json:"description,omitempty"`
-	Parent          *string `json:"parent"`
+	Parent          *string `json:"parent"                    native:"omitempty,max=255"`
 	ThemeID         string  `json:"themeId,omitempty"`
 	LayoutID        string  `json:"layoutId,omitempty"`
-	LogoURL         string  `json:"logoUrl,omitempty"`
-	TosURI          string  `json:"tosUri,omitempty"`
-	PolicyURI       string  `json:"policyUri,omitempty"`
-	CookiePolicyURI string  `json:"cookiePolicyUri,omitempty"`
-}
-
-// OrganizationUnitRequestWithID represents the request body for creating an organization unit
-// in import/declarative paths where preserving IDs is required.
-type OrganizationUnitRequestWithID struct {
-	ID              string  `json:"id" yaml:"id"`
-	Handle          string  `json:"handle" yaml:"handle"`
-	Name            string  `json:"name" yaml:"name"`
-	Description     string  `json:"description,omitempty" yaml:"description,omitempty"`
-	Parent          *string `json:"parent" yaml:"parent"`
-	ThemeID         string  `json:"themeId,omitempty" yaml:"theme_id,omitempty"`
-	LayoutID        string  `json:"layoutId,omitempty" yaml:"layout_id,omitempty"`
-	LogoURL         string  `json:"logoUrl,omitempty" yaml:"logo_url,omitempty"`
-	TosURI          string  `json:"tosUri,omitempty" yaml:"tos_uri,omitempty"`
-	PolicyURI       string  `json:"policyUri,omitempty" yaml:"policy_uri,omitempty"`
-	CookiePolicyURI string  `json:"cookiePolicyUri,omitempty" yaml:"cookie_policy_uri,omitempty"`
-}
-
-// OrganizationUnitListResponse represents the response for listing organization units with pagination.
-type OrganizationUnitListResponse struct {
-	TotalResults      int                     `json:"totalResults"`
-	StartIndex        int                     `json:"startIndex"`
-	Count             int                     `json:"count"`
-	OrganizationUnits []OrganizationUnitBasic `json:"organizationUnits"`
-	Links             []utils.Link            `json:"links"`
+	LogoURL         string  `json:"logoUrl,omitempty"         native:"omitempty,url,max=2048"`
+	TosURI          string  `json:"tosUri,omitempty"          native:"omitempty,url,max=2048"`
+	PolicyURI       string  `json:"policyUri,omitempty"       native:"omitempty,url,max=2048"`
+	CookiePolicyURI string  `json:"cookiePolicyUri,omitempty" native:"omitempty,url,max=2048"`
 }
 
 // User represents a user with basic information for OU endpoints.
@@ -120,6 +66,8 @@ type UserListResponse struct {
 type OUUserResolver interface {
 	GetUserCountByOUID(ctx context.Context, ouID string) (int, error)
 	GetUserListByOUID(ctx context.Context, ouID string, limit, offset int, includeDisplay bool) ([]User, error)
+	GetResourceDependencies(
+		ctx context.Context, resourceType, id string) ([]resourcedependency.ResourceDependency, error)
 }
 
 // OUGroupResolver provides access to group data for an organization unit
@@ -127,6 +75,8 @@ type OUUserResolver interface {
 type OUGroupResolver interface {
 	GetGroupCountByOUID(ctx context.Context, ouID string) (int, error)
 	GetGroupListByOUID(ctx context.Context, ouID string, limit, offset int) ([]Group, error)
+	GetResourceDependencies(
+		ctx context.Context, resourceType, id string) ([]resourcedependency.ResourceDependency, error)
 }
 
 // GroupListResponse represents the response for listing groups in an organization unit.
@@ -136,4 +86,28 @@ type GroupListResponse struct {
 	Count        int          `json:"count"`
 	Groups       []Group      `json:"groups"`
 	Links        []utils.Link `json:"links"`
+}
+
+// Role represents a role with basic information for OU endpoints.
+type Role struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+	IsReadOnly  bool   `json:"isReadOnly"`
+}
+
+// RoleListResponse represents the response for listing roles in an organization unit.
+type RoleListResponse struct {
+	TotalResults int          `json:"totalResults"`
+	StartIndex   int          `json:"startIndex"`
+	Count        int          `json:"count"`
+	Roles        []Role       `json:"roles"`
+	Links        []utils.Link `json:"links"`
+}
+
+// OURoleResolver provides access to role data for an organization unit
+// without requiring direct import of the role package.
+type OURoleResolver interface {
+	GetRoleCountByOUID(ctx context.Context, ouID string) (int, error)
+	GetRoleListByOUID(ctx context.Context, ouID string, limit, offset int) ([]Role, error)
 }

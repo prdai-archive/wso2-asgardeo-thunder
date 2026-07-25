@@ -16,14 +16,17 @@
  * under the License.
  */
 
+import {
+  AuthenticatorTypes,
+  IdentityProviderTypes,
+  getConnectionIcon,
+  type IdentityProvider,
+} from '@thunderid/configure-connections';
 import {List, Divider} from '@wso2/oxygen-ui';
 import {UserRound, Google, GitHub, KeyRound} from '@wso2/oxygen-ui-icons-react';
 import type {JSX} from 'react';
 import {useTranslation} from 'react-i18next';
 import AuthenticationMethodItem from './AuthenticationMethodItem';
-import {AuthenticatorTypes} from '@/features/integrations/models/authenticators';
-import {type IdentityProvider, IdentityProviderTypes} from '@/features/integrations/models/identity-provider';
-import getIntegrationIcon from '@/features/integrations/utils/getIntegrationIcon';
 
 /**
  * Props for the IndividualMethodsToggleView component
@@ -61,7 +64,7 @@ export default function IndividualMethodsToggleView({
   const githubProvider = availableIntegrations.find(
     (idp: IdentityProvider) => idp.type === IdentityProviderTypes.GITHUB,
   );
-  const hasUsernamePassword = integrations[AuthenticatorTypes.BASIC_AUTH] ?? false;
+  const hasUsernamePassword = integrations[AuthenticatorTypes.CREDENTIALS_AUTH] ?? false;
 
   const otherProviders = availableIntegrations.filter(
     (provider: IdentityProvider) =>
@@ -74,7 +77,7 @@ export default function IndividualMethodsToggleView({
       <List sx={{bgcolor: 'background.paper', borderRadius: 1, border: 1, borderColor: 'divider'}}>
         {/* Username & Password */}
         <AuthenticationMethodItem
-          id={AuthenticatorTypes.BASIC_AUTH}
+          id={AuthenticatorTypes.CREDENTIALS_AUTH}
           name={t('applications:onboarding.configure.SignInOptions.usernamePassword')}
           icon={<UserRound size={24} />}
           isEnabled={hasUsernamePassword}
@@ -125,7 +128,7 @@ export default function IndividualMethodsToggleView({
             <AuthenticationMethodItem
               id={provider.id}
               name={provider.name}
-              icon={getIntegrationIcon(provider.type)}
+              icon={getConnectionIcon(provider.type)}
               isEnabled={integrations[provider.id] ?? false}
               isAvailable
               onToggle={onIntegrationToggle}

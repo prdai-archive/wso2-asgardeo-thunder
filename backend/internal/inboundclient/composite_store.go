@@ -24,6 +24,7 @@ import (
 	inboundmodel "github.com/thunder-id/thunderid/internal/inboundclient/model"
 	serverconst "github.com/thunder-id/thunderid/internal/system/constants"
 	declarativeresource "github.com/thunder-id/thunderid/internal/system/declarative_resource"
+	"github.com/thunder-id/thunderid/pkg/thunderidengine/providers"
 )
 
 // compositeStore combines a file-backed (immutable, declarative) store and a database-backed
@@ -70,12 +71,56 @@ func (c *compositeStore) GetInboundClientList(ctx context.Context, limit int) ([
 	return clients, nil
 }
 
+func (c *compositeStore) GetEntityIDsByReference(
+	ctx context.Context, refType, refID string, limit, offset int) ([]string, int, error) {
+	dbIDs, _, err := c.dbStore.GetEntityIDsByReference(ctx, refType, refID, serverconst.MaxCompositeStoreRecords, 0)
+	if err != nil {
+		return nil, 0, err
+	}
+	if len(dbIDs) == serverconst.MaxCompositeStoreRecords {
+		return nil, 0, ErrCompositeResultLimitExceeded
+	}
+	fileIDs, _, err := c.fileStore.GetEntityIDsByReference(
+		ctx, refType, refID, serverconst.MaxCompositeStoreRecords, 0)
+	if err != nil {
+		return nil, 0, err
+	}
+	if len(fileIDs) == serverconst.MaxCompositeStoreRecords {
+		return nil, 0, ErrCompositeResultLimitExceeded
+	}
+
+	seen := make(map[string]struct{}, len(dbIDs)+len(fileIDs))
+	all := make([]string, 0, len(dbIDs)+len(fileIDs))
+	for _, id := range dbIDs {
+		if _, exists := seen[id]; !exists {
+			seen[id] = struct{}{}
+			all = append(all, id)
+		}
+	}
+	for _, id := range fileIDs {
+		if _, exists := seen[id]; !exists {
+			seen[id] = struct{}{}
+			all = append(all, id)
+		}
+	}
+
+	total := len(all)
+	if offset >= total {
+		return []string{}, total, nil
+	}
+	end := offset + limit
+	if end > total {
+		end = total
+	}
+	return all[offset:end], total, nil
+}
+
 func (c *compositeStore) CreateInboundClient(ctx context.Context, client inboundmodel.InboundClient) error {
 	return c.dbStore.CreateInboundClient(ctx, client)
 }
 
 func (c *compositeStore) CreateOAuthProfile(ctx context.Context, entityID string,
-	oauthProfile *inboundmodel.OAuthProfile) error {
+	oauthProfile *providers.OAuthProfile) error {
 	return c.dbStore.CreateOAuthProfile(ctx, entityID, oauthProfile)
 }
 
@@ -93,10 +138,10 @@ func (c *compositeStore) GetInboundClientByEntityID(ctx context.Context, entityI
 }
 
 func (c *compositeStore) GetOAuthProfileByEntityID(ctx context.Context, entityID string) (
-	*inboundmodel.OAuthProfile, error) {
+	*providers.OAuthProfile, error) {
 	return declarativeresource.CompositeGetHelper(
-		func() (*inboundmodel.OAuthProfile, error) { return c.dbStore.GetOAuthProfileByEntityID(ctx, entityID) },
-		func() (*inboundmodel.OAuthProfile, error) {
+		func() (*providers.OAuthProfile, error) { return c.dbStore.GetOAuthProfileByEntityID(ctx, entityID) },
+		func() (*providers.OAuthProfile, error) {
 			return c.fileStore.GetOAuthProfileByEntityID(ctx, entityID)
 		},
 		ErrInboundClientNotFound,
@@ -108,7 +153,7 @@ func (c *compositeStore) UpdateInboundClient(ctx context.Context, client inbound
 }
 
 func (c *compositeStore) UpdateOAuthProfile(ctx context.Context, entityID string,
-	oauthProfile *inboundmodel.OAuthProfile) error {
+	oauthProfile *providers.OAuthProfile) error {
 	return c.dbStore.UpdateOAuthProfile(ctx, entityID, oauthProfile)
 }
 

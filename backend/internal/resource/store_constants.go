@@ -28,14 +28,14 @@ var (
 	queryCreateResourceServer = dbmodel.DBQuery{
 		ID: "RSQ-RES_MGT-01",
 		Query: `INSERT INTO "RESOURCE_SERVER"
-			(ID, OU_ID, NAME, DESCRIPTION, HANDLE, IDENTIFIER, PROPERTIES, DEPLOYMENT_ID)
+			(ID, OU_ID, NAME, DESCRIPTION, IDENTIFIER, TYPE, PROPERTIES, DEPLOYMENT_ID)
 			VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
 	}
 
 	// queryGetResourceServerByID retrieves a resource server by ID.
 	queryGetResourceServerByID = dbmodel.DBQuery{
 		ID: "RSQ-RES_MGT-02",
-		Query: `SELECT ID, OU_ID, NAME, DESCRIPTION, HANDLE, IDENTIFIER, PROPERTIES
+		Query: `SELECT ID, OU_ID, NAME, DESCRIPTION, IDENTIFIER, TYPE, PROPERTIES
 			FROM "RESOURCE_SERVER"
 			WHERE ID = $1 AND DEPLOYMENT_ID = $2`,
 	}
@@ -43,7 +43,7 @@ var (
 	// queryGetResourceServerList retrieves a list of resource servers with pagination.
 	queryGetResourceServerList = dbmodel.DBQuery{
 		ID: "RSQ-RES_MGT-03",
-		Query: `SELECT ID, OU_ID, NAME, DESCRIPTION, HANDLE, IDENTIFIER, PROPERTIES
+		Query: `SELECT ID, OU_ID, NAME, DESCRIPTION, IDENTIFIER, TYPE, PROPERTIES
 			FROM "RESOURCE_SERVER"
 			WHERE DEPLOYMENT_ID = $3
 			ORDER BY CREATED_AT DESC
@@ -60,7 +60,7 @@ var (
 	queryUpdateResourceServer = dbmodel.DBQuery{
 		ID: "RSQ-RES_MGT-05",
 		Query: `UPDATE "RESOURCE_SERVER"
-			SET OU_ID = $1, NAME = $2, DESCRIPTION = $3, HANDLE = $4, IDENTIFIER = $5, PROPERTIES = $6
+			SET OU_ID = $1, NAME = $2, DESCRIPTION = $3, IDENTIFIER = $4, TYPE = $5, PROPERTIES = $6
 			WHERE ID = $7 AND DEPLOYMENT_ID = $8`,
 	}
 
@@ -76,12 +76,6 @@ var (
 		Query: `SELECT COUNT(*) as count FROM "RESOURCE_SERVER" WHERE NAME = $1 AND DEPLOYMENT_ID = $2`,
 	}
 
-	// queryCheckResourceServerHandleExists checks if a resource server handler already exists.
-	queryCheckResourceServerHandleExists = dbmodel.DBQuery{
-		ID:    "RSQ-RES_MGT-08",
-		Query: `SELECT COUNT(*) as count FROM "RESOURCE_SERVER" WHERE HANDLE = $1 AND DEPLOYMENT_ID = $2`,
-	}
-
 	// queryCheckResourceServerIdentifierExists checks if a resource server identifier already exists.
 	queryCheckResourceServerIdentifierExists = dbmodel.DBQuery{
 		ID:    "RSQ-RES_MGT-33",
@@ -91,7 +85,7 @@ var (
 	// queryGetResourceServerByIdentifier retrieves a resource server by identifier.
 	queryGetResourceServerByIdentifier = dbmodel.DBQuery{
 		ID: "RSQ-RES_MGT-34",
-		Query: `SELECT ID, OU_ID, NAME, DESCRIPTION, HANDLE, IDENTIFIER, PROPERTIES
+		Query: `SELECT ID, OU_ID, NAME, DESCRIPTION, IDENTIFIER, TYPE, PROPERTIES
 			FROM "RESOURCE_SERVER"
 			WHERE IDENTIFIER = $1 AND DEPLOYMENT_ID = $2`,
 	}
@@ -110,7 +104,7 @@ var (
 	}
 )
 
-// Resource Queries
+// providers.Resource Queries
 var (
 	// queryCreateResource creates a new resource.
 	queryCreateResource = dbmodel.DBQuery{
@@ -265,7 +259,7 @@ var (
 	}
 )
 
-// Action Queries
+// providers.Action Queries
 var (
 	// queryCreateAction creates a new action.
 	queryCreateAction = dbmodel.DBQuery{
@@ -298,6 +292,25 @@ var (
 		        ORDER BY a.CREATED_AT DESC LIMIT $3 OFFSET $4`,
 	}
 
+	// queryGetActionListByKind retrieves actions filtered by kind (stored in PROPERTIES) with pagination.
+	queryGetActionListByKind = dbmodel.DBQuery{
+		ID: "RSQ-RES_MGT-39",
+		PostgresQuery: `SELECT a.ID, a.NAME, a.HANDLE, a.DESCRIPTION, a.PERMISSION, a.PROPERTIES
+		        FROM "ACTION" a
+		        WHERE a.RESOURCE_SERVER_ID = $1
+		          AND (a.RESOURCE_ID = $2 OR (a.RESOURCE_ID IS NULL AND $2 IS NULL))
+		          AND a.PROPERTIES->>'kind' = $5
+		          AND a.DEPLOYMENT_ID = $6
+		        ORDER BY a.CREATED_AT DESC LIMIT $3 OFFSET $4`,
+		SQLiteQuery: `SELECT a.ID, a.NAME, a.HANDLE, a.DESCRIPTION, a.PERMISSION, a.PROPERTIES
+		        FROM "ACTION" a
+		        WHERE a.RESOURCE_SERVER_ID = $1
+		          AND (a.RESOURCE_ID = $2 OR (a.RESOURCE_ID IS NULL AND $2 IS NULL))
+		          AND json_extract(a.PROPERTIES, '$.kind') = $5
+		          AND a.DEPLOYMENT_ID = $6
+		        ORDER BY a.CREATED_AT DESC LIMIT $3 OFFSET $4`,
+	}
+
 	// queryGetActionListCount retrieves count of actions.
 	queryGetActionListCount = dbmodel.DBQuery{
 		ID: "RSQ-RES_MGT-27",
@@ -306,6 +319,23 @@ var (
 		        WHERE a.RESOURCE_SERVER_ID = $1
 		          AND (a.RESOURCE_ID = $2 OR (a.RESOURCE_ID IS NULL AND $2 IS NULL))
 		          AND a.DEPLOYMENT_ID = $3`,
+	}
+
+	// queryGetActionListCountByKind retrieves count of actions filtered by kind (stored in PROPERTIES).
+	queryGetActionListCountByKind = dbmodel.DBQuery{
+		ID: "RSQ-RES_MGT-40",
+		PostgresQuery: `SELECT COUNT(*) as total
+		        FROM "ACTION" a
+		        WHERE a.RESOURCE_SERVER_ID = $1
+		          AND (a.RESOURCE_ID = $2 OR (a.RESOURCE_ID IS NULL AND $2 IS NULL))
+		          AND a.PROPERTIES->>'kind' = $3
+		          AND a.DEPLOYMENT_ID = $4`,
+		SQLiteQuery: `SELECT COUNT(*) as total
+		        FROM "ACTION" a
+		        WHERE a.RESOURCE_SERVER_ID = $1
+		          AND (a.RESOURCE_ID = $2 OR (a.RESOURCE_ID IS NULL AND $2 IS NULL))
+		          AND json_extract(a.PROPERTIES, '$.kind') = $3
+		          AND a.DEPLOYMENT_ID = $4`,
 	}
 
 	// queryUpdateAction updates an action.
@@ -360,49 +390,6 @@ var (
 		          AND (a.RESOURCE_ID = $2 OR (a.RESOURCE_ID IS NULL AND $2 IS NULL))
 		          AND a.HANDLE = $3
 		          AND a.DEPLOYMENT_ID = $4`,
-	}
-
-	// queryFindResourceServersByPermissions returns distinct resource servers that define at least
-	// one of the supplied permissions (as a RESOURCE.PERMISSION or ACTION.PERMISSION). Results are
-	// ordered by IDENTIFIER for deterministic output. Parameter $2 must be a JSON array string.
-	queryFindResourceServersByPermissions = dbmodel.DBQuery{
-		ID: "RSQ-RES_MGT-35",
-		PostgresQuery: `SELECT DISTINCT rs.ID, rs.OU_ID, rs.NAME, rs.DESCRIPTION, rs.HANDLE,
-		               rs.IDENTIFIER, rs.PROPERTIES
-		        FROM "RESOURCE_SERVER" rs
-		        WHERE rs.DEPLOYMENT_ID = $1
-		          AND rs.IDENTIFIER IS NOT NULL
-		          AND (
-		              EXISTS (
-		                  SELECT 1 FROM "RESOURCE" r
-		                  JOIN json_array_elements_text($2::json) AS p ON r.PERMISSION = p.value::text
-		                  WHERE r.RESOURCE_SERVER_ID = rs.ID AND r.DEPLOYMENT_ID = $1
-		              )
-		              OR EXISTS (
-		                  SELECT 1 FROM "ACTION" a
-		                  JOIN json_array_elements_text($2::json) AS p ON a.PERMISSION = p.value::text
-		                  WHERE a.RESOURCE_SERVER_ID = rs.ID AND a.DEPLOYMENT_ID = $1
-		              )
-		          )
-		        ORDER BY rs.IDENTIFIER`,
-		SQLiteQuery: `SELECT DISTINCT rs.ID, rs.OU_ID, rs.NAME, rs.DESCRIPTION, rs.HANDLE,
-		              rs.IDENTIFIER, rs.PROPERTIES
-		        FROM "RESOURCE_SERVER" rs
-		        WHERE rs.DEPLOYMENT_ID = $1
-		          AND rs.IDENTIFIER IS NOT NULL
-		          AND (
-		              EXISTS (
-		                  SELECT 1 FROM "RESOURCE" r
-		                  JOIN json_each($2) AS p ON r.PERMISSION = p.value
-		                  WHERE r.RESOURCE_SERVER_ID = rs.ID AND r.DEPLOYMENT_ID = $1
-		              )
-		              OR EXISTS (
-		                  SELECT 1 FROM "ACTION" a
-		                  JOIN json_each($2) AS p ON a.PERMISSION = p.value
-		                  WHERE a.RESOURCE_SERVER_ID = rs.ID AND a.DEPLOYMENT_ID = $1
-		              )
-		          )
-		        ORDER BY rs.IDENTIFIER`,
 	}
 
 	// queryValidatePermissions validates if permissions exist for a resource server.

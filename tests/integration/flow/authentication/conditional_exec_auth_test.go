@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2025, WSO2 LLC. (https://www.wso2.com).
+ * Copyright (c) 2025-2026, WSO2 LLC. (https://www.wso2.com).
  *
  * WSO2 LLC. licenses this file to you under the Apache License,
  * Version 2.0 (the "License"); you may not use this file except
@@ -65,7 +65,7 @@ var (
 				"id":   "conditional_ou_creation",
 				"type": "TASK_EXECUTION",
 				"condition": map[string]interface{}{
-					"key":    "{{ context.userEligibleForProvisioning }}",
+					"key":    "{{ctx(userEligibleForProvisioning)}}",
 					"value":  "true",
 					"onSkip": "auth_assert",
 				},
@@ -78,7 +78,7 @@ var (
 				"id":   "provisioning",
 				"type": "TASK_EXECUTION",
 				"condition": map[string]interface{}{
-					"key":    "{{ context.userEligibleForProvisioning }}",
+					"key":    "{{ctx(userEligibleForProvisioning)}}",
 					"value":  "true",
 					"onSkip": "auth_assert",
 				},
@@ -267,26 +267,6 @@ func (ts *ConditionalExecAuthFlowTestSuite) SetupSuite() {
 				IsSecret: true,
 			},
 			{
-				Name:     "authorization_endpoint",
-				Value:    ts.mockGoogleServer.GetURL() + "/o/oauth2/v2/auth",
-				IsSecret: false,
-			},
-			{
-				Name:     "token_endpoint",
-				Value:    ts.mockGoogleServer.GetURL() + "/token",
-				IsSecret: false,
-			},
-			{
-				Name:     "userinfo_endpoint",
-				Value:    ts.mockGoogleServer.GetURL() + "/v1/userinfo",
-				IsSecret: false,
-			},
-			{
-				Name:     "jwks_endpoint",
-				Value:    ts.mockGoogleServer.GetURL() + "/oauth2/v3/certs",
-				IsSecret: false,
-			},
-			{
 				Name:     "scopes",
 				Value:    "openid email profile",
 				IsSecret: false,
@@ -399,7 +379,7 @@ func (ts *ConditionalExecAuthFlowTestSuite) TestSkipConditionalNodes() {
 	ts.Require().Equal("COMPLETE", flowStep.FlowStatus,
 		"Expected flow status to be COMPLETE (conditional nodes should be skipped for existing user)")
 	ts.Require().NotEmpty(flowStep.Assertion, "Assertion token should be present")
-	ts.Empty(flowStep.FailureReason, "Failure reason should be empty")
+	ts.Nil(flowStep.Error, "Error should be nil")
 
 	// Validate JWT assertion
 	jwtClaims, err := testutils.ValidateJWTAssertionFields(

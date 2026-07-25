@@ -344,6 +344,18 @@ describe('UserInvitePage', () => {
 
       expect(mockNavigate).toHaveBeenCalledWith('/users');
     });
+
+    it('should navigate to /users/add when Add User breadcrumb is clicked', async () => {
+      mockInviteUserRenderProps.isLoading = true;
+      mockInviteUserRenderProps.components = [];
+
+      render(<UserInvitePage />);
+
+      const addUserBreadcrumb = screen.getByRole('button', {name: /add user/i});
+      await userEvent.click(addUserBreadcrumb);
+
+      expect(mockNavigate).toHaveBeenCalledWith('/users/add');
+    });
   });
 
   /* ----- Form fields rendering ----- */
@@ -537,6 +549,35 @@ describe('UserInvitePage', () => {
       expect(mockResetFlow).toHaveBeenCalled();
     });
 
+    it('should re-trigger the auto-invite after "Add Another User" resets the flow', async () => {
+      const invitePrompt: EmbeddedFlowComponent[] = [
+        heading('How would you like to add a user?'),
+        block([submitAction('Invite user', {id: 'action_invite_user'})]),
+      ];
+
+      // Auto-invite fires once on arrival.
+      mockInviteUserRenderProps.components = invitePrompt;
+      const {rerender} = render(<UserInvitePage />);
+
+      await waitFor(() => {
+        expect(mockHandleSubmit).toHaveBeenCalledTimes(1);
+      });
+
+      // Advance to the completion step, then click "Add Another User".
+      mockInviteUserRenderProps = {...mockInviteUserRenderProps, components: [heading('Done')]};
+      rerender(<UserInvitePage />);
+      await userEvent.click(screen.getByRole('button', {name: /add another user/i}));
+      expect(mockResetFlow).toHaveBeenCalled();
+
+      // Prompt returns; auto-invite must fire again.
+      mockInviteUserRenderProps = {...mockInviteUserRenderProps, components: invitePrompt};
+      rerender(<UserInvitePage />);
+
+      await waitFor(() => {
+        expect(mockHandleSubmit).toHaveBeenCalledTimes(2);
+      });
+    });
+
     it('should navigate to /users when footer Close button is clicked in display-only state', async () => {
       mockInviteUserRenderProps.components = [heading('Done')];
 
@@ -629,9 +670,15 @@ describe('UserInvitePage', () => {
 
       const {rerender} = render(<UserInvitePage />);
 
-      // Trigger onFlowChange with a failure reason
+      // Trigger onFlowChange with an error
       if (capturedOnFlowChange) {
-        capturedOnFlowChange({failureReason: 'User already exists'});
+        capturedOnFlowChange({
+          error: {
+            code: 'FEE-60005',
+            message: {key: 'flows.errors.user_exists', defaultValue: 'User already exists'},
+            description: {key: 'flows.errors.user_exists_desc', defaultValue: 'User already exists'},
+          },
+        });
       }
 
       // Re-render to reflect state change
@@ -662,7 +709,7 @@ describe('UserInvitePage', () => {
       render(<UserInvitePage />);
 
       await waitFor(() => {
-        expect(mockNavigate).toHaveBeenCalledWith('/users/create');
+        expect(mockNavigate).toHaveBeenCalledWith('/users/add/create');
       });
 
       expect(mockLoggerInfo).toHaveBeenCalledWith(
@@ -677,11 +724,18 @@ describe('UserInvitePage', () => {
       render(<UserInvitePage />);
 
       if (capturedOnFlowChange) {
-        capturedOnFlowChange({failureReason: 'Flow not found', response: {status: 404, data: {code: 'FLM-1003'}}});
+        capturedOnFlowChange({
+          error: {
+            code: 'FLM-1003',
+            message: {key: 'flows.errors.not_found', defaultValue: 'Flow not found'},
+            description: {key: 'flows.errors.not_found.desc', defaultValue: 'Flow not found'},
+          },
+          response: {status: 404, data: {code: 'FLM-1003'}},
+        });
       }
 
       await waitFor(() => {
-        expect(mockNavigate).toHaveBeenCalledWith('/users/create');
+        expect(mockNavigate).toHaveBeenCalledWith('/users/add/create');
       });
     });
   });
@@ -1031,7 +1085,7 @@ describe('UserInvitePage', () => {
   /* ----- Clearing flow error on reset ----- */
 
   describe('flow error reset', () => {
-    it('should clear flowError when onFlowChange receives null failureReason', async () => {
+    it('should clear flowError when onFlowChange receives no error', async () => {
       mockInviteUserRenderProps.components = [
         heading('Step'),
         block([textInput('name', 'Name'), submitAction('Next')]),
@@ -1041,7 +1095,13 @@ describe('UserInvitePage', () => {
 
       // First set an error
       if (capturedOnFlowChange) {
-        capturedOnFlowChange({failureReason: 'Some error'});
+        capturedOnFlowChange({
+          error: {
+            code: 'FEE-60001',
+            message: {key: 'flows.errors.some', defaultValue: 'Some error'},
+            description: {key: 'flows.errors.some.desc', defaultValue: 'Some error'},
+          },
+        });
       }
       rerender(<UserInvitePage />);
 
@@ -1051,7 +1111,7 @@ describe('UserInvitePage', () => {
 
       // Then clear it
       if (capturedOnFlowChange) {
-        capturedOnFlowChange({failureReason: null});
+        capturedOnFlowChange({});
       }
       rerender(<UserInvitePage />);
 

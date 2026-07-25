@@ -16,17 +16,18 @@
  * under the License.
  */
 
-import {useThunderID} from '@thunderid/react';
 import {useGetAgentType, useGetAgentTypes} from '@thunderid/configure-agent-types';
 import {useGetChildOrganizationUnits} from '@thunderid/configure-organization-units';
 import {ConfigureOrganizationUnit} from '@thunderid/configure-users';
 import {useLogger} from '@thunderid/logger/react';
-import {Alert, Box, Breadcrumbs, Button, IconButton, LinearProgress, Stack, Typography} from '@wso2/oxygen-ui';
-import {ChevronRight, X} from '@wso2/oxygen-ui-icons-react';
+import {useThunderID} from '@thunderid/react';
+import {Alert, Box, Button, IconButton, LinearProgress, Stack, Typography, AppBreadcrumbs} from '@wso2/oxygen-ui';
+import {X} from '@wso2/oxygen-ui-icons-react';
 import type {JSX} from 'react';
 import {useState, useCallback, useEffect, useMemo} from 'react';
 import {useTranslation} from 'react-i18next';
 import {useNavigate} from 'react-router';
+import RouteConfig from '../../../configs/RouteConfig';
 import useCreateAgent from '../api/useCreateAgent';
 import ConfigureAgentDetails from '../components/create-agent/ConfigureAgentDetails';
 import ConfigureName from '../components/create-agent/ConfigureName';
@@ -114,11 +115,7 @@ export default function AgentCreatePage(): JSX.Element {
   const isLastStep = currentStep === activeSteps[activeSteps.length - 1];
 
   const handleClose = (): void => {
-    (async () => {
-      await navigate('/agents', {replace: true});
-    })().catch((_error: unknown) => {
-      logger.error('Failed to navigate to agents page', {error: _error});
-    });
+    void navigate(RouteConfig.agents.list());
   };
 
   const handleStepReadyChange = useCallback((step: AgentCreateFlowStep, isReady: boolean): void => {
@@ -151,8 +148,10 @@ export default function AgentCreatePage(): JSX.Element {
           grantTypes: ['client_credentials'],
           tokenEndpointAuthMethod: 'client_secret_basic',
           responseTypes: [],
+          // PKCE requires the authorization_code grant, which new agents don't have yet.
+          pkceRequired: false,
           token: {
-            accessToken: {validityPeriod: 3600, userAttributes: []},
+            accessToken: {userConfig: {validityPeriod: 3600, attributes: []}},
             // idToken is required by the shared OAuth2Token type; default agent grants don't issue
             // ID tokens, but the field must be present to satisfy the type.
             idToken: {validityPeriod: 3600, userAttributes: []},
@@ -187,7 +186,7 @@ export default function AgentCreatePage(): JSX.Element {
   const handleCompleteContinue = (): void => {
     if (!createdAgent) return;
     (async () => {
-      await navigate(`/agents/${createdAgent.id}`);
+      await navigate(RouteConfig.agents.detail(createdAgent.id));
     })().catch((_error: unknown) => {
       logger.error('Failed to navigate to agent details', {error: _error, agentId: createdAgent.id});
     });
@@ -362,34 +361,13 @@ export default function AgentCreatePage(): JSX.Element {
             >
               <X size={24} />
             </IconButton>
-            <Breadcrumbs separator={<ChevronRight size={16} />} aria-label="breadcrumb">
-              {getBreadcrumbSteps().map((step, index, array) => {
-                const isLast = index === array.length - 1;
-                return isLast ? (
-                  <Typography key={step} variant="h5" color="text.primary">
-                    {steps[step].label}
-                  </Typography>
-                ) : (
-                  <Typography
-                    key={step}
-                    variant="h5"
-                    color="inherit"
-                    role="button"
-                    tabIndex={0}
-                    onClick={() => setCurrentStep(step)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter' || e.key === ' ') {
-                        e.preventDefault();
-                        setCurrentStep(step);
-                      }
-                    }}
-                    sx={{cursor: 'pointer', '&:hover': {textDecoration: 'underline'}}}
-                  >
-                    {steps[step].label}
-                  </Typography>
-                );
-              })}
-            </Breadcrumbs>
+            <AppBreadcrumbs
+              items={getBreadcrumbSteps().map((step, index, array) => ({
+                key: step,
+                label: steps[step].label,
+                onClick: index < array.length - 1 ? () => setCurrentStep(step) : undefined,
+              }))}
+            />
           </Stack>
         </Box>
 

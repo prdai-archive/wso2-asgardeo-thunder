@@ -23,10 +23,10 @@ import (
 	"context"
 	"slices"
 
+	tidcommon "github.com/thunder-id/thunderid/pkg/thunderidengine/common"
+
 	authncm "github.com/thunder-id/thunderid/internal/authn/common"
 	authnoauth "github.com/thunder-id/thunderid/internal/authn/oauth"
-	"github.com/thunder-id/thunderid/internal/entityprovider"
-	"github.com/thunder-id/thunderid/internal/system/error/serviceerror"
 	syshttp "github.com/thunder-id/thunderid/internal/system/http"
 	"github.com/thunder-id/thunderid/internal/system/log"
 )
@@ -59,26 +59,26 @@ func newGithubOAuthAuthnService(internal authnoauth.OAuthAuthnServiceInterface,
 
 // BuildAuthorizeURL constructs the authorization request URL for GitHub OAuth authentication.
 func (g *githubOAuthAuthnService) BuildAuthorizeURL(
-	ctx context.Context, idpID string) (string, *serviceerror.ServiceError) {
+	ctx context.Context, idpID string) (string, map[string]string, *tidcommon.ServiceError) {
 	return g.internal.BuildAuthorizeURL(ctx, idpID)
 }
 
 // ExchangeCodeForToken exchanges the authorization code for a token with GitHub.
 func (g *githubOAuthAuthnService) ExchangeCodeForToken(ctx context.Context, idpID, code string, validateResponse bool) (
-	*authnoauth.TokenResponse, *serviceerror.ServiceError) {
+	*authnoauth.TokenResponse, *tidcommon.ServiceError) {
 	return g.internal.ExchangeCodeForToken(ctx, idpID, code, validateResponse)
 }
 
 // FetchUserInfo retrieves user information from the Github API, ensuring email resolution if necessary.
 func (g *githubOAuthAuthnService) FetchUserInfo(ctx context.Context, idpID, accessToken string) (
-	map[string]interface{}, *serviceerror.ServiceError) {
+	map[string]interface{}, *tidcommon.ServiceError) {
 	logger := g.logger
 	oAuthClientConfig, svcErr := g.internal.GetOAuthClientConfig(ctx, idpID)
 	if svcErr != nil {
 		return nil, svcErr
 	}
 
-	userInfo, svcErr := g.internal.FetchUserInfoWithClientConfig(oAuthClientConfig, accessToken)
+	userInfo, svcErr := g.internal.FetchUserInfoWithClientConfig(ctx, oAuthClientConfig, accessToken)
 	if svcErr != nil {
 		return userInfo, svcErr
 	}
@@ -86,13 +86,13 @@ func (g *githubOAuthAuthnService) FetchUserInfo(ctx context.Context, idpID, acce
 	// If email is already present in the user info or email scope is not requested, return it directly.
 	email := authnoauth.GetStringUserClaimValue(userInfo, "email")
 	if email != "" || !g.shouldFetchEmail(oAuthClientConfig.Scopes) {
-		logger.Debug("Email is already present in the user info or email scope not requested")
+		logger.Debug(ctx, "Email is already present in the user info or email scope not requested")
 		authnoauth.ProcessSubClaim(userInfo)
 		return userInfo, nil
 	}
 
 	// Fetch primary email from the GitHub user emails endpoint.
-	primaryEmail, svcErr := g.fetchPrimaryEmail(oAuthClientConfig, accessToken)
+	primaryEmail, svcErr := g.fetchPrimaryEmail(ctx, oAuthClientConfig, accessToken)
 	if svcErr != nil {
 		return nil, svcErr
 	}
@@ -110,18 +110,18 @@ func (g *githubOAuthAuthnService) shouldFetchEmail(scopes []string) bool {
 }
 
 // fetchPrimaryEmail fetches the primary email of the user from the GitHub user emails endpoint.
-func (g *githubOAuthAuthnService) fetchPrimaryEmail(
+func (g *githubOAuthAuthnService) fetchPrimaryEmail(ctx context.Context,
 	oAuthClientConfig *authnoauth.OAuthClientConfig, accessToken string) (
-	string, *serviceerror.ServiceError) {
+	string, *tidcommon.ServiceError) {
 	logger := g.logger
-	logger.Debug("Fetching primary email from GitHub user emails endpoint")
+	logger.Debug(ctx, "Fetching primary email from GitHub user emails endpoint")
 
 	if oAuthClientConfig.OAuthEndpoints.UserEmailEndpoint == "" {
-		logger.Error("User email endpoint is not configured in OAuth client config")
-		return "", &serviceerror.InternalServerError
+		logger.Error(ctx, "User email endpoint is not configured in OAuth client config")
+		return "", &tidcommon.InternalServerError
 	}
 
-	req, svcErr := buildUserEmailRequest(oAuthClientConfig.OAuthEndpoints.UserEmailEndpoint, accessToken, logger)
+	req, svcErr := buildUserEmailRequest(ctx, oAuthClientConfig.OAuthEndpoints.UserEmailEndpoint, accessToken, logger)
 	if svcErr != nil {
 		return "", svcErr
 	}
@@ -142,26 +142,21 @@ func (g *githubOAuthAuthnService) fetchPrimaryEmail(
 	return "", nil
 }
 
-// GetInternalUser retrieves the internal user based on the external subject identifier.
-func (g *githubOAuthAuthnService) GetInternalUser(sub string) (*entityprovider.Entity, *serviceerror.ServiceError) {
-	return g.internal.GetInternalUser(sub)
-}
-
 // GetOAuthClientConfig retrieves and validates the OAuth client configuration for the given identity provider ID.
 func (g *githubOAuthAuthnService) GetOAuthClientConfig(ctx context.Context, idpID string) (
-	*authnoauth.OAuthClientConfig, *serviceerror.ServiceError) {
+	*authnoauth.OAuthClientConfig, *tidcommon.ServiceError) {
 	return g.internal.GetOAuthClientConfig(ctx, idpID)
 }
 
 // Authenticate performs the full GitHub OAuth authentication flow: exchanges the code for a token,
 // fetches user info, and resolves the internal user.
 // A missing internal user is NOT an error — the caller decides how to handle it.
-func (g *githubOAuthAuthnService) Authenticate(ctx context.Context, idpID, code string) (
-	*authncm.FederatedAuthResult, *serviceerror.ServiceError) {
+func (g *githubOAuthAuthnService) Authenticate(ctx context.Context, idpID string,
+	authzData authncm.AuthorizationData) (*authncm.AuthnResult, *tidcommon.ServiceError) {
 	logger := g.logger.With(log.String("idpId", idpID))
-	logger.Debug("Performing federated GitHub OAuth authentication")
+	logger.Debug(ctx, "Performing federated GitHub OAuth authentication")
 
-	tokenResp, svcErr := g.ExchangeCodeForToken(ctx, idpID, code, true)
+	tokenResp, svcErr := g.ExchangeCodeForToken(ctx, idpID, authzData.Code, true)
 	if svcErr != nil {
 		return nil, svcErr
 	}
@@ -178,25 +173,16 @@ func (g *githubOAuthAuthnService) Authenticate(ctx context.Context, idpID, code 
 		}
 	}
 	if sub == "" {
-		logger.Debug("sub claim not found in user info")
+		logger.Debug(ctx, "sub claim not found in user info")
 		return nil, &authncm.ErrorSubClaimNotFound
 	}
 
-	result := &authncm.FederatedAuthResult{
-		Sub:    sub,
-		Claims: userInfo,
-	}
-	user, svcErr := g.GetInternalUser(sub)
-	if svcErr != nil {
-		if svcErr.Code == authncm.ErrorUserNotFound.Code {
-			return result, nil
-		}
-		if svcErr.Code == authncm.ErrorAmbiguousUser.Code {
-			result.IsAmbiguousUser = true
-			return result, nil
-		}
-		return nil, svcErr
-	}
-	result.InternalEntity = user
-	return result, nil
+	return g.internal.BuildFederatedAuthResult(ctx, idpID, sub, userInfo)
+}
+
+// BuildFederatedAuthResult delegates to the underlying OAuth service, which applies attribute mapping
+// and account-linking resolution uniformly for all federated authenticators.
+func (g *githubOAuthAuthnService) BuildFederatedAuthResult(ctx context.Context, idpID, sub string,
+	claims map[string]interface{}) (*authncm.AuthnResult, *tidcommon.ServiceError) {
+	return g.internal.BuildFederatedAuthResult(ctx, idpID, sub, claims)
 }

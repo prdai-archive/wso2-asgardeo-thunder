@@ -20,6 +20,7 @@ import {useConfig} from '@thunderid/contexts';
 import {Stack} from '@wso2/oxygen-ui';
 import {useState, useCallback} from 'react';
 import type {JSX} from 'react';
+import {useTranslation} from 'react-i18next';
 import AccessSection from './AccessSection';
 import DangerZoneSection from './DangerZoneSection';
 import QuickCopySection from './QuickCopySection';
@@ -28,6 +29,7 @@ import {TokenEndpointAuthMethods} from '../../../models/oauth';
 import type {OAuth2Config} from '../../../models/oauth';
 import ApplicationDeleteDialog from '../../ApplicationDeleteDialog';
 import ClientSecretSuccessDialog from '../../ClientSecretSuccessDialog';
+import RegenerateFlowSecretDialog from '../../RegenerateFlowSecretDialog';
 import RegenerateSecretDialog from '../../RegenerateSecretDialog';
 
 /**
@@ -66,6 +68,11 @@ interface EditGeneralSettingsProps {
    * Callback invoked after the application is successfully deleted
    */
   onDeleteSuccess?: () => void;
+  /**
+   * Callback function to handle validation changes
+   * @param hasErrors - Boolean indicating if the general settings have validation errors
+   */
+  onValidationChange?: (hasErrors: boolean) => void;
 }
 
 /**
@@ -87,17 +94,30 @@ export default function EditGeneralSettings({
   copiedField,
   onCopyToClipboard,
   onDeleteSuccess = undefined,
+  onValidationChange = undefined,
 }: EditGeneralSettingsProps): JSX.Element {
   const {config} = useConfig();
+  const {t} = useTranslation();
   const [regenerateDialogOpen, setRegenerateDialogOpen] = useState(false);
   const [secretDialogOpen, setSecretDialogOpen] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [newClientSecret, setNewClientSecret] = useState<string>('');
+  const [regenerateFlowSecretDialogOpen, setRegenerateFlowSecretDialogOpen] = useState(false);
+  const [flowSecretDialogOpen, setFlowSecretDialogOpen] = useState(false);
+  const [newFlowSecret, setNewFlowSecret] = useState<string>('');
   const systemConsoleClientId = (config?.client?.client_id ?? 'CONSOLE').toUpperCase();
 
   const isConfidentialClient =
     oauth2Config?.tokenEndpointAuthMethod === TokenEndpointAuthMethods.CLIENT_SECRET_BASIC ||
     oauth2Config?.tokenEndpointAuthMethod === TokenEndpointAuthMethods.CLIENT_SECRET_POST;
+
+  // Only flow-native apps are issued a Flow Secret and can rotate it: embedded apps with no OAuth
+  // profile, or confidential non-redirect apps. Public, redirect (authorization_code), and
+  // machine-to-machine (client_credentials as the only grant) apps get no Flow Secret.
+  const grantTypes = oauth2Config?.grantTypes ?? [];
+  const isM2MClient = grantTypes.length === 1 && grantTypes[0] === 'client_credentials';
+  const isFlowNativeClient =
+    !oauth2Config || (!oauth2Config.publicClient && !grantTypes.includes('authorization_code') && !isM2MClient);
 
   const handleRegenerateClick = useCallback((): void => {
     setRegenerateDialogOpen(true);
@@ -111,6 +131,20 @@ export default function EditGeneralSettings({
   const handleSecretDialogClose = useCallback((): void => {
     setSecretDialogOpen(false);
     setNewClientSecret('');
+  }, []);
+
+  const handleRegenerateFlowSecretClick = useCallback((): void => {
+    setRegenerateFlowSecretDialogOpen(true);
+  }, []);
+
+  const handleRegenerateFlowSecretSuccess = useCallback((flowSecret: string): void => {
+    setNewFlowSecret(flowSecret);
+    setFlowSecretDialogOpen(true);
+  }, []);
+
+  const handleFlowSecretDialogClose = useCallback((): void => {
+    setFlowSecretDialogOpen(false);
+    setNewFlowSecret('');
   }, []);
 
   return (
@@ -127,11 +161,14 @@ export default function EditGeneralSettings({
           editedApp={editedApp}
           oauth2Config={oauth2Config}
           onFieldChange={onFieldChange}
+          onValidationChange={onValidationChange}
         />
-        {oauth2Config?.clientId?.toUpperCase() !== systemConsoleClientId && (
+        {!application.isReadOnly && oauth2Config?.clientId?.toUpperCase() !== systemConsoleClientId && (
           <DangerZoneSection
             showRegenerateSecret={isConfidentialClient}
             onRegenerateClick={handleRegenerateClick}
+            showRegenerateFlowSecret={isFlowNativeClient}
+            onRegenerateFlowSecretClick={handleRegenerateFlowSecretClick}
             onDeleteClick={() => setDeleteDialogOpen(true)}
           />
         )}
@@ -150,6 +187,27 @@ export default function EditGeneralSettings({
         open={secretDialogOpen}
         clientSecret={newClientSecret}
         onClose={handleSecretDialogClose}
+      />
+
+      {/* Regenerate Flow Secret Confirmation Dialog */}
+      <RegenerateFlowSecretDialog
+        open={regenerateFlowSecretDialogOpen}
+        applicationId={application.id}
+        onClose={() => setRegenerateFlowSecretDialogOpen(false)}
+        onSuccess={handleRegenerateFlowSecretSuccess}
+      />
+
+      {/* New Flow Secret Success Dialog */}
+      <ClientSecretSuccessDialog
+        open={flowSecretDialogOpen}
+        clientSecret={newFlowSecret}
+        title={t('applications:regenerateFlowSecret.success.title')}
+        subtitle={t('applications:regenerateFlowSecret.success.subtitle')}
+        secretLabel={t('applications:regenerateFlowSecret.success.secretLabel')}
+        copySecretLabel={t('applications:regenerateFlowSecret.success.copySecret')}
+        securityReminderTitle={t('applications:regenerateFlowSecret.success.securityReminder.title')}
+        securityReminderDescription={t('applications:regenerateFlowSecret.success.securityReminder.description')}
+        onClose={handleFlowSecretDialogClose}
       />
 
       {/* Delete Application Confirmation Dialog */}

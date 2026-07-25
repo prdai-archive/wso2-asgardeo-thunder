@@ -27,12 +27,15 @@ export const ALLOWED_RESOURCE_TYPES = [
   'theme',
   'layout',
   'translation',
-  'identity_provider',
+  'connection',
   'organization_unit',
   'user_type',
   'resource_server',
   'role',
   'agent',
+  'presentation_definition',
+  'credential_configuration',
+  'server_config',
 ] as const;
 
 export type ResourceType = (typeof ALLOWED_RESOURCE_TYPES)[number];

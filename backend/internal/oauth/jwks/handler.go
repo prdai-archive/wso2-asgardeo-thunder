@@ -19,10 +19,12 @@
 package jwks
 
 import (
+	"context"
 	"net/http"
 
+	tidcommon "github.com/thunder-id/thunderid/pkg/thunderidengine/common"
+
 	"github.com/thunder-id/thunderid/internal/system/error/apierror"
-	"github.com/thunder-id/thunderid/internal/system/error/serviceerror"
 	"github.com/thunder-id/thunderid/internal/system/log"
 	sysutils "github.com/thunder-id/thunderid/internal/system/utils"
 )
@@ -46,21 +48,21 @@ func (h *jwksHandler) HandleJWKSRequest(w http.ResponseWriter, r *http.Request) 
 	ctx := r.Context()
 	jwksResponse, svcErr := h.jwksService.GetJWKS(ctx)
 	if svcErr != nil {
-		h.logAndWriteError(w, logger, svcErr)
+		h.logAndWriteError(ctx, w, logger, svcErr)
 		return
 	}
 
-	sysutils.WriteSuccessResponse(w, http.StatusOK, jwksResponse)
-	logger.Debug("JWKS response successfully sent")
+	sysutils.WriteSuccessResponse(ctx, w, http.StatusOK, jwksResponse)
+	logger.Debug(ctx, "JWKS response successfully sent")
 }
 
 // logAndWriteError logs server errors and writes an appropriate error response to the HTTP response writer.
-func (h *jwksHandler) logAndWriteError(w http.ResponseWriter, logger *log.Logger,
-	svcErr *serviceerror.ServiceError) {
+func (h *jwksHandler) logAndWriteError(ctx context.Context, w http.ResponseWriter, logger *log.Logger,
+	svcErr *tidcommon.ServiceError) {
 	statusCode := http.StatusBadRequest
-	if svcErr.Type == serviceerror.ServerErrorType {
+	if svcErr.Type == tidcommon.ServerErrorType {
 		statusCode = http.StatusInternalServerError
-		logger.Error("Failed to retrieve JWKS", log.String("error_code", svcErr.Code))
+		logger.Error(ctx, "Failed to retrieve JWKS", log.String("error_code", svcErr.Code))
 	}
 
 	errResp := apierror.ErrorResponse{
@@ -69,5 +71,5 @@ func (h *jwksHandler) logAndWriteError(w http.ResponseWriter, logger *log.Logger
 		Description: svcErr.ErrorDescription,
 	}
 
-	sysutils.WriteErrorResponse(w, statusCode, errResp)
+	sysutils.WriteErrorResponse(ctx, w, statusCode, errResp)
 }

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2025, WSO2 LLC. (https://www.wso2.com).
+ * Copyright (c) 2025-2026, WSO2 LLC. (https://www.wso2.com).
  *
  * WSO2 LLC. licenses this file to you under the Apache License,
  * Version 2.0 (the "License"); you may not use this file except
@@ -21,80 +21,107 @@ package oauth
 
 import (
 	"net/http"
+	"slices"
+	"time"
 
-	"github.com/thunder-id/thunderid/internal/application"
 	"github.com/thunder-id/thunderid/internal/attributecache"
-	authnprovidermgr "github.com/thunder-id/thunderid/internal/authnprovider/manager"
-	"github.com/thunder-id/thunderid/internal/authz"
-	"github.com/thunder-id/thunderid/internal/entityprovider"
 	"github.com/thunder-id/thunderid/internal/flow/flowexec"
-	"github.com/thunder-id/thunderid/internal/idp"
-	"github.com/thunder-id/thunderid/internal/inboundclient"
+	oauthconfig "github.com/thunder-id/thunderid/internal/oauth/config"
 	"github.com/thunder-id/thunderid/internal/oauth/jwks"
+	oauth2authz "github.com/thunder-id/thunderid/internal/oauth/oauth2/authz"
+	"github.com/thunder-id/thunderid/internal/oauth/oauth2/callback"
+	"github.com/thunder-id/thunderid/internal/oauth/oauth2/ciba"
 	"github.com/thunder-id/thunderid/internal/oauth/oauth2/discovery"
 	"github.com/thunder-id/thunderid/internal/oauth/oauth2/dpop"
 	"github.com/thunder-id/thunderid/internal/oauth/oauth2/granthandlers"
 	"github.com/thunder-id/thunderid/internal/oauth/oauth2/introspect"
-	"github.com/thunder-id/thunderid/internal/oauth/oauth2/jti"
 	"github.com/thunder-id/thunderid/internal/oauth/oauth2/jwksresolver"
+	oauth2logout "github.com/thunder-id/thunderid/internal/oauth/oauth2/logout"
 	"github.com/thunder-id/thunderid/internal/oauth/oauth2/par"
+	"github.com/thunder-id/thunderid/internal/oauth/oauth2/revocation"
 	"github.com/thunder-id/thunderid/internal/oauth/oauth2/token"
 	"github.com/thunder-id/thunderid/internal/oauth/oauth2/tokenservice"
 	"github.com/thunder-id/thunderid/internal/oauth/oauth2/userinfo"
 	"github.com/thunder-id/thunderid/internal/oauth/scope"
-	"github.com/thunder-id/thunderid/internal/ou"
-	"github.com/thunder-id/thunderid/internal/resource"
-	"github.com/thunder-id/thunderid/internal/system/config"
 	syshttp "github.com/thunder-id/thunderid/internal/system/http"
-	i18nmgt "github.com/thunder-id/thunderid/internal/system/i18n/mgt"
 	"github.com/thunder-id/thunderid/internal/system/jose/jwe"
 	"github.com/thunder-id/thunderid/internal/system/jose/jwt"
 	kmprovider "github.com/thunder-id/thunderid/internal/system/kmprovider/common"
-	"github.com/thunder-id/thunderid/internal/system/observability"
+	"github.com/thunder-id/thunderid/internal/system/transaction"
+	"github.com/thunder-id/thunderid/pkg/thunderidengine/providers"
 )
 
 // Initialize initializes all OAuth-related services and registers their routes.
 func Initialize(
 	mux *http.ServeMux,
-	applicationService application.ApplicationServiceInterface,
-	inboundClient inboundclient.InboundClientServiceInterface,
-	authnProvider authnprovidermgr.AuthnProviderManagerInterface,
+	actorProvider providers.ActorProvider,
+	authnProvider providers.AuthnProviderManager,
 	jwtService jwt.JWTServiceInterface,
 	jweService jwe.JWEServiceInterface,
 	flowExecService flowexec.FlowExecServiceInterface,
-	observabilitySvc observability.ObservabilityServiceInterface,
+	observabilitySvc providers.ObservabilityProvider,
 	runtimeCrypto kmprovider.RuntimeCryptoProvider,
-	ouService ou.OrganizationUnitServiceInterface,
+	ouService providers.OrganizationUnitProvider,
 	attributeCacheSvc attributecache.AttributeCacheServiceInterface,
-	authzService authz.AuthorizationServiceInterface,
-	entityProvider entityprovider.EntityProviderInterface,
-	resourceService resource.ResourceServiceInterface,
-	i18nService i18nmgt.I18nServiceInterface,
-	idpService idp.IDPServiceInterface,
+	authzService providers.AuthorizationProvider,
+	resourceService providers.ResourceServerProvider,
+	i18nService providers.I18nProvider,
+	idpService providers.IDPProvider,
+	dpopVerifier dpop.VerifierInterface,
+	runtimeStore providers.RuntimeStoreProvider,
+	transactioner transaction.Transactioner,
+	cfg oauthconfig.Config,
 ) error {
 	jwks.Initialize(mux, runtimeCrypto)
 	httpClient := syshttp.NewHTTPClientWithCheckRedirect(func(req *http.Request, _ []*http.Request) error {
 		return syshttp.IsSSRFSafeURL(req.URL.String())
 	})
 	resolver := jwksresolver.Initialize(httpClient)
-	tokenBuilder, tokenValidator := tokenservice.Initialize(jwtService, jweService, resolver, idpService)
 	scopeValidator := scope.Initialize()
-	discoveryService := discovery.Initialize(mux, runtimeCrypto)
-	jtiStore := jti.Initialize(config.GetServerRuntime().Config.Server.Identifier)
-	dpopVerifier := dpop.Initialize(jtiStore)
-	parService := par.Initialize(mux, inboundClient, authnProvider, jwtService, discoveryService,
-		resourceService, dpopVerifier)
-	grantHandlerProvider, err := granthandlers.Initialize(
-		mux, jwtService, inboundClient, flowExecService, tokenBuilder, tokenValidator,
-		attributeCacheSvc, ouService, authzService, entityProvider, resourceService, parService)
+	discoveryService := discovery.Initialize(mux, runtimeCrypto, cfg)
+	var enforcementService revocation.EnforcementServiceInterface
+	var revocationSvc revocation.RevocationServiceInterface
+	if cfg.OAuth.TokenRevocation.Enabled {
+		// The enforcement service (revocation read path) is built before the token service so it can be
+		// injected into the validator, which enforces the deny list as the final step of every validation.
+		tokenFamilyRevocationTTL := time.Duration(cfg.OAuth.RefreshToken.ValidityPeriod) * time.Second
+		enforcementService, revocationSvc = revocation.Initialize(
+			mux, jwtService, actorProvider, authnProvider, discoveryService, observabilitySvc,
+			tokenFamilyRevocationTTL, cfg.OAuth.Revocation.TokenFamily.OnExplicitRevoke)
+	}
+
+	tokenBuilder, tokenValidator := tokenservice.Initialize(
+		cfg, jwtService, jweService, resolver, idpService, enforcementService)
+	parService := par.Initialize(mux, actorProvider, authnProvider, jwtService, discoveryService,
+		resourceService, dpopVerifier, cfg, runtimeStore)
+	oauth2AuthzService, err := oauth2authz.Initialize(mux, actorProvider, resourceService,
+		jwtService, flowExecService, parService, revocationSvc, cfg, runtimeStore, transactioner)
 	if err != nil {
 		return err
 	}
-	token.Initialize(mux, jwtService, inboundClient, authnProvider, grantHandlerProvider,
-		scopeValidator, observabilitySvc, discoveryService, dpopVerifier)
-	introspect.Initialize(mux, jwtService, inboundClient, authnProvider, discoveryService)
+
+	var cibaService ciba.CIBAServiceInterface
+	if len(cfg.OAuth.AllowedGrantTypes) == 0 ||
+		slices.Contains(cfg.OAuth.AllowedGrantTypes, string(providers.GrantTypeCIBA)) {
+		cibaService = ciba.Initialize(mux, jwtService, actorProvider, authnProvider, flowExecService,
+			discoveryService, resourceService, cfg)
+	}
+
+	grantHandlerProvider := granthandlers.Initialize(
+		jwtService, oauth2AuthzService, tokenBuilder, tokenValidator,
+		attributeCacheSvc, ouService, authzService, actorProvider, resourceService,
+		cibaService, revocationSvc, revocationSvc, cfg)
+
+	token.Initialize(mux, jwtService, actorProvider, authnProvider, grantHandlerProvider,
+		scopeValidator, observabilitySvc, discoveryService, dpopVerifier, cfg)
+	introspect.Initialize(mux, jwtService, actorProvider, authnProvider, discoveryService, tokenValidator)
 	userinfo.Initialize(mux, jwtService, jweService, resolver,
-		tokenValidator, inboundClient, attributeCacheSvc,
-		discoveryService, dpopVerifier)
+		tokenValidator, actorProvider, attributeCacheSvc,
+		discoveryService, dpopVerifier, cfg)
+	callback.Initialize(mux, oauth2AuthzService, cibaService, cfg)
+
+	if cfg.OAuth.Logout.Enabled {
+		oauth2logout.Initialize(mux, jwtService, actorProvider, flowExecService, runtimeStore, cfg)
+	}
 	return nil
 }

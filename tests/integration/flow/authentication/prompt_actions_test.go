@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2025, WSO2 LLC. (https://www.wso2.com).
+ * Copyright (c) 2025-2026, WSO2 LLC. (https://www.wso2.com).
  *
  * WSO2 LLC. licenses this file to you under the Apache License,
  * Version 2.0 (the "License"); you may not use this file except
@@ -23,9 +23,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/suite"
 	"github.com/thunder-id/thunderid/tests/integration/flow/common"
 	"github.com/thunder-id/thunderid/tests/integration/testutils"
-	"github.com/stretchr/testify/suite"
 )
 
 const (
@@ -49,8 +49,8 @@ var (
 				"prompts": []map[string]interface{}{
 					{
 						"action": map[string]interface{}{
-							"ref":      "basic_auth",
-							"nextNode": "basic_auth",
+							"ref":      "credentials_auth",
+							"nextNode": "credentials_auth",
 						},
 					},
 					{
@@ -62,10 +62,10 @@ var (
 				},
 			},
 			{
-				"id":   "basic_auth",
+				"id":   "credentials_auth",
 				"type": "TASK_EXECUTION",
 				"executor": map[string]interface{}{
-					"name": "BasicAuthExecutor",
+					"name": "CredentialsAuthExecutor",
 					"inputs": []map[string]interface{}{
 						{
 							"ref":        "input_001",
@@ -91,13 +91,13 @@ var (
 					"inputs": []map[string]interface{}{
 						{
 							"ref":        "input_003",
-							"identifier": "mobileNumber",
+							"identifier": "mobile_number",
 							"type":       "string",
 							"required":   true,
 						},
 					},
 				},
-				"onSuccess": "sms_otp_send",
+				"onSuccess": "generate_otp",
 			},
 			{
 				"id":   "prompt_mobile",
@@ -107,27 +107,44 @@ var (
 						"inputs": []map[string]interface{}{
 							{
 								"ref":        "input_004",
-								"identifier": "mobileNumber",
-								"type":       "string",
+								"identifier": "mobile_number",
+								"type":       "PHONE_INPUT",
 								"required":   true,
 							},
 						},
 						"action": map[string]interface{}{
 							"ref":      "action_mobile",
-							"nextNode": "sms_otp_send",
+							"nextNode": "generate_otp",
 						},
 					},
 				},
 			},
 			{
-				"id":   "sms_otp_send",
+				"id":   "generate_otp",
+				"type": "TASK_EXECUTION",
+				"executor": map[string]interface{}{
+					"name": "OTPExecutor",
+					"mode": "generate",
+					"inputs": []map[string]interface{}{
+						{
+							"ref":        "input_mobile",
+							"identifier": "mobile_number",
+							"type":       "PHONE_INPUT",
+							"required":   true,
+						},
+					},
+				},
+				"onSuccess": "sms_send",
+			},
+			{
+				"id":   "sms_send",
 				"type": "TASK_EXECUTION",
 				"properties": map[string]interface{}{
-					"senderId": "placeholder-sender-id",
+					"senderId":    "placeholder-sender-id",
+					"smsTemplate": "OTP",
 				},
 				"executor": map[string]interface{}{
-					"name": "SMSOTPAuthExecutor",
-					"mode": "send",
+					"name": "SMSExecutor",
 				},
 				"onSuccess": "prompt_otp",
 			},
@@ -140,25 +157,22 @@ var (
 							{
 								"ref":        "input_005",
 								"identifier": "otp",
-								"type":       "number",
+								"type":       "OTP_INPUT",
 								"required":   true,
 							},
 						},
 						"action": map[string]interface{}{
 							"ref":      "action_otp",
-							"nextNode": "sms_otp_verify",
+							"nextNode": "verify_otp",
 						},
 					},
 				},
 			},
 			{
-				"id":   "sms_otp_verify",
+				"id":   "verify_otp",
 				"type": "TASK_EXECUTION",
-				"properties": map[string]interface{}{
-					"senderId": "placeholder-sender-id",
-				},
 				"executor": map[string]interface{}{
-					"name": "SMSOTPAuthExecutor",
+					"name": "OTPExecutor",
 					"mode": "verify",
 				},
 				"onSuccess": "auth_assert",
@@ -217,7 +231,7 @@ var (
 			"family_name": map[string]interface{}{
 				"type": "string",
 			},
-			"mobileNumber": map[string]interface{}{
+			"mobile_number": map[string]interface{}{
 				"type": "string",
 			},
 		},
@@ -231,7 +245,7 @@ var (
 			"email": "promptactionsuser1@example.com",
 			"given_name": "PromptActions",
 			"family_name": "User1",
-			"mobileNumber": "+1234567890"
+			"mobile_number": "+1234567890"
 		}`),
 	}
 
@@ -336,8 +350,7 @@ func (ts *PromptActionsAndMFAFlowTestSuite) SetupSuite() {
 
 	// Update flow definition with created sender ID
 	nodes := promptActionsFlow.Nodes.([]map[string]interface{})
-	nodes[5]["properties"].(map[string]interface{})["senderId"] = senderID // sms_otp_send node
-	nodes[7]["properties"].(map[string]interface{})["senderId"] = senderID // sms_otp_verify node
+	nodes[6]["properties"].(map[string]interface{})["senderId"] = senderID // sms_send node
 	promptActionsFlow.Nodes = nodes
 
 	// Create flow
@@ -404,7 +417,7 @@ func (ts *PromptActionsAndMFAFlowTestSuite) TearDownSuite() {
 	}
 }
 
-func (ts *PromptActionsAndMFAFlowTestSuite) TestBasicAuthWithMobileUserSMSOTP() {
+func (ts *PromptActionsAndMFAFlowTestSuite) TestCredentialsAuthWithMobileUserSMSOTP() {
 	// Step 1: Initialize the flow - should present prompt with action choices
 	flowStep, err := common.InitiateAuthenticationFlow(promptActionsTestAppID, false, nil, "")
 	if err != nil {
@@ -420,12 +433,12 @@ func (ts *PromptActionsAndMFAFlowTestSuite) TestBasicAuthWithMobileUserSMSOTP() 
 	ts.Require().NotEmpty(flowStep.Data.Actions, "Flow should require actions")
 
 	// Check if expected actions are present
-	expectedActions := []string{"basic_auth", "prompt_mobile"}
+	expectedActions := []string{"credentials_auth", "prompt_mobile"}
 	ts.Require().True(common.ValidateRequiredActions(flowStep.Data.Actions, expectedActions),
-		"Expected actions basic_auth and prompt_mobile should be present")
+		"Expected actions credentials_auth and prompt_mobile should be present")
 
 	// Step 2: Choose basic auth
-	basicAuthStep, err := common.CompleteFlow(flowStep.ExecutionID, map[string]string{}, "basic_auth",
+	basicAuthStep, err := common.CompleteFlow(flowStep.ExecutionID, map[string]string{}, "credentials_auth",
 		flowStep.ChallengeToken)
 	if err != nil {
 		ts.T().Fatalf("Failed to complete authentication flow with decision: %v", err)
@@ -494,7 +507,7 @@ func (ts *PromptActionsAndMFAFlowTestSuite) TestBasicAuthWithMobileUserSMSOTP() 
 	ts.Require().Equal("COMPLETE", completeFlowStep.FlowStatus, "Expected flow status to be COMPLETE")
 	ts.Require().NotEmpty(completeFlowStep.Assertion,
 		"JWT assertion should be returned after successful authentication")
-	ts.Require().Empty(completeFlowStep.FailureReason, "Failure reason should be empty for successful authentication")
+	ts.Require().Nil(completeFlowStep.Error, "Error should be nil for successful authentication")
 
 	// Validate JWT assertion fields using common utility
 	jwtClaims, err := testutils.ValidateJWTAssertionFields(
@@ -509,9 +522,9 @@ func (ts *PromptActionsAndMFAFlowTestSuite) TestBasicAuthWithMobileUserSMSOTP() 
 	ts.Require().NotNil(jwtClaims, "JWT claims should not be nil")
 }
 
-func (ts *PromptActionsAndMFAFlowTestSuite) TestBasicAuthWithoutMobileUserSMSOTP() {
+func (ts *PromptActionsAndMFAFlowTestSuite) TestCredentialsAuthWithoutMobileUserSMSOTP() {
 	// Test case 1: Authentication with basic auth with user not having mobile, provide mobile, then SMS OTP
-	ts.Run("TestBasicAuthWithoutMobileUserSMSOTP_ProvideMobile", func() {
+	ts.Run("TestCredentialsAuthWithoutMobileUserSMSOTP_ProvideMobile", func() {
 		// Step 1: Initialize the flow - should present prompt with action choices
 		flowStep, err := common.InitiateAuthenticationFlow(promptActionsTestAppID, false, nil, "")
 		if err != nil {
@@ -525,13 +538,13 @@ func (ts *PromptActionsAndMFAFlowTestSuite) TestBasicAuthWithoutMobileUserSMSOTP
 
 		// Check if expected actions are present
 		for _, action := range flowStep.Data.Actions {
-			if action.Ref != "basic_auth" && action.Ref != "prompt_mobile" {
-				ts.T().Fatalf("Expected action ref to be 'basic_auth' or 'prompt_mobile', but got %s", action.Ref)
+			if action.Ref != "credentials_auth" && action.Ref != "prompt_mobile" {
+				ts.T().Fatalf("Expected action ref to be 'credentials_auth' or 'prompt_mobile', but got %s", action.Ref)
 			}
 		}
 
 		// Step 2: Choose basic auth
-		basicAuthStep, err := common.CompleteFlow(flowStep.ExecutionID, map[string]string{}, "basic_auth",
+		basicAuthStep, err := common.CompleteFlow(flowStep.ExecutionID, map[string]string{}, "credentials_auth",
 			flowStep.ChallengeToken)
 		if err != nil {
 			ts.T().Fatalf("Failed to complete authentication flow with decision: %v", err)
@@ -559,7 +572,7 @@ func (ts *PromptActionsAndMFAFlowTestSuite) TestBasicAuthWithoutMobileUserSMSOTP
 
 		var hasMobileNumber bool
 		for _, input := range mobilePromptStep.Data.Inputs {
-			if input.Identifier == "mobileNumber" {
+			if input.Identifier == "mobile_number" {
 				hasMobileNumber = true
 				break
 			}
@@ -571,7 +584,7 @@ func (ts *PromptActionsAndMFAFlowTestSuite) TestBasicAuthWithoutMobileUserSMSOTP
 
 		// Step 4: Provide mobile number
 		mobileInputs := map[string]string{
-			"mobileNumber": "+1987654321",
+			"mobile_number": "+1987654321",
 		}
 
 		otpFlowStep, err := common.CompleteFlow(flowStep.ExecutionID, mobileInputs, "",
@@ -616,8 +629,8 @@ func (ts *PromptActionsAndMFAFlowTestSuite) TestBasicAuthWithoutMobileUserSMSOTP
 		ts.Require().Equal("COMPLETE", completeFlowStep.FlowStatus, "Expected flow status to be COMPLETE")
 		ts.Require().NotEmpty(completeFlowStep.Assertion,
 			"JWT assertion should be returned after successful authentication")
-		ts.Require().Empty(completeFlowStep.FailureReason,
-			"Failure reason should be empty for successful authentication")
+		ts.Require().Nil(completeFlowStep.Error,
+			"Error should be nil for successful authentication")
 
 		// Validate JWT assertion fields using common utility
 		jwtClaims, err := testutils.ValidateJWTAssertionFields(
@@ -633,7 +646,7 @@ func (ts *PromptActionsAndMFAFlowTestSuite) TestBasicAuthWithoutMobileUserSMSOTP
 	})
 
 	// Test case 2: Retry auth flow for same user - should not prompt for mobile again
-	ts.Run("TestBasicAuthWithoutMobileUserSMSOTP_RetryAuth", func() {
+	ts.Run("TestCredentialsAuthWithoutMobileUserSMSOTP_RetryAuth", func() {
 		// Step 1: Initialize the flow - should present prompt with action choices
 		flowStep, err := common.InitiateAuthenticationFlow(promptActionsTestAppID, false, nil, "")
 		if err != nil {
@@ -646,13 +659,13 @@ func (ts *PromptActionsAndMFAFlowTestSuite) TestBasicAuthWithoutMobileUserSMSOTP
 
 		// Check if expected actions are present
 		for _, action := range flowStep.Data.Actions {
-			if action.Ref != "basic_auth" && action.Ref != "prompt_mobile" {
-				ts.T().Fatalf("Expected action ref to be 'basic_auth' or 'prompt_mobile', but got %s", action.Ref)
+			if action.Ref != "credentials_auth" && action.Ref != "prompt_mobile" {
+				ts.T().Fatalf("Expected action ref to be 'credentials_auth' or 'prompt_mobile', but got %s", action.Ref)
 			}
 		}
 
 		// Step 2: Choose basic auth
-		basicAuthStep, err := common.CompleteFlow(flowStep.ExecutionID, map[string]string{}, "basic_auth",
+		basicAuthStep, err := common.CompleteFlow(flowStep.ExecutionID, map[string]string{}, "credentials_auth",
 			flowStep.ChallengeToken)
 		if err != nil {
 			ts.T().Fatalf("Failed to complete authentication flow with decision: %v", err)
@@ -726,8 +739,8 @@ func (ts *PromptActionsAndMFAFlowTestSuite) TestBasicAuthWithoutMobileUserSMSOTP
 		ts.Require().Equal("COMPLETE", completeFlowStep.FlowStatus, "Expected flow status to be COMPLETE")
 		ts.Require().NotEmpty(completeFlowStep.Assertion,
 			"JWT assertion should be returned after successful authentication")
-		ts.Require().Empty(completeFlowStep.FailureReason,
-			"Failure reason should be empty for successful authentication")
+		ts.Require().Nil(completeFlowStep.Error,
+			"Error should be nil for successful authentication")
 
 		// Validate JWT assertion fields using common utility
 		jwtClaims, err := testutils.ValidateJWTAssertionFields(
@@ -756,8 +769,8 @@ func (ts *PromptActionsAndMFAFlowTestSuite) TestSMSOTPAuthWithValidMobile() {
 
 	// Check if expected actions are present
 	for _, action := range flowStep.Data.Actions {
-		if action.Ref != "basic_auth" && action.Ref != "prompt_mobile" {
-			ts.T().Fatalf("Expected action ref to be 'basic_auth' or 'prompt_mobile', but got %s", action.Ref)
+		if action.Ref != "credentials_auth" && action.Ref != "prompt_mobile" {
+			ts.T().Fatalf("Expected action ref to be 'credentials_auth' or 'prompt_mobile', but got %s", action.Ref)
 		}
 	}
 
@@ -774,7 +787,7 @@ func (ts *PromptActionsAndMFAFlowTestSuite) TestSMSOTPAuthWithValidMobile() {
 
 	var hasMobileNumber bool
 	for _, input := range smsAuthStep.Data.Inputs {
-		if input.Identifier == "mobileNumber" {
+		if input.Identifier == "mobile_number" {
 			hasMobileNumber = true
 			break
 		}
@@ -790,7 +803,7 @@ func (ts *PromptActionsAndMFAFlowTestSuite) TestSMSOTPAuthWithValidMobile() {
 	ts.Require().NoError(err, "Failed to unmarshal user attributes")
 
 	mobileInputs := map[string]string{
-		"mobileNumber": userAttrs["mobileNumber"].(string),
+		"mobile_number": userAttrs["mobile_number"].(string),
 	}
 
 	otpFlowStep, err := common.CompleteFlow(flowStep.ExecutionID, mobileInputs, "action_mobile",
@@ -835,7 +848,7 @@ func (ts *PromptActionsAndMFAFlowTestSuite) TestSMSOTPAuthWithValidMobile() {
 	ts.Require().Equal("COMPLETE", completeFlowStep.FlowStatus, "Expected flow status to be COMPLETE")
 	ts.Require().NotEmpty(completeFlowStep.Assertion,
 		"JWT assertion should be returned after successful authentication")
-	ts.Require().Empty(completeFlowStep.FailureReason, "Failure reason should be empty for successful authentication")
+	ts.Require().Nil(completeFlowStep.Error, "Error should be nil for successful authentication")
 
 	// Validate JWT assertion fields using common utility
 	jwtClaims, err := testutils.ValidateJWTAssertionFields(
@@ -865,8 +878,8 @@ func (ts *PromptActionsAndMFAFlowTestSuite) TestSMSOTPAuthWithInvalidMobile() {
 
 	// Check if expected actions are present
 	for _, action := range flowStep.Data.Actions {
-		if action.Ref != "basic_auth" && action.Ref != "prompt_mobile" {
-			ts.T().Fatalf("Expected action ref to be 'basic_auth' or 'prompt_mobile', but got %s", action.Ref)
+		if action.Ref != "credentials_auth" && action.Ref != "prompt_mobile" {
+			ts.T().Fatalf("Expected action ref to be 'credentials_auth' or 'prompt_mobile', but got %s", action.Ref)
 		}
 	}
 
@@ -882,7 +895,7 @@ func (ts *PromptActionsAndMFAFlowTestSuite) TestSMSOTPAuthWithInvalidMobile() {
 
 	// Step 3: Provide invalid mobile number (not in any user profile)
 	mobileInputs := map[string]string{
-		"mobileNumber": "+9999999999", // Invalid mobile not associated with any user
+		"mobile_number": "+9999999999", // Invalid mobile not associated with any user
 	}
 
 	// This should result in failure or error

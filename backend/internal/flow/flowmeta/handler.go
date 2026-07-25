@@ -19,10 +19,12 @@
 package flowmeta
 
 import (
+	"context"
 	"net/http"
 
+	tidcommon "github.com/thunder-id/thunderid/pkg/thunderidengine/common"
+
 	"github.com/thunder-id/thunderid/internal/system/error/apierror"
-	"github.com/thunder-id/thunderid/internal/system/error/serviceerror"
 	"github.com/thunder-id/thunderid/internal/system/log"
 	sysutils "github.com/thunder-id/thunderid/internal/system/utils"
 )
@@ -60,12 +62,12 @@ func (h *flowMetaHandler) HandleGetFlowMetadata(w http.ResponseWriter, r *http.R
 
 	// Validate parameter combinations: id requires type, and type requires id
 	if id != "" && metaType == "" {
-		handleServiceError(w, &ErrorMissingType)
+		handleServiceError(r.Context(), w, &ErrorMissingType)
 		return
 	}
 
 	if metaType != "" && id == "" {
-		handleServiceError(w, &ErrorMissingID)
+		handleServiceError(r.Context(), w, &ErrorMissingID)
 		return
 	}
 	if language != nil {
@@ -80,19 +82,19 @@ func (h *flowMetaHandler) HandleGetFlowMetadata(w http.ResponseWriter, r *http.R
 	// Call service
 	metadata, svcErr := h.flowMetaService.GetFlowMetadata(r.Context(), MetaType(metaType), id, language, namespace)
 	if svcErr != nil {
-		handleServiceError(w, svcErr)
+		handleServiceError(r.Context(), w, svcErr)
 		return
 	}
 
 	// Return success response
-	sysutils.WriteSuccessResponse(w, http.StatusOK, metadata)
-	h.logger.Debug("Flow metadata retrieved successfully",
+	sysutils.WriteSuccessResponse(r.Context(), w, http.StatusOK, metadata)
+	h.logger.Debug(r.Context(), "Flow metadata retrieved successfully",
 		log.String("type", metaType),
 		log.String("id", id))
 }
 
 // handleServiceError converts service errors to appropriate HTTP responses.
-func handleServiceError(w http.ResponseWriter, svcErr *serviceerror.ServiceError) {
+func handleServiceError(ctx context.Context, w http.ResponseWriter, svcErr *tidcommon.ServiceError) {
 	errResp := apierror.ErrorResponse{
 		Code:        svcErr.Code,
 		Message:     svcErr.Error,
@@ -100,7 +102,7 @@ func handleServiceError(w http.ResponseWriter, svcErr *serviceerror.ServiceError
 	}
 
 	statusCode := http.StatusInternalServerError
-	if svcErr.Type == serviceerror.ClientErrorType {
+	if svcErr.Type == tidcommon.ClientErrorType {
 		// Determine specific client error status code
 		if svcErr.Code == ErrorApplicationNotFound.Code || svcErr.Code == ErrorOUNotFound.Code {
 			statusCode = http.StatusNotFound
@@ -109,5 +111,5 @@ func handleServiceError(w http.ResponseWriter, svcErr *serviceerror.ServiceError
 		}
 	}
 
-	sysutils.WriteErrorResponse(w, statusCode, errResp)
+	sysutils.WriteErrorResponse(ctx, w, statusCode, errResp)
 }

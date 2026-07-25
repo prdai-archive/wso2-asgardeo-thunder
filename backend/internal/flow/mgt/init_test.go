@@ -24,6 +24,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	engineconfig "github.com/thunder-id/thunderid/pkg/thunderidengine/config"
+
 	"github.com/stretchr/testify/suite"
 	yaml "gopkg.in/yaml.v3"
 
@@ -31,6 +33,7 @@ import (
 	"github.com/thunder-id/thunderid/internal/system/config"
 	serverconst "github.com/thunder-id/thunderid/internal/system/constants"
 	"github.com/thunder-id/thunderid/internal/system/cors"
+	"github.com/thunder-id/thunderid/internal/system/cors/corstest"
 	"github.com/thunder-id/thunderid/internal/system/database/provider"
 	"github.com/thunder-id/thunderid/tests/mocks/database/providermock"
 )
@@ -74,17 +77,16 @@ func (s *InitTestSuite) SetupTest() {
 				Type:   "sqlite",
 				SQLite: config.SQLiteDataSource{Path: ":memory:"},
 			},
-			Runtime: config.DataSource{
+			RuntimeTransient: config.DataSource{
 				Type:   "sqlite",
 				SQLite: config.SQLiteDataSource{Path: ":memory:"},
 			},
 		},
-		Server: config.ServerConfig{
+		Server: engineconfig.ServerConfig{
 			Identifier: "test-deployment",
 		},
-		CORS: config.CORSConfig{AllowedOrigins: allowedOrigins},
 	}
-	s.Require().NoError(cors.InitializeMatcher(testConfig.CORS.AllowedOrigins))
+	corstest.InstallMatcherEntries(s.T(), allowedOrigins)
 	_ = config.InitializeServerRuntime("test", testConfig)
 }
 
@@ -281,7 +283,7 @@ func (s *InitTestSuite) TestRegisterRoutes_PreflightRequests() {
 // Store Mode Detection tests
 func (s *InitTestSuite) TestGetFlowStoreMode_Mutable() {
 	testConfig := &config.Config{
-		Flow: config.FlowConfig{
+		Flow: engineconfig.FlowConfig{
 			Store: string(serverconst.StoreModeMutable),
 		},
 	}
@@ -296,7 +298,7 @@ func (s *InitTestSuite) TestGetFlowStoreMode_Mutable() {
 
 func (s *InitTestSuite) TestGetFlowStoreMode_Declarative() {
 	testConfig := &config.Config{
-		Flow: config.FlowConfig{
+		Flow: engineconfig.FlowConfig{
 			Store: string(serverconst.StoreModeDeclarative),
 		},
 	}
@@ -311,7 +313,7 @@ func (s *InitTestSuite) TestGetFlowStoreMode_Declarative() {
 
 func (s *InitTestSuite) TestGetFlowStoreMode_Composite() {
 	testConfig := &config.Config{
-		Flow: config.FlowConfig{
+		Flow: engineconfig.FlowConfig{
 			Store: string(serverconst.StoreModeComposite),
 		},
 		DeclarativeResources: config.DeclarativeResources{
@@ -329,7 +331,7 @@ func (s *InitTestSuite) TestGetFlowStoreMode_Composite() {
 
 func (s *InitTestSuite) TestGetFlowStoreMode_DefaultMutable() {
 	testConfig := &config.Config{
-		Flow: config.FlowConfig{
+		Flow: engineconfig.FlowConfig{
 			Store: "",
 		},
 	}
@@ -344,7 +346,7 @@ func (s *InitTestSuite) TestGetFlowStoreMode_DefaultMutable() {
 
 func (s *InitTestSuite) TestIsCompositeModeEnabled_Enabled() {
 	testConfig := &config.Config{
-		Flow: config.FlowConfig{
+		Flow: engineconfig.FlowConfig{
 			Store: string(serverconst.StoreModeComposite),
 		},
 		DeclarativeResources: config.DeclarativeResources{
@@ -362,7 +364,7 @@ func (s *InitTestSuite) TestIsCompositeModeEnabled_Enabled() {
 
 func (s *InitTestSuite) TestIsCompositeModeEnabled_Disabled() {
 	testConfig := &config.Config{
-		Flow: config.FlowConfig{
+		Flow: engineconfig.FlowConfig{
 			Store: string(serverconst.StoreModeMutable),
 		},
 	}
@@ -380,7 +382,7 @@ func (s *InitTestSuite) TestIsCompositeModeEnabled_Disabled() {
 // Test getFlowStoreMode with invalid store mode (should fall back to mutable)
 func (s *InitTestSuite) TestGetFlowStoreMode_InvalidMode() {
 	testConfig := &config.Config{
-		Flow: config.FlowConfig{
+		Flow: engineconfig.FlowConfig{
 			Store: "invalid-mode",
 		},
 	}
@@ -397,7 +399,7 @@ func (s *InitTestSuite) TestGetFlowStoreMode_InvalidMode() {
 // Test getFlowStoreMode with whitespace in mode
 func (s *InitTestSuite) TestGetFlowStoreMode_WithWhitespace() {
 	testConfig := &config.Config{
-		Flow: config.FlowConfig{
+		Flow: engineconfig.FlowConfig{
 			Store: "  composite  ",
 		},
 	}
@@ -414,7 +416,7 @@ func (s *InitTestSuite) TestGetFlowStoreMode_WithWhitespace() {
 // Test getFlowStoreMode with mixed case
 func (s *InitTestSuite) TestGetFlowStoreMode_MixedCase() {
 	testConfig := &config.Config{
-		Flow: config.FlowConfig{
+		Flow: engineconfig.FlowConfig{
 			Store: "Declarative",
 		},
 	}
@@ -431,7 +433,7 @@ func (s *InitTestSuite) TestGetFlowStoreMode_MixedCase() {
 // Test getFlowStoreMode fallback to global DeclarativeResources.Enabled=true
 func (s *InitTestSuite) TestGetFlowStoreMode_FallbackToGlobalDeclarative() {
 	testConfig := &config.Config{
-		Flow: config.FlowConfig{
+		Flow: engineconfig.FlowConfig{
 			Store: "", // Not explicitly set
 		},
 		DeclarativeResources: config.DeclarativeResources{
@@ -451,7 +453,7 @@ func (s *InitTestSuite) TestGetFlowStoreMode_FallbackToGlobalDeclarative() {
 // Test getFlowStoreMode fallback to global DeclarativeResources.Enabled=false
 func (s *InitTestSuite) TestGetFlowStoreMode_FallbackToGlobalMutable() {
 	testConfig := &config.Config{
-		Flow: config.FlowConfig{
+		Flow: engineconfig.FlowConfig{
 			Store: "", // Not explicitly set
 		},
 		DeclarativeResources: config.DeclarativeResources{
@@ -471,7 +473,7 @@ func (s *InitTestSuite) TestGetFlowStoreMode_FallbackToGlobalMutable() {
 // Test getFlowStoreMode - explicit setting overrides global
 func (s *InitTestSuite) TestGetFlowStoreMode_ExplicitOverridesGlobal() {
 	testConfig := &config.Config{
-		Flow: config.FlowConfig{
+		Flow: engineconfig.FlowConfig{
 			Store: string(serverconst.StoreModeMutable), // Explicitly set to mutable
 		},
 		DeclarativeResources: config.DeclarativeResources{
@@ -491,7 +493,7 @@ func (s *InitTestSuite) TestGetFlowStoreMode_ExplicitOverridesGlobal() {
 // Test isCompositeModeEnabled - true case
 func (s *InitTestSuite) TestIsCompositeModeEnabled_True() {
 	testConfig := &config.Config{
-		Flow: config.FlowConfig{
+		Flow: engineconfig.FlowConfig{
 			Store: string(serverconst.StoreModeComposite),
 		},
 	}
@@ -507,7 +509,7 @@ func (s *InitTestSuite) TestIsCompositeModeEnabled_True() {
 // Test isCompositeModeEnabled - false for mutable
 func (s *InitTestSuite) TestIsCompositeModeEnabled_FalseForMutable() {
 	testConfig := &config.Config{
-		Flow: config.FlowConfig{
+		Flow: engineconfig.FlowConfig{
 			Store: string(serverconst.StoreModeMutable),
 		},
 	}
@@ -523,7 +525,7 @@ func (s *InitTestSuite) TestIsCompositeModeEnabled_FalseForMutable() {
 // Test isCompositeModeEnabled - false for declarative
 func (s *InitTestSuite) TestIsCompositeModeEnabled_FalseForDeclarative() {
 	testConfig := &config.Config{
-		Flow: config.FlowConfig{
+		Flow: engineconfig.FlowConfig{
 			Store: string(serverconst.StoreModeDeclarative),
 		},
 	}
@@ -539,7 +541,7 @@ func (s *InitTestSuite) TestIsCompositeModeEnabled_FalseForDeclarative() {
 // Test getFlowStoreMode with uppercase
 func (s *InitTestSuite) TestGetFlowStoreMode_Uppercase() {
 	testConfig := &config.Config{
-		Flow: config.FlowConfig{
+		Flow: engineconfig.FlowConfig{
 			Store: "COMPOSITE",
 		},
 	}
@@ -556,7 +558,7 @@ func (s *InitTestSuite) TestGetFlowStoreMode_Uppercase() {
 // Test getFlowStoreMode with special characters (should fall back to mutable)
 func (s *InitTestSuite) TestGetFlowStoreMode_SpecialCharacters() {
 	testConfig := &config.Config{
-		Flow: config.FlowConfig{
+		Flow: engineconfig.FlowConfig{
 			Store: "mutable@#$",
 		},
 	}
@@ -630,7 +632,7 @@ func (s *InitTestSuite) TestGetFlowStoreMode_PriorityOrder() {
 	for _, tc := range testCases {
 		s.Run(tc.name, func() {
 			testConfig := &config.Config{
-				Flow: config.FlowConfig{
+				Flow: engineconfig.FlowConfig{
 					Store: tc.flowStore,
 				},
 				DeclarativeResources: config.DeclarativeResources{
@@ -659,7 +661,7 @@ func (s *InitTestSuite) TestGetFlowStoreMode_AllValidModes() {
 	for _, validMode := range validModes {
 		s.Run("Mode_"+string(validMode), func() {
 			testConfig := &config.Config{
-				Flow: config.FlowConfig{
+				Flow: engineconfig.FlowConfig{
 					Store: string(validMode),
 				},
 			}
@@ -678,7 +680,7 @@ func (s *InitTestSuite) TestGetFlowStoreMode_AllValidModes() {
 func (s *InitTestSuite) TestGetFlowStoreMode_EmptyStringVsNil() {
 	s.Run("Empty string falls back to global", func() {
 		testConfig := &config.Config{
-			Flow: config.FlowConfig{
+			Flow: engineconfig.FlowConfig{
 				Store: "",
 			},
 			DeclarativeResources: config.DeclarativeResources{
@@ -714,7 +716,7 @@ func (s *InitTestSuite) TestGetFlowStoreMode_NormalizationCases() {
 	for _, tc := range testCases {
 		s.Run(tc.name, func() {
 			testConfig := &config.Config{
-				Flow: config.FlowConfig{
+				Flow: engineconfig.FlowConfig{
 					Store: tc.input,
 				},
 			}
@@ -732,7 +734,7 @@ func (s *InitTestSuite) TestGetFlowStoreMode_NormalizationCases() {
 // Test initializeStore with mutable mode
 func (s *InitTestSuite) TestInitializeStore_MutableMode() {
 	testConfig := &config.Config{
-		Flow: config.FlowConfig{
+		Flow: engineconfig.FlowConfig{
 			Store: string(serverconst.StoreModeMutable),
 		},
 		Database: config.DatabaseConfig{
@@ -740,12 +742,12 @@ func (s *InitTestSuite) TestInitializeStore_MutableMode() {
 				Type:   "sqlite",
 				SQLite: config.SQLiteDataSource{Path: ":memory:"},
 			},
-			Runtime: config.DataSource{
+			RuntimeTransient: config.DataSource{
 				Type:   "sqlite",
 				SQLite: config.SQLiteDataSource{Path: ":memory:"},
 			},
 		},
-		Server: config.ServerConfig{
+		Server: engineconfig.ServerConfig{
 			Identifier: "test-deployment",
 		},
 	}
@@ -756,7 +758,11 @@ func (s *InitTestSuite) TestInitializeStore_MutableMode() {
 	cleanup := setupMockDBProvider()
 	defer cleanup()
 
-	store, compositeStore, _, err := initializeStore(cache.Initialize())
+	mockValidator := NewFlowValidatorInterfaceMock(s.T())
+	store, compositeStore, _, err := initializeStore(
+		cache.Initialize(config.GetServerRuntime().Config.Cache, "test-deployment"),
+		mockValidator,
+	)
 
 	s.NoError(err)
 	s.NotNil(store)
@@ -769,7 +775,7 @@ func (s *InitTestSuite) TestInitializeStore_MutableMode() {
 // Test initializeStore with declarative mode
 func (s *InitTestSuite) TestInitializeStore_DeclarativeMode() {
 	testConfig := &config.Config{
-		Flow: config.FlowConfig{
+		Flow: engineconfig.FlowConfig{
 			Store: string(serverconst.StoreModeDeclarative),
 		},
 		Database: config.DatabaseConfig{
@@ -777,12 +783,12 @@ func (s *InitTestSuite) TestInitializeStore_DeclarativeMode() {
 				Type:   "sqlite",
 				SQLite: config.SQLiteDataSource{Path: ":memory:"},
 			},
-			Runtime: config.DataSource{
+			RuntimeTransient: config.DataSource{
 				Type:   "sqlite",
 				SQLite: config.SQLiteDataSource{Path: ":memory:"},
 			},
 		},
-		Server: config.ServerConfig{
+		Server: engineconfig.ServerConfig{
 			Identifier: "test-deployment",
 		},
 		DeclarativeResources: config.DeclarativeResources{
@@ -793,7 +799,11 @@ func (s *InitTestSuite) TestInitializeStore_DeclarativeMode() {
 	_ = config.InitializeServerRuntime("test", testConfig)
 	defer config.ResetServerRuntime()
 
-	store, compositeStore, _, err := initializeStore(cache.Initialize())
+	mockValidator := NewFlowValidatorInterfaceMock(s.T())
+	store, compositeStore, _, err := initializeStore(
+		cache.Initialize(config.GetServerRuntime().Config.Cache, "test-deployment"),
+		mockValidator,
+	)
 
 	// Note: err might occur if declarative resources path doesn't exist, but that's expected
 	// We're testing store type initialization, not resource loading
@@ -808,7 +818,7 @@ func (s *InitTestSuite) TestInitializeStore_DeclarativeMode() {
 // Test initializeStore with composite mode
 func (s *InitTestSuite) TestInitializeStore_CompositeMode() {
 	testConfig := &config.Config{
-		Flow: config.FlowConfig{
+		Flow: engineconfig.FlowConfig{
 			Store: string(serverconst.StoreModeComposite),
 		},
 		Database: config.DatabaseConfig{
@@ -816,12 +826,12 @@ func (s *InitTestSuite) TestInitializeStore_CompositeMode() {
 				Type:   "sqlite",
 				SQLite: config.SQLiteDataSource{Path: ":memory:"},
 			},
-			Runtime: config.DataSource{
+			RuntimeTransient: config.DataSource{
 				Type:   "sqlite",
 				SQLite: config.SQLiteDataSource{Path: ":memory:"},
 			},
 		},
-		Server: config.ServerConfig{
+		Server: engineconfig.ServerConfig{
 			Identifier: "test-deployment",
 		},
 		DeclarativeResources: config.DeclarativeResources{
@@ -835,7 +845,11 @@ func (s *InitTestSuite) TestInitializeStore_CompositeMode() {
 	cleanup := setupMockDBProvider()
 	defer cleanup()
 
-	store, compositeStore, _, err := initializeStore(cache.Initialize())
+	mockValidator := NewFlowValidatorInterfaceMock(s.T())
+	store, compositeStore, _, err := initializeStore(
+		cache.Initialize(config.GetServerRuntime().Config.Cache, "test-deployment"),
+		mockValidator,
+	)
 
 	// Note: err might occur if declarative resources path doesn't exist, but that's expected
 	// We're testing store type initialization, not resource loading
@@ -852,7 +866,7 @@ func (s *InitTestSuite) TestInitializeStore_CompositeMode() {
 // Test initializeStore with declarative mode handles resource loading errors
 func (s *InitTestSuite) TestInitializeStore_DeclarativeMode_ResourceLoadingError() {
 	testConfig := &config.Config{
-		Flow: config.FlowConfig{
+		Flow: engineconfig.FlowConfig{
 			Store: string(serverconst.StoreModeDeclarative),
 		},
 		Database: config.DatabaseConfig{
@@ -860,12 +874,12 @@ func (s *InitTestSuite) TestInitializeStore_DeclarativeMode_ResourceLoadingError
 				Type:   "sqlite",
 				SQLite: config.SQLiteDataSource{Path: ":memory:"},
 			},
-			Runtime: config.DataSource{
+			RuntimeTransient: config.DataSource{
 				Type:   "sqlite",
 				SQLite: config.SQLiteDataSource{Path: ":memory:"},
 			},
 		},
-		Server: config.ServerConfig{
+		Server: engineconfig.ServerConfig{
 			Identifier: "test-deployment",
 		},
 		DeclarativeResources: config.DeclarativeResources{
@@ -876,7 +890,11 @@ func (s *InitTestSuite) TestInitializeStore_DeclarativeMode_ResourceLoadingError
 	_ = config.InitializeServerRuntime("test", testConfig)
 	defer config.ResetServerRuntime()
 
-	store, compositeStore, _, err := initializeStore(cache.Initialize())
+	mockValidator := NewFlowValidatorInterfaceMock(s.T())
+	store, compositeStore, _, err := initializeStore(
+		cache.Initialize(config.GetServerRuntime().Config.Cache, "test-deployment"),
+		mockValidator,
+	)
 
 	// When declarative resources path doesn't exist or has issues, error is returned
 	// The store and compositeStore should be nil when error occurs
@@ -893,7 +911,7 @@ func (s *InitTestSuite) TestInitializeStore_DeclarativeMode_ResourceLoadingError
 // Test initializeStore with composite mode handles resource loading errors
 func (s *InitTestSuite) TestInitializeStore_CompositeMode_ResourceLoadingError() {
 	testConfig := &config.Config{
-		Flow: config.FlowConfig{
+		Flow: engineconfig.FlowConfig{
 			Store: string(serverconst.StoreModeComposite),
 		},
 		Database: config.DatabaseConfig{
@@ -901,12 +919,12 @@ func (s *InitTestSuite) TestInitializeStore_CompositeMode_ResourceLoadingError()
 				Type:   "sqlite",
 				SQLite: config.SQLiteDataSource{Path: ":memory:"},
 			},
-			Runtime: config.DataSource{
+			RuntimeTransient: config.DataSource{
 				Type:   "sqlite",
 				SQLite: config.SQLiteDataSource{Path: ":memory:"},
 			},
 		},
-		Server: config.ServerConfig{
+		Server: engineconfig.ServerConfig{
 			Identifier: "test-deployment",
 		},
 		DeclarativeResources: config.DeclarativeResources{
@@ -920,7 +938,11 @@ func (s *InitTestSuite) TestInitializeStore_CompositeMode_ResourceLoadingError()
 	cleanup := setupMockDBProvider()
 	defer cleanup()
 
-	store, compositeStore, _, err := initializeStore(cache.Initialize())
+	mockValidator := NewFlowValidatorInterfaceMock(s.T())
+	store, compositeStore, _, err := initializeStore(
+		cache.Initialize(config.GetServerRuntime().Config.Cache, "test-deployment"),
+		mockValidator,
+	)
 
 	// When declarative resources path doesn't exist or has issues, error is returned
 	// The store and compositeStore should be nil when error occurs
@@ -937,7 +959,7 @@ func (s *InitTestSuite) TestInitializeStore_CompositeMode_ResourceLoadingError()
 // Test initializeStore with default mode (fallback to mutable)
 func (s *InitTestSuite) TestInitializeStore_DefaultMode() {
 	testConfig := &config.Config{
-		Flow: config.FlowConfig{
+		Flow: engineconfig.FlowConfig{
 			Store: "", // Empty should fallback to mutable
 		},
 		Database: config.DatabaseConfig{
@@ -945,12 +967,12 @@ func (s *InitTestSuite) TestInitializeStore_DefaultMode() {
 				Type:   "sqlite",
 				SQLite: config.SQLiteDataSource{Path: ":memory:"},
 			},
-			Runtime: config.DataSource{
+			RuntimeTransient: config.DataSource{
 				Type:   "sqlite",
 				SQLite: config.SQLiteDataSource{Path: ":memory:"},
 			},
 		},
-		Server: config.ServerConfig{
+		Server: engineconfig.ServerConfig{
 			Identifier: "test-deployment",
 		},
 		DeclarativeResources: config.DeclarativeResources{
@@ -964,7 +986,11 @@ func (s *InitTestSuite) TestInitializeStore_DefaultMode() {
 	cleanup := setupMockDBProvider()
 	defer cleanup()
 
-	store, compositeStore, _, err := initializeStore(cache.Initialize())
+	mockValidator := NewFlowValidatorInterfaceMock(s.T())
+	store, compositeStore, _, err := initializeStore(
+		cache.Initialize(config.GetServerRuntime().Config.Cache, "test-deployment"),
+		mockValidator,
+	)
 
 	s.NoError(err)
 	s.NotNil(store)
@@ -977,7 +1003,7 @@ func (s *InitTestSuite) TestInitializeStore_DefaultMode() {
 // Test initializeStore validates store mode normalization
 func (s *InitTestSuite) TestInitializeStore_ModeNormalization() {
 	testConfig := &config.Config{
-		Flow: config.FlowConfig{
+		Flow: engineconfig.FlowConfig{
 			Store: "  COMPOSITE  ", // Should normalize to composite
 		},
 		Database: config.DatabaseConfig{
@@ -985,12 +1011,12 @@ func (s *InitTestSuite) TestInitializeStore_ModeNormalization() {
 				Type:   "sqlite",
 				SQLite: config.SQLiteDataSource{Path: ":memory:"},
 			},
-			Runtime: config.DataSource{
+			RuntimeTransient: config.DataSource{
 				Type:   "sqlite",
 				SQLite: config.SQLiteDataSource{Path: ":memory:"},
 			},
 		},
-		Server: config.ServerConfig{
+		Server: engineconfig.ServerConfig{
 			Identifier: "test-deployment",
 		},
 		DeclarativeResources: config.DeclarativeResources{
@@ -1004,7 +1030,11 @@ func (s *InitTestSuite) TestInitializeStore_ModeNormalization() {
 	cleanup := setupMockDBProvider()
 	defer cleanup()
 
-	store, compositeStore, _, err := initializeStore(cache.Initialize())
+	mockValidator := NewFlowValidatorInterfaceMock(s.T())
+	store, compositeStore, _, err := initializeStore(
+		cache.Initialize(config.GetServerRuntime().Config.Cache, "test-deployment"),
+		mockValidator,
+	)
 
 	// Note: err might occur if declarative resources path doesn't exist, but that's expected
 	// We're testing store type initialization and mode normalization

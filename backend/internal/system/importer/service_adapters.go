@@ -23,22 +23,22 @@ import (
 	"encoding/json"
 	"fmt"
 
+	tidcommon "github.com/thunder-id/thunderid/pkg/thunderidengine/common"
+	"github.com/thunder-id/thunderid/pkg/thunderidengine/providers"
+
 	agentmodel "github.com/thunder-id/thunderid/internal/agent/model"
 	layoutmgt "github.com/thunder-id/thunderid/internal/design/layout/mgt"
 	thememgt "github.com/thunder-id/thunderid/internal/design/theme/mgt"
 	"github.com/thunder-id/thunderid/internal/entitytype"
 	"github.com/thunder-id/thunderid/internal/group"
-	inboundmodel "github.com/thunder-id/thunderid/internal/inboundclient/model"
-	oauth2const "github.com/thunder-id/thunderid/internal/oauth/oauth2/constants"
-	"github.com/thunder-id/thunderid/internal/ou"
 	"github.com/thunder-id/thunderid/internal/resource"
 	"github.com/thunder-id/thunderid/internal/role"
 	serverconst "github.com/thunder-id/thunderid/internal/system/constants"
-	"github.com/thunder-id/thunderid/internal/system/error/serviceerror"
-	"github.com/thunder-id/thunderid/internal/system/i18n/core"
 	i18nmgt "github.com/thunder-id/thunderid/internal/system/i18n/mgt"
 	"github.com/thunder-id/thunderid/internal/system/log"
 	"github.com/thunder-id/thunderid/internal/user"
+	"github.com/thunder-id/thunderid/internal/vc/credential"
+	"github.com/thunder-id/thunderid/internal/vc/presentation"
 )
 
 // resolveImportOUHandle resolves an ou_handle to its corresponding OU ID for import operations.
@@ -46,10 +46,10 @@ import (
 // Returns the (possibly resolved) ouID and any service error from the OU lookup.
 func (s *importService) resolveImportOUHandle(
 	ctx context.Context, resourceType, resourceID, resourceName, ouID, ouHandle string,
-) (string, *serviceerror.ServiceError) {
+) (string, *tidcommon.ServiceError) {
 	logger := log.GetLogger().With(log.String(log.LoggerKeyComponentName, "ImportService"))
 	if ouID != "" && ouHandle != "" {
-		logger.Warn("Both ou_id and ou_handle provided; ou_handle ignored",
+		logger.Warn(ctx, "Both ouId and ouHandle provided; ouHandle ignored",
 			log.String("resourceType", resourceType),
 			log.String("resourceID", resourceID),
 			log.String("resourceName", resourceName))
@@ -57,7 +57,7 @@ func (s *importService) resolveImportOUHandle(
 	}
 	if ouID == "" && ouHandle != "" {
 		if s.ouService == nil {
-			return "", &serviceerror.InternalServerError
+			return "", &tidcommon.InternalServerError
 		}
 		resolved, svcErr := s.ouService.GetOrganizationUnitByPath(ctx, ouHandle)
 		if svcErr != nil {
@@ -72,8 +72,8 @@ type roleDeclarativeYAML struct {
 	ID          string                     `yaml:"id"`
 	Name        string                     `yaml:"name"`
 	Description string                     `yaml:"description,omitempty"`
-	OUID        string                     `yaml:"ou_id,omitempty"`
-	OUHandle    string                     `yaml:"ou_handle,omitempty"`
+	OUID        string                     `yaml:"ouId,omitempty"`
+	OUHandle    string                     `yaml:"ouHandle,omitempty"`
 	Permissions []role.ResourcePermissions `yaml:"permissions"`
 	Assignments []role.RoleAssignment      `yaml:"assignments,omitempty"`
 }
@@ -81,8 +81,8 @@ type roleDeclarativeYAML struct {
 type userDeclarativeYAML struct {
 	ID          string                 `yaml:"id"`
 	Type        string                 `yaml:"type"`
-	OUID        string                 `yaml:"ou_id,omitempty"`
-	OUHandle    string                 `yaml:"ou_handle,omitempty"`
+	OUID        string                 `yaml:"ouId,omitempty"`
+	OUHandle    string                 `yaml:"ouHandle,omitempty"`
 	Attributes  map[string]interface{} `yaml:"attributes"`
 	Credentials map[string]interface{} `yaml:"credentials,omitempty"`
 }
@@ -91,10 +91,10 @@ type entityTypeDeclarativeYAML struct {
 	ID                    string                       `yaml:"id"`
 	Category              entitytype.TypeCategory      `yaml:"category,omitempty"`
 	Name                  string                       `yaml:"name"`
-	OUID                  string                       `yaml:"organization_unit_id,omitempty"`
-	OUHandle              string                       `yaml:"ou_handle,omitempty"`
-	AllowSelfRegistration bool                         `yaml:"allow_self_registration,omitempty"`
-	SystemAttributes      *entitytype.SystemAttributes `yaml:"system_attributes,omitempty"`
+	OUID                  string                       `yaml:"ouId,omitempty"`
+	OUHandle              string                       `yaml:"ouHandle,omitempty"`
+	AllowSelfRegistration bool                         `yaml:"allowSelfRegistration,omitempty"`
+	SystemAttributes      *entitytype.SystemAttributes `yaml:"systemAttributes,omitempty"`
 	Schema                interface{}                  `yaml:"schema"`
 }
 
@@ -121,12 +121,12 @@ func (s *importService) importOrganizationUnit(
 		return unsupportedAdapterOutcome(resourceTypeOrganizationUnit, "organization unit")
 	}
 
-	var req ou.OrganizationUnit
+	var req providers.OrganizationUnit
 	if err := doc.Node.Decode(&req); err != nil {
 		return decodeErrorOutcome(resourceTypeOrganizationUnit, req.ID, req.Name, err)
 	}
 
-	createReq := ou.OrganizationUnitRequestWithID{
+	createReq := providers.OrganizationUnitRequestWithID{
 		ID:              req.ID,
 		Handle:          req.Handle,
 		Name:            req.Name,
@@ -346,8 +346,8 @@ func (s *importService) importRole(
 			if len(req.Assignments) > 0 {
 				if s.roleAssignmentService == nil {
 					return serviceErrorOutcome(resourceTypeRole, updated.ID, updated.Name, operationUpdate,
-						serviceerror.CustomServiceError(serviceerror.InternalServerError,
-							core.I18nMessage{DefaultValue: "roleAssignmentService not configured"}))
+						tidcommon.CustomServiceError(tidcommon.InternalServerError,
+							tidcommon.I18nMessage{DefaultValue: "roleAssignmentService not configured"}))
 				}
 				assignErr := s.roleAssignmentService.AddAssignments(ctx, updated.ID, req.Assignments)
 				if assignErr != nil {
@@ -382,8 +382,8 @@ func (s *importService) importGroup(
 		ID          string         `yaml:"id"`
 		Name        string         `yaml:"name"`
 		Description string         `yaml:"description,omitempty"`
-		OUID        string         `yaml:"ou_id,omitempty"`
-		OUHandle    string         `yaml:"ou_handle,omitempty"`
+		OUID        string         `yaml:"ouId,omitempty"`
+		OUHandle    string         `yaml:"ouHandle,omitempty"`
 		Members     []group.Member `yaml:"members,omitempty"`
 	}
 	if err := doc.Node.Decode(&raw); err != nil {
@@ -461,7 +461,7 @@ func (s *importService) importResourceServer(
 		return unsupportedAdapterOutcome(resourceTypeResourceServer, "resource server")
 	}
 
-	var req resource.ResourceServer
+	var req providers.ResourceServer
 	if err := doc.Node.Decode(&req); err != nil {
 		return decodeErrorOutcome(resourceTypeResourceServer, req.ID, req.Name, err)
 	}
@@ -515,7 +515,8 @@ func (s *importService) importResourceServer(
 }
 
 //nolint:dupl // Theme and layout imports share the same upsert pattern with type-specific services.
-func (s *importService) importTheme(doc parsedDocument, options *ImportOptions, dryRun bool) ImportItemOutcome {
+func (s *importService) importTheme(
+	ctx context.Context, doc parsedDocument, options *ImportOptions, dryRun bool) ImportItemOutcome {
 	if s.themeService == nil {
 		return unsupportedAdapterOutcome(resourceTypeTheme, "theme")
 	}
@@ -553,7 +554,7 @@ func (s *importService) importTheme(doc parsedDocument, options *ImportOptions, 
 
 	if dryRun {
 		if options.IsUpsertEnabled() && req.ID != "" {
-			_, svcErr := s.themeService.GetTheme(req.ID)
+			_, svcErr := s.themeService.GetTheme(ctx, req.ID)
 			if svcErr == nil {
 				return successOutcome(resourceTypeTheme, req.ID, req.DisplayName, operationUpdate)
 			}
@@ -567,7 +568,7 @@ func (s *importService) importTheme(doc parsedDocument, options *ImportOptions, 
 	}
 
 	if options.IsUpsertEnabled() && req.ID != "" {
-		updated, svcErr := s.themeService.UpdateTheme(req.ID, updateReq)
+		updated, svcErr := s.themeService.UpdateTheme(ctx, req.ID, updateReq)
 		if svcErr == nil {
 			return successOutcome(resourceTypeTheme, updated.ID, updated.DisplayName, operationUpdate)
 		}
@@ -576,7 +577,7 @@ func (s *importService) importTheme(doc parsedDocument, options *ImportOptions, 
 			return serviceErrorOutcome(resourceTypeTheme, req.ID, req.DisplayName, operationUpdate, svcErr)
 		}
 
-		created, createErr := s.themeService.CreateTheme(createReq)
+		created, createErr := s.themeService.CreateTheme(ctx, createReq)
 		if createErr != nil {
 			return serviceErrorOutcome(resourceTypeTheme, req.ID, req.DisplayName, operationCreate, createErr)
 		}
@@ -584,7 +585,7 @@ func (s *importService) importTheme(doc parsedDocument, options *ImportOptions, 
 		return successOutcome(resourceTypeTheme, created.ID, created.DisplayName, operationCreate)
 	}
 
-	created, svcErr := s.themeService.CreateTheme(createReq)
+	created, svcErr := s.themeService.CreateTheme(ctx, createReq)
 	if svcErr != nil {
 		return serviceErrorOutcome(resourceTypeTheme, req.ID, req.DisplayName, operationCreate, svcErr)
 	}
@@ -593,7 +594,8 @@ func (s *importService) importTheme(doc parsedDocument, options *ImportOptions, 
 }
 
 //nolint:dupl // Theme and layout imports share the same upsert pattern with type-specific services.
-func (s *importService) importLayout(doc parsedDocument, options *ImportOptions, dryRun bool) ImportItemOutcome {
+func (s *importService) importLayout(
+	ctx context.Context, doc parsedDocument, options *ImportOptions, dryRun bool) ImportItemOutcome {
 	if s.layoutService == nil {
 		return unsupportedAdapterOutcome(resourceTypeLayout, "layout")
 	}
@@ -615,35 +617,59 @@ func (s *importService) importLayout(doc parsedDocument, options *ImportOptions,
 		}
 	}
 
-	createReq := layoutmgt.CreateLayoutRequest{
+	createReq := layoutmgt.CreateLayoutRequestWithID{
+		ID:          req.ID,
 		Handle:      req.Handle,
 		DisplayName: req.DisplayName,
 		Description: req.Description,
 		Layout:      layoutBytes,
 	}
-	updateReq := layoutmgt.UpdateLayoutRequest(createReq)
+	updateReq := layoutmgt.UpdateLayoutRequest{
+		Handle:      req.Handle,
+		DisplayName: req.DisplayName,
+		Description: req.Description,
+		Layout:      layoutBytes,
+	}
 
-	return importDesignResource(options.IsUpsertEnabled(), dryRun, req.ID, req.DisplayName,
-		func() *serviceerror.ServiceError {
-			_, svcErr := s.layoutService.GetLayout(req.ID)
-			return svcErr
-		},
-		func() (string, string, *serviceerror.ServiceError) {
-			updated, svcErr := s.layoutService.UpdateLayout(req.ID, updateReq)
-			if svcErr != nil {
-				return "", "", svcErr
+	if dryRun {
+		if options.IsUpsertEnabled() && req.ID != "" {
+			_, svcErr := s.layoutService.GetLayout(ctx, req.ID)
+			if svcErr == nil {
+				return successOutcome(resourceTypeLayout, req.ID, req.DisplayName, operationUpdate)
 			}
-			return updated.ID, updated.DisplayName, nil
-		},
-		func() (string, string, *serviceerror.ServiceError) {
-			created, svcErr := s.layoutService.CreateLayout(createReq)
-			if svcErr != nil {
-				return "", "", svcErr
+
+			if !isNotFoundServiceError(svcErr) {
+				return serviceErrorOutcome(resourceTypeLayout, req.ID, req.DisplayName, operationUpdate, svcErr)
 			}
-			return created.ID, created.DisplayName, nil
-		},
-		resourceTypeLayout,
-	)
+		}
+
+		return successOutcome(resourceTypeLayout, req.ID, req.DisplayName, operationCreate)
+	}
+
+	if options.IsUpsertEnabled() && req.ID != "" {
+		updated, svcErr := s.layoutService.UpdateLayout(ctx, req.ID, updateReq)
+		if svcErr == nil {
+			return successOutcome(resourceTypeLayout, updated.ID, updated.DisplayName, operationUpdate)
+		}
+
+		if !isNotFoundServiceError(svcErr) {
+			return serviceErrorOutcome(resourceTypeLayout, req.ID, req.DisplayName, operationUpdate, svcErr)
+		}
+
+		created, createErr := s.layoutService.CreateLayout(ctx, createReq)
+		if createErr != nil {
+			return serviceErrorOutcome(resourceTypeLayout, req.ID, req.DisplayName, operationCreate, createErr)
+		}
+
+		return successOutcome(resourceTypeLayout, created.ID, created.DisplayName, operationCreate)
+	}
+
+	created, svcErr := s.layoutService.CreateLayout(ctx, createReq)
+	if svcErr != nil {
+		return serviceErrorOutcome(resourceTypeLayout, req.ID, req.DisplayName, operationCreate, svcErr)
+	}
+
+	return successOutcome(resourceTypeLayout, created.ID, created.DisplayName, operationCreate)
 }
 
 func (s *importService) importUser(
@@ -739,10 +765,10 @@ func (s *importService) importUser(
 			json.RawMessage(credentialsJSON),
 		); credErr != nil {
 			if rollbackErr := s.userService.DeleteUser(ctx, created.ID); rollbackErr != nil {
-				combinedErr := &serviceerror.ServiceError{
+				combinedErr := &tidcommon.ServiceError{
 					Code: credErr.Code,
 					Type: credErr.Type,
-					Error: core.I18nMessage{
+					Error: tidcommon.I18nMessage{
 						Key: credErr.Error.Key,
 						DefaultValue: fmt.Sprintf(
 							"user credential update failed: %s; rollback delete failed: %s",
@@ -750,7 +776,7 @@ func (s *importService) importUser(
 							rollbackErr.Error.DefaultValue,
 						),
 					},
-					ErrorDescription: core.I18nMessage{
+					ErrorDescription: tidcommon.I18nMessage{
 						Key: credErr.ErrorDescription.Key,
 						DefaultValue: fmt.Sprintf(
 							"credential update error code %s for user %s; rollback delete error code %s",
@@ -771,7 +797,7 @@ func (s *importService) importUser(
 	return successOutcome(resourceTypeUser, created.ID, "", operationCreate)
 }
 
-func (s *importService) importTranslation(doc parsedDocument, dryRun bool) ImportItemOutcome {
+func (s *importService) importTranslation(ctx context.Context, doc parsedDocument, dryRun bool) ImportItemOutcome {
 	if s.translationService == nil {
 		return unsupportedAdapterOutcome(resourceTypeTranslation, "translation")
 	}
@@ -785,7 +811,7 @@ func (s *importService) importTranslation(doc parsedDocument, dryRun bool) Impor
 		return successOutcome(resourceTypeTranslation, "", req.Language, operationUpdate)
 	}
 
-	_, i18nErr := s.translationService.SetTranslationOverrides(req.Language, req.Translations)
+	_, i18nErr := s.translationService.SetTranslationOverrides(ctx, req.Language, req.Translations)
 	if i18nErr != nil {
 		return ImportItemOutcome{
 			ResourceType: resourceTypeTranslation,
@@ -804,18 +830,18 @@ func (s *importService) importTranslation(doc parsedDocument, dryRun bool) Impor
 // It first computes permission strings via ProcessResourceServer, then calls the resource service
 // for each resource and action.  Existing resources/actions (on upsert paths) are silently skipped.
 func (s *importService) importResourceServerChildren(
-	ctx context.Context, serverID string, rs resource.ResourceServer,
-) *serviceerror.ServiceError {
+	ctx context.Context, serverID string, rs providers.ResourceServer,
+) *tidcommon.ServiceError {
 	if len(rs.Resources) == 0 {
 		return nil
 	}
 
 	// Compute permission strings in-place (mirrors declarative loader logic).
 	if err := resource.ProcessResourceServer(&rs); err != nil {
-		return &serviceerror.ServiceError{
+		return &tidcommon.ServiceError{
 			Code: ErrorInvalidYAMLContent.Code,
 			Type: ErrorInvalidYAMLContent.Type,
-			Error: core.I18nMessage{
+			Error: tidcommon.I18nMessage{
 				DefaultValue: fmt.Sprintf("failed to process resource server children: %v", err),
 			},
 		}
@@ -860,7 +886,7 @@ func (s *importService) importResourceServerChildren(
 			if existingID == "" {
 				continue
 			}
-			created = &resource.Resource{ID: existingID}
+			created = &providers.Resource{ID: existingID}
 		}
 
 		handleToID[res.Handle] = created.ID
@@ -912,7 +938,7 @@ func (s *importService) importAgent(
 		attributesJSON = raw
 	}
 
-	normalizeAgentOAuthConfigForImport(&req)
+	normalizeAgentOAuthConfigForImport(ctx, &req)
 
 	createReq := &agentmodel.Agent{
 		ID:                 req.ID,
@@ -975,13 +1001,13 @@ func (s *importService) importAgent(
 	return successOutcome(resourceTypeAgent, created.ID, created.Name, operationCreate)
 }
 
-func getAgentOAuthConfigForImport(req *agentmodel.AgentRequestWithID) *inboundmodel.OAuthConfigWithSecret {
+func getAgentOAuthConfigForImport(req *agentmodel.AgentRequestWithID) *providers.OAuthConfigWithSecret {
 	if req == nil {
 		return nil
 	}
 
 	for _, inboundAuth := range req.InboundAuthConfig {
-		if inboundAuth.Type == inboundmodel.OAuthInboundAuthType && inboundAuth.OAuthConfig != nil {
+		if inboundAuth.Type == providers.OAuthInboundAuthType && inboundAuth.OAuthConfig != nil {
 			return inboundAuth.OAuthConfig
 		}
 	}
@@ -989,16 +1015,17 @@ func getAgentOAuthConfigForImport(req *agentmodel.AgentRequestWithID) *inboundmo
 	return nil
 }
 
-func normalizeAgentOAuthConfigForImport(req *agentmodel.AgentRequestWithID) {
+func normalizeAgentOAuthConfigForImport(ctx context.Context, req *agentmodel.AgentRequestWithID) {
 	oauthConfig := getAgentOAuthConfigForImport(req)
 	if oauthConfig == nil {
 		return
 	}
 
 	if oauthConfig.PublicClient &&
-		oauthConfig.TokenEndpointAuthMethod == oauth2const.TokenEndpointAuthMethodNone &&
+		oauthConfig.TokenEndpointAuthMethod == providers.TokenEndpointAuthMethodNone &&
 		oauthConfig.ClientSecret != "" {
-		log.GetLogger().Debug("Dropping client_secret for public agent import with token endpoint auth method 'none'",
+		log.GetLogger().Debug(ctx,
+			"Dropping client_secret for public agent import with token endpoint auth method 'none'",
 			log.String("agentID", req.ID),
 			log.String("name", req.Name),
 			log.String("clientID", oauthConfig.ClientID))
@@ -1028,7 +1055,7 @@ func decodeErrorOutcome(resourceType, id, name string, err error) ImportItemOutc
 
 func serviceErrorOutcome(
 	resourceType, id, name, operation string,
-	svcErr *serviceerror.ServiceError,
+	svcErr *tidcommon.ServiceError,
 ) ImportItemOutcome {
 	return ImportItemOutcome{
 		ResourceType: resourceType,
@@ -1051,70 +1078,112 @@ func successOutcome(resourceType, id, name, operation string) ImportItemOutcome 
 	}
 }
 
-func importDesignResource(
-	upsert bool,
-	dryRun bool,
-	resourceID string,
-	resourceName string,
-	getFn func() *serviceerror.ServiceError,
-	updateFn func() (string, string, *serviceerror.ServiceError),
-	createFn func() (string, string, *serviceerror.ServiceError),
-	resourceType string,
+//nolint:dupl // parallel to importCredentialConfiguration; kept separate per resource type.
+func (s *importService) importPresentationDefinition(
+	ctx context.Context, doc parsedDocument, options *ImportOptions, dryRun bool,
 ) ImportItemOutcome {
-	if dryRun {
-		if upsert && resourceID != "" {
-			svcErr := getFn()
-			if svcErr == nil {
-				return successOutcome(resourceType, resourceID, resourceName, operationUpdate)
-			}
+	if s.presentationDefinitionService == nil {
+		return ImportItemOutcome{
+			ResourceType: resourceTypePresentationDefinition,
+			Status:       statusFailed,
+			Code:         ErrorAdapterNotConfigured.Code,
+			Message:      "presentation definition adapter is not configured",
+		}
+	}
 
+	var dto presentation.PresentationDefinitionDTO
+	if err := doc.Node.Decode(&dto); err != nil {
+		return ImportItemOutcome{
+			ResourceType: resourceTypePresentationDefinition,
+			Status:       statusFailed,
+			Code:         ErrorInvalidYAMLContent.Code,
+			Message:      fmt.Sprintf("failed to decode presentation definition document: %v", err),
+		}
+	}
+
+	if dryRun {
+		if options.IsUpsertEnabled() && dto.ID != "" {
+			_, svcErr := s.presentationDefinitionService.GetPresentationDefinition(ctx, dto.ID)
+			if svcErr == nil {
+				return successOutcome(resourceTypePresentationDefinition, dto.ID, dto.Handle, operationUpdate)
+			}
 			if !isNotFoundServiceError(svcErr) {
 				return serviceErrorOutcome(
-					resourceType,
-					resourceID,
-					resourceName,
-					operationUpdate,
-					svcErr,
-				)
+					resourceTypePresentationDefinition, dto.ID, dto.Handle, operationUpdate, svcErr)
 			}
 		}
-
-		return successOutcome(resourceType, resourceID, resourceName, operationCreate)
+		return successOutcome(resourceTypePresentationDefinition, dto.ID, dto.Handle, operationCreate)
 	}
 
-	if upsert && resourceID != "" {
-		updatedID, updatedName, svcErr := updateFn()
+	if options.IsUpsertEnabled() && dto.ID != "" {
+		updated, svcErr := s.presentationDefinitionService.UpdatePresentationDefinition(ctx, dto.ID, &dto)
 		if svcErr == nil {
-			return successOutcome(resourceType, updatedID, updatedName, operationUpdate)
+			return successOutcome(resourceTypePresentationDefinition, updated.ID, updated.Handle, operationUpdate)
 		}
-
 		if !isNotFoundServiceError(svcErr) {
 			return serviceErrorOutcome(
-				resourceType,
-				resourceID,
-				resourceName,
-				operationUpdate,
-				svcErr,
-			)
-		}
-
-		// ID-preserving create is not supported; return a clear failure when ID is set but not found.
-		return ImportItemOutcome{
-			ResourceType: resourceType,
-			ResourceID:   resourceID,
-			ResourceName: resourceName,
-			Operation:    operationCreate,
-			Status:       statusFailed,
-			Code:         ErrorInvalidImportRequest.Code,
-			Message: fmt.Sprintf("%s with given ID not found; ID-preserving create not supported",
-				resourceType),
+				resourceTypePresentationDefinition, dto.ID, dto.Handle, operationUpdate, svcErr)
 		}
 	}
 
-	createdID, createdName, svcErr := createFn()
+	created, svcErr := s.presentationDefinitionService.CreatePresentationDefinition(ctx, &dto)
 	if svcErr != nil {
-		return serviceErrorOutcome(resourceType, resourceID, resourceName, operationCreate, svcErr)
+		return serviceErrorOutcome(resourceTypePresentationDefinition, dto.ID, dto.Handle, operationCreate, svcErr)
+	}
+	return successOutcome(resourceTypePresentationDefinition, created.ID, created.Handle, operationCreate)
+}
+
+//nolint:dupl // parallel to importPresentationDefinition; kept separate per resource type.
+func (s *importService) importCredentialConfiguration(
+	ctx context.Context, doc parsedDocument, options *ImportOptions, dryRun bool,
+) ImportItemOutcome {
+	if s.credentialConfigurationService == nil {
+		return ImportItemOutcome{
+			ResourceType: resourceTypeCredentialConfiguration,
+			Status:       statusFailed,
+			Code:         ErrorAdapterNotConfigured.Code,
+			Message:      "credential configuration adapter is not configured",
+		}
 	}
 
-	return successOutcome(resourceType, createdID, createdName, operationCreate)
+	var dto credential.CredentialConfigurationDTO
+	if err := doc.Node.Decode(&dto); err != nil {
+		return ImportItemOutcome{
+			ResourceType: resourceTypeCredentialConfiguration,
+			Status:       statusFailed,
+			Code:         ErrorInvalidYAMLContent.Code,
+			Message:      fmt.Sprintf("failed to decode credential configuration document: %v", err),
+		}
+	}
+
+	if dryRun {
+		if options.IsUpsertEnabled() && dto.ID != "" {
+			_, svcErr := s.credentialConfigurationService.GetCredentialConfiguration(ctx, dto.ID)
+			if svcErr == nil {
+				return successOutcome(resourceTypeCredentialConfiguration, dto.ID, dto.Handle, operationUpdate)
+			}
+			if !isNotFoundServiceError(svcErr) {
+				return serviceErrorOutcome(
+					resourceTypeCredentialConfiguration, dto.ID, dto.Handle, operationUpdate, svcErr)
+			}
+		}
+		return successOutcome(resourceTypeCredentialConfiguration, dto.ID, dto.Handle, operationCreate)
+	}
+
+	if options.IsUpsertEnabled() && dto.ID != "" {
+		updated, svcErr := s.credentialConfigurationService.UpdateCredentialConfiguration(ctx, dto.ID, &dto)
+		if svcErr == nil {
+			return successOutcome(resourceTypeCredentialConfiguration, updated.ID, updated.Handle, operationUpdate)
+		}
+		if !isNotFoundServiceError(svcErr) {
+			return serviceErrorOutcome(
+				resourceTypeCredentialConfiguration, dto.ID, dto.Handle, operationUpdate, svcErr)
+		}
+	}
+
+	created, svcErr := s.credentialConfigurationService.CreateCredentialConfiguration(ctx, &dto)
+	if svcErr != nil {
+		return serviceErrorOutcome(resourceTypeCredentialConfiguration, dto.ID, dto.Handle, operationCreate, svcErr)
+	}
+	return successOutcome(resourceTypeCredentialConfiguration, created.ID, created.Handle, operationCreate)
 }

@@ -128,7 +128,7 @@ Run the following command with the extracted `executionId`.
 
 ```bash
 ADMIN_TOKEN_RESPONSE=$(curl -k -s -X POST 'https://localhost:8090/flow/execute' \
-  -d '{"executionId":"'$EXECUTION_ID'","inputs":{"username":"admin","password":"admin","requested_permissions":"system"},"action":"action_001"}')
+  -d '{"executionId":"'$EXECUTION_ID'","inputs":{"username":"admin","password":"admin","requested_permissions":"system","resource_server_identifier":"https://localhost:8090/mcp"},"action":"action_001"}')
 
 ADMIN_TOKEN=$(echo $ADMIN_TOKEN_RESPONSE | jq -r '.assertion')
 ```
@@ -136,32 +136,17 @@ ADMIN_TOKEN=$(echo $ADMIN_TOKEN_RESPONSE | jq -r '.assertion')
 ### Create the Notification Sender
 
 ```bash
-NOTIFICATION_SENDER_RESPONSE=$(curl -kL -X POST 'https://localhost:8090/notification-senders/message' \
+NOTIFICATION_SENDER_RESPONSE=$(curl -kL -X POST 'https://localhost:8090/connections/sms-gateway' \
   -H 'Content-Type: application/json' \
   -H 'Accept: application/json' \
   -H "Authorization: Bearer $ADMIN_TOKEN" \
   -d '{
     "name": "E2E Mock SMS Sender",
     "description": "Mock SMS sender for e2e MFA testing",
-    "provider": "custom",
-    "properties": [ 
-      {                                                      
-        "name": "url",                                               
-        "value": "http://localhost:8098/send-sms",
-        "isSecret": false              
-      },                                                                               
-      {                      
-        "name": "http_method",
-        "value": "POST",
-        "isSecret": false                 
-      },                                             
-      {                                         
-        "name": "content_type",      
-        "value": "JSON",      
-        "isSecret": false                      
-      }                       
-    ]             
-  }'                                               
+    "url": "http://localhost:8098/send-sms",
+    "httpMethod": "POST",
+    "contentType": "JSON"
+  }'
 )
 
 NOTIFICATION_SENDER_ID=$(echo $NOTIFICATION_SENDER_RESPONSE | jq -r '.id')
@@ -277,12 +262,12 @@ FLOW_RESPONSE=$(curl --location 'https://localhost:8090/flows' \
             "actions": [
                 {
                     "ref": "action_001",
-                    "nextNode": "basic_auth"
+                    "nextNode": "credentials_auth"
                 }
             ]
         },
         {
-            "id": "basic_auth",
+            "id": "credentials_auth",
             "type": "TASK_EXECUTION",
             "layout": {
                 "size": {
@@ -309,7 +294,7 @@ FLOW_RESPONSE=$(curl --location 'https://localhost:8090/flows' \
                 }
             ],
             "executor": {
-                "name": "BasicAuthExecutor"
+                "name": "CredentialsAuthExecutor"
             },
             "onSuccess": "authorization_check"
         },
@@ -525,7 +510,7 @@ USER_RESPONSE=$(curl --location 'https://localhost:8090/users' \
     "password": "e2e-test-password",
     "given_name": "E2E User",
     "email": "e2e@example.com",
-    "mobileNumber": "+12345678920"
+    "mobile_number": "+12345678920"
   }
 }')
 ```
@@ -935,7 +920,7 @@ The tests use a TypeScript-based mock SMS server that:
 
 **Solutions**:
 1. Verify test user exists in the server
-2. Ensure user has `mobileNumber` attribute
+2. Ensure user has `mobile_number` attribute
 3. Check user is in correct organization unit
 4. Verify user credentials in `.env` file
 

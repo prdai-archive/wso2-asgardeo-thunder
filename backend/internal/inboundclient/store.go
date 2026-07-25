@@ -25,10 +25,13 @@ import (
 
 	inboundmodel "github.com/thunder-id/thunderid/internal/inboundclient/model"
 	"github.com/thunder-id/thunderid/internal/system/config"
+	dbmodel "github.com/thunder-id/thunderid/internal/system/database/model"
 	"github.com/thunder-id/thunderid/internal/system/database/provider"
 	"github.com/thunder-id/thunderid/internal/system/log"
+	"github.com/thunder-id/thunderid/internal/system/resourcedependency"
 	"github.com/thunder-id/thunderid/internal/system/transaction"
 	"github.com/thunder-id/thunderid/internal/system/utils"
+	"github.com/thunder-id/thunderid/pkg/thunderidengine/providers"
 )
 
 // inboundClientJSONBlob is the internal structure for marshaling/unmarshaling the
@@ -37,6 +40,7 @@ type inboundClientJSONBlob struct {
 	Assertion        *inboundmodel.AssertionConfig    `json:"assertion,omitempty"`
 	LoginConsent     *inboundmodel.LoginConsentConfig `json:"loginConsent,omitempty"`
 	AllowedUserTypes []string                         `json:"allowedUserTypes,omitempty"`
+	Attestation      *providers.AttestationConfig     `json:"attestation,omitempty"`
 	Properties       map[string]interface{}           `json:"properties,omitempty"`
 }
 
@@ -45,14 +49,15 @@ type inboundClientJSONBlob struct {
 // any future principal category. OAuth methods accept typed OAuthProfile; the store
 // handles JSON marshaling internally so callers never need to know the wire format.
 type inboundClientStoreInterface interface {
-	CreateInboundClient(ctx context.Context, client inboundmodel.InboundClient) error
-	CreateOAuthProfile(ctx context.Context, entityID string, oauthProfile *inboundmodel.OAuthProfile) error
-	GetInboundClientByEntityID(ctx context.Context, entityID string) (*inboundmodel.InboundClient, error)
-	GetOAuthProfileByEntityID(ctx context.Context, entityID string) (*inboundmodel.OAuthProfile, error)
-	GetInboundClientList(ctx context.Context, limit int) ([]inboundmodel.InboundClient, error)
+	CreateInboundClient(ctx context.Context, client providers.InboundClient) error
+	CreateOAuthProfile(ctx context.Context, entityID string, oauthProfile *providers.OAuthProfile) error
+	GetInboundClientByEntityID(ctx context.Context, entityID string) (*providers.InboundClient, error)
+	GetOAuthProfileByEntityID(ctx context.Context, entityID string) (*providers.OAuthProfile, error)
+	GetInboundClientList(ctx context.Context, limit int) ([]providers.InboundClient, error)
+	GetEntityIDsByReference(ctx context.Context, refType, refID string, limit, offset int) ([]string, int, error)
 	GetTotalInboundClientCount(ctx context.Context) (int, error)
-	UpdateInboundClient(ctx context.Context, client inboundmodel.InboundClient) error
-	UpdateOAuthProfile(ctx context.Context, entityID string, oauthProfile *inboundmodel.OAuthProfile) error
+	UpdateInboundClient(ctx context.Context, client providers.InboundClient) error
+	UpdateOAuthProfile(ctx context.Context, entityID string, oauthProfile *providers.OAuthProfile) error
 	DeleteInboundClient(ctx context.Context, entityID string) error
 	DeleteOAuthProfile(ctx context.Context, entityID string) error
 	InboundClientExists(ctx context.Context, entityID string) (bool, error)
@@ -102,18 +107,19 @@ func marshalInboundClient(c inboundmodel.InboundClient) (
 	propertiesBytes interface{},
 	isRegistrationEnabledStr string,
 	isRecoveryEnabledStr string,
-	recoveryFlowID, registrationFlowID, themeID, layoutID interface{},
+	recoveryFlowID, signOutFlowID, registrationFlowID, themeID, layoutID interface{},
 	err error,
 ) {
 	blob := inboundClientJSONBlob{
 		Assertion:        c.Assertion,
 		LoginConsent:     c.LoginConsent,
 		AllowedUserTypes: c.AllowedUserTypes,
+		Attestation:      c.Attestation,
 		Properties:       c.Properties,
 	}
 	propertiesBytes, err = marshalNullableJSON(blob)
 	if err != nil {
-		return nil, "", "", nil, nil, nil, nil, fmt.Errorf("failed to marshal properties: %w", err)
+		return nil, "", "", nil, nil, nil, nil, nil, fmt.Errorf("failed to marshal properties: %w", err)
 	}
 
 	isRegistrationEnabledStr = utils.BoolToNumString(c.IsRegistrationFlowEnabled)
@@ -121,6 +127,9 @@ func marshalInboundClient(c inboundmodel.InboundClient) (
 
 	if c.RecoveryFlowID != "" {
 		recoveryFlowID = c.RecoveryFlowID
+	}
+	if c.SignOutFlowID != "" {
+		signOutFlowID = c.SignOutFlowID
 	}
 	if c.RegistrationFlowID != "" {
 		registrationFlowID = c.RegistrationFlowID
@@ -132,8 +141,8 @@ func marshalInboundClient(c inboundmodel.InboundClient) (
 		layoutID = c.LayoutID
 	}
 
-	return propertiesBytes, isRegistrationEnabledStr, isRecoveryEnabledStr, recoveryFlowID,
-		registrationFlowID, themeID, layoutID, nil
+	return propertiesBytes, isRegistrationEnabledStr, isRecoveryEnabledStr,
+		recoveryFlowID, signOutFlowID, registrationFlowID, themeID, layoutID, nil
 }
 
 // CreateInboundClient creates a new inbound client entry.
@@ -144,14 +153,15 @@ func (st *store) CreateInboundClient(ctx context.Context, client inboundmodel.In
 	}
 
 	propsBytes, isRegEnabledStr, isRecoveryEnabledStr, recoveryFlowID,
-		registrationFlowID, themeID, layoutID, marshalErr := marshalInboundClient(client)
+		signOutFlowID, registrationFlowID, themeID, layoutID, marshalErr := marshalInboundClient(client)
 	if marshalErr != nil {
 		return marshalErr
 	}
 
 	_, err = dbClient.ExecuteContext(ctx, queryCreateInboundClient,
 		client.ID, client.AuthFlowID, registrationFlowID, isRegEnabledStr,
-		recoveryFlowID, isRecoveryEnabledStr, themeID, layoutID, propsBytes, st.deploymentID)
+		recoveryFlowID, isRecoveryEnabledStr, signOutFlowID,
+		themeID, layoutID, propsBytes, st.deploymentID)
 	if err != nil {
 		return fmt.Errorf("failed to insert inbound client: %w", err)
 	}
@@ -161,7 +171,7 @@ func (st *store) CreateInboundClient(ctx context.Context, client inboundmodel.In
 // CreateOAuthProfile creates a new OAuth inbound profile entry. The typed profile is
 // marshaled to JSON internally.
 func (st *store) CreateOAuthProfile(ctx context.Context, entityID string,
-	oauthProfile *inboundmodel.OAuthProfile) error {
+	oauthProfile *providers.OAuthProfile) error {
 	dbClient, err := st.dbProvider.GetConfigDBClient()
 	if err != nil {
 		return fmt.Errorf("failed to get database client: %w", err)
@@ -193,11 +203,11 @@ func (st *store) GetInboundClientByEntityID(ctx context.Context, entityID string
 	if len(results) == 0 {
 		return nil, ErrInboundClientNotFound
 	}
-	return buildInboundClientFromRow(results[0])
+	return buildInboundClientFromRow(ctx, results[0])
 }
 
 // GetOAuthProfileByEntityID retrieves an OAuth profile by entity ID.
-func (st *store) GetOAuthProfileByEntityID(ctx context.Context, entityID string) (*inboundmodel.OAuthProfile, error) {
+func (st *store) GetOAuthProfileByEntityID(ctx context.Context, entityID string) (*providers.OAuthProfile, error) {
 	dbClient, err := st.dbProvider.GetConfigDBClient()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get database client: %w", err)
@@ -214,7 +224,7 @@ func (st *store) GetOAuthProfileByEntityID(ctx context.Context, entityID string)
 }
 
 // GetInboundClientList retrieves all inbound clients.
-func (st *store) GetInboundClientList(ctx context.Context, limit int) ([]inboundmodel.InboundClient, error) {
+func (st *store) GetInboundClientList(ctx context.Context, limit int) ([]providers.InboundClient, error) {
 	dbClient, err := st.dbProvider.GetConfigDBClient()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get database client: %w", err)
@@ -227,13 +237,91 @@ func (st *store) GetInboundClientList(ctx context.Context, limit int) ([]inbound
 
 	clients := make([]inboundmodel.InboundClient, 0, len(results))
 	for _, row := range results {
-		c, err := buildInboundClientFromRow(row)
+		c, err := buildInboundClientFromRow(ctx, row)
 		if err != nil {
 			return nil, fmt.Errorf("failed to build inbound client from result row: %w", err)
 		}
 		clients = append(clients, *c)
 	}
 	return clients, nil
+}
+
+// GetEntityIDsByReference retrieves paginated entity IDs for inbound clients referencing the resource
+// identified by (refType, refID). Unknown reference types resolve to no usages, since an inbound client
+// cannot reference a resource type it has no column for.
+func (st *store) GetEntityIDsByReference(
+	ctx context.Context, refType, refID string, limit, offset int) ([]string, int, error) {
+	countQuery, listQuery, filterArgs, ok := referenceQueries(refType, refID, st.deploymentID)
+	if !ok {
+		return []string{}, 0, nil
+	}
+
+	dbClient, err := st.dbProvider.GetConfigDBClient()
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to get database client: %w", err)
+	}
+
+	countResults, err := dbClient.QueryContext(ctx, countQuery, filterArgs...)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to execute count query: %w", err)
+	}
+	total := 0
+	if len(countResults) > 0 {
+		if v, ok := countResults[0]["total"].(int64); ok {
+			total = int(v)
+		}
+	}
+
+	results, err := dbClient.QueryContext(ctx, listQuery, append(filterArgs, limit, offset)...)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to execute query: %w", err)
+	}
+
+	ids := make([]string, 0, len(results))
+	for _, row := range results {
+		id, ok := row["entity_id"].(string)
+		if !ok {
+			return nil, 0, fmt.Errorf("entity_id field missing or invalid type")
+		}
+		ids = append(ids, id)
+	}
+	return ids, total, nil
+}
+
+// referenceQueries maps a reference resource type to its count/list queries and the leading filter
+// arguments (the reference ID repeated per column slot, followed by the deployment ID). The boolean
+// is false when the reference type is not tracked by the inbound-client store.
+func referenceQueries(refType, refID, deploymentID string) (
+	dbmodel.DBQuery, dbmodel.DBQuery, []interface{}, bool) {
+	switch refType {
+	case resourcedependency.ResourceTypeTheme:
+		return queryGetEntityIDsByThemeIDCount, queryGetEntityIDsByThemeID,
+			[]interface{}{refID, deploymentID}, true
+	case resourcedependency.ResourceTypeLayout:
+		return queryGetEntityIDsByLayoutIDCount, queryGetEntityIDsByLayoutID,
+			[]interface{}{refID, deploymentID}, true
+	case resourcedependency.ResourceTypeFlow:
+		return queryGetEntityIDsByFlowIDCount, queryGetEntityIDsByFlowID,
+			[]interface{}{refID, refID, refID, refID, deploymentID}, true
+	default:
+		return dbmodel.DBQuery{}, dbmodel.DBQuery{}, nil, false
+	}
+}
+
+// clientReferences reports whether the inbound client references the resource identified by
+// (refType, refID). It mirrors referenceQueries for the in-memory (file-based) store.
+func clientReferences(c *inboundmodel.InboundClient, refType, refID string) bool {
+	switch refType {
+	case resourcedependency.ResourceTypeTheme:
+		return c.ThemeID == refID
+	case resourcedependency.ResourceTypeLayout:
+		return c.LayoutID == refID
+	case resourcedependency.ResourceTypeFlow:
+		return c.AuthFlowID == refID || c.RegistrationFlowID == refID || c.RecoveryFlowID == refID ||
+			c.SignOutFlowID == refID
+	default:
+		return false
+	}
 }
 
 // GetTotalInboundClientCount retrieves the total count of inbound clients.
@@ -265,14 +353,15 @@ func (st *store) UpdateInboundClient(ctx context.Context, client inboundmodel.In
 	}
 
 	propsBytes, isRegEnabledStr, isRecoveryEnabledStr, recoveryFlowID,
-		registrationFlowID, themeID, layoutID, marshalErr := marshalInboundClient(client)
+		signOutFlowID, registrationFlowID, themeID, layoutID, marshalErr := marshalInboundClient(client)
 	if marshalErr != nil {
 		return marshalErr
 	}
 
 	rowsAffected, err := dbClient.ExecuteContext(ctx, queryUpdateInboundClientByEntityID,
 		client.ID, client.AuthFlowID, registrationFlowID, isRegEnabledStr,
-		recoveryFlowID, isRecoveryEnabledStr, themeID, layoutID, propsBytes, st.deploymentID)
+		recoveryFlowID, isRecoveryEnabledStr, signOutFlowID,
+		themeID, layoutID, propsBytes, st.deploymentID)
 	if err != nil {
 		return fmt.Errorf("failed to update inbound client: %w", err)
 	}
@@ -285,7 +374,7 @@ func (st *store) UpdateInboundClient(ctx context.Context, client inboundmodel.In
 // UpdateOAuthProfile updates an OAuth profile for an entity. The typed profile is marshaled
 // to JSON internally.
 func (st *store) UpdateOAuthProfile(ctx context.Context, entityID string,
-	oauthProfile *inboundmodel.OAuthProfile) error {
+	oauthProfile *providers.OAuthProfile) error {
 	dbClient, err := st.dbProvider.GetConfigDBClient()
 	if err != nil {
 		return fmt.Errorf("failed to get database client: %w", err)
@@ -309,7 +398,7 @@ func (st *store) UpdateOAuthProfile(ctx context.Context, entityID string,
 
 // marshalOAuthProfile serializes an OAuthProfile to the OAUTH_CONFIG JSON format.
 // Returns nil bytes for nil input.
-func marshalOAuthProfile(p *inboundmodel.OAuthProfile) (json.RawMessage, error) {
+func marshalOAuthProfile(p *providers.OAuthProfile) (json.RawMessage, error) {
 	if p == nil {
 		return nil, nil
 	}
@@ -371,7 +460,7 @@ func (st *store) IsDeclarative(_ context.Context, _ string) bool {
 // --- Helper functions ---
 
 // buildInboundClientFromRow constructs an InboundClient from a database result row.
-func buildInboundClientFromRow(row map[string]interface{}) (*inboundmodel.InboundClient, error) {
+func buildInboundClientFromRow(ctx context.Context, row map[string]interface{}) (*inboundmodel.InboundClient, error) {
 	entityID, ok := row["entity_id"].(string)
 	if !ok {
 		return nil, fmt.Errorf("failed to parse entity_id as string")
@@ -380,6 +469,7 @@ func buildInboundClientFromRow(row map[string]interface{}) (*inboundmodel.Inboun
 	authFlowID := parseStringColumn(row, "auth_flow_id")
 	regFlowID := parseStringColumn(row, "registration_flow_id")
 	recoveryFlowID := parseStringColumn(row, "recovery_flow_id")
+	signOutFlowID := parseStringColumn(row, "signout_flow_id")
 	themeID := parseStringColumn(row, "theme_id")
 	layoutID := parseStringColumn(row, "layout_id")
 
@@ -400,6 +490,7 @@ func buildInboundClientFromRow(row map[string]interface{}) (*inboundmodel.Inboun
 		IsRegistrationFlowEnabled: isRegistrationFlowEnabled,
 		RecoveryFlowID:            recoveryFlowID,
 		IsRecoveryFlowEnabled:     isRecoveryFlowEnabled,
+		SignOutFlowID:             signOutFlowID,
 		ThemeID:                   themeID,
 		LayoutID:                  layoutID,
 	}
@@ -407,11 +498,12 @@ func buildInboundClientFromRow(row map[string]interface{}) (*inboundmodel.Inboun
 	if blobStr := parseJSONColumnString(row, "properties"); blobStr != "" {
 		var blob inboundClientJSONBlob
 		if err := json.Unmarshal([]byte(blobStr), &blob); err != nil {
-			log.GetLogger().Debug("Failed to unmarshal properties", log.Error(err))
+			log.GetLogger().Debug(ctx, "Failed to unmarshal properties", log.Error(err))
 		} else {
 			client.Assertion = blob.Assertion
 			client.LoginConsent = blob.LoginConsent
 			client.AllowedUserTypes = blob.AllowedUserTypes
+			client.Attestation = blob.Attestation
 			client.Properties = blob.Properties
 		}
 	}
@@ -421,12 +513,12 @@ func buildInboundClientFromRow(row map[string]interface{}) (*inboundmodel.Inboun
 
 // buildOAuthProfileFromRow constructs an OAuthProfile from a database result row.
 // Returns nil when the row has no oauth_config payload.
-func buildOAuthProfileFromRow(row map[string]interface{}) (*inboundmodel.OAuthProfile, error) {
+func buildOAuthProfileFromRow(row map[string]interface{}) (*providers.OAuthProfile, error) {
 	profileStr := parseJSONColumnString(row, "oauth_config")
 	if profileStr == "" {
 		return nil, nil
 	}
-	var p inboundmodel.OAuthProfile
+	var p providers.OAuthProfile
 	if err := json.Unmarshal([]byte(profileStr), &p); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal OAuth profile JSON: %w", err)
 	}

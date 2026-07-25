@@ -25,11 +25,13 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/thunder-id/thunderid/internal/system/resourcedependency"
+	"github.com/thunder-id/thunderid/pkg/thunderidengine/providers"
+
+	tidcommon "github.com/thunder-id/thunderid/pkg/thunderidengine/common"
+
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/suite"
-
-	"github.com/thunder-id/thunderid/internal/flow/common"
-	"github.com/thunder-id/thunderid/internal/system/error/serviceerror"
 )
 
 const testFlowIDHandler = "test-flow-id"
@@ -54,13 +56,13 @@ func (s *FlowMgtHandlerTestSuite) SetupTest() {
 func (s *FlowMgtHandlerTestSuite) TestListFlows_Success() {
 	expectedList := &FlowListResponse{
 		Flows: []BasicFlowDefinition{
-			{ID: "flow1", Handle: "flow1-handle", Name: "Flow 1", FlowType: common.FlowTypeAuthentication},
-			{ID: "flow2", Handle: "flow2-handle", Name: "Flow 2", FlowType: common.FlowTypeRegistration},
+			{ID: "flow1", Handle: "flow1-handle", Name: "Flow 1", FlowType: providers.FlowTypeAuthentication},
+			{ID: "flow2", Handle: "flow2-handle", Name: "Flow 2", FlowType: providers.FlowTypeRegistration},
 		},
 		Count: 2,
 	}
 
-	s.mockService.EXPECT().ListFlows(mock.Anything, 30, 0, common.FlowType("")).Return(expectedList, nil)
+	s.mockService.EXPECT().ListFlows(mock.Anything, 30, 0, providers.FlowType("")).Return(expectedList, nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/flows", nil)
 	w := httptest.NewRecorder()
@@ -78,7 +80,7 @@ func (s *FlowMgtHandlerTestSuite) TestListFlows_Success() {
 func (s *FlowMgtHandlerTestSuite) TestListFlows_WithPagination() {
 	expectedList := &FlowListResponse{Flows: []BasicFlowDefinition{}, Count: 0}
 
-	s.mockService.EXPECT().ListFlows(mock.Anything, 20, 10, common.FlowType("")).Return(expectedList, nil)
+	s.mockService.EXPECT().ListFlows(mock.Anything, 20, 10, providers.FlowType("")).Return(expectedList, nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/flows?limit=20&offset=10", nil)
 	w := httptest.NewRecorder()
@@ -91,7 +93,7 @@ func (s *FlowMgtHandlerTestSuite) TestListFlows_WithPagination() {
 func (s *FlowMgtHandlerTestSuite) TestListFlows_WithFlowType() {
 	expectedList := &FlowListResponse{Flows: []BasicFlowDefinition{}, Count: 0}
 
-	s.mockService.EXPECT().ListFlows(mock.Anything, 30, 0, common.FlowTypeAuthentication).Return(expectedList, nil)
+	s.mockService.EXPECT().ListFlows(mock.Anything, 30, 0, providers.FlowTypeAuthentication).Return(expectedList, nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/flows?flowType=AUTHENTICATION", nil)
 	w := httptest.NewRecorder()
@@ -129,8 +131,8 @@ func (s *FlowMgtHandlerTestSuite) TestListFlows_InvalidOffset() {
 }
 
 func (s *FlowMgtHandlerTestSuite) TestListFlows_ServiceError() {
-	s.mockService.EXPECT().ListFlows(mock.Anything, 30, 0, common.FlowType("")).
-		Return(nil, &serviceerror.InternalServerError)
+	s.mockService.EXPECT().ListFlows(mock.Anything, 30, 0, providers.FlowType("")).
+		Return(nil, &tidcommon.InternalServerError)
 
 	req := httptest.NewRequest(http.MethodGet, "/flows", nil)
 	w := httptest.NewRecorder()
@@ -146,16 +148,16 @@ func (s *FlowMgtHandlerTestSuite) TestCreateFlow_Success() {
 	flowDef := &FlowDefinition{
 		Handle:   "new-flow-handle",
 		Name:     "New Flow",
-		FlowType: common.FlowTypeAuthentication,
-		Nodes: []NodeDefinition{
+		FlowType: providers.FlowTypeAuthentication,
+		Nodes: []providers.NodeDefinition{
 			{ID: "start", Type: "START"},
 		},
 	}
-	createdFlow := &CompleteFlowDefinition{
+	createdFlow := &providers.CompleteFlowDefinition{
 		ID:       testFlowIDHandler,
 		Handle:   "new-flow-handle",
 		Name:     "New Flow",
-		FlowType: common.FlowTypeAuthentication,
+		FlowType: providers.FlowTypeAuthentication,
 		Nodes:    flowDef.Nodes,
 	}
 
@@ -169,7 +171,7 @@ func (s *FlowMgtHandlerTestSuite) TestCreateFlow_Success() {
 	s.handler.createFlow(w, req)
 
 	s.Equal(http.StatusCreated, w.Code)
-	var response CompleteFlowDefinition
+	var response providers.CompleteFlowDefinition
 	err := json.Unmarshal(w.Body.Bytes(), &response)
 	s.NoError(err)
 	s.Equal(testFlowIDHandler, response.ID)
@@ -190,7 +192,7 @@ func (s *FlowMgtHandlerTestSuite) TestCreateFlow_ServiceError() {
 	flowDef := &FlowDefinition{
 		Handle:   "new-flow-handle",
 		Name:     "New Flow",
-		FlowType: common.FlowTypeAuthentication,
+		FlowType: providers.FlowTypeAuthentication,
 	}
 
 	s.mockService.EXPECT().CreateFlow(mock.Anything, flowDef).Return(nil, &ErrorInvalidFlowData)
@@ -208,11 +210,11 @@ func (s *FlowMgtHandlerTestSuite) TestCreateFlow_ServiceError() {
 // Test getFlow
 
 func (s *FlowMgtHandlerTestSuite) TestGetFlow_Success() {
-	expectedFlow := &CompleteFlowDefinition{
+	expectedFlow := &providers.CompleteFlowDefinition{
 		ID:       testFlowIDHandler,
 		Handle:   "test-handle",
 		Name:     "Test Flow",
-		FlowType: common.FlowTypeAuthentication,
+		FlowType: providers.FlowTypeAuthentication,
 	}
 
 	s.mockService.EXPECT().GetFlow(mock.Anything, testFlowIDHandler).Return(expectedFlow, nil)
@@ -224,7 +226,7 @@ func (s *FlowMgtHandlerTestSuite) TestGetFlow_Success() {
 	s.handler.getFlow(w, req)
 
 	s.Equal(http.StatusOK, w.Code)
-	var response CompleteFlowDefinition
+	var response providers.CompleteFlowDefinition
 	err := json.Unmarshal(w.Body.Bytes(), &response)
 	s.NoError(err)
 	s.Equal(testFlowIDHandler, response.ID)
@@ -251,22 +253,73 @@ func (s *FlowMgtHandlerTestSuite) TestGetFlow_NotFound() {
 	s.Equal(http.StatusNotFound, w.Code)
 }
 
+// Test getFlowUsages
+
+func (s *FlowMgtHandlerTestSuite) TestGetFlowUsages_Success() {
+	total := 1
+	s.mockService.EXPECT().GetFlowUsages(mock.Anything, testFlowIDHandler).Return(
+		&resourcedependency.DependenciesResponse{
+			TotalResults: &total,
+			Count:        1,
+			Summary:      map[string]int{resourcedependency.ResourceTypeApplication: 1},
+			Usages: []resourcedependency.ResourceDependency{
+				{ResourceType: resourcedependency.ResourceTypeApplication, ID: "app-1",
+					DisplayName: "App One", BehaviorOnDelete: resourcedependency.BehaviorFallback},
+			},
+		}, nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/flows/"+testFlowIDHandler+"/usages", nil)
+	req.SetPathValue(pathParamFlowID, testFlowIDHandler)
+	w := httptest.NewRecorder()
+
+	s.handler.getFlowUsages(w, req)
+
+	s.Equal(http.StatusOK, w.Code)
+	var response resourcedependency.DependenciesResponse
+	err := json.Unmarshal(w.Body.Bytes(), &response)
+	s.NoError(err)
+	s.Equal(1, *response.TotalResults)
+	s.Len(response.Usages, 1)
+	s.Equal(resourcedependency.ResourceTypeApplication, response.Usages[0].ResourceType)
+}
+
+func (s *FlowMgtHandlerTestSuite) TestGetFlowUsages_MissingFlowID() {
+	req := httptest.NewRequest(http.MethodGet, "/flows//usages", nil)
+	w := httptest.NewRecorder()
+
+	s.handler.getFlowUsages(w, req)
+
+	s.Equal(http.StatusBadRequest, w.Code)
+}
+
+func (s *FlowMgtHandlerTestSuite) TestGetFlowUsages_NotFound() {
+	s.mockService.EXPECT().GetFlowUsages(mock.Anything, testFlowIDHandler).Return(nil, &ErrorFlowNotFound)
+
+	req := httptest.NewRequest(http.MethodGet, "/flows/"+testFlowIDHandler+"/usages", nil)
+	req.SetPathValue(pathParamFlowID, testFlowIDHandler)
+	w := httptest.NewRecorder()
+
+	s.handler.getFlowUsages(w, req)
+
+	s.Equal(http.StatusNotFound, w.Code)
+}
+
 // Test updateFlow
 
 func (s *FlowMgtHandlerTestSuite) TestUpdateFlow_Success() {
 	flowDef := &FlowDefinition{
 		Handle:   "test-handle",
 		Name:     "Updated Flow",
-		FlowType: common.FlowTypeAuthentication,
-		Nodes: []NodeDefinition{
+		FlowType: providers.FlowTypeAuthentication,
+		Nodes: []providers.NodeDefinition{
 			{ID: "start", Type: "START"},
 		},
 	}
-	updatedFlow := &CompleteFlowDefinition{
+	updatedFlow := &providers.CompleteFlowDefinition{
 		ID:       testFlowIDHandler,
 		Handle:   "test-handle",
 		Name:     "Updated Flow",
-		FlowType: common.FlowTypeAuthentication,
+		FlowType: providers.FlowTypeAuthentication,
 		Nodes:    flowDef.Nodes,
 	}
 
@@ -281,7 +334,7 @@ func (s *FlowMgtHandlerTestSuite) TestUpdateFlow_Success() {
 	s.handler.updateFlow(w, req)
 
 	s.Equal(http.StatusOK, w.Code)
-	var response CompleteFlowDefinition
+	var response providers.CompleteFlowDefinition
 	err := json.Unmarshal(w.Body.Bytes(), &response)
 	s.NoError(err)
 	s.Equal(testFlowIDHandler, response.ID)
@@ -313,7 +366,7 @@ func (s *FlowMgtHandlerTestSuite) TestUpdateFlow_NotFound() {
 	flowDef := &FlowDefinition{
 		Handle:   "test-handle",
 		Name:     "Updated Flow",
-		FlowType: common.FlowTypeAuthentication,
+		FlowType: providers.FlowTypeAuthentication,
 	}
 
 	s.mockService.EXPECT().UpdateFlow(mock.Anything, testFlowIDHandler, flowDef).Return(nil, &ErrorFlowNotFound)
@@ -496,11 +549,11 @@ func (s *FlowMgtHandlerTestSuite) TestGetFlowVersion_NotFound() {
 
 func (s *FlowMgtHandlerTestSuite) TestRestoreFlowVersion_Success() {
 	request := &RestoreVersionRequest{Version: 1}
-	restoredFlow := &CompleteFlowDefinition{
+	restoredFlow := &providers.CompleteFlowDefinition{
 		ID:       testFlowIDHandler,
 		Handle:   "test-handle",
 		Name:     "Restored Flow",
-		FlowType: common.FlowTypeAuthentication,
+		FlowType: providers.FlowTypeAuthentication,
 	}
 
 	s.mockService.EXPECT().RestoreFlowVersion(mock.Anything, testFlowIDHandler, 1).Return(restoredFlow, nil)
@@ -515,7 +568,7 @@ func (s *FlowMgtHandlerTestSuite) TestRestoreFlowVersion_Success() {
 	s.handler.restoreFlowVersion(w, req)
 
 	s.Equal(http.StatusOK, w.Code)
-	var response CompleteFlowDefinition
+	var response providers.CompleteFlowDefinition
 	err := json.Unmarshal(w.Body.Bytes(), &response)
 	s.NoError(err)
 	s.Equal(testFlowIDHandler, response.ID)
@@ -626,8 +679,8 @@ func (s *FlowMgtHandlerTestSuite) TestSanitizeFlowDefinitionRequest() {
 	input := &FlowDefinitionRequest{
 		Handle:   "test-handle",
 		Name:     "  Test Flow  ",
-		FlowType: common.FlowTypeAuthentication,
-		Nodes: []NodeDefinition{
+		FlowType: providers.FlowTypeAuthentication,
+		Nodes: []providers.NodeDefinition{
 			{ID: "start", Type: "START"},
 		},
 	}
@@ -635,6 +688,6 @@ func (s *FlowMgtHandlerTestSuite) TestSanitizeFlowDefinitionRequest() {
 	result := sanitizeFlowDefinitionRequest(input)
 
 	s.Equal("Test Flow", result.Name)
-	s.Equal(common.FlowTypeAuthentication, result.FlowType)
+	s.Equal(providers.FlowTypeAuthentication, result.FlowType)
 	s.Len(result.Nodes, 1)
 }

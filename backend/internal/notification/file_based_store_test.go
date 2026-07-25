@@ -22,6 +22,8 @@ import (
 	"context"
 	"testing"
 
+	engineconfig "github.com/thunder-id/thunderid/pkg/thunderidengine/config"
+
 	"github.com/thunder-id/thunderid/internal/notification/common"
 	"github.com/thunder-id/thunderid/internal/system/cmodels"
 	"github.com/thunder-id/thunderid/internal/system/config"
@@ -49,7 +51,7 @@ func (suite *FileBasedStoreTestSuite) SetupSuite() {
 	// Initialize server runtime once for all tests
 	testConfig := &config.Config{
 		Crypto: config.CryptoConfig{
-			Encryption: config.EncryptionConfig{
+			Encryption: engineconfig.EncryptionConfig{
 				Key: "0579f866ac7c9273580d0ff163fa01a7b2401a7ff3ddc3e3b14ae3136fa6025e",
 			},
 		},
@@ -199,6 +201,35 @@ func (suite *FileBasedStoreTestSuite) TestListSenders_MultipleSenders() {
 	suite.True(senderNames["Sender One"])
 	suite.True(senderNames["Sender Two"])
 	suite.True(senderNames["Sender Three"])
+}
+
+func (suite *FileBasedStoreTestSuite) TestListSendersByType_FiltersByType() {
+	// Arrange
+	messageSender := suite.createTestSender("sender-007", "Message Sender")
+	emailSender := suite.createTestSender("sender-008", "Email Sender")
+	emailSender.Type = common.NotificationSenderTypeEmail
+
+	_ = suite.store.createSender(context.Background(), *messageSender)
+	_ = suite.store.createSender(context.Background(), *emailSender)
+
+	// Act
+	senders, err := suite.store.listSendersByType(context.Background(), common.NotificationSenderTypeMessage)
+
+	// Assert
+	suite.NoError(err)
+	suite.Require().Len(senders, 1)
+	suite.Equal("Message Sender", senders[0].Name)
+	suite.Equal(common.NotificationSenderTypeMessage, senders[0].Type)
+}
+
+func (suite *FileBasedStoreTestSuite) TestListSendersByType_Empty() {
+	// Act
+	senders, err := suite.store.listSendersByType(context.Background(), common.NotificationSenderTypeMessage)
+
+	// Assert
+	suite.NoError(err)
+	suite.NotNil(senders)
+	suite.Empty(senders)
 }
 
 func (suite *FileBasedStoreTestSuite) TestUpdateSender_ReturnsError() {

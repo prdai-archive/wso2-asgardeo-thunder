@@ -24,12 +24,14 @@ import (
 	"errors"
 	"testing"
 
+	tidcommon "github.com/thunder-id/thunderid/pkg/thunderidengine/common"
+	"github.com/thunder-id/thunderid/pkg/thunderidengine/providers"
+
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/suite"
 
-	"github.com/thunder-id/thunderid/internal/entity"
 	"github.com/thunder-id/thunderid/internal/group"
-	"github.com/thunder-id/thunderid/internal/system/error/serviceerror"
+	"github.com/thunder-id/thunderid/internal/system/resourcedependency"
 	"github.com/thunder-id/thunderid/tests/mocks/entitymock"
 	"github.com/thunder-id/thunderid/tests/mocks/entitytypemock"
 	"github.com/thunder-id/thunderid/tests/mocks/groupmock"
@@ -80,8 +82,8 @@ func (suite *RoleAssignmentServiceTestSuite) TestGetRoleAssignments_Success() {
 	suite.mockStore.On("GetRoleAssignments", mock.Anything,
 		"role1", 10, 0).Return(expectedAssignments, nil)
 	suite.mockEntityService.On("GetEntitiesByIDs", mock.Anything,
-		[]string{testUserID1}).Return([]entity.Entity{
-		{ID: testUserID1, Category: entity.EntityCategoryUser},
+		[]string{testUserID1}).Return([]providers.Entity{
+		{ID: testUserID1, Category: providers.EntityCategoryUser},
 	}, nil).Once()
 
 	result, err := suite.service.GetRoleAssignments(context.Background(), "role1", 10, 0, false)
@@ -132,7 +134,7 @@ func (suite *RoleAssignmentServiceTestSuite) TestGetRoleAssignments_GetRoleError
 
 	suite.Nil(result)
 	suite.NotNil(err)
-	suite.Equal(serviceerror.InternalServerError.Code, err.Code)
+	suite.Equal(tidcommon.InternalServerError.Code, err.Code)
 }
 
 func (suite *RoleAssignmentServiceTestSuite) TestGetRoleAssignments_CountError() {
@@ -145,7 +147,7 @@ func (suite *RoleAssignmentServiceTestSuite) TestGetRoleAssignments_CountError()
 
 	suite.Nil(result)
 	suite.NotNil(err)
-	suite.Equal(serviceerror.InternalServerError.Code, err.Code)
+	suite.Equal(tidcommon.InternalServerError.Code, err.Code)
 }
 
 func (suite *RoleAssignmentServiceTestSuite) TestGetRoleAssignments_GetListError() {
@@ -160,7 +162,7 @@ func (suite *RoleAssignmentServiceTestSuite) TestGetRoleAssignments_GetListError
 
 	suite.Nil(result)
 	suite.NotNil(err)
-	suite.Equal(serviceerror.InternalServerError.Code, err.Code)
+	suite.Equal(tidcommon.InternalServerError.Code, err.Code)
 }
 
 func (suite *RoleAssignmentServiceTestSuite) TestGetRoleAssignments_WithDisplay_Success() {
@@ -176,10 +178,10 @@ func (suite *RoleAssignmentServiceTestSuite) TestGetRoleAssignments_WithDisplay_
 	suite.mockStore.On("GetRoleAssignments", mock.Anything,
 		"role1", 10, 0).Return(expectedAssignments, nil)
 	suite.mockEntityService.On("GetEntitiesByIDs", mock.Anything,
-		[]string{testUserID1}).Return([]entity.Entity{
+		[]string{testUserID1}).Return([]providers.Entity{
 		{
 			ID:         testUserID1,
-			Category:   entity.EntityCategoryUser,
+			Category:   providers.EntityCategoryUser,
 			Type:       "employee",
 			Attributes: json.RawMessage(`{"email":"alice@example.com"}`),
 		},
@@ -187,11 +189,11 @@ func (suite *RoleAssignmentServiceTestSuite) TestGetRoleAssignments_WithDisplay_
 	suite.mockGroupService.On("GetGroupsByIDs", mock.Anything,
 		[]string{"group1"}).Return(map[string]*group.Group{
 		"group1": {Name: "Test Group"},
-	}, (*serviceerror.ServiceError)(nil)).Once()
+	}, (*tidcommon.ServiceError)(nil)).Once()
 	suite.mockEntityTypeService.On("GetDisplayAttributesByNames", mock.Anything, mock.Anything,
 		[]string{"employee"}).Return(map[string]string{
 		"employee": "email",
-	}, (*serviceerror.ServiceError)(nil)).Once()
+	}, (*tidcommon.ServiceError)(nil)).Once()
 
 	result, err := suite.service.GetRoleAssignments(context.Background(), "role1", 10, 0, true)
 
@@ -217,7 +219,7 @@ func (suite *RoleAssignmentServiceTestSuite) TestGetRoleAssignments_WithDisplay_
 	suite.mockStore.On("GetRoleAssignments", mock.Anything,
 		"role1", 10, 0).Return(expectedAssignments, nil)
 	suite.mockEntityService.On("GetEntitiesByIDs", mock.Anything,
-		[]string{testUserID1}).Return([]entity.Entity{
+		[]string{testUserID1}).Return([]providers.Entity{
 		{ID: testUserID1},
 	}, nil).Once()
 
@@ -235,7 +237,7 @@ func (suite *RoleAssignmentServiceTestSuite) TestGetRoleAssignments_WithDisplay_
 		suite.mockStore.On("GetRoleAssignments", mock.Anything, "role1", 10, 0).
 			Return([]RoleAssignment{{ID: testUserID1, Type: assigneeTypeEntity}}, nil).Once()
 		suite.mockEntityService.On("GetEntitiesByIDs", mock.Anything, []string{testUserID1}).
-			Return([]entity.Entity(nil), errors.New("internal error")).Once()
+			Return([]providers.Entity(nil), errors.New("internal error")).Once()
 
 		result, err := suite.service.GetRoleAssignments(context.Background(), "role1", 10, 0, true)
 
@@ -250,7 +252,7 @@ func (suite *RoleAssignmentServiceTestSuite) TestGetRoleAssignments_WithDisplay_
 		suite.mockStore.On("GetRoleAssignments", mock.Anything, "role1", 10, 0).
 			Return([]RoleAssignment{{ID: "group1", Type: AssigneeTypeGroup}}, nil).Once()
 		suite.mockGroupService.On("GetGroupsByIDs", mock.Anything, []string{"group1"}).
-			Return((map[string]*group.Group)(nil), &serviceerror.ServiceError{Code: "INTERNAL_ERROR"}).Once()
+			Return((map[string]*group.Group)(nil), &tidcommon.ServiceError{Code: "INTERNAL_ERROR"}).Once()
 
 		result, err := suite.service.GetRoleAssignments(context.Background(), "role1", 10, 0, true)
 
@@ -277,10 +279,10 @@ func (suite *RoleAssignmentServiceTestSuite) TestGetRoleAssignments_WithDisplay_
 		"role1", 10, 0).Return(expectedAssignments, nil)
 	// Entity not found in service — orphaned assignment, skipped in output.
 	suite.mockEntityService.On("GetEntitiesByIDs", mock.Anything,
-		[]string{testUserID1}).Return([]entity.Entity{}, nil).Once()
+		[]string{testUserID1}).Return([]providers.Entity{}, nil).Once()
 	// Group found but not in map — display falls back to ID.
 	suite.mockGroupService.On("GetGroupsByIDs", mock.Anything,
-		[]string{"group1"}).Return(map[string]*group.Group{}, (*serviceerror.ServiceError)(nil)).Once()
+		[]string{"group1"}).Return(map[string]*group.Group{}, (*tidcommon.ServiceError)(nil)).Once()
 
 	result, err := suite.service.GetRoleAssignments(context.Background(), "role1", 10, 0, true)
 
@@ -304,10 +306,10 @@ func (suite *RoleAssignmentServiceTestSuite) TestGetRoleAssignments_WithDisplay_
 	suite.mockStore.On("GetRoleAssignments", mock.Anything,
 		"role1", 10, 0).Return(expectedAssignments, nil)
 	suite.mockEntityService.On("GetEntitiesByIDs", mock.Anything,
-		[]string{testUserID1}).Return([]entity.Entity{
+		[]string{testUserID1}).Return([]providers.Entity{
 		{
 			ID:         testUserID1,
-			Category:   entity.EntityCategoryUser,
+			Category:   providers.EntityCategoryUser,
 			Type:       "employee",
 			Attributes: json.RawMessage(`{"profile":{"fullName":"Alice Smith"}}`),
 		},
@@ -315,7 +317,7 @@ func (suite *RoleAssignmentServiceTestSuite) TestGetRoleAssignments_WithDisplay_
 	suite.mockEntityTypeService.On("GetDisplayAttributesByNames", mock.Anything, mock.Anything,
 		[]string{"employee"}).Return(map[string]string{
 		"employee": "profile.fullName",
-	}, (*serviceerror.ServiceError)(nil)).Once()
+	}, (*tidcommon.ServiceError)(nil)).Once()
 
 	result, err := suite.service.GetRoleAssignments(context.Background(), "role1", 10, 0, true)
 
@@ -336,10 +338,10 @@ func (suite *RoleAssignmentServiceTestSuite) TestGetRoleAssignments_WithDisplay_
 	suite.mockStore.On("GetRoleAssignments", mock.Anything,
 		"role1", 10, 0).Return(expectedAssignments, nil)
 	suite.mockEntityService.On("GetEntitiesByIDs", mock.Anything,
-		[]string{testUserID1}).Return([]entity.Entity{
+		[]string{testUserID1}).Return([]providers.Entity{
 		{
 			ID:         testUserID1,
-			Category:   entity.EntityCategoryUser,
+			Category:   providers.EntityCategoryUser,
 			Type:       "employee",
 			Attributes: json.RawMessage(`{"email":"alice@example.com"}`),
 		},
@@ -347,7 +349,7 @@ func (suite *RoleAssignmentServiceTestSuite) TestGetRoleAssignments_WithDisplay_
 	// Schema service fails — should fall back to user ID.
 	suite.mockEntityTypeService.On("GetDisplayAttributesByNames", mock.Anything, mock.Anything,
 		[]string{"employee"}).Return(
-		(map[string]string)(nil), &serviceerror.ServiceError{Code: "INTERNAL_ERROR"},
+		(map[string]string)(nil), &tidcommon.ServiceError{Code: "INTERNAL_ERROR"},
 	).Once()
 
 	result, err := suite.service.GetRoleAssignments(context.Background(), "role1", 10, 0, true)
@@ -372,14 +374,14 @@ func (suite *RoleAssignmentServiceTestSuite) TestGetRoleAssignmentsByType_UserFi
 	}, nil).Once()
 	suite.mockEntityService.On("GetEntitiesByIDs", mock.Anything,
 		mock.MatchedBy(func(ids []string) bool { return len(ids) == 2 })).
-		Return([]entity.Entity{
-			{ID: testUserID1, Category: entity.EntityCategoryUser},
-			{ID: "app-001", Category: entity.EntityCategoryApp},
+		Return([]providers.Entity{
+			{ID: testUserID1, Category: providers.EntityCategoryUser},
+			{ID: "app-001", Category: providers.EntityCategoryApp},
 		}, nil).Once()
 	// resolveAssignments fetches entity details for the filtered user page.
 	suite.mockEntityService.On("GetEntitiesByIDs", mock.Anything,
-		[]string{testUserID1}).Return([]entity.Entity{
-		{ID: testUserID1, Category: entity.EntityCategoryUser},
+		[]string{testUserID1}).Return([]providers.Entity{
+		{ID: testUserID1, Category: providers.EntityCategoryUser},
 	}, nil).Once()
 
 	result, err := suite.service.GetRoleAssignmentsByType(
@@ -405,7 +407,7 @@ func (suite *RoleAssignmentServiceTestSuite) TestGetRoleAssignmentsByType_Entity
 		{ID: testUserID1, Type: assigneeTypeEntity},
 	}, nil).Once()
 	suite.mockEntityService.On("GetEntitiesByIDs", mock.Anything,
-		[]string{testUserID1}).Return([]entity.Entity(nil), errors.New("entity service down")).Once()
+		[]string{testUserID1}).Return([]providers.Entity(nil), errors.New("entity service down")).Once()
 
 	result, err := suite.service.GetRoleAssignmentsByType(
 		context.Background(), "role1", 10, 0, false, "user")
@@ -486,7 +488,7 @@ func (suite *RoleAssignmentServiceTestSuite) TestAddAssignments_GetRoleError() {
 	err := suite.service.AddAssignments(context.Background(), "role1", request)
 
 	suite.NotNil(err)
-	suite.Equal(ErrorInternalServerError.Code, err.Code)
+	suite.Equal(tidcommon.InternalServerError.Code, err.Code)
 }
 
 func (suite *RoleAssignmentServiceTestSuite) TestAddAssignments_StoreError() {
@@ -498,8 +500,8 @@ func (suite *RoleAssignmentServiceTestSuite) TestAddAssignments_StoreError() {
 	}
 
 	suite.mockEntityService.On("GetEntitiesByIDs", mock.Anything,
-		[]string{testUserID1}).Return([]entity.Entity{
-		{ID: testUserID1, Category: entity.EntityCategoryUser},
+		[]string{testUserID1}).Return([]providers.Entity{
+		{ID: testUserID1, Category: providers.EntityCategoryUser},
 	}, nil)
 	suite.mockStore.On("IsRoleExist", mock.Anything,
 		"role1").Return(true, nil)
@@ -509,7 +511,7 @@ func (suite *RoleAssignmentServiceTestSuite) TestAddAssignments_StoreError() {
 	err := suite.service.AddAssignments(context.Background(), "role1", request)
 
 	suite.NotNil(err)
-	suite.Equal(serviceerror.InternalServerError.Code, err.Code)
+	suite.Equal(tidcommon.InternalServerError.Code, err.Code)
 }
 
 func (suite *RoleAssignmentServiceTestSuite) TestAddAssignments_Success() {
@@ -521,8 +523,8 @@ func (suite *RoleAssignmentServiceTestSuite) TestAddAssignments_Success() {
 	}
 
 	suite.mockEntityService.On("GetEntitiesByIDs", mock.Anything,
-		[]string{testUserID1}).Return([]entity.Entity{
-		{ID: testUserID1, Category: entity.EntityCategoryUser},
+		[]string{testUserID1}).Return([]providers.Entity{
+		{ID: testUserID1, Category: providers.EntityCategoryUser},
 	}, nil)
 	suite.mockStore.On("IsRoleExist", mock.Anything,
 		"role1").Return(true, nil)
@@ -579,7 +581,7 @@ func (suite *RoleAssignmentServiceTestSuite) TestRemoveAssignments_GetRoleError(
 	err := suite.service.RemoveAssignments(context.Background(), "role1", request)
 
 	suite.NotNil(err)
-	suite.Equal(ErrorInternalServerError.Code, err.Code)
+	suite.Equal(tidcommon.InternalServerError.Code, err.Code)
 }
 
 func (suite *RoleAssignmentServiceTestSuite) TestRemoveAssignments_StoreError() {
@@ -591,8 +593,8 @@ func (suite *RoleAssignmentServiceTestSuite) TestRemoveAssignments_StoreError() 
 	}
 
 	suite.mockEntityService.On("GetEntitiesByIDs", mock.Anything,
-		[]string{testUserID1}).Return([]entity.Entity{
-		{ID: testUserID1, Category: entity.EntityCategoryUser},
+		[]string{testUserID1}).Return([]providers.Entity{
+		{ID: testUserID1, Category: providers.EntityCategoryUser},
 	}, nil)
 	suite.mockStore.On("IsRoleExist", mock.Anything,
 		"role1").Return(true, nil)
@@ -602,7 +604,7 @@ func (suite *RoleAssignmentServiceTestSuite) TestRemoveAssignments_StoreError() 
 	err := suite.service.RemoveAssignments(context.Background(), "role1", request)
 
 	suite.NotNil(err)
-	suite.Equal(serviceerror.InternalServerError.Code, err.Code)
+	suite.Equal(tidcommon.InternalServerError.Code, err.Code)
 }
 
 func (suite *RoleAssignmentServiceTestSuite) TestRemoveAssignments_Success() {
@@ -614,8 +616,8 @@ func (suite *RoleAssignmentServiceTestSuite) TestRemoveAssignments_Success() {
 	}
 
 	suite.mockEntityService.On("GetEntitiesByIDs", mock.Anything,
-		[]string{testUserID1}).Return([]entity.Entity{
-		{ID: testUserID1, Category: entity.EntityCategoryUser},
+		[]string{testUserID1}).Return([]providers.Entity{
+		{ID: testUserID1, Category: providers.EntityCategoryUser},
 	}, nil)
 	suite.mockStore.On("IsRoleExist", mock.Anything,
 		"role1").Return(true, nil)
@@ -625,4 +627,167 @@ func (suite *RoleAssignmentServiceTestSuite) TestRemoveAssignments_Success() {
 	err := suite.service.RemoveAssignments(context.Background(), "role1", request)
 
 	suite.Nil(err)
+}
+
+func (suite *RoleAssignmentServiceTestSuite) TestGetRoleAssignments_IsRoleExist_DatabaseError() {
+	suite.mockStore.On("IsRoleExist", mock.Anything, "role1").
+		Return(false, errors.New("mock database tracking timeout")).Once()
+
+	result, err := suite.service.GetRoleAssignments(context.Background(), "role1", 10, 0, false)
+
+	suite.Nil(result)
+	suite.NotNil(err)
+	suite.Equal(tidcommon.InternalServerError.Code, err.Code)
+}
+
+func (suite *RoleAssignmentServiceTestSuite) TestAddAssignments_Transaction_DatabaseError() {
+	assignments := []RoleAssignment{{ID: "user1", Type: "user"}}
+
+	suite.mockStore.On("IsRoleExist", mock.Anything, "role1").Return(true, nil).Once()
+	suite.mockEntityService.On("GetEntitiesByIDs", mock.Anything, []string{"user1"}).
+		Return([]providers.Entity{{ID: "user1", Category: providers.EntityCategoryUser}}, nil).Once()
+
+	suite.transactioner.err = errors.New("failed to commit transaction block")
+
+	err := suite.service.AddAssignments(context.Background(), "role1", assignments)
+
+	suite.NotNil(err)
+	suite.Equal(tidcommon.InternalServerError.Code, err.Code)
+}
+
+func (suite *RoleAssignmentServiceTestSuite) TestGetRoleAssignmentsByType_CountStoreError() {
+	suite.mockStore.On("IsRoleExist", mock.Anything, "role-1").Return(true, nil).Once()
+
+	suite.mockStore.On("GetRoleAssignmentsCountByType", mock.Anything, "role-1", "entity").
+		Return(0, errors.New("mock db counter crash")).Once()
+
+	result, err := suite.service.GetRoleAssignmentsByType(context.Background(), "role-1", 10, 0, false, "user")
+	suite.Nil(result)
+	suite.NotNil(err)
+	suite.Equal(tidcommon.InternalServerError.Code, err.Code)
+}
+
+func (suite *RoleAssignmentServiceTestSuite) TestGetRoleAssignmentsByType_ListStoreError() {
+	suite.mockStore.On("IsRoleExist", mock.Anything, "role-1").Return(true, nil).Once()
+
+	suite.mockStore.On("GetRoleAssignmentsCountByType", mock.Anything, "role-1", "entity").
+		Return(1, nil).Once()
+
+	suite.mockStore.On("GetRoleAssignmentsByType", mock.Anything, "role-1", 1, 0, "entity").
+		Return([]RoleAssignment{}, errors.New("mock db row scan failure")).Once()
+
+	result, err := suite.service.GetRoleAssignmentsByType(context.Background(), "role-1", 10, 0, false, "user")
+	suite.Nil(result)
+	suite.NotNil(err)
+	suite.Equal(tidcommon.InternalServerError.Code, err.Code)
+}
+
+// AddAssigneesToRoles Tests
+
+func (suite *RoleAssignmentServiceTestSuite) TestAddAssigneesToRoles_EmptyRoleIDs() {
+	assignments := []RoleAssignment{{ID: testUserID1, Type: AssigneeTypeUser}}
+	err := suite.service.AddAssigneesToRoles(context.Background(), assignments, []string{})
+	suite.Nil(err)
+}
+
+func (suite *RoleAssignmentServiceTestSuite) TestAddAssigneesToRoles_AddAssignmentsFails() {
+	assignments := []RoleAssignment{{ID: testUserID1, Type: AssigneeTypeUser}}
+	suite.mockStore.On("IsRoleExist", mock.Anything, "role1").Return(false, nil).Once()
+
+	err := suite.service.AddAssigneesToRoles(context.Background(), assignments, []string{"role1"})
+
+	suite.NotNil(err)
+	suite.Equal(ErrorRoleNotFound.Code, err.Code)
+}
+
+func (suite *RoleAssignmentServiceTestSuite) TestAddAssigneesToRoles_TransactionerError() {
+	assignments := []RoleAssignment{{ID: testUserID1, Type: AssigneeTypeUser}}
+	suite.transactioner.err = errors.New("tx begin failed")
+
+	err := suite.service.AddAssigneesToRoles(context.Background(), assignments, []string{"role1"})
+
+	suite.NotNil(err)
+	suite.Equal(tidcommon.InternalServerError.Code, err.Code)
+}
+
+func (suite *RoleAssignmentServiceTestSuite) TestAddAssigneesToRoles_Success() {
+	assignments := []RoleAssignment{{ID: testUserID1, Type: AssigneeTypeUser}}
+	normalized := []RoleAssignment{{ID: testUserID1, Type: assigneeTypeEntity}}
+
+	suite.mockStore.On("IsRoleExist", mock.Anything, "role1").Return(true, nil).Once()
+	suite.mockEntityService.On("GetEntitiesByIDs", mock.Anything, []string{testUserID1}).
+		Return([]providers.Entity{{ID: testUserID1, Category: providers.EntityCategoryUser}}, nil).Once()
+	suite.mockStore.On("AddAssignments", mock.Anything, "role1", normalized).Return(nil).Once()
+
+	err := suite.service.AddAssigneesToRoles(context.Background(), assignments, []string{"role1"})
+
+	suite.Nil(err)
+}
+
+func (suite *RoleAssignmentServiceTestSuite) TestAddAssigneesToRoles_MultipleRoles_Success() {
+	assignments := []RoleAssignment{{ID: testUserID1, Type: AssigneeTypeUser}}
+	normalized := []RoleAssignment{{ID: testUserID1, Type: assigneeTypeEntity}}
+
+	suite.mockStore.On("IsRoleExist", mock.Anything, "role1").Return(true, nil).Once()
+	suite.mockStore.On("IsRoleExist", mock.Anything, "role2").Return(true, nil).Once()
+	suite.mockEntityService.On("GetEntitiesByIDs", mock.Anything, []string{testUserID1}).
+		Return([]providers.Entity{{ID: testUserID1, Category: providers.EntityCategoryUser}}, nil).Times(2)
+	suite.mockStore.On("AddAssignments", mock.Anything, "role1", normalized).Return(nil).Once()
+	suite.mockStore.On("AddAssignments", mock.Anything, "role2", normalized).Return(nil).Once()
+
+	err := suite.service.AddAssigneesToRoles(
+		context.Background(), assignments, []string{"role1", "role2"})
+
+	suite.Nil(err)
+}
+
+// --- Cascade / dependency provider ---
+
+func (suite *RoleAssignmentServiceTestSuite) TestGetResourceDependencies_ReturnsEmpty() {
+	result, err := suite.service.GetResourceDependencies(
+		context.Background(), resourcedependency.ResourceTypeUser, "user-1")
+	suite.NoError(err)
+	suite.Empty(result)
+}
+
+func (suite *RoleAssignmentServiceTestSuite) TestCascadeDeleteDependencies_User_DeletesAssignments() {
+	suite.mockStore.On("DeleteAssignmentsByAssignee", mock.Anything, string(assigneeTypeEntity), "user-1").
+		Return(int64(3), nil)
+
+	deleted, err := suite.service.CascadeDeleteDependencies(
+		context.Background(), resourcedependency.ResourceTypeUser, "user-1")
+
+	suite.NoError(err)
+	suite.Equal(3, deleted)
+}
+
+func (suite *RoleAssignmentServiceTestSuite) TestCascadeDeleteDependencies_UnknownType_NoOp() {
+	deleted, err := suite.service.CascadeDeleteDependencies(context.Background(), "theme", "theme-1")
+
+	suite.NoError(err)
+	suite.Equal(0, deleted)
+	suite.mockStore.AssertNotCalled(suite.T(), "DeleteAssignmentsByAssignee",
+		mock.Anything, mock.Anything, mock.Anything)
+}
+
+func (suite *RoleAssignmentServiceTestSuite) TestCascadeDeleteDependencies_StoreError() {
+	suite.mockStore.On("DeleteAssignmentsByAssignee", mock.Anything, string(assigneeTypeEntity), "user-1").
+		Return(int64(0), errors.New("db error"))
+
+	deleted, err := suite.service.CascadeDeleteDependencies(
+		context.Background(), resourcedependency.ResourceTypeUser, "user-1")
+
+	suite.Error(err)
+	suite.Equal(0, deleted)
+}
+
+func (suite *RoleAssignmentServiceTestSuite) TestCascadeDeleteDependencies_Group_DeletesAssignments() {
+	suite.mockStore.On("DeleteAssignmentsByAssignee", mock.Anything, string(AssigneeTypeGroup), "group-1").
+		Return(int64(1), nil)
+
+	deleted, err := suite.service.CascadeDeleteDependencies(
+		context.Background(), resourcedependency.ResourceTypeGroup, "group-1")
+
+	suite.NoError(err)
+	suite.Equal(1, deleted)
 }

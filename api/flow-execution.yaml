@@ -26,9 +26,25 @@ paths:
   /flow/execute:
     post:
       summary: Execute a flow step
-      description: Execute a step in an authentication flow.
+      description: >-
+        Execute a step in an authentication flow. Backend/server-side applications must present
+        their Flow Secret in the `Flow-Secret` header (see the `FlowSecret` security scheme) when
+        initiating a new flow; the header is ignored for other application types.
       tags:
         - Flow Execution
+      security:
+        - {}
+        - FlowSecret: []
+      parameters:
+        - in: header
+          name: Attestation-Token
+          required: false
+          schema:
+            type: string
+          description: >
+            Platform attestation token (e.g. a Google Play Integrity token) presented by a mobile
+            application when initiating a new authentication flow. Required only for applications
+            configured with attestation; ignored when continuing an existing flow via executionId.
       requestBody:
         required: true
         content:
@@ -43,12 +59,17 @@ paths:
                 value:
                   applicationId: "550e8400-e29b-41d4-a716-446655440000"
                   flowType: "AUTHENTICATION"
+              initialRequestBackendApp:
+                summary: Initial request from a backend/server-side application (requires the Flow-Secret header)
+                value:
+                  applicationId: "550e8400-e29b-41d4-a716-446655440000"
+                  flowType: "AUTHENTICATION"
               subSequentRequestExample:
                 summary: Subsequent request
                 value:
                   executionId: "2c6d4c45-3de9-4a70-ae6b-ba1d034af6bc"
                   challengeToken: "a3f2e1b0c9d8e7f6a5b4c3d2e1f0a9b8c7d6e5f4a3b2c1d0e9f8a7b6c5d4e3f2"
-                  action: "basic_auth"
+                  action: "credentials_auth"
                   inputs: {
                     "username": "thor",
                     "password": "thor@123"
@@ -173,10 +194,32 @@ paths:
                   value:
                     executionId: "2c6d4c45-3de9-4a70-ae6b-ba1d034af6bc"
                     flowStatus: "ERROR"
-                    failureReason: "Invalid credentials"
+                    error:
+                      code: "FET-20002"
+                      message:
+                        key: "flows.executor.errors.invalid_credentials"
+                        defaultValue: "Invalid credentials provided"
+                      description:
+                        key: "flows.executor.errors.invalid_credentials_desc"
+                        defaultValue: "The credentials provided are invalid"
         
         "400":
           description: 'Bad Request: The request body is malformed or contains invalid data'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        "401":
+          description: >
+            Unauthorized: The application must present a valid credential to initiate a new flow —
+            a Flow Secret for backend applications, or a platform attestation token for mobile
+            applications — and the presented credential was missing or invalid.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        "403":
+          description: 'Forbidden: Direct flow initiation is not permitted for this application type'
           content:
             application/json:
               schema:
@@ -189,6 +232,15 @@ paths:
                 $ref: '#/components/schemas/Error'
 
 components:
+  securitySchemes:
+    FlowSecret:
+      type: apiKey
+      in: header
+      name: Flow-Secret
+      description: >-
+        Flow Secret used to authenticate backend/server-side applications when initiating a flow
+        directly. Required for non-public clients that do not use the redirect-based
+        authorization_code flow; ignored for other applications.
   schemas:
     InitialFlowRequest:
       type: object
@@ -229,7 +281,7 @@ components:
         action:
           type: string
           description: Reference of the action to execute in the flow
-          example: "basic_auth"
+          example: "credentials_auth"
         inputs:
           type: object
           description: Input data provided for the flow step execution
@@ -306,7 +358,7 @@ components:
       required:
         - executionId
         - flowStatus
-        - failureReason
+        - error
       properties:
         executionId:
           type: string
@@ -315,11 +367,11 @@ components:
         flowStatus:
           type: string
           description: Status of the flow execution
+          enum:
+            - ERROR
           example: "ERROR"
-        failureReason:
-          type: string
-          description: Reason for the failure in the flow execution
-          example: "Invalid credentials"
+        error:
+          $ref: '#/components/schemas/Error'
 
     Data:
       type: object

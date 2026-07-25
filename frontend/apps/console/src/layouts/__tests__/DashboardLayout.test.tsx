@@ -20,6 +20,7 @@ import {render, screen, userEvent, waitFor} from '@thunderid/test-utils';
 import {afterEach, describe, it, expect, vi, beforeEach} from 'vitest';
 import DashboardLayout from '../DashboardLayout';
 
+const mockNavigate = vi.fn();
 const mockSignIn = vi.fn();
 const mockSignOut = vi.fn();
 const mockClearSession = vi.fn();
@@ -105,6 +106,7 @@ vi.mock('react-router', async () => {
         {children}
       </a>
     ),
+    useNavigate: () => mockNavigate,
   };
 });
 
@@ -151,7 +153,7 @@ describe('DashboardLayout', () => {
     expect(screen.getByText('navigation:pages.users')).toBeInTheDocument();
     expect(screen.getByText('navigation:pages.userTypes')).toBeInTheDocument();
     expect(screen.getByText('navigation:pages.applications')).toBeInTheDocument();
-    expect(screen.getByText('navigation:pages.integrations')).toBeInTheDocument();
+    expect(screen.getByText('navigation:pages.connections')).toBeInTheDocument();
     expect(screen.getByText('navigation:pages.flows')).toBeInTheDocument();
   });
 
@@ -162,10 +164,9 @@ describe('DashboardLayout', () => {
     expect(screen.getByText(new RegExp(currentYear.toString()))).toBeInTheDocument();
   });
 
-  it('calls signIn after successful signOut when sign out is clicked', async () => {
+  it('does not start a second sign-in after signing out', async () => {
     const user = userEvent.setup();
     mockSignOut.mockResolvedValue(undefined);
-    mockSignIn.mockResolvedValue(undefined);
 
     render(<DashboardLayout />);
 
@@ -179,8 +180,8 @@ describe('DashboardLayout', () => {
 
     await waitFor(() => {
       expect(mockSignOut).toHaveBeenCalled();
-      expect(mockSignIn).toHaveBeenCalled();
     });
+    expect(mockSignIn).not.toHaveBeenCalled();
   });
 
   it('logs error when signOut fails', async () => {
@@ -200,7 +201,7 @@ describe('DashboardLayout', () => {
 
     await waitFor(() => {
       expect(mockSignOut).toHaveBeenCalled();
-      expect(mockLoggerError).toHaveBeenCalledWith('Sign out/in failed', {error: signOutError});
+      expect(mockLoggerError).toHaveBeenCalledWith('Sign out failed', {error: signOutError});
     });
   });
 
@@ -218,15 +219,6 @@ describe('DashboardLayout', () => {
     render(<DashboardLayout />);
 
     expect(screen.getByTestId('outlet')).toBeInTheDocument();
-  });
-
-  it('navigates to export page when export button is clicked', async () => {
-    const user = userEvent.setup();
-    render(<DashboardLayout />);
-
-    const exportButton = screen.getByText('navigation:pages.export');
-    expect(exportButton).toBeInTheDocument();
-    await user.click(exportButton);
   });
 
   it('navigates to welcome page when welcome menu item is clicked', async () => {
@@ -294,6 +286,27 @@ describe('DashboardLayout', () => {
       expect(mockClearSession).toHaveBeenCalled();
       expect(window.location.href).toContain('https://idp.example.com/logout');
       expect(window.location.href).toContain('client_id=test-client-id');
+    });
+
+    it('logs error when clearSession throws during generic OIDC sign out', async () => {
+      mockDiscovery = {wellKnown: {end_session_endpoint: 'https://idp.example.com/logout'}};
+      const sessionError = new Error('session clear failed');
+      mockClearSession.mockImplementation(() => {
+        throw sessionError;
+      });
+      const user = userEvent.setup();
+
+      render(<DashboardLayout />);
+
+      const userMenuTrigger = screen.getByLabelText('Test User');
+      await user.click(userMenuTrigger);
+
+      const signOutButton = await screen.findByText('common:userMenu.signOut');
+      await user.click(signOutButton);
+
+      expect(mockLoggerError).toHaveBeenCalledWith(expect.stringContaining('Failed to clear local session'), {
+        error: sessionError,
+      });
     });
   });
 });

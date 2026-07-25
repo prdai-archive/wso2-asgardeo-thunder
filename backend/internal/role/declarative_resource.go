@@ -22,11 +22,12 @@ import (
 	"context"
 	"fmt"
 
+	tidcommon "github.com/thunder-id/thunderid/pkg/thunderidengine/common"
+
 	"gopkg.in/yaml.v3"
 
 	serverconst "github.com/thunder-id/thunderid/internal/system/constants"
 	declarativeresource "github.com/thunder-id/thunderid/internal/system/declarative_resource"
-	"github.com/thunder-id/thunderid/internal/system/error/serviceerror"
 	"github.com/thunder-id/thunderid/internal/system/log"
 )
 
@@ -58,7 +59,7 @@ func (e *roleExporter) GetParameterizerType() string {
 
 // GetAllResourceIDs retrieves all role IDs from the database store.
 // In composite mode, this excludes declarative (YAML-based) roles.
-func (e *roleExporter) GetAllResourceIDs(ctx context.Context) ([]string, *serviceerror.ServiceError) {
+func (e *roleExporter) GetAllResourceIDs(ctx context.Context) ([]string, *tidcommon.ServiceError) {
 	offset := 0
 	limit := serverconst.MaxPageSize
 	ids := []string{}
@@ -92,7 +93,7 @@ func (e *roleExporter) GetAllResourceIDs(ctx context.Context) ([]string, *servic
 
 // GetResourceByID retrieves a role by its ID.
 func (e *roleExporter) GetResourceByID(
-	ctx context.Context, id string) (interface{}, string, *serviceerror.ServiceError) {
+	ctx context.Context, id string) (interface{}, string, *tidcommon.ServiceError) {
 	roleWithPermissions, err := e.service.GetRoleWithPermissions(ctx, id)
 	if err != nil {
 		return nil, "", err
@@ -121,7 +122,7 @@ func (e *roleExporter) GetResourceByID(
 }
 
 // ValidateResource validates a role resource.
-func (e *roleExporter) ValidateResource(
+func (e *roleExporter) ValidateResource(ctx context.Context,
 	resource interface{}, id string, logger *log.Logger,
 ) (string, *declarativeresource.ExportError) {
 	role, ok := resource.(*roleDeclarativeResource)
@@ -129,7 +130,7 @@ func (e *roleExporter) ValidateResource(
 		return "", declarativeresource.CreateTypeError(resourceTypeRole, id)
 	}
 
-	if err := declarativeresource.ValidateResourceName(
+	if err := declarativeresource.ValidateResourceName(ctx,
 		role.Name, resourceTypeRole, id, "ROLE_VALIDATION_ERROR", logger); err != nil {
 		return "", err
 	}
@@ -164,7 +165,9 @@ func loadDeclarativeResources(
 				return v.ID
 			}
 			// Log error and return empty string if type assertion fails
-			log.GetLogger().Error("IDExtractor: type assertion failed for RoleWithPermissionsAndAssignments")
+			// Declarative resource loading runs during startup, outside any request.
+			log.GetLogger().Error(context.Background(),
+				"IDExtractor: type assertion failed for RoleWithPermissionsAndAssignments")
 			return ""
 		},
 	}
@@ -188,8 +191,8 @@ type roleDeclarativeResource struct {
 	ID          string                      `yaml:"id"`
 	Name        string                      `yaml:"name"`
 	Description string                      `yaml:"description,omitempty"`
-	OUID        string                      `yaml:"ou_id,omitempty"`
-	OUHandle    string                      `yaml:"ou_handle,omitempty"`
+	OUID        string                      `yaml:"ouId,omitempty"`
+	OUHandle    string                      `yaml:"ouHandle,omitempty"`
 	Permissions []roleDeclarativePermission `yaml:"permissions"`
 	Assignments []RoleAssignment            `yaml:"assignments,omitempty"`
 }
@@ -254,7 +257,7 @@ func validateRoleWrapper(
 		}
 	}
 	if role.OUID == "" {
-		return fmt.Errorf("ou_id or ou_handle is required for role '%s'", role.Name)
+		return fmt.Errorf("ouId or ouHandle is required for role '%s'", role.Name)
 	}
 
 	for _, assignment := range role.Assignments {
@@ -295,7 +298,7 @@ func validateRoleWrapper(
 func (e *roleExporter) getAllRoleAssignments(
 	ctx context.Context,
 	roleID string,
-) ([]RoleAssignment, *serviceerror.ServiceError) {
+) ([]RoleAssignment, *tidcommon.ServiceError) {
 	offset := 0
 	limit := serverconst.MaxPageSize
 	assignments := []RoleAssignment{}

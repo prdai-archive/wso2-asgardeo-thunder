@@ -24,6 +24,7 @@ import (
 
 	"github.com/thunder-id/thunderid/internal/system/cache"
 	"github.com/thunder-id/thunderid/internal/system/log"
+	"github.com/thunder-id/thunderid/pkg/thunderidengine/providers"
 )
 
 const cacheBackedIDPStoreLoggerComponentName = "CacheBackedIDPStore"
@@ -37,15 +38,15 @@ var cacheablePropertyKeys = map[string]bool{
 
 // cacheBackedIDPStore wraps any idpStoreInterface with two in-memory caches.
 type cacheBackedIDPStore struct {
-	idpByIDCache       cache.CacheInterface[*IDPDTO]
-	idpByPropertyCache cache.CacheInterface[[]IDPDTO]
+	idpByIDCache       cache.CacheInterface[*providers.IDPDTO]
+	idpByPropertyCache cache.CacheInterface[[]providers.IDPDTO]
 	inner              idpStoreInterface
 }
 
 // newCacheBackedIDPStore creates a new cache-backed IDP store wrapping the provided inner store.
 func newCacheBackedIDPStore(
-	idpByIDCache cache.CacheInterface[*IDPDTO],
-	idpByPropertyCache cache.CacheInterface[[]IDPDTO],
+	idpByIDCache cache.CacheInterface[*providers.IDPDTO],
+	idpByPropertyCache cache.CacheInterface[[]providers.IDPDTO],
 	inner idpStoreInterface,
 ) idpStoreInterface {
 	return &cacheBackedIDPStore{
@@ -56,7 +57,7 @@ func newCacheBackedIDPStore(
 }
 
 // CreateIdentityProvider delegates to the inner store and caches the created IDP.
-func (s *cacheBackedIDPStore) CreateIdentityProvider(ctx context.Context, idp IDPDTO) error {
+func (s *cacheBackedIDPStore) CreateIdentityProvider(ctx context.Context, idp providers.IDPDTO) error {
 	if err := s.inner.CreateIdentityProvider(ctx, idp); err != nil {
 		return err
 	}
@@ -75,7 +76,7 @@ func (s *cacheBackedIDPStore) GetIdentityProviderListCount(ctx context.Context) 
 }
 
 // GetIdentityProvider retrieves an IDP by ID, using the ID cache on a hit.
-func (s *cacheBackedIDPStore) GetIdentityProvider(ctx context.Context, idpID string) (*IDPDTO, error) {
+func (s *cacheBackedIDPStore) GetIdentityProvider(ctx context.Context, idpID string) (*providers.IDPDTO, error) {
 	cacheKey := cache.CacheKey{Key: idpID}
 	if cached, ok := s.idpByIDCache.Get(ctx, cacheKey); ok {
 		return cached, nil
@@ -90,7 +91,10 @@ func (s *cacheBackedIDPStore) GetIdentityProvider(ctx context.Context, idpID str
 }
 
 // GetIdentityProviderByName delegates to inner store and populates the ID cache with the result.
-func (s *cacheBackedIDPStore) GetIdentityProviderByName(ctx context.Context, idpName string) (*IDPDTO, error) {
+func (s *cacheBackedIDPStore) GetIdentityProviderByName(
+	ctx context.Context,
+	idpName string,
+) (*providers.IDPDTO, error) {
 	idp, err := s.inner.GetIdentityProviderByName(ctx, idpName)
 	if err != nil || idp == nil {
 		return idp, err
@@ -102,7 +106,7 @@ func (s *cacheBackedIDPStore) GetIdentityProviderByName(ctx context.Context, idp
 // GetIdentityProvidersByProperty retrieves IDPs by property, using the property cache on a hit.
 // Only property keys listed in cacheablePropertyKeys are cached; all others bypass the cache.
 func (s *cacheBackedIDPStore) GetIdentityProvidersByProperty(ctx context.Context,
-	propertyKey, propertyValue string) ([]IDPDTO, error) {
+	propertyKey, propertyValue string) ([]providers.IDPDTO, error) {
 	if !cacheablePropertyKeys[propertyKey] {
 		return s.inner.GetIdentityProvidersByProperty(ctx, propertyKey, propertyValue)
 	}
@@ -128,7 +132,7 @@ func (s *cacheBackedIDPStore) GetIdentityProvidersByProperty(ctx context.Context
 
 // UpdateIdentityProvider fetches the old IDP to capture its properties, delegates the update, then
 // invalidates old cache entries and caches the new state.
-func (s *cacheBackedIDPStore) UpdateIdentityProvider(ctx context.Context, idp *IDPDTO) error {
+func (s *cacheBackedIDPStore) UpdateIdentityProvider(ctx context.Context, idp *providers.IDPDTO) error {
 	oldIDP, err := s.inner.GetIdentityProvider(ctx, idp.ID)
 	if err != nil {
 		return err
@@ -161,7 +165,7 @@ func (s *cacheBackedIDPStore) DeleteIdentityProvider(ctx context.Context, id str
 
 // cacheIDP stores the IDP in the ID cache only.
 // Property cache is populated lazily on read (GetIdentityProvidersByProperty).
-func (s *cacheBackedIDPStore) cacheIDP(ctx context.Context, idp *IDPDTO) {
+func (s *cacheBackedIDPStore) cacheIDP(ctx context.Context, idp *providers.IDPDTO) {
 	if idp == nil || idp.ID == "" {
 		return
 	}
@@ -169,12 +173,12 @@ func (s *cacheBackedIDPStore) cacheIDP(ctx context.Context, idp *IDPDTO) {
 
 	idKey := cache.CacheKey{Key: idp.ID}
 	if err := s.idpByIDCache.Set(ctx, idKey, idp); err != nil {
-		logger.Error("Failed to cache IDP by ID", log.Error(err), log.String("idpID", idp.ID))
+		logger.Error(ctx, "Failed to cache IDP by ID", log.Error(err), log.String("idpID", idp.ID))
 	}
 }
 
 // invalidateIDP removes the IDP from ID cache and invalidates property cache entries.
-func (s *cacheBackedIDPStore) invalidateIDP(ctx context.Context, idp *IDPDTO) {
+func (s *cacheBackedIDPStore) invalidateIDP(ctx context.Context, idp *providers.IDPDTO) {
 	logger := log.GetLogger().With(log.String(log.LoggerKeyComponentName, cacheBackedIDPStoreLoggerComponentName))
 	if idp == nil {
 		return
@@ -182,7 +186,8 @@ func (s *cacheBackedIDPStore) invalidateIDP(ctx context.Context, idp *IDPDTO) {
 	if idp.ID != "" {
 		idKey := cache.CacheKey{Key: idp.ID}
 		if err := s.idpByIDCache.Delete(ctx, idKey); err != nil {
-			logger.Error("Failed to invalidate IDP cache by ID", log.Error(err), log.String("idpID", idp.ID))
+			logger.Error(ctx, "Failed to invalidate IDP cache by ID",
+				log.Error(err), log.String("idpID", idp.ID))
 		}
 	}
 	for _, prop := range idp.Properties {
@@ -195,7 +200,7 @@ func (s *cacheBackedIDPStore) invalidateIDP(ctx context.Context, idp *IDPDTO) {
 		}
 		propKey := cache.CacheKey{Key: prop.GetName() + ":" + val}
 		if err := s.idpByPropertyCache.Delete(ctx, propKey); err != nil {
-			logger.Error("Failed to invalidate IDP property cache", log.Error(err))
+			logger.Error(ctx, "Failed to invalidate IDP property cache", log.Error(err))
 		}
 	}
 }

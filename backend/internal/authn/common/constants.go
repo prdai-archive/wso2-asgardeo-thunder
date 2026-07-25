@@ -29,12 +29,14 @@ const DefaultHTTPTimeout = 5 * time.Second
 const (
 	AuthenticatorCredentials = "CredentialsAuthenticator"
 	AuthenticatorSMSOTP      = "SMSOTPAuthenticator"
+	AuthenticatorOTP         = "OTPAuthenticator"
 	AuthenticatorMagicLink   = "MagicLinkAuthenticator"
 	AuthenticatorGoogle      = "GoogleOIDCAuthenticator"
 	AuthenticatorGithub      = "GithubOAuthAuthenticator"
 	AuthenticatorOAuth       = "OAuthAuthenticator"
 	AuthenticatorOIDC        = "OIDCAuthenticator"
 	AuthenticatorPasskey     = "Passkey"
+	AuthenticatorOpenID4VP   = "OpenID4VPAuthenticator"
 )
 
 // AuthenticationFactor represents the type of authentication factor.
@@ -48,3 +50,6 @@ const (
 	// FactorInherence represents "something you are" (e.g., biometrics).
 	FactorInherence AuthenticationFactor = "INHERENCE"
 )
+
+// UserAttributeUserID is the user attribute key for user ID in authentication results.
+const UserAttributeUserID = "userID"

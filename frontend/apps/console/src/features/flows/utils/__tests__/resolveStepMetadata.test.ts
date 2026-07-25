@@ -242,10 +242,47 @@ describe('resolveStepMetadata', () => {
       });
 
       const result = resolveStepMetadata(resources, steps);
-      const properties = result[0].data?.properties as Record<string, unknown>;
+      const properties = result[0].data.properties!;
 
       expect(properties.includeOptional).toBe(true);
       expect(properties.maxPerPrompt).toBe(5);
+    });
+
+    it('should coerce the sign-out prompt property string to a boolean based on the executor default', () => {
+      const steps: Step[] = [
+        createMockStep({
+          id: 'session-sign-out-step',
+          type: 'TASK_EXECUTION',
+          data: {
+            action: {
+              executor: {name: 'SessionSignOutExecutor'},
+            },
+            properties: {
+              promptOnSignOut: 'true',
+            },
+          },
+        }),
+      ];
+
+      const resources = createMockResources({
+        executors: [
+          createMockStep({
+            type: 'TASK_EXECUTION',
+            data: {
+              action: {
+                executor: {name: 'SessionSignOutExecutor'},
+              },
+              properties: {
+                promptOnSignOut: false,
+              },
+            },
+          }),
+        ],
+      });
+
+      const result = resolveStepMetadata(resources, steps);
+
+      expect(result[0].data.properties!.promptOnSignOut).toBe(true);
     });
 
     it('should fall back to executor defaults for invalid numeric strings in persisted executor properties', () => {
@@ -281,7 +318,7 @@ describe('resolveStepMetadata', () => {
       });
 
       const result = resolveStepMetadata(resources, steps);
-      const properties = result[0].data?.properties as Record<string, unknown>;
+      const properties = result[0].data.properties!;
 
       expect(properties.maxPerPrompt).toBe(0);
     });
@@ -319,7 +356,7 @@ describe('resolveStepMetadata', () => {
       });
 
       const result = resolveStepMetadata(resources, steps);
-      const properties = result[0].data?.properties as Record<string, unknown>;
+      const properties = result[0].data.properties!;
 
       expect(properties.includeOptional).toBe(false);
     });
@@ -349,7 +386,7 @@ describe('resolveStepMetadata', () => {
       });
 
       const result = resolveStepMetadata(resources, steps);
-      const properties = result[0].data?.properties as Record<string, unknown>;
+      const properties = result[0].data.properties!;
 
       expect(properties.maxPerPrompt).toBe(3);
     });
@@ -379,7 +416,7 @@ describe('resolveStepMetadata', () => {
       });
 
       const result = resolveStepMetadata(resources, steps);
-      const properties = result[0].data?.properties as Record<string, unknown>;
+      const properties = result[0].data.properties!;
 
       expect(properties.includeOptional).toBe(false);
     });
@@ -409,7 +446,7 @@ describe('resolveStepMetadata', () => {
       });
 
       const result = resolveStepMetadata(resources, steps);
-      const properties = result[0].data?.properties as Record<string, unknown>;
+      const properties = result[0].data.properties!;
 
       expect(properties.assignGroup).toBe('my-group');
     });
@@ -417,11 +454,11 @@ describe('resolveStepMetadata', () => {
     it('should resolve executor metadata with mode matching', () => {
       const steps: Step[] = [
         createMockStep({
-          id: 'sms-step',
+          id: 'otp-step',
           type: 'TASK_EXECUTION',
           data: {
             action: {
-              executor: {name: 'SMSOTPAuthExecutor', mode: 'SEND'},
+              executor: {name: 'OTPExecutor', mode: 'generate'},
             },
           },
         }),
@@ -433,26 +470,26 @@ describe('resolveStepMetadata', () => {
           createMockStep({
             type: 'TASK_EXECUTION',
             display: {
-              label: 'Send SMS OTP',
-              image: '/images/sms-send.svg',
+              label: 'Generate OTP',
+              image: '/images/otp-generate.svg',
               showOnResourcePanel: true,
             },
             data: {
               action: {
-                executor: {name: 'SMSOTPAuthExecutor', mode: 'SEND'},
+                executor: {name: 'OTPExecutor', mode: 'generate'},
               },
             },
           }),
           createMockStep({
             type: 'TASK_EXECUTION',
             display: {
-              label: 'Verify SMS OTP',
-              image: '/images/sms-verify.svg',
+              label: 'Verify OTP',
+              image: '/images/otp-verify.svg',
               showOnResourcePanel: true,
             },
             data: {
               action: {
-                executor: {name: 'SMSOTPAuthExecutor', mode: 'VERIFY'},
+                executor: {name: 'OTPExecutor', mode: 'verify'},
               },
             },
           }),
@@ -461,18 +498,18 @@ describe('resolveStepMetadata', () => {
 
       const result = resolveStepMetadata(resources, steps);
 
-      expect(result[0].display.label).toBe('Send SMS OTP');
-      expect(result[0].display.image).toBe('/images/sms-send.svg');
+      expect(result[0].display.label).toBe('Generate OTP');
+      expect(result[0].display.image).toBe('/images/otp-generate.svg');
     });
 
     it('should fall back to first matching executor when step has no mode', () => {
       const steps: Step[] = [
         createMockStep({
-          id: 'sms-step',
+          id: 'otp-step',
           type: 'TASK_EXECUTION',
           data: {
             action: {
-              executor: {name: 'SMSOTPAuthExecutor'},
+              executor: {name: 'OTPExecutor'},
             },
           },
         }),
@@ -483,13 +520,13 @@ describe('resolveStepMetadata', () => {
           createMockStep({
             type: 'TASK_EXECUTION',
             display: {
-              label: 'SMS OTP First',
-              image: '/images/sms.svg',
+              label: 'Generate OTP',
+              image: '/images/otp-generate.svg',
               showOnResourcePanel: true,
             },
             data: {
               action: {
-                executor: {name: 'SMSOTPAuthExecutor', mode: 'SEND'},
+                executor: {name: 'OTPExecutor', mode: 'generate'},
               },
             },
           }),
@@ -498,7 +535,7 @@ describe('resolveStepMetadata', () => {
 
       const result = resolveStepMetadata(resources, steps);
 
-      expect(result[0].display.label).toBe('SMS OTP First');
+      expect(result[0].display.label).toBe('Generate OTP');
     });
 
     it('should merge executor display into step data as well', () => {

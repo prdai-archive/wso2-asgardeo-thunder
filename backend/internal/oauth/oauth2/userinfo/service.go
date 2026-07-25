@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2025, WSO2 LLC. (https://www.wso2.com).
+ * Copyright (c) 2025-2026, WSO2 LLC. (https://www.wso2.com).
  *
  * WSO2 LLC. licenses this file to you under the Apache License,
  * Version 2.0 (the "License"); you may not use this file except
@@ -22,40 +22,43 @@ package userinfo
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"slices"
 
+	tidcommon "github.com/thunder-id/thunderid/pkg/thunderidengine/common"
+
 	"github.com/thunder-id/thunderid/internal/attributecache"
-	"github.com/thunder-id/thunderid/internal/inboundclient"
-	inboundmodel "github.com/thunder-id/thunderid/internal/inboundclient/model"
+	oauthconfig "github.com/thunder-id/thunderid/internal/oauth/config"
 	"github.com/thunder-id/thunderid/internal/oauth/oauth2/constants"
 	"github.com/thunder-id/thunderid/internal/oauth/oauth2/dpop"
 	"github.com/thunder-id/thunderid/internal/oauth/oauth2/jwksresolver"
 	"github.com/thunder-id/thunderid/internal/oauth/oauth2/model"
+	"github.com/thunder-id/thunderid/internal/oauth/oauth2/revocation"
 	"github.com/thunder-id/thunderid/internal/oauth/oauth2/tokenservice"
 	oauth2utils "github.com/thunder-id/thunderid/internal/oauth/oauth2/utils"
-	"github.com/thunder-id/thunderid/internal/system/config"
-	"github.com/thunder-id/thunderid/internal/system/error/serviceerror"
 	"github.com/thunder-id/thunderid/internal/system/jose/jwe"
 	"github.com/thunder-id/thunderid/internal/system/jose/jwt"
 	"github.com/thunder-id/thunderid/internal/system/log"
+	"github.com/thunder-id/thunderid/pkg/thunderidengine/providers"
 )
 
 const serviceLoggerComponentName = "UserInfoService"
 
 // userInfoServiceInterface defines the interface for OIDC UserInfo endpoint.
 type userInfoServiceInterface interface {
-	GetUserInfo(ctx context.Context, accessToken string) (*UserInfoResponse, *serviceerror.ServiceError)
+	GetUserInfo(ctx context.Context, accessToken string) (*UserInfoResponse, *tidcommon.ServiceError)
 	GetUserInfoForDPoP(ctx context.Context, accessToken, proof, htm, htu string) (
-		*UserInfoResponse, *serviceerror.ServiceError)
+		*UserInfoResponse, *tidcommon.ServiceError)
 }
 
 // userInfoService implements the userInfoServiceInterface.
 type userInfoService struct {
+	cfg               oauthconfig.Config
 	jwtService        jwt.JWTServiceInterface
 	jweService        jwe.JWEServiceInterface
 	jwksResolver      *jwksresolver.Resolver
 	tokenValidator    tokenservice.TokenValidatorInterface
-	inboundClient     inboundclient.InboundClientServiceInterface
+	inboundClient     providers.ActorProvider
 	attributeCacheSvc attributecache.AttributeCacheServiceInterface
 	dpopVerifier      dpop.VerifierInterface
 	logger            *log.Logger
@@ -67,17 +70,19 @@ func newUserInfoService(
 	jweService jwe.JWEServiceInterface,
 	resolver *jwksresolver.Resolver,
 	tokenValidator tokenservice.TokenValidatorInterface,
-	inboundClient inboundclient.InboundClientServiceInterface,
+	actorProvider providers.ActorProvider,
 	attributeCacheSvc attributecache.AttributeCacheServiceInterface,
 	dpopVerifier dpop.VerifierInterface,
+	cfg oauthconfig.Config,
 ) userInfoServiceInterface {
 	logger := log.GetLogger().With(log.String(log.LoggerKeyComponentName, serviceLoggerComponentName))
 	return &userInfoService{
+		cfg:               cfg,
 		jwtService:        jwtService,
 		jweService:        jweService,
 		jwksResolver:      resolver,
 		tokenValidator:    tokenValidator,
-		inboundClient:     inboundClient,
+		inboundClient:     actorProvider,
 		attributeCacheSvc: attributeCacheSvc,
 		dpopVerifier:      dpopVerifier,
 		logger:            logger,
@@ -88,20 +93,23 @@ func newUserInfoService(
 // access token presented under Bearer is rejected as a downgrade.
 func (s *userInfoService) GetUserInfo(
 	ctx context.Context, accessToken string,
-) (*UserInfoResponse, *serviceerror.ServiceError) {
+) (*UserInfoResponse, *tidcommon.ServiceError) {
 	if accessToken == "" {
 		return nil, &errorInvalidAccessToken
 	}
 
 	accessTokenClaims, err := s.tokenValidator.ValidateAccessToken(ctx, accessToken)
 	if err != nil {
-		s.logger.Debug("Failed to verify access token", log.Error(err))
+		s.logger.Debug(ctx, "Failed to verify access token", log.Error(err))
+		if errors.Is(err, revocation.ErrEnforcementUnavailable) {
+			return nil, &errorRevocationUnavailable
+		}
 		return nil, &errorInvalidAccessToken
 	}
 
 	boundJkt, _ := dpop.ExtractCnfJkt(accessTokenClaims.Claims)
 	if boundJkt != "" {
-		s.logger.Debug("DPoP-bound access token presented under Bearer scheme")
+		s.logger.Debug(ctx, "DPoP-bound access token presented under Bearer scheme")
 		return nil, &errorBearerDowngrade
 	}
 
@@ -113,26 +121,29 @@ func (s *userInfoService) GetUserInfo(
 // access token (via ath).
 func (s *userInfoService) GetUserInfoForDPoP(
 	ctx context.Context, accessToken, proof, htm, htu string,
-) (*UserInfoResponse, *serviceerror.ServiceError) {
+) (*UserInfoResponse, *tidcommon.ServiceError) {
 	if accessToken == "" {
 		return nil, &errorInvalidAccessToken
 	}
 
 	accessTokenClaims, err := s.tokenValidator.ValidateAccessToken(ctx, accessToken)
 	if err != nil {
-		s.logger.Debug("Failed to verify access token", log.Error(err))
+		s.logger.Debug(ctx, "Failed to verify access token", log.Error(err))
+		if errors.Is(err, revocation.ErrEnforcementUnavailable) {
+			return nil, &errorRevocationUnavailable
+		}
 		return nil, &errorInvalidAccessToken
 	}
 
 	expectedJkt, _ := dpop.ExtractCnfJkt(accessTokenClaims.Claims)
 	if expectedJkt == "" {
-		s.logger.Debug("DPoP scheme used with non-bound access token")
+		s.logger.Debug(ctx, "DPoP scheme used with non-bound access token")
 		return nil, &errorDPoPProofInvalid
 	}
 
 	if s.dpopVerifier == nil {
-		s.logger.Error("DPoP verifier not configured")
-		return nil, &serviceerror.InternalServerError
+		s.logger.Error(ctx, "DPoP verifier not configured")
+		return nil, &tidcommon.InternalServerError
 	}
 	if _, dpopErr := s.dpopVerifier.Verify(ctx, dpop.VerifyParams{
 		Proof:       proof,
@@ -141,7 +152,7 @@ func (s *userInfoService) GetUserInfoForDPoP(
 		AccessToken: accessToken,
 		ExpectedJkt: expectedJkt,
 	}); dpopErr != nil {
-		s.logger.Debug("DPoP proof verification failed", log.Error(dpopErr))
+		s.logger.Debug(ctx, "DPoP proof verification failed", log.Error(dpopErr))
 		return nil, &errorDPoPProofInvalid
 	}
 
@@ -151,18 +162,18 @@ func (s *userInfoService) GetUserInfoForDPoP(
 // buildResponseFromClaims builds the UserInfo response from validated access token claims.
 func (s *userInfoService) buildResponseFromClaims(
 	ctx context.Context, accessTokenClaims *tokenservice.AccessTokenClaims,
-) (*UserInfoResponse, *serviceerror.ServiceError) {
+) (*UserInfoResponse, *tidcommon.ServiceError) {
 	tokenClaims := accessTokenClaims.Claims
 	sub := accessTokenClaims.Sub
 
-	if svcErr := s.validateGrantType(tokenClaims); svcErr != nil {
+	if svcErr := s.validateGrantType(ctx, tokenClaims); svcErr != nil {
 		return nil, svcErr
 	}
 
 	scopes := s.extractScopes(tokenClaims)
 
 	// Validate that the 'openid' scope is present
-	if svcErr := s.validateOpenIDScope(scopes); svcErr != nil {
+	if svcErr := s.validateOpenIDScope(ctx, scopes); svcErr != nil {
 		return nil, svcErr
 	}
 
@@ -182,35 +193,36 @@ func (s *userInfoService) buildResponseFromClaims(
 	userAttributes, err := tokenservice.FetchUserAttributes(ctx, s.attributeCacheSvc,
 		allowedUserAttributes, attributeCacheID)
 	if err != nil {
-		s.logger.Error("Failed to fetch user attributes", log.MaskedString(log.LoggerKeyUserID, sub), log.Error(err))
-		return nil, &serviceerror.InternalServerError
+		s.logger.Error(ctx, "Failed to fetch user attributes",
+			log.MaskedString(log.LoggerKeyUserID, sub), log.Error(err))
+		return nil, &tidcommon.InternalServerError
 	}
 
-	response, svcErr := s.buildUserInfoResponse(sub, scopes, userAttributes, oauthApp, tokenClaims)
+	response, svcErr := s.buildUserInfoResponse(ctx, sub, scopes, userAttributes, oauthApp, tokenClaims)
 	if svcErr != nil {
 		return nil, svcErr
 	}
 
-	var userInfoCfg *inboundmodel.UserInfoConfig
-	var certificate *inboundmodel.Certificate
+	var userInfoCfg *providers.UserInfoConfig
+	var certificate *providers.Certificate
 	if oauthApp != nil {
 		userInfoCfg = oauthApp.UserInfo
 		certificate = oauthApp.Certificate
 	}
 
-	responseType := inboundmodel.UserInfoResponseTypeJSON
+	responseType := providers.UserInfoResponseTypeJSON
 	if userInfoCfg != nil {
 		responseType = userInfoCfg.ResponseType
 	}
 	switch responseType {
-	case inboundmodel.UserInfoResponseTypeNESTEDJWT:
+	case providers.UserInfoResponseTypeNESTEDJWT:
 		return s.generateNestedJWTUserInfo(ctx, sub, tokenClaims, response, userInfoCfg, certificate)
-	case inboundmodel.UserInfoResponseTypeJWE:
+	case providers.UserInfoResponseTypeJWE:
 		return s.generateJWEUserInfo(ctx, response, userInfoCfg, certificate)
-	case inboundmodel.UserInfoResponseTypeJWS:
+	case providers.UserInfoResponseTypeJWS:
 		return s.generateJWSUserInfo(ctx, sub, tokenClaims, response, userInfoCfg)
 	default:
-		return &UserInfoResponse{Type: inboundmodel.UserInfoResponseTypeJSON, JSONBody: response}, nil
+		return &UserInfoResponse{Type: providers.UserInfoResponseTypeJSON, JSONBody: response}, nil
 	}
 }
 
@@ -218,9 +230,9 @@ func (s *userInfoService) buildResponseFromClaims(
 func (s *userInfoService) generateJWEUserInfo(
 	ctx context.Context,
 	response map[string]interface{},
-	cfg *inboundmodel.UserInfoConfig,
-	certificate *inboundmodel.Certificate,
-) (*UserInfoResponse, *serviceerror.ServiceError) {
+	cfg *providers.UserInfoConfig,
+	certificate *providers.Certificate,
+) (*UserInfoResponse, *tidcommon.ServiceError) {
 	rpKey, rpKID, svcErr := s.jwksResolver.ResolveEncryptionKey(
 		ctx, certificate, cfg.EncryptionAlg, jwksresolver.KeyUseStrictEnc)
 	if svcErr != nil {
@@ -229,11 +241,11 @@ func (s *userInfoService) generateJWEUserInfo(
 
 	payload, err := json.Marshal(response)
 	if err != nil {
-		s.logger.Error("Failed to marshal userinfo claims for JWE")
-		return nil, &serviceerror.InternalServerError
+		s.logger.Error(ctx, "Failed to marshal userinfo claims for JWE")
+		return nil, &tidcommon.InternalServerError
 	}
 
-	compact, svcErr := s.jweService.Encrypt(
+	compact, svcErr := s.jweService.Encrypt(ctx,
 		payload, rpKey,
 		jwe.KeyEncAlgorithm(cfg.EncryptionAlg),
 		jwe.ContentEncAlgorithm(cfg.EncryptionEnc),
@@ -241,11 +253,11 @@ func (s *userInfoService) generateJWEUserInfo(
 		rpKID,
 	)
 	if svcErr != nil {
-		s.logger.Error("Failed to encrypt userinfo JWE")
+		s.logger.Error(ctx, "Failed to encrypt userinfo JWE")
 		return nil, svcErr
 	}
 
-	return &UserInfoResponse{Type: inboundmodel.UserInfoResponseTypeJWE, JWTBody: compact}, nil
+	return &UserInfoResponse{Type: providers.UserInfoResponseTypeJWE, JWTBody: compact}, nil
 }
 
 // generateNestedJWTUserInfo creates a sign-then-encrypt Nested JWT UserInfo response.
@@ -254,9 +266,9 @@ func (s *userInfoService) generateNestedJWTUserInfo(
 	sub string,
 	tokenClaims map[string]interface{},
 	response map[string]interface{},
-	cfg *inboundmodel.UserInfoConfig,
-	certificate *inboundmodel.Certificate,
-) (*UserInfoResponse, *serviceerror.ServiceError) {
+	cfg *providers.UserInfoConfig,
+	certificate *providers.Certificate,
+) (*UserInfoResponse, *tidcommon.ServiceError) {
 	jwsResp, svcErr := s.generateJWSUserInfo(ctx, sub, tokenClaims, response, cfg)
 	if svcErr != nil {
 		return nil, svcErr
@@ -268,7 +280,7 @@ func (s *userInfoService) generateNestedJWTUserInfo(
 		return nil, svcErr
 	}
 
-	compact, svcErr := s.jweService.Encrypt(
+	compact, svcErr := s.jweService.Encrypt(ctx,
 		[]byte(jwsResp.JWTBody), rpKey,
 		jwe.KeyEncAlgorithm(cfg.EncryptionAlg),
 		jwe.ContentEncAlgorithm(cfg.EncryptionEnc),
@@ -276,11 +288,11 @@ func (s *userInfoService) generateNestedJWTUserInfo(
 		rpKID,
 	)
 	if svcErr != nil {
-		s.logger.Error("Failed to encrypt nested JWT userinfo JWE")
+		s.logger.Error(ctx, "Failed to encrypt nested JWT userinfo JWE")
 		return nil, svcErr
 	}
 
-	return &UserInfoResponse{Type: inboundmodel.UserInfoResponseTypeNESTEDJWT, JWTBody: compact}, nil
+	return &UserInfoResponse{Type: providers.UserInfoResponseTypeNESTEDJWT, JWTBody: compact}, nil
 }
 
 // generateJWSUserInfo creates a signed JWT UserInfo response
@@ -290,17 +302,15 @@ func (s *userInfoService) generateJWSUserInfo(
 	sub string,
 	tokenClaims map[string]interface{},
 	response map[string]interface{},
-	cfg *inboundmodel.UserInfoConfig,
-) (*UserInfoResponse, *serviceerror.ServiceError) {
+	cfg *providers.UserInfoConfig,
+) (*UserInfoResponse, *tidcommon.ServiceError) {
 	clientID := ""
 	if cid, ok := tokenClaims["client_id"].(string); ok {
 		clientID = cid
 	}
 
-	runtime := config.GetServerRuntime()
-
-	issuer := runtime.Config.JWT.Issuer
-	validity := runtime.Config.JWT.ValidityPeriod
+	issuer := s.cfg.JWT.Issuer
+	validity := s.cfg.JWT.ValidityPeriod
 
 	response["aud"] = clientID
 	signingAlg := ""
@@ -319,23 +329,24 @@ func (s *userInfoService) generateJWSUserInfo(
 	)
 	if err != nil {
 		if err.Code == jwt.ErrorUnsupportedJWSAlgorithm.Code {
-			s.logger.Error("UserInfo signing algorithm is not supported by the server key",
+			s.logger.Error(ctx, "UserInfo signing algorithm is not supported by the server key",
 				log.String("alg", signingAlg), log.String("error", err.Error.DefaultValue))
 		} else {
-			s.logger.Error("Failed to generate signed UserInfo JWT",
+			s.logger.Error(ctx, "Failed to generate signed UserInfo JWT",
 				log.String("error", err.Error.DefaultValue))
 		}
-		return nil, &serviceerror.InternalServerError
+		return nil, &tidcommon.InternalServerError
 	}
 
 	return &UserInfoResponse{
-		Type:    inboundmodel.UserInfoResponseTypeJWS,
+		Type:    providers.UserInfoResponseTypeJWS,
 		JWTBody: signedJWT,
 	}, nil
 }
 
 // validateGrantType validates that the token was not issued using client_credentials grant.
-func (s *userInfoService) validateGrantType(claims map[string]interface{}) *serviceerror.ServiceError {
+func (s *userInfoService) validateGrantType(
+	ctx context.Context, claims map[string]interface{}) *tidcommon.ServiceError {
 	grantTypeValue, ok := claims["grant_type"]
 	if !ok {
 		return nil
@@ -346,8 +357,8 @@ func (s *userInfoService) validateGrantType(claims map[string]interface{}) *serv
 		return nil
 	}
 
-	if constants.GrantType(grantTypeString) == constants.GrantTypeClientCredentials {
-		s.logger.Debug("UserInfo endpoint called with client_credentials grant token",
+	if providers.GrantType(grantTypeString) == providers.GrantTypeClientCredentials {
+		s.logger.Debug(ctx, "UserInfo endpoint called with client_credentials grant token",
 			log.String("grant_type", grantTypeString))
 		return &errorClientCredentialsNotSupported
 	}
@@ -371,9 +382,9 @@ func (s *userInfoService) extractScopes(claims map[string]interface{}) []string 
 }
 
 // validateOpenIDScope validates that the access token contains the required 'openid' scope.
-func (s *userInfoService) validateOpenIDScope(scopes []string) *serviceerror.ServiceError {
+func (s *userInfoService) validateOpenIDScope(ctx context.Context, scopes []string) *tidcommon.ServiceError {
 	if !slices.Contains(scopes, constants.ScopeOpenID) {
-		s.logger.Debug("UserInfo request missing required 'openid' scope",
+		s.logger.Debug(ctx, "UserInfo request missing required 'openid' scope",
 			log.String("scopes", tokenservice.JoinScopes(scopes)))
 		return &errorInsufficientScope
 	}
@@ -384,14 +395,14 @@ func (s *userInfoService) validateOpenIDScope(scopes []string) *serviceerror.Ser
 // Returns nil when no client_id is present, on error, or when the app is not found.
 func (s *userInfoService) getOAuthApp(
 	ctx context.Context, claims map[string]interface{},
-) *inboundmodel.OAuthClient {
+) *providers.OAuthClient {
 	clientID, ok := claims["client_id"].(string)
 	if !ok || clientID == "" {
 		return nil
 	}
 
-	app, err := s.inboundClient.GetOAuthClientByClientID(ctx, clientID)
-	if err != nil || app == nil {
+	app, svcErr := s.inboundClient.GetOAuthClientByClientID(ctx, clientID)
+	if svcErr != nil || app == nil {
 		return nil
 	}
 
@@ -400,20 +411,20 @@ func (s *userInfoService) getOAuthApp(
 
 // buildUserInfoResponse builds the final UserInfo response from sub, scopes, and user attributes.
 // It also processes any explicit claims request embedded in the access token.
-func (s *userInfoService) buildUserInfoResponse(
+func (s *userInfoService) buildUserInfoResponse(ctx context.Context,
 	sub string,
 	scopes []string,
 	userAttributes map[string]interface{},
-	oauthApp *inboundmodel.OAuthClient,
+	oauthApp *providers.OAuthClient,
 	tokenClaims map[string]interface{},
-) (map[string]interface{}, *serviceerror.ServiceError) {
+) (map[string]interface{}, *tidcommon.ServiceError) {
 	response := map[string]interface{}{
 		"sub": sub,
 	}
 
 	// Build claims from scopes and explicit claims request
 	// Extract only the UserInfo claims map from the access token
-	claimsRequest, svcErr := s.extractClaimsRequest(tokenClaims)
+	claimsRequest, svcErr := s.extractClaimsRequest(ctx, tokenClaims)
 	if svcErr != nil {
 		return nil, svcErr
 	}
@@ -447,9 +458,9 @@ func (s *userInfoService) buildUserInfoResponse(
 }
 
 // extractClaimsRequest extracts the claims request from the access token if present.
-func (s *userInfoService) extractClaimsRequest(
+func (s *userInfoService) extractClaimsRequest(ctx context.Context,
 	tokenClaims map[string]interface{},
-) (*model.ClaimsRequest, *serviceerror.ServiceError) {
+) (*model.ClaimsRequest, *tidcommon.ServiceError) {
 	claimsRequestStr, ok := tokenClaims[constants.ClaimClaimsRequest].(string)
 	if !ok || claimsRequestStr == "" {
 		return nil, nil
@@ -457,8 +468,8 @@ func (s *userInfoService) extractClaimsRequest(
 
 	claimsRequest, err := oauth2utils.ParseClaimsRequest(claimsRequestStr)
 	if err != nil {
-		s.logger.Error("Failed to parse claims request from access token", log.Error(err))
-		return nil, &serviceerror.InternalServerError
+		s.logger.Error(ctx, "Failed to parse claims request from access token", log.Error(err))
+		return nil, &tidcommon.InternalServerError
 	}
 
 	return claimsRequest, nil

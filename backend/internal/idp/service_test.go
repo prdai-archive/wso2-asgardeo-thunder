@@ -23,15 +23,21 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/thunder-id/thunderid/pkg/thunderidengine/providers"
+
+	tidcommon "github.com/thunder-id/thunderid/pkg/thunderidengine/common"
+
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/suite"
 
+	"github.com/thunder-id/thunderid/internal/entitytype"
 	"github.com/thunder-id/thunderid/internal/system/cmodels"
 	"github.com/thunder-id/thunderid/internal/system/config"
 	declarativeresource "github.com/thunder-id/thunderid/internal/system/declarative_resource"
-	"github.com/thunder-id/thunderid/internal/system/error/serviceerror"
 	"github.com/thunder-id/thunderid/internal/system/log"
+	"github.com/thunder-id/thunderid/internal/system/resourcedependency"
 	"github.com/thunder-id/thunderid/internal/system/utils"
+	"github.com/thunder-id/thunderid/tests/mocks/entitytypemock"
 )
 
 type mockTransactioner struct{}
@@ -40,9 +46,42 @@ func (m *mockTransactioner) Transact(ctx context.Context, operation func(txCtx c
 	return operation(ctx)
 }
 
+// stubDependencyRegistry is a minimal resourcedependency.Registry for tests.
+type stubDependencyRegistry struct {
+	resp *resourcedependency.DependenciesResponse
+	err  error
+}
+
+func (r *stubDependencyRegistry) RegisterProvider(resourcedependency.Provider) {}
+
+func (r *stubDependencyRegistry) GetDependencies(
+	context.Context, string, string) (*resourcedependency.DependenciesResponse, error) {
+	return r.resp, r.err
+}
+
+func (r *stubDependencyRegistry) CascadeDelete(context.Context, string, string) (int, error) {
+	return 0, nil
+}
+
+func (r *stubDependencyRegistry) ValidateReferenceUpdate(
+	context.Context, string, string) *tidcommon.ServiceError {
+	return nil
+}
+
+// newNoBlockingDepsRegistry returns a registry reporting confirmed-empty dependencies, so that
+// deletion is permitted by the blocking guard.
+func newNoBlockingDepsRegistry() *stubDependencyRegistry {
+	total := 0
+	return &stubDependencyRegistry{resp: &resourcedependency.DependenciesResponse{
+		TotalResults: &total,
+		Usages:       []resourcedependency.ResourceDependency{},
+	}}
+}
+
 type IDPServiceTestSuite struct {
 	suite.Suite
 	mockStore  *idpStoreInterfaceMock
+	mockET     *entitytypemock.EntityTypeServiceInterfaceMock
 	idpService *idpService
 }
 
@@ -65,11 +104,14 @@ func (s *IDPServiceTestSuite) SetupTest() {
 	_ = config.InitializeServerRuntime("/tmp/test", testConfig)
 
 	s.mockStore = newIdpStoreInterfaceMock(s.T())
+	s.mockET = entitytypemock.NewEntityTypeServiceInterfaceMock(s.T())
 	s.idpService = &idpService{
-		idpStore:      s.mockStore,
-		transactioner: &mockTransactioner{},
-		logger:        log.GetLogger().With(log.String(log.LoggerKeyComponentName, "IdPService")),
-		uuidGenerator: utils.GenerateUUIDv7,
+		idpStore:           s.mockStore,
+		transactioner:      &mockTransactioner{},
+		dependencyRegistry: newNoBlockingDepsRegistry(),
+		logger:             log.GetLogger().With(log.String(log.LoggerKeyComponentName, "IdPService")),
+		uuidGenerator:      utils.GenerateUUIDv7,
+		entityTypeService:  s.mockET,
 	}
 }
 
@@ -88,16 +130,17 @@ func createOIDCProperties() []cmodels.Property {
 
 // TestCreateIdentityProvider_Success tests successful IDP creation
 func (s *IDPServiceTestSuite) TestCreateIdentityProvider_Success() {
-	idp := &IDPDTO{
+	idp := &providers.IDPDTO{
 		Name:        "Test IDP",
 		Description: "Test Description",
-		Type:        IDPTypeOIDC,
+		Type:        providers.IDPTypeOIDC,
 		Properties:  createOIDCProperties(),
 	}
 
-	s.mockStore.On("GetIdentityProviderByName", mock.Anything, "Test IDP").Return((*IDPDTO)(nil), ErrIDPNotFound)
-	s.mockStore.On("CreateIdentityProvider", mock.Anything, mock.MatchedBy(func(dto IDPDTO) bool {
-		return dto.Name == "Test IDP" && dto.Type == IDPTypeOIDC && dto.ID != ""
+	s.mockStore.On("GetIdentityProviderByName", mock.Anything, "Test IDP").
+		Return((*providers.IDPDTO)(nil), ErrIDPNotFound)
+	s.mockStore.On("CreateIdentityProvider", mock.Anything, mock.MatchedBy(func(dto providers.IDPDTO) bool {
+		return dto.Name == "Test IDP" && dto.Type == providers.IDPTypeOIDC && dto.ID != ""
 	})).Return(nil)
 
 	result, err := s.idpService.CreateIdentityProvider(context.Background(), idp)
@@ -123,7 +166,7 @@ func (s *IDPServiceTestSuite) TestCreateIdentityProvider_InvalidName() {
 	testCases := []struct {
 		name     string
 		idpName  string
-		expected serviceerror.ServiceError
+		expected tidcommon.ServiceError
 	}{
 		{"Empty name", "", ErrorInvalidIDPName},
 		{"Whitespace name", "   ", ErrorInvalidIDPName},
@@ -131,9 +174,9 @@ func (s *IDPServiceTestSuite) TestCreateIdentityProvider_InvalidName() {
 
 	for _, tc := range testCases {
 		s.Run(tc.name, func() {
-			idp := &IDPDTO{
+			idp := &providers.IDPDTO{
 				Name: tc.idpName,
-				Type: IDPTypeOIDC,
+				Type: providers.IDPTypeOIDC,
 			}
 
 			result, err := s.idpService.CreateIdentityProvider(context.Background(), idp)
@@ -149,15 +192,15 @@ func (s *IDPServiceTestSuite) TestCreateIdentityProvider_InvalidName() {
 func (s *IDPServiceTestSuite) TestCreateIdentityProvider_InvalidType() {
 	testCases := []struct {
 		name    string
-		idpType IDPType
+		idpType providers.IDPType
 	}{
-		{"Empty type", IDPType("")},
-		{"Invalid type", IDPType("INVALID")},
+		{"Empty type", providers.IDPType("")},
+		{"Invalid type", providers.IDPType("INVALID")},
 	}
 
 	for _, tc := range testCases {
 		s.Run(tc.name, func() {
-			idp := &IDPDTO{
+			idp := &providers.IDPDTO{
 				Name: "Test IDP",
 				Type: tc.idpType,
 			}
@@ -173,13 +216,13 @@ func (s *IDPServiceTestSuite) TestCreateIdentityProvider_InvalidType() {
 
 // TestCreateIdentityProvider_AlreadyExists tests duplicate IDP name
 func (s *IDPServiceTestSuite) TestCreateIdentityProvider_AlreadyExists() {
-	idp := &IDPDTO{
+	idp := &providers.IDPDTO{
 		Name:       "Existing IDP",
-		Type:       IDPTypeOIDC,
+		Type:       providers.IDPTypeOIDC,
 		Properties: createOIDCProperties(),
 	}
 
-	existingIDP := &IDPDTO{ID: "existing-id", Name: "Existing IDP"}
+	existingIDP := &providers.IDPDTO{ID: "existing-id", Name: "Existing IDP"}
 	s.mockStore.On("GetIdentityProviderByName", mock.Anything, "Existing IDP").Return(existingIDP, nil)
 
 	result, err := s.idpService.CreateIdentityProvider(context.Background(), idp)
@@ -192,55 +235,57 @@ func (s *IDPServiceTestSuite) TestCreateIdentityProvider_AlreadyExists() {
 
 // TestCreateIdentityProvider_CheckExistingStoreError tests store error when checking existing IDP
 func (s *IDPServiceTestSuite) TestCreateIdentityProvider_CheckExistingStoreError() {
-	idp := &IDPDTO{
+	idp := &providers.IDPDTO{
 		Name:       "Test IDP",
-		Type:       IDPTypeOIDC,
+		Type:       providers.IDPTypeOIDC,
 		Properties: createOIDCProperties(),
 	}
 
 	s.mockStore.On("GetIdentityProviderByName", mock.Anything, "Test IDP").
-		Return((*IDPDTO)(nil), errors.New("database error"))
+		Return((*providers.IDPDTO)(nil), errors.New("database error"))
 
 	result, err := s.idpService.CreateIdentityProvider(context.Background(), idp)
 
 	s.Nil(result)
 	s.NotNil(err)
-	s.Equal(serviceerror.InternalServerError.Code, err.Code)
+	s.Equal(tidcommon.InternalServerError.Code, err.Code)
 	s.mockStore.AssertExpectations(s.T())
 }
 
 // TestCreateIdentityProvider_StoreError tests store error handling
 func (s *IDPServiceTestSuite) TestCreateIdentityProvider_StoreError() {
-	idp := &IDPDTO{
+	idp := &providers.IDPDTO{
 		Name:       "Test IDP",
-		Type:       IDPTypeOIDC,
+		Type:       providers.IDPTypeOIDC,
 		Properties: createOIDCProperties(),
 	}
 
-	s.mockStore.On("GetIdentityProviderByName", mock.Anything, "Test IDP").Return((*IDPDTO)(nil), ErrIDPNotFound)
+	s.mockStore.On("GetIdentityProviderByName", mock.Anything, "Test IDP").
+		Return((*providers.IDPDTO)(nil), ErrIDPNotFound)
 	s.mockStore.On("CreateIdentityProvider", mock.Anything, mock.Anything).Return(errors.New("database error"))
 
 	result, err := s.idpService.CreateIdentityProvider(context.Background(), idp)
 
 	s.Nil(result)
 	s.NotNil(err)
-	s.Equal(serviceerror.InternalServerError.Code, err.Code)
+	s.Equal(tidcommon.InternalServerError.Code, err.Code)
 	s.mockStore.AssertExpectations(s.T())
 }
 
 // TestCreateIdentityProvider_WithPresetID tests that a preset ID is preserved and not overwritten.
 func (s *IDPServiceTestSuite) TestCreateIdentityProvider_WithPresetID() {
 	presetID := "preset-idp-id-1234"
-	idp := &IDPDTO{
+	idp := &providers.IDPDTO{
 		ID:          presetID,
 		Name:        "Test IDP",
 		Description: "Test Description",
-		Type:        IDPTypeOIDC,
+		Type:        providers.IDPTypeOIDC,
 		Properties:  createOIDCProperties(),
 	}
 
-	s.mockStore.On("GetIdentityProviderByName", mock.Anything, "Test IDP").Return((*IDPDTO)(nil), ErrIDPNotFound)
-	s.mockStore.On("CreateIdentityProvider", mock.Anything, mock.MatchedBy(func(dto IDPDTO) bool {
+	s.mockStore.On("GetIdentityProviderByName", mock.Anything, "Test IDP").
+		Return((*providers.IDPDTO)(nil), ErrIDPNotFound)
+	s.mockStore.On("CreateIdentityProvider", mock.Anything, mock.MatchedBy(func(dto providers.IDPDTO) bool {
 		return dto.ID == presetID
 	})).Return(nil)
 
@@ -254,9 +299,9 @@ func (s *IDPServiceTestSuite) TestCreateIdentityProvider_WithPresetID() {
 
 // TestCreateIdentityProvider_UUIDGenerationError tests that a UUID generation failure returns InternalServerError.
 func (s *IDPServiceTestSuite) TestCreateIdentityProvider_UUIDGenerationError() {
-	idp := &IDPDTO{
+	idp := &providers.IDPDTO{
 		Name:       "Test IDP",
-		Type:       IDPTypeOIDC,
+		Type:       providers.IDPTypeOIDC,
 		Properties: createOIDCProperties(),
 	}
 
@@ -268,14 +313,14 @@ func (s *IDPServiceTestSuite) TestCreateIdentityProvider_UUIDGenerationError() {
 
 	s.Nil(result)
 	s.NotNil(err)
-	s.Equal(serviceerror.InternalServerError.Code, err.Code)
+	s.Equal(tidcommon.InternalServerError.Code, err.Code)
 }
 
 // TestGetIdentityProviderList_Success tests successful list retrieval
 func (s *IDPServiceTestSuite) TestGetIdentityProviderList_Success() {
 	idpList := []BasicIDPDTO{
-		{ID: "idp-1", Name: "IDP 1", Type: IDPTypeOIDC},
-		{ID: "idp-2", Name: "IDP 2", Type: IDPTypeGoogle},
+		{ID: "idp-1", Name: "IDP 1", Type: providers.IDPTypeOIDC},
+		{ID: "idp-2", Name: "IDP 2", Type: providers.IDPTypeGoogle},
 	}
 
 	s.mockStore.On("GetIdentityProviderList", mock.Anything).Return(idpList, nil)
@@ -309,17 +354,17 @@ func (s *IDPServiceTestSuite) TestGetIdentityProviderList_StoreError() {
 
 	s.Nil(result)
 	s.NotNil(err)
-	s.Equal(serviceerror.InternalServerError.Code, err.Code)
+	s.Equal(tidcommon.InternalServerError.Code, err.Code)
 	s.mockStore.AssertExpectations(s.T())
 }
 
 // TestGetIdentityProvider_Success tests successful IDP retrieval
 func (s *IDPServiceTestSuite) TestGetIdentityProvider_Success() {
-	idp := &IDPDTO{
+	idp := &providers.IDPDTO{
 		ID:          "idp-123",
 		Name:        "Test IDP",
 		Description: "Test Description",
-		Type:        IDPTypeOIDC,
+		Type:        providers.IDPTypeOIDC,
 	}
 
 	s.mockStore.On("GetIdentityProvider", mock.Anything, "idp-123").Return(idp, nil)
@@ -344,7 +389,8 @@ func (s *IDPServiceTestSuite) TestGetIdentityProvider_EmptyID() {
 
 // TestGetIdentityProvider_NotFound tests IDP not found
 func (s *IDPServiceTestSuite) TestGetIdentityProvider_NotFound() {
-	s.mockStore.On("GetIdentityProvider", mock.Anything, "non-existent").Return((*IDPDTO)(nil), ErrIDPNotFound)
+	s.mockStore.On("GetIdentityProvider", mock.Anything, "non-existent").
+		Return((*providers.IDPDTO)(nil), ErrIDPNotFound)
 
 	result, err := s.idpService.GetIdentityProvider(context.Background(), "non-existent")
 
@@ -356,22 +402,23 @@ func (s *IDPServiceTestSuite) TestGetIdentityProvider_NotFound() {
 
 // TestGetIdentityProvider_StoreError tests store error handling
 func (s *IDPServiceTestSuite) TestGetIdentityProvider_StoreError() {
-	s.mockStore.On("GetIdentityProvider", mock.Anything, "idp-123").Return((*IDPDTO)(nil), errors.New("database error"))
+	s.mockStore.On("GetIdentityProvider", mock.Anything, "idp-123").
+		Return((*providers.IDPDTO)(nil), errors.New("database error"))
 
 	result, err := s.idpService.GetIdentityProvider(context.Background(), "idp-123")
 
 	s.Nil(result)
 	s.NotNil(err)
-	s.Equal(serviceerror.InternalServerError.Code, err.Code)
+	s.Equal(tidcommon.InternalServerError.Code, err.Code)
 	s.mockStore.AssertExpectations(s.T())
 }
 
 // TestGetIdentityProviderByName_Success tests successful IDP retrieval by name
 func (s *IDPServiceTestSuite) TestGetIdentityProviderByName_Success() {
-	idp := &IDPDTO{
+	idp := &providers.IDPDTO{
 		ID:   "idp-123",
 		Name: "Test IDP",
-		Type: IDPTypeOIDC,
+		Type: providers.IDPTypeOIDC,
 	}
 
 	s.mockStore.On("GetIdentityProviderByName", mock.Anything, "Test IDP").Return(idp, nil)
@@ -395,7 +442,8 @@ func (s *IDPServiceTestSuite) TestGetIdentityProviderByName_EmptyName() {
 
 // TestGetIdentityProviderByName_NotFound tests IDP not found
 func (s *IDPServiceTestSuite) TestGetIdentityProviderByName_NotFound() {
-	s.mockStore.On("GetIdentityProviderByName", mock.Anything, "Non-existent").Return((*IDPDTO)(nil), ErrIDPNotFound)
+	s.mockStore.On("GetIdentityProviderByName", mock.Anything, "Non-existent").
+		Return((*providers.IDPDTO)(nil), ErrIDPNotFound)
 
 	result, err := s.idpService.GetIdentityProviderByName(context.Background(), "Non-existent")
 
@@ -408,24 +456,24 @@ func (s *IDPServiceTestSuite) TestGetIdentityProviderByName_NotFound() {
 // TestGetIdentityProviderByName_StoreError tests store error handling
 func (s *IDPServiceTestSuite) TestGetIdentityProviderByName_StoreError() {
 	s.mockStore.On("GetIdentityProviderByName", mock.Anything, "Test").
-		Return((*IDPDTO)(nil), errors.New("database error"))
+		Return((*providers.IDPDTO)(nil), errors.New("database error"))
 
 	result, err := s.idpService.GetIdentityProviderByName(context.Background(), "Test")
 
 	s.Nil(result)
 	s.NotNil(err)
-	s.Equal(serviceerror.InternalServerError.Code, err.Code)
+	s.Equal(tidcommon.InternalServerError.Code, err.Code)
 	s.mockStore.AssertExpectations(s.T())
 }
 
 // TestGetIdentityProvidersByProperty_Success tests successful IDP retrieval by property
 func (s *IDPServiceTestSuite) TestGetIdentityProvidersByProperty_Success() {
 	prop, _ := cmodels.NewProperty(PropIssuer, "https://idp.example.com", false)
-	idps := []IDPDTO{
+	idps := []providers.IDPDTO{
 		{
 			ID:         "idp-123",
 			Name:       "Test IDP",
-			Type:       IDPTypeOIDC,
+			Type:       providers.IDPTypeOIDC,
 			Properties: []cmodels.Property{*prop},
 		},
 	}
@@ -464,7 +512,7 @@ func (s *IDPServiceTestSuite) TestGetIdentityProvidersByProperty_EmptyValue() {
 // TestGetIdentityProvidersByProperty_NotFound tests IDP not found by property
 func (s *IDPServiceTestSuite) TestGetIdentityProvidersByProperty_NotFound() {
 	s.mockStore.On("GetIdentityProvidersByProperty", mock.Anything, "issuer", "https://unknown.example.com").
-		Return([]IDPDTO(nil), ErrIDPNotFound)
+		Return([]providers.IDPDTO(nil), ErrIDPNotFound)
 
 	result, err := s.idpService.GetIdentityProvidersByProperty(
 		context.Background(), "issuer", "https://unknown.example.com")
@@ -478,35 +526,36 @@ func (s *IDPServiceTestSuite) TestGetIdentityProvidersByProperty_NotFound() {
 // TestGetIdentityProvidersByProperty_StoreError tests store error handling
 func (s *IDPServiceTestSuite) TestGetIdentityProvidersByProperty_StoreError() {
 	s.mockStore.On("GetIdentityProvidersByProperty", mock.Anything, "issuer", "https://idp.example.com").
-		Return([]IDPDTO(nil), errors.New("database error"))
+		Return([]providers.IDPDTO(nil), errors.New("database error"))
 
 	result, err := s.idpService.GetIdentityProvidersByProperty(
 		context.Background(), "issuer", "https://idp.example.com")
 
 	s.Nil(result)
 	s.NotNil(err)
-	s.Equal(serviceerror.InternalServerError.Code, err.Code)
+	s.Equal(tidcommon.InternalServerError.Code, err.Code)
 	s.mockStore.AssertExpectations(s.T())
 }
 
 // TestUpdateIdentityProvider_Success tests successful IDP update
 func (s *IDPServiceTestSuite) TestUpdateIdentityProvider_Success() {
-	idp := &IDPDTO{
+	idp := &providers.IDPDTO{
 		Name:       "Updated IDP",
-		Type:       IDPTypeOIDC,
+		Type:       providers.IDPTypeOIDC,
 		Properties: createOIDCProperties(),
 	}
 
-	existingIDP := &IDPDTO{
+	existingIDP := &providers.IDPDTO{
 		ID:         "idp-123",
 		Name:       "Old Name",
-		Type:       IDPTypeOIDC,
+		Type:       providers.IDPTypeOIDC,
 		Properties: createOIDCProperties(),
 	}
 
 	s.mockStore.On("GetIdentityProvider", mock.Anything, "idp-123").Return(existingIDP, nil)
-	s.mockStore.On("GetIdentityProviderByName", mock.Anything, "Updated IDP").Return((*IDPDTO)(nil), ErrIDPNotFound)
-	s.mockStore.On("UpdateIdentityProvider", mock.Anything, mock.MatchedBy(func(dto *IDPDTO) bool {
+	s.mockStore.On("GetIdentityProviderByName", mock.Anything, "Updated IDP").
+		Return((*providers.IDPDTO)(nil), ErrIDPNotFound)
+	s.mockStore.On("UpdateIdentityProvider", mock.Anything, mock.MatchedBy(func(dto *providers.IDPDTO) bool {
 		return dto.ID == "idp-123" && dto.Name == "Updated IDP"
 	})).Return(nil)
 
@@ -521,7 +570,7 @@ func (s *IDPServiceTestSuite) TestUpdateIdentityProvider_Success() {
 
 // TestUpdateIdentityProvider_EmptyID tests empty ID validation
 func (s *IDPServiceTestSuite) TestUpdateIdentityProvider_EmptyID() {
-	idp := &IDPDTO{Name: "Test", Type: IDPTypeOIDC, Properties: createOIDCProperties()}
+	idp := &providers.IDPDTO{Name: "Test", Type: providers.IDPTypeOIDC, Properties: createOIDCProperties()}
 
 	result, err := s.idpService.UpdateIdentityProvider(context.Background(), "", idp)
 
@@ -532,9 +581,10 @@ func (s *IDPServiceTestSuite) TestUpdateIdentityProvider_EmptyID() {
 
 // TestUpdateIdentityProvider_NotFound tests IDP not found
 func (s *IDPServiceTestSuite) TestUpdateIdentityProvider_NotFound() {
-	idp := &IDPDTO{Name: "Test", Type: IDPTypeOIDC, Properties: createOIDCProperties()}
+	idp := &providers.IDPDTO{Name: "Test", Type: providers.IDPTypeOIDC, Properties: createOIDCProperties()}
 
-	s.mockStore.On("GetIdentityProvider", mock.Anything, "non-existent").Return((*IDPDTO)(nil), ErrIDPNotFound)
+	s.mockStore.On("GetIdentityProvider", mock.Anything, "non-existent").
+		Return((*providers.IDPDTO)(nil), ErrIDPNotFound)
 
 	result, err := s.idpService.UpdateIdentityProvider(context.Background(), "non-existent", idp)
 
@@ -546,11 +596,11 @@ func (s *IDPServiceTestSuite) TestUpdateIdentityProvider_NotFound() {
 
 // TestUpdateIdentityProvider_NameConflict tests name conflict during update
 func (s *IDPServiceTestSuite) TestUpdateIdentityProvider_NameConflict() {
-	idp := &IDPDTO{Name: "Existing Name", Type: IDPTypeOIDC, Properties: createOIDCProperties()}
+	idp := &providers.IDPDTO{Name: "Existing Name", Type: providers.IDPTypeOIDC, Properties: createOIDCProperties()}
 
-	existingIDP := &IDPDTO{ID: "idp-123", Name: "Old Name", Type: IDPTypeOIDC,
+	existingIDP := &providers.IDPDTO{ID: "idp-123", Name: "Old Name", Type: providers.IDPTypeOIDC,
 		Properties: createOIDCProperties()}
-	conflictIDP := &IDPDTO{ID: "idp-456", Name: "Existing Name", Type: IDPTypeOIDC,
+	conflictIDP := &providers.IDPDTO{ID: "idp-456", Name: "Existing Name", Type: providers.IDPTypeOIDC,
 		Properties: createOIDCProperties()}
 
 	s.mockStore.On("GetIdentityProvider", mock.Anything, "idp-123").Return(existingIDP, nil)
@@ -566,10 +616,10 @@ func (s *IDPServiceTestSuite) TestUpdateIdentityProvider_NameConflict() {
 
 // TestUpdateIdentityProvider_SameNameUpdate tests updating without changing name
 func (s *IDPServiceTestSuite) TestUpdateIdentityProvider_SameNameUpdate() {
-	idp := &IDPDTO{Name: "Same Name", Type: IDPTypeOIDC, Description: "New Description",
+	idp := &providers.IDPDTO{Name: "Same Name", Type: providers.IDPTypeOIDC, Description: "New Description",
 		Properties: createOIDCProperties()}
 
-	existingIDP := &IDPDTO{ID: "idp-123", Name: "Same Name", Type: IDPTypeOIDC,
+	existingIDP := &providers.IDPDTO{ID: "idp-123", Name: "Same Name", Type: providers.IDPTypeOIDC,
 		Properties: createOIDCProperties()}
 
 	s.mockStore.On("GetIdentityProvider", mock.Anything, "idp-123").Return(existingIDP, nil)
@@ -586,8 +636,8 @@ func (s *IDPServiceTestSuite) TestUpdateIdentityProvider_SameNameUpdate() {
 func (s *IDPServiceTestSuite) TestUpdateIdentityProvider_InvalidData() {
 	testCases := []struct {
 		name        string
-		idp         *IDPDTO
-		expectedErr serviceerror.ServiceError
+		idp         *providers.IDPDTO
+		expectedErr tidcommon.ServiceError
 	}{
 		{
 			name:        "Nil IDP",
@@ -596,12 +646,12 @@ func (s *IDPServiceTestSuite) TestUpdateIdentityProvider_InvalidData() {
 		},
 		{
 			name:        "Empty name",
-			idp:         &IDPDTO{Name: "", Type: IDPTypeOIDC},
+			idp:         &providers.IDPDTO{Name: "", Type: providers.IDPTypeOIDC},
 			expectedErr: ErrorInvalidIDPName,
 		},
 		{
 			name:        "Invalid type",
-			idp:         &IDPDTO{Name: "Test", Type: IDPType("INVALID")},
+			idp:         &providers.IDPDTO{Name: "Test", Type: providers.IDPType("INVALID")},
 			expectedErr: ErrorInvalidIDPType,
 		},
 	}
@@ -619,41 +669,52 @@ func (s *IDPServiceTestSuite) TestUpdateIdentityProvider_InvalidData() {
 
 // TestUpdateIdentityProvider_GetStoreError tests store error when checking existing IDP
 func (s *IDPServiceTestSuite) TestUpdateIdentityProvider_GetStoreError() {
-	idp := &IDPDTO{Name: "Test", Type: IDPTypeOIDC, Properties: createOIDCProperties()}
+	idp := &providers.IDPDTO{Name: "Test", Type: providers.IDPTypeOIDC, Properties: createOIDCProperties()}
 
-	s.mockStore.On("GetIdentityProvider", mock.Anything, "idp-123").Return((*IDPDTO)(nil), errors.New("database error"))
+	s.mockStore.On("GetIdentityProvider", mock.Anything, "idp-123").
+		Return((*providers.IDPDTO)(nil), errors.New("database error"))
 
 	result, err := s.idpService.UpdateIdentityProvider(context.Background(), "idp-123", idp)
 
 	s.Nil(result)
 	s.NotNil(err)
-	s.Equal(serviceerror.InternalServerError.Code, err.Code)
+	s.Equal(tidcommon.InternalServerError.Code, err.Code)
 	s.mockStore.AssertExpectations(s.T())
 }
 
 // TestUpdateIdentityProvider_CheckNameStoreError tests store error when checking name conflict
 func (s *IDPServiceTestSuite) TestUpdateIdentityProvider_CheckNameStoreError() {
-	idp := &IDPDTO{Name: "New Name", Type: IDPTypeOIDC, Properties: createOIDCProperties()}
+	idp := &providers.IDPDTO{Name: "New Name", Type: providers.IDPTypeOIDC, Properties: createOIDCProperties()}
 
-	existingIDP := &IDPDTO{ID: "idp-123", Name: "Old Name", Type: IDPTypeOIDC, Properties: createOIDCProperties()}
+	existingIDP := &providers.IDPDTO{
+		ID:         "idp-123",
+		Name:       "Old Name",
+		Type:       providers.IDPTypeOIDC,
+		Properties: createOIDCProperties(),
+	}
 
 	s.mockStore.On("GetIdentityProvider", mock.Anything, "idp-123").Return(existingIDP, nil)
 	s.mockStore.On("GetIdentityProviderByName", mock.Anything, "New Name").
-		Return((*IDPDTO)(nil), errors.New("database error"))
+		Return((*providers.IDPDTO)(nil), errors.New("database error"))
 
 	result, err := s.idpService.UpdateIdentityProvider(context.Background(), "idp-123", idp)
 
 	s.Nil(result)
 	s.NotNil(err)
-	s.Equal(serviceerror.InternalServerError.Code, err.Code)
+	s.Equal(tidcommon.InternalServerError.Code, err.Code)
 	s.mockStore.AssertExpectations(s.T())
 }
 
 // TestUpdateIdentityProvider_StoreError tests store error during update
 func (s *IDPServiceTestSuite) TestUpdateIdentityProvider_StoreError() {
-	idp := &IDPDTO{Name: "Test", Type: IDPTypeOIDC, Properties: createOIDCProperties()}
+	idp := &providers.IDPDTO{Name: "Test", Type: providers.IDPTypeOIDC, Properties: createOIDCProperties()}
 
-	existingIDP := &IDPDTO{ID: "idp-123", Name: "Test", Type: IDPTypeOIDC, Properties: createOIDCProperties()}
+	existingIDP := &providers.IDPDTO{
+		ID:         "idp-123",
+		Name:       "Test",
+		Type:       providers.IDPTypeOIDC,
+		Properties: createOIDCProperties(),
+	}
 
 	s.mockStore.On("GetIdentityProvider", mock.Anything, "idp-123").Return(existingIDP, nil)
 	s.mockStore.On("UpdateIdentityProvider", mock.Anything, mock.Anything).Return(errors.New("database error"))
@@ -662,13 +723,13 @@ func (s *IDPServiceTestSuite) TestUpdateIdentityProvider_StoreError() {
 
 	s.Nil(result)
 	s.NotNil(err)
-	s.Equal(serviceerror.InternalServerError.Code, err.Code)
+	s.Equal(tidcommon.InternalServerError.Code, err.Code)
 	s.mockStore.AssertExpectations(s.T())
 }
 
 // TestDeleteIdentityProvider_Success tests successful IDP deletion
 func (s *IDPServiceTestSuite) TestDeleteIdentityProvider_Success() {
-	existingIDP := &IDPDTO{ID: "idp-123", Name: "Test IDP"}
+	existingIDP := &providers.IDPDTO{ID: "idp-123", Name: "Test IDP"}
 
 	s.mockStore.On("GetIdentityProvider", mock.Anything, "idp-123").Return(existingIDP, nil)
 	s.mockStore.On("DeleteIdentityProvider", mock.Anything, "idp-123").Return(nil)
@@ -676,6 +737,80 @@ func (s *IDPServiceTestSuite) TestDeleteIdentityProvider_Success() {
 	err := s.idpService.DeleteIdentityProvider(context.Background(), "idp-123")
 
 	s.Nil(err)
+	s.mockStore.AssertExpectations(s.T())
+}
+
+// TestGetIDPUsages_ReturnsDependencies verifies usages are returned for an existing IDP.
+func (s *IDPServiceTestSuite) TestGetIDPUsages_ReturnsDependencies() {
+	total := 1
+	usages := &resourcedependency.DependenciesResponse{
+		TotalResults: &total,
+		Count:        1,
+		Usages: []resourcedependency.ResourceDependency{
+			{ResourceType: resourcedependency.ResourceTypeFlow, ID: "flow-1",
+				DisplayName: "Google Login", BehaviorOnDelete: resourcedependency.BehaviorRestrict},
+		},
+	}
+	s.idpService.dependencyRegistry = &stubDependencyRegistry{resp: usages}
+	s.mockStore.On("GetIdentityProvider", mock.Anything, "idp-123").
+		Return(&providers.IDPDTO{ID: "idp-123"}, nil)
+
+	result, err := s.idpService.GetIDPUsages(context.Background(), "idp-123")
+
+	s.Nil(err)
+	s.Equal(usages, result)
+	s.mockStore.AssertExpectations(s.T())
+}
+
+// TestGetIDPUsages_EmptyID validates the empty-ID guard.
+func (s *IDPServiceTestSuite) TestGetIDPUsages_EmptyID() {
+	result, err := s.idpService.GetIDPUsages(context.Background(), "")
+
+	s.Nil(result)
+	s.NotNil(err)
+	s.Equal(ErrorInvalidIDPID.Code, err.Code)
+}
+
+// TestGetIDPUsages_NotFound verifies a not-found error when the IDP does not exist.
+func (s *IDPServiceTestSuite) TestGetIDPUsages_NotFound() {
+	s.mockStore.On("GetIdentityProvider", mock.Anything, "missing").
+		Return((*providers.IDPDTO)(nil), ErrIDPNotFound)
+
+	result, err := s.idpService.GetIDPUsages(context.Background(), "missing")
+
+	s.Nil(result)
+	s.NotNil(err)
+	s.Equal(ErrorIDPNotFound.Code, err.Code)
+	s.mockStore.AssertExpectations(s.T())
+}
+
+// TestGetIDPUsages_GetStoreError verifies a store error while retrieving the IDP maps to an
+// internal server error.
+func (s *IDPServiceTestSuite) TestGetIDPUsages_GetStoreError() {
+	s.mockStore.On("GetIdentityProvider", mock.Anything, "idp-123").
+		Return((*providers.IDPDTO)(nil), errors.New("database error"))
+
+	result, err := s.idpService.GetIDPUsages(context.Background(), "idp-123")
+
+	s.Nil(result)
+	s.NotNil(err)
+	s.Equal(tidcommon.InternalServerError.Code, err.Code)
+	s.mockStore.AssertExpectations(s.T())
+}
+
+// TestGetIDPUsages_RegistryUnset returns unknown dependencies rather than failing when the
+// registry was never wired in (informational endpoint, unlike deletion which fails closed).
+func (s *IDPServiceTestSuite) TestGetIDPUsages_RegistryUnset() {
+	s.idpService.dependencyRegistry = nil
+	s.mockStore.On("GetIdentityProvider", mock.Anything, "idp-123").
+		Return(&providers.IDPDTO{ID: "idp-123"}, nil)
+
+	result, err := s.idpService.GetIDPUsages(context.Background(), "idp-123")
+
+	s.Nil(err)
+	s.Require().NotNil(result)
+	s.Nil(result.TotalResults)
+	s.Empty(result.Usages)
 	s.mockStore.AssertExpectations(s.T())
 }
 
@@ -689,7 +824,8 @@ func (s *IDPServiceTestSuite) TestDeleteIdentityProvider_EmptyID() {
 
 // TestDeleteIdentityProvider_NotFound tests deleting non-existent IDP
 func (s *IDPServiceTestSuite) TestDeleteIdentityProvider_NotFound() {
-	s.mockStore.On("GetIdentityProvider", mock.Anything, "non-existent").Return((*IDPDTO)(nil), ErrIDPNotFound)
+	s.mockStore.On("GetIdentityProvider", mock.Anything, "non-existent").
+		Return((*providers.IDPDTO)(nil), ErrIDPNotFound)
 
 	err := s.idpService.DeleteIdentityProvider(context.Background(), "non-existent")
 
@@ -699,18 +835,19 @@ func (s *IDPServiceTestSuite) TestDeleteIdentityProvider_NotFound() {
 
 // TestDeleteIdentityProvider_GetStoreError tests store error when checking existing IDP
 func (s *IDPServiceTestSuite) TestDeleteIdentityProvider_GetStoreError() {
-	s.mockStore.On("GetIdentityProvider", mock.Anything, "idp-123").Return((*IDPDTO)(nil), errors.New("database error"))
+	s.mockStore.On("GetIdentityProvider", mock.Anything, "idp-123").
+		Return((*providers.IDPDTO)(nil), errors.New("database error"))
 
 	err := s.idpService.DeleteIdentityProvider(context.Background(), "idp-123")
 
 	s.NotNil(err)
-	s.Equal(serviceerror.InternalServerError.Code, err.Code)
+	s.Equal(tidcommon.InternalServerError.Code, err.Code)
 	s.mockStore.AssertExpectations(s.T())
 }
 
 // TestDeleteIdentityProvider_StoreError tests store error handling
 func (s *IDPServiceTestSuite) TestDeleteIdentityProvider_StoreError() {
-	existingIDP := &IDPDTO{ID: "idp-123", Name: "Test IDP"}
+	existingIDP := &providers.IDPDTO{ID: "idp-123", Name: "Test IDP"}
 
 	s.mockStore.On("GetIdentityProvider", mock.Anything, "idp-123").Return(existingIDP, nil)
 	s.mockStore.On("DeleteIdentityProvider", mock.Anything, "idp-123").Return(errors.New("database error"))
@@ -718,8 +855,54 @@ func (s *IDPServiceTestSuite) TestDeleteIdentityProvider_StoreError() {
 	err := s.idpService.DeleteIdentityProvider(context.Background(), "idp-123")
 
 	s.NotNil(err)
-	s.Equal(serviceerror.InternalServerError.Code, err.Code)
+	s.Equal(tidcommon.InternalServerError.Code, err.Code)
 	s.mockStore.AssertExpectations(s.T())
+}
+
+// TestDeleteIdentityProvider_BlockedByFlow verifies deletion is refused when a flow references the IDP.
+func (s *IDPServiceTestSuite) TestDeleteIdentityProvider_BlockedByFlow() {
+	total := 1
+	s.idpService.dependencyRegistry = &stubDependencyRegistry{resp: &resourcedependency.DependenciesResponse{
+		TotalResults: &total,
+		Count:        1,
+		Usages: []resourcedependency.ResourceDependency{
+			{ResourceType: resourcedependency.ResourceTypeFlow, ID: "flow-1",
+				DisplayName: "Google Login", BehaviorOnDelete: resourcedependency.BehaviorRestrict},
+		},
+	}}
+
+	err := s.idpService.DeleteIdentityProvider(context.Background(), "idp-123")
+
+	s.NotNil(err)
+	s.Equal(ErrorIDPHasBlockingDependencies.Code, err.Code)
+	s.mockStore.AssertNotCalled(s.T(), "DeleteIdentityProvider", mock.Anything, mock.Anything)
+}
+
+// TestDeleteIdentityProvider_RefusedWhenDependenciesUnknown verifies deletion fails closed when a
+// provider fails to report dependency data.
+func (s *IDPServiceTestSuite) TestDeleteIdentityProvider_RefusedWhenDependenciesUnknown() {
+	s.idpService.dependencyRegistry = &stubDependencyRegistry{resp: &resourcedependency.DependenciesResponse{
+		TotalResults: nil,
+		Usages:       []resourcedependency.ResourceDependency{},
+	}}
+
+	err := s.idpService.DeleteIdentityProvider(context.Background(), "idp-123")
+
+	s.NotNil(err)
+	s.Equal(tidcommon.InternalServerError.Code, err.Code)
+	s.mockStore.AssertNotCalled(s.T(), "DeleteIdentityProvider", mock.Anything, mock.Anything)
+}
+
+// TestDeleteIdentityProvider_RefusedWhenRegistryUnset verifies deletion fails closed when the
+// dependency registry was never wired in.
+func (s *IDPServiceTestSuite) TestDeleteIdentityProvider_RefusedWhenRegistryUnset() {
+	s.idpService.dependencyRegistry = nil
+
+	err := s.idpService.DeleteIdentityProvider(context.Background(), "idp-123")
+
+	s.NotNil(err)
+	s.Equal(tidcommon.InternalServerError.Code, err.Code)
+	s.mockStore.AssertNotCalled(s.T(), "DeleteIdentityProvider", mock.Anything, mock.Anything)
 }
 
 // TestCreateIdentityProvider_DeclarativeModeEnabled tests creation is blocked when declarative mode is enabled
@@ -733,9 +916,9 @@ func (s *IDPServiceTestSuite) TestCreateIdentityProvider_DeclarativeModeEnabled(
 	_ = config.InitializeServerRuntime("/tmp/test", testConfig)
 	defer config.ResetServerRuntime()
 
-	idp := &IDPDTO{
+	idp := &providers.IDPDTO{
 		Name: "Test IDP",
-		Type: IDPTypeOIDC,
+		Type: providers.IDPTypeOIDC,
 	}
 
 	result, err := s.idpService.CreateIdentityProvider(context.Background(), idp)
@@ -756,9 +939,9 @@ func (s *IDPServiceTestSuite) TestUpdateIdentityProvider_DeclarativeModeEnabled(
 	_ = config.InitializeServerRuntime("/tmp/test", testConfig)
 	defer config.ResetServerRuntime()
 
-	idp := &IDPDTO{
+	idp := &providers.IDPDTO{
 		Name: "Updated IDP",
-		Type: IDPTypeOIDC,
+		Type: providers.IDPTypeOIDC,
 	}
 
 	result, err := s.idpService.UpdateIdentityProvider(context.Background(), "idp-123", idp)
@@ -789,15 +972,15 @@ func (s *IDPServiceTestSuite) TestDeleteIdentityProvider_DeclarativeModeEnabled(
 func (s *IDPServiceTestSuite) TestValidateIDP() {
 	testCases := []struct {
 		name        string
-		idp         *IDPDTO
+		idp         *providers.IDPDTO
 		expectError bool
 		errorCode   string
 	}{
 		{
 			name: "Valid IDP",
-			idp: &IDPDTO{
+			idp: &providers.IDPDTO{
 				Name:       "Test",
-				Type:       IDPTypeOIDC,
+				Type:       providers.IDPTypeOIDC,
 				Properties: createOIDCProperties(),
 			},
 			expectError: false,
@@ -810,27 +993,27 @@ func (s *IDPServiceTestSuite) TestValidateIDP() {
 		},
 		{
 			name: "Empty name",
-			idp: &IDPDTO{
+			idp: &providers.IDPDTO{
 				Name: "",
-				Type: IDPTypeOIDC,
+				Type: providers.IDPTypeOIDC,
 			},
 			expectError: true,
 			errorCode:   ErrorInvalidIDPName.Code,
 		},
 		{
 			name: "Empty type",
-			idp: &IDPDTO{
+			idp: &providers.IDPDTO{
 				Name: "Test",
-				Type: IDPType(""),
+				Type: providers.IDPType(""),
 			},
 			expectError: true,
 			errorCode:   ErrorInvalidIDPType.Code,
 		},
 		{
 			name: "Invalid type",
-			idp: &IDPDTO{
+			idp: &providers.IDPDTO{
 				Name: "Test",
-				Type: IDPType("INVALID"),
+				Type: providers.IDPType("INVALID"),
 			},
 			expectError: true,
 			errorCode:   ErrorInvalidIDPType.Code,
@@ -840,7 +1023,7 @@ func (s *IDPServiceTestSuite) TestValidateIDP() {
 	for _, tc := range testCases {
 		s.Run(tc.name, func() {
 			logger := log.GetLogger()
-			err := validateIDP(tc.idp, logger)
+			err := validateIDP(context.Background(), tc.idp, logger)
 			if tc.expectError {
 				s.NotNil(err)
 				s.Equal(tc.errorCode, err.Code)
@@ -862,11 +1045,11 @@ func (s *IDPServiceTestSuite) TestUpdateIdentityProvider_FailsForDeclarativeIDP(
 	_ = config.InitializeServerRuntime("/tmp/test", testConfig)
 
 	idpID := declarativeIDPTestID
-	existingIDP := &IDPDTO{
+	existingIDP := &providers.IDPDTO{
 		ID:          idpID,
 		Name:        "Declarative IDP",
 		Description: "From file store",
-		Type:        IDPTypeOIDC,
+		Type:        providers.IDPTypeOIDC,
 		Properties:  createOIDCProperties(),
 	}
 
@@ -874,19 +1057,20 @@ func (s *IDPServiceTestSuite) TestUpdateIdentityProvider_FailsForDeclarativeIDP(
 	dbStore := newIdpStoreInterfaceMock(s.T())
 	compositeStore := newCompositeIDPStore(fileStore, dbStore)
 
-	dbStore.On("GetIdentityProvider", context.Background(), idpID).Return((*IDPDTO)(nil), ErrIDPNotFound)
+	dbStore.On("GetIdentityProvider", context.Background(), idpID).Return((*providers.IDPDTO)(nil), ErrIDPNotFound)
 	fileStore.On("GetIdentityProvider", context.Background(), idpID).Return(existingIDP, nil)
 
-	dbStore.On("GetIdentityProviderByName", context.Background(), "Updated Name").Return((*IDPDTO)(nil), ErrIDPNotFound)
+	dbStore.On("GetIdentityProviderByName", context.Background(), "Updated Name").
+		Return((*providers.IDPDTO)(nil), ErrIDPNotFound)
 	fileStore.On("GetIdentityProviderByName", context.Background(), "Updated Name").
-		Return((*IDPDTO)(nil), ErrIDPNotFound)
+		Return((*providers.IDPDTO)(nil), ErrIDPNotFound)
 
-	service := newIDPService(compositeStore, &mockTransactioner{})
+	service := newIDPService(compositeStore, nil, &mockTransactioner{})
 
-	updatedIDP := &IDPDTO{
+	updatedIDP := &providers.IDPDTO{
 		Name:        "Updated Name",
 		Description: "Updated Description",
-		Type:        IDPTypeOIDC,
+		Type:        providers.IDPTypeOIDC,
 		Properties:  createOIDCProperties(),
 	}
 
@@ -911,11 +1095,11 @@ func (s *IDPServiceTestSuite) TestUpdateIdentityProvider_SucceedsForMutableIDP()
 	_ = config.InitializeServerRuntime("/tmp/test", testConfig)
 
 	idpID := mutableIDPTestID
-	existingIDP := &IDPDTO{
+	existingIDP := &providers.IDPDTO{
 		ID:          idpID,
 		Name:        "Mutable IDP",
 		Description: "From database",
-		Type:        IDPTypeOIDC,
+		Type:        providers.IDPTypeOIDC,
 		Properties:  createOIDCProperties(),
 	}
 
@@ -923,21 +1107,22 @@ func (s *IDPServiceTestSuite) TestUpdateIdentityProvider_SucceedsForMutableIDP()
 	dbStore := newIdpStoreInterfaceMock(s.T())
 	compositeStore := newCompositeIDPStore(fileStore, dbStore)
 
-	fileStore.On("GetIdentityProvider", context.Background(), idpID).Return((*IDPDTO)(nil), ErrIDPNotFound)
+	fileStore.On("GetIdentityProvider", context.Background(), idpID).Return((*providers.IDPDTO)(nil), ErrIDPNotFound)
 	fileStore.On("GetIdentityProviderByName", context.Background(), "Updated Name").
-		Return((*IDPDTO)(nil), ErrIDPNotFound)
+		Return((*providers.IDPDTO)(nil), ErrIDPNotFound)
 	dbStore.On("GetIdentityProvider", context.Background(), idpID).Return(existingIDP, nil)
-	dbStore.On("GetIdentityProviderByName", context.Background(), "Updated Name").Return((*IDPDTO)(nil), ErrIDPNotFound)
-	dbStore.On("UpdateIdentityProvider", context.Background(), mock.MatchedBy(func(dto *IDPDTO) bool {
+	dbStore.On("GetIdentityProviderByName", context.Background(), "Updated Name").
+		Return((*providers.IDPDTO)(nil), ErrIDPNotFound)
+	dbStore.On("UpdateIdentityProvider", context.Background(), mock.MatchedBy(func(dto *providers.IDPDTO) bool {
 		return dto.ID == idpID && dto.Name == "Updated Name"
 	})).Return(nil)
 
-	service := newIDPService(compositeStore, &mockTransactioner{})
+	service := newIDPService(compositeStore, nil, &mockTransactioner{})
 
-	updatedIDP := &IDPDTO{
+	updatedIDP := &providers.IDPDTO{
 		Name:        "Updated Name",
 		Description: "Updated Description",
-		Type:        IDPTypeOIDC,
+		Type:        providers.IDPTypeOIDC,
 		Properties:  createOIDCProperties(),
 	}
 
@@ -960,21 +1145,22 @@ func (s *IDPServiceTestSuite) TestDeleteIdentityProvider_FailsForDeclarativeIDP(
 	_ = config.InitializeServerRuntime("/tmp/test", testConfig)
 
 	idpID := "declarative-idp"
-	existingIDP := &IDPDTO{
+	existingIDP := &providers.IDPDTO{
 		ID:          idpID,
 		Name:        "Declarative IDP",
 		Description: "From file store",
-		Type:        IDPTypeOIDC,
+		Type:        providers.IDPTypeOIDC,
 	}
 
 	fileStore := newIdpStoreInterfaceMock(s.T())
 	dbStore := newIdpStoreInterfaceMock(s.T())
 	compositeStore := newCompositeIDPStore(fileStore, dbStore)
 
-	dbStore.On("GetIdentityProvider", context.Background(), idpID).Return((*IDPDTO)(nil), ErrIDPNotFound)
+	dbStore.On("GetIdentityProvider", context.Background(), idpID).Return((*providers.IDPDTO)(nil), ErrIDPNotFound)
 	fileStore.On("GetIdentityProvider", context.Background(), idpID).Return(existingIDP, nil)
 
-	service := newIDPService(compositeStore, &mockTransactioner{})
+	service := newIDPService(compositeStore, nil, &mockTransactioner{})
+	service.SetDependencyRegistry(newNoBlockingDepsRegistry())
 
 	err := service.DeleteIdentityProvider(context.Background(), idpID)
 
@@ -996,22 +1182,23 @@ func (s *IDPServiceTestSuite) TestDeleteIdentityProvider_SucceedsForMutableIDP()
 	_ = config.InitializeServerRuntime("/tmp/test", testConfig)
 
 	idpID := "mutable-idp"
-	existingIDP := &IDPDTO{
+	existingIDP := &providers.IDPDTO{
 		ID:          idpID,
 		Name:        "Mutable IDP",
 		Description: "From database",
-		Type:        IDPTypeOIDC,
+		Type:        providers.IDPTypeOIDC,
 	}
 
 	fileStore := newIdpStoreInterfaceMock(s.T())
 	dbStore := newIdpStoreInterfaceMock(s.T())
 	compositeStore := newCompositeIDPStore(fileStore, dbStore)
 
-	fileStore.On("GetIdentityProvider", context.Background(), idpID).Return((*IDPDTO)(nil), ErrIDPNotFound)
+	fileStore.On("GetIdentityProvider", context.Background(), idpID).Return((*providers.IDPDTO)(nil), ErrIDPNotFound)
 	dbStore.On("GetIdentityProvider", context.Background(), idpID).Return(existingIDP, nil)
 	dbStore.On("DeleteIdentityProvider", context.Background(), idpID).Return(nil)
 
-	service := newIDPService(compositeStore, &mockTransactioner{})
+	service := newIDPService(compositeStore, nil, &mockTransactioner{})
+	service.SetDependencyRegistry(newNoBlockingDepsRegistry())
 
 	err := service.DeleteIdentityProvider(context.Background(), idpID)
 
@@ -1019,4 +1206,232 @@ func (s *IDPServiceTestSuite) TestDeleteIdentityProvider_SucceedsForMutableIDP()
 	dbStore.AssertCalled(s.T(), "DeleteIdentityProvider", context.Background(), idpID)
 
 	config.ResetServerRuntime()
+}
+
+// singleProfileMapping builds an attribute configuration that resolves to userType with a single
+// user-type-attributes entry carrying the given claim mappings.
+func singleProfileMapping(userType string, mappings []providers.AttributeMapping) *providers.AttributeConfiguration {
+	return &providers.AttributeConfiguration{
+		UserTypeResolution:        &providers.UserTypeResolution{Default: userType},
+		UserTypeAttributeMappings: []providers.UserTypeAttributeMapping{{UserType: userType, Attributes: mappings}},
+	}
+}
+
+func (s *IDPServiceTestSuite) TestValidateAttributeConfiguration_NilMapping_OK() {
+	svcErr := s.idpService.validateAttributeConfiguration(context.Background(), &providers.IDPDTO{})
+	s.Nil(svcErr)
+}
+
+func (s *IDPServiceTestSuite) TestValidateAttributeConfiguration_AccountLinkingOnly_NoUserTypeResolutionRequired() {
+	idp := &providers.IDPDTO{AttributeConfiguration: &providers.AttributeConfiguration{
+		AccountLinking: &providers.AccountLinking{Attributes: []string{"email"}},
+	}}
+	s.Nil(s.idpService.validateAttributeConfiguration(context.Background(), idp))
+}
+
+func (s *IDPServiceTestSuite) TestValidateAttributeConfiguration_Valid() {
+	s.mockET.On("GetAttributes", mock.Anything, entitytype.TypeCategoryUser, "person", false, true, false).
+		Return([]entitytype.AttributeInfo{{Attribute: "firstName"}, {Attribute: "email"}},
+			(*tidcommon.ServiceError)(nil))
+
+	idp := &providers.IDPDTO{AttributeConfiguration: singleProfileMapping("person", []providers.AttributeMapping{
+		{ExternalAttribute: "given_name", LocalAttribute: "firstName"},
+		{ExternalAttribute: "address.email", LocalAttribute: "email"},
+	})}
+
+	s.Nil(s.idpService.validateAttributeConfiguration(context.Background(), idp))
+}
+
+func (s *IDPServiceTestSuite) TestValidateAttributeConfiguration_EmptyEntityType() {
+	idp := &providers.IDPDTO{AttributeConfiguration: &providers.AttributeConfiguration{
+		UserTypeAttributeMappings: []providers.UserTypeAttributeMapping{{
+			Attributes: []providers.AttributeMapping{{ExternalAttribute: "given_name", LocalAttribute: "firstName"}},
+		}},
+	}}
+	svcErr := s.idpService.validateAttributeConfiguration(context.Background(), idp)
+	s.NotNil(svcErr)
+	s.Equal(ErrorInvalidAttributeConfiguration.Code, svcErr.Code)
+}
+
+func (s *IDPServiceTestSuite) TestValidateAttributeConfiguration_EmptyMappings() {
+	s.mockET.On("GetAttributes", mock.Anything, entitytype.TypeCategoryUser, "person", false, true, false).
+		Return([]entitytype.AttributeInfo{{Attribute: "firstName"}}, (*tidcommon.ServiceError)(nil))
+	idp := &providers.IDPDTO{AttributeConfiguration: singleProfileMapping("person", nil)}
+	svcErr := s.idpService.validateAttributeConfiguration(context.Background(), idp)
+	s.Nil(svcErr)
+}
+
+func (s *IDPServiceTestSuite) TestValidateAttributeConfiguration_OneSourceToMultipleTargets() {
+	s.mockET.On("GetAttributes", mock.Anything, entitytype.TypeCategoryUser, "person", false, true, false).
+		Return([]entitytype.AttributeInfo{{Attribute: "email"}, {Attribute: "contactEmail"}},
+			(*tidcommon.ServiceError)(nil))
+
+	idp := &providers.IDPDTO{AttributeConfiguration: singleProfileMapping("person", []providers.AttributeMapping{
+		{ExternalAttribute: "email", LocalAttribute: "email"},
+		{ExternalAttribute: "email", LocalAttribute: "contactEmail"},
+	})}
+
+	s.Nil(s.idpService.validateAttributeConfiguration(context.Background(), idp))
+}
+
+func (s *IDPServiceTestSuite) TestValidateAttributeConfiguration_DuplicateTarget() {
+	idp := &providers.IDPDTO{AttributeConfiguration: singleProfileMapping("person", []providers.AttributeMapping{
+		{ExternalAttribute: "given_name", LocalAttribute: "firstName"},
+		{ExternalAttribute: "first_name", LocalAttribute: "firstName"},
+	})}
+	svcErr := s.idpService.validateAttributeConfiguration(context.Background(), idp)
+	s.NotNil(svcErr)
+	s.Equal(ErrorInvalidAttributeConfiguration.Code, svcErr.Code)
+	s.Contains(svcErr.ErrorDescription.DefaultValue, "more than once")
+}
+
+func (s *IDPServiceTestSuite) TestValidateAttributeConfiguration_DuplicateTargetWhitespaceVariant() {
+	idp := &providers.IDPDTO{AttributeConfiguration: singleProfileMapping("person", []providers.AttributeMapping{
+		{ExternalAttribute: "given_name", LocalAttribute: "firstName"},
+		{ExternalAttribute: "first_name", LocalAttribute: "  firstName  "},
+	})}
+	svcErr := s.idpService.validateAttributeConfiguration(context.Background(), idp)
+	s.NotNil(svcErr)
+	s.Equal(ErrorInvalidAttributeConfiguration.Code, svcErr.Code)
+	s.Contains(svcErr.ErrorDescription.DefaultValue, "more than once")
+}
+
+func (s *IDPServiceTestSuite) TestValidateAttributeConfiguration_DuplicateEntityType() {
+	s.mockET.On("GetAttributes", mock.Anything, entitytype.TypeCategoryUser, "person", false, true, false).
+		Return([]entitytype.AttributeInfo{{Attribute: "firstName"}}, (*tidcommon.ServiceError)(nil))
+	idp := &providers.IDPDTO{AttributeConfiguration: &providers.AttributeConfiguration{
+		UserTypeResolution: &providers.UserTypeResolution{Default: "person"},
+		UserTypeAttributeMappings: []providers.UserTypeAttributeMapping{
+			{
+				UserType: "person",
+				Attributes: []providers.AttributeMapping{
+					{ExternalAttribute: "given_name", LocalAttribute: "firstName"},
+				},
+			},
+			{
+				UserType: "person",
+				Attributes: []providers.AttributeMapping{
+					{ExternalAttribute: "family_name", LocalAttribute: "lastName"},
+				},
+			},
+		},
+	}}
+	svcErr := s.idpService.validateAttributeConfiguration(context.Background(), idp)
+	s.NotNil(svcErr)
+	s.Equal(ErrorInvalidAttributeConfiguration.Code, svcErr.Code)
+	s.Contains(svcErr.ErrorDescription.DefaultValue, "configured more than once")
+}
+
+func (s *IDPServiceTestSuite) TestValidateAttributeConfiguration_TargetNotInSchema() {
+	s.mockET.On("GetAttributes", mock.Anything, entitytype.TypeCategoryUser, "person", false, true, false).
+		Return([]entitytype.AttributeInfo{{Attribute: "email"}}, (*tidcommon.ServiceError)(nil))
+
+	idp := &providers.IDPDTO{AttributeConfiguration: singleProfileMapping("person", []providers.AttributeMapping{
+		{ExternalAttribute: "given_name", LocalAttribute: "firstName"},
+	})}
+	svcErr := s.idpService.validateAttributeConfiguration(context.Background(), idp)
+	s.NotNil(svcErr)
+	s.Equal(ErrorInvalidAttributeConfiguration.Code, svcErr.Code)
+	s.Contains(svcErr.ErrorDescription.DefaultValue, "not an attribute")
+}
+
+func (s *IDPServiceTestSuite) TestValidateAttributeConfiguration_UnknownEntityType() {
+	s.mockET.On("GetAttributes", mock.Anything, entitytype.TypeCategoryUser, "ghost", false, true, false).
+		Return([]entitytype.AttributeInfo(nil), &tidcommon.ServiceError{
+			Type: tidcommon.ClientErrorType, Code: "ETS-1004",
+			ErrorDescription: tidcommon.I18nMessage{DefaultValue: "user type not found"},
+		})
+
+	idp := &providers.IDPDTO{AttributeConfiguration: singleProfileMapping("ghost", []providers.AttributeMapping{
+		{ExternalAttribute: "given_name", LocalAttribute: "firstName"},
+	})}
+	svcErr := s.idpService.validateAttributeConfiguration(context.Background(), idp)
+	s.NotNil(svcErr)
+	s.Equal(ErrorInvalidAttributeConfiguration.Code, svcErr.Code)
+}
+
+func (s *IDPServiceTestSuite) TestValidateAttributeConfiguration_DynamicResolutionValid() {
+	s.mockET.On("GetAttributes", mock.Anything, entitytype.TypeCategoryUser, "employee", false, true, false).
+		Return([]entitytype.AttributeInfo{{Attribute: "firstName"}}, (*tidcommon.ServiceError)(nil))
+
+	idp := &providers.IDPDTO{AttributeConfiguration: &providers.AttributeConfiguration{
+		UserTypeResolution: &providers.UserTypeResolution{
+			Default:           "person",
+			ExternalAttribute: "user_type",
+			ValueMapping:      map[string]string{"staff": "employee"},
+		},
+	}}
+	s.Nil(s.idpService.validateAttributeConfiguration(context.Background(), idp))
+}
+
+func (s *IDPServiceTestSuite) TestValidateAttributeConfiguration_ExternalAttributeWithoutMapping_OK() {
+	// An external attribute may be configured on its own; every identity resolves to Default until
+	// value mappings are added later.
+	idp := &providers.IDPDTO{AttributeConfiguration: &providers.AttributeConfiguration{
+		UserTypeResolution: &providers.UserTypeResolution{
+			Default:           "person",
+			ExternalAttribute: "user_type",
+		},
+	}}
+	s.Nil(s.idpService.validateAttributeConfiguration(context.Background(), idp))
+}
+
+func (s *IDPServiceTestSuite) TestValidateAttributeConfiguration_MappingWithoutExternalAttribute() {
+	idp := &providers.IDPDTO{AttributeConfiguration: &providers.AttributeConfiguration{
+		UserTypeResolution: &providers.UserTypeResolution{
+			Default:      "person",
+			ValueMapping: map[string]string{"staff": "employee"},
+		},
+	}}
+	svcErr := s.idpService.validateAttributeConfiguration(context.Background(), idp)
+	s.NotNil(svcErr)
+	s.Equal(ErrorInvalidAttributeConfiguration.Code, svcErr.Code)
+	s.Contains(svcErr.ErrorDescription.DefaultValue, "requires an external attribute")
+}
+
+func (s *IDPServiceTestSuite) TestValidateAttributeConfiguration_DynamicResolutionDefaultRequired() {
+	idp := &providers.IDPDTO{AttributeConfiguration: &providers.AttributeConfiguration{
+		UserTypeResolution: &providers.UserTypeResolution{
+			ExternalAttribute: "user_type",
+			ValueMapping:      map[string]string{"staff": "employee"},
+		},
+	}}
+	svcErr := s.idpService.validateAttributeConfiguration(context.Background(), idp)
+	s.NotNil(svcErr)
+	s.Equal(ErrorInvalidAttributeConfiguration.Code, svcErr.Code)
+	s.Contains(svcErr.ErrorDescription.DefaultValue, "default user type")
+}
+
+func (s *IDPServiceTestSuite) TestValidateAttributeConfiguration_DynamicResolutionEmptyMapping() {
+	idp := &providers.IDPDTO{AttributeConfiguration: &providers.AttributeConfiguration{
+		UserTypeResolution: &providers.UserTypeResolution{
+			Default:           "person",
+			ExternalAttribute: "user_type",
+			ValueMapping:      map[string]string{"staff": ""},
+		},
+	}}
+	svcErr := s.idpService.validateAttributeConfiguration(context.Background(), idp)
+	s.NotNil(svcErr)
+	s.Equal(ErrorInvalidAttributeConfiguration.Code, svcErr.Code)
+	s.Contains(svcErr.ErrorDescription.DefaultValue, "must not contain empty")
+}
+
+func (s *IDPServiceTestSuite) TestValidateAttributeConfiguration_DynamicResolutionInvalidTarget() {
+	s.mockET.On("GetAttributes", mock.Anything, entitytype.TypeCategoryUser, "ghost", false, true, false).
+		Return([]entitytype.AttributeInfo(nil), &tidcommon.ServiceError{
+			Type: tidcommon.ClientErrorType, Code: "ETS-1004",
+			ErrorDescription: tidcommon.I18nMessage{DefaultValue: "user type not found"},
+		})
+
+	idp := &providers.IDPDTO{AttributeConfiguration: &providers.AttributeConfiguration{
+		UserTypeResolution: &providers.UserTypeResolution{
+			Default:           "person",
+			ExternalAttribute: "user_type",
+			ValueMapping:      map[string]string{"staff": "ghost"},
+		},
+	}}
+	svcErr := s.idpService.validateAttributeConfiguration(context.Background(), idp)
+	s.NotNil(svcErr)
+	s.Equal(ErrorInvalidAttributeConfiguration.Code, svcErr.Code)
+	s.Contains(svcErr.ErrorDescription.DefaultValue, "invalid user type")
 }

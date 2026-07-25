@@ -1,6 +1,6 @@
 #!/bin/bash
 # ----------------------------------------------------------------------------
-# Copyright (c) 2025, WSO2 LLC. (https://www.wso2.com).
+# Copyright (c) 2025-2026, WSO2 LLC. (https://www.wso2.com).
 #
 # WSO2 LLC. licenses this file to you under the Apache License,
 # Version 2.0 (the "License"); you may not use this file except
@@ -21,19 +21,7 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# Check if --without-consent is passed and remove it from args
-WITHOUT_CONSENT=${WITHOUT_CONSENT:-false}
-NEW_ARGS=()
-for arg in "$@"; do
-    if [ "$arg" = "--without-consent" ]; then
-        WITHOUT_CONSENT="true"
-    else
-        NEW_ARGS+=("$arg")
-    fi
-done
-set -- "${NEW_ARGS[@]}"
-
-# --- Set Default OS and the architecture --- 
+# --- Set Default OS and the architecture ---
 # Auto-detect GO OS
 DEFAULT_OS=$(go env GOOS 2>/dev/null)
 if [ -z "$DEFAULT_OS" ]; then
@@ -60,21 +48,6 @@ GO_OS=${2:-$DEFAULT_OS}
 GO_ARCH=${3:-$DEFAULT_ARCH}
 
 echo "Using GO OS: $GO_OS and ARCH: $GO_ARCH"
-
-SAMPLE_DIST_NODE_VERSION=node18
-SAMPLE_DIST_OS=${2:-$DEFAULT_OS}
-SAMPLE_DIST_ARCH=${3:-$DEFAULT_ARCH}
-
-# Transform OS for node packaging executor
-if [ "$SAMPLE_DIST_OS" = "darwin" ]; then
-    SAMPLE_DIST_OS=macos
-elif [ "$SAMPLE_DIST_OS" = "windows" ]; then
-    SAMPLE_DIST_OS="win"
-fi
-
-if [ "$SAMPLE_DIST_ARCH" = "amd64" ]; then
-    SAMPLE_DIST_ARCH=x64
-fi
 
 # --- Package Distribution details ---
 GO_PACKAGE_OS=$GO_OS
@@ -103,25 +76,23 @@ BINARY_NAME="${PRODUCT_NAME_LOWERCASE}"
 PRODUCT_FOLDER=${BINARY_NAME}-${PRODUCT_VERSION}-${GO_PACKAGE_OS}-${GO_PACKAGE_ARCH}
 
 # --- Sample App Distribution details ---
-SAMPLE_PACKAGE_OS=$SAMPLE_DIST_OS
-SAMPLE_PACKAGE_ARCH=$SAMPLE_DIST_ARCH
-
 # React Vanilla Sample
-VANILLA_SAMPLE_APP_SERVER_BINARY_NAME=server
 VANILLA_SAMPLE_APP_VERSION=$(grep -o '"version": *"[^"]*"' samples/apps/react-vanilla-sample/package.json | sed 's/"version": *"\(.*\)"/\1/')
-VANILLA_SAMPLE_APP_FOLDER="sample-app-react-vanilla-${VANILLA_SAMPLE_APP_VERSION}-${SAMPLE_PACKAGE_OS}-${SAMPLE_PACKAGE_ARCH}"
+VANILLA_SAMPLE_APP_FOLDER="sample-app-react-vanilla-${VANILLA_SAMPLE_APP_VERSION}"
 
 # React SDK Sample
 REACT_SDK_SAMPLE_APP_VERSION=$(grep -o '"version": *"[^"]*"' samples/apps/react-sdk-sample/package.json | sed 's/"version": *"\(.*\)"/\1/')
-REACT_SDK_SAMPLE_APP_FOLDER="sample-app-react-sdk-${REACT_SDK_SAMPLE_APP_VERSION}-${SAMPLE_PACKAGE_OS}-${SAMPLE_PACKAGE_ARCH}"
+REACT_SDK_SAMPLE_APP_FOLDER="sample-app-react-sdk-${REACT_SDK_SAMPLE_APP_VERSION}"
 
 # React API-based Sample
 REACT_API_SAMPLE_APP_VERSION=$(grep -o '"version": *"[^"]*"' samples/apps/react-api-based-sample/package.json | sed 's/"version": *"\(.*\)"/\1/')
-REACT_API_SAMPLE_APP_FOLDER="sample-app-react-api-based-${REACT_API_SAMPLE_APP_VERSION}-${SAMPLE_PACKAGE_OS}-${SAMPLE_PACKAGE_ARCH}"
+REACT_API_SAMPLE_APP_FOLDER="sample-app-react-api-based-${REACT_API_SAMPLE_APP_VERSION}"
 
 # Wayfinder Sample
 WAYFINDER_SAMPLE_APP_VERSION=$(grep -o '"version": *"[^"]*"' samples/apps/wayfinder-sample/package.json | sed 's/"version": *"\(.*\)"/\1/')
-WAYFINDER_SAMPLE_APP_FOLDER="sample-app-wayfinder-${WAYFINDER_SAMPLE_APP_VERSION}-${SAMPLE_PACKAGE_OS}-${SAMPLE_PACKAGE_ARCH}"
+WAYFINDER_SAMPLE_APP_FOLDER="sample-app-wayfinder-${WAYFINDER_SAMPLE_APP_VERSION}"
+
+
 
 # Directories
 TARGET_DIR=target
@@ -131,11 +102,10 @@ BUILD_DIR=$OUTPUT_DIR/.build
 LOCAL_CERT_DIR=$OUTPUT_DIR/.cert
 BACKEND_BASE_DIR=backend
 BACKEND_DIR=$BACKEND_BASE_DIR/cmd/server
-REPOSITORY_DIR=$BACKEND_BASE_DIR/cmd/server/repository
-REPOSITORY_DB_DIR=$REPOSITORY_DIR/database
+REPOSITORY_DB_DIR=$BACKEND_DIR/database
 SERVER_SCRIPTS_DIR=$BACKEND_BASE_DIR/scripts
 SERVER_DB_SCRIPTS_DIR=$BACKEND_BASE_DIR/dbscripts
-SECURITY_DIR=repository/resources/security
+SECURITY_DIR=config/certs
 FRONTEND_BASE_DIR=frontend
 GATE_APP_DIST_DIR=apps/gate
 CONSOLE_APP_DIST_DIR=apps/console
@@ -148,6 +118,16 @@ REACT_SDK_SAMPLE_APP_DIR=$SAMPLE_BASE_DIR/apps/react-sdk-sample
 REACT_API_SAMPLE_APP_DIR=$SAMPLE_BASE_DIR/apps/react-api-based-sample
 WAYFINDER_SAMPLE_APP_DIR=$SAMPLE_BASE_DIR/apps/wayfinder-sample
 
+
+# Quick start declarative bundles staged into the console's welcome feature so they're inlined
+# into the console JS bundle at build time.
+# Add a new bundle as a single line: "<dest-name>:<source-dir>".
+# <dest-name> may include "/" for grouping (e.g. "wayfinder/redirect-based").
+QUICKSTART_SAMPLE_BUNDLES=(
+    "wayfinder:$WAYFINDER_SAMPLE_APP_DIR/thunderid-config"
+)
+QUICKSTART_BUNDLE_STAGE_DIR="$FRONTEND_CONSOLE_APP_SOURCE_DIR/src/features/welcome/data/sample-bundles"
+
 # Default ports
 GATE_APP_DEFAULT_PORT=5190
 CONSOLE_APP_DEFAULT_PORT=5191
@@ -158,13 +138,13 @@ TEST_RUN="${4:-}"
 TEST_PACKAGE="${5:-}"
 
 # PNPM version to use for frontend builds and docs build
-PNPM_VERSION="11.0.9"
+PNPM_VERSION=$(grep -A2 '"packageManager"' package.json | grep -o '"version": *"[^"]*"' | sed 's/"version": *"\(.*\)"/\1/')
 
 # ============================================================================
 # Read Configuration from deployment.yaml
 # ============================================================================
 
-CONFIG_FILE="./backend/cmd/server/repository/conf/deployment.yaml"
+CONFIG_FILE="./backend/cmd/server/deployment.yaml"
 
 # Function to read config with fallback
 read_config() {
@@ -176,7 +156,6 @@ read_config() {
         PORT=8090
         HTTP_ONLY="false"
         PUBLIC_HOSTNAME=""
-        CONSENT_ENABLED="true"
     else
         # Try yq first (YAML parser)
         if command -v yq >/dev/null 2>&1; then
@@ -184,7 +163,6 @@ read_config() {
             PORT=$(yq eval '.server.port // 8090' "$config_file" 2>/dev/null)
             HTTP_ONLY=$(yq eval '.server.http_only // false' "$config_file" 2>/dev/null)
             PUBLIC_HOSTNAME=$(yq eval '.server.public_hostname // ""' "$config_file" 2>/dev/null)
-            CONSENT_ENABLED=$(yq eval '.consent.enabled // true' "$config_file" 2>/dev/null)
         else
             # Fallback: basic parsing with grep/awk
             HOSTNAME=$(grep -E '^\s*hostname:' "$config_file" | awk -F':' '{gsub(/[[:space:]"'\'']/,"",$2); print $2}' | head -1)
@@ -196,13 +174,6 @@ read_config() {
                 HTTP_ONLY="true"
             else
                 HTTP_ONLY="false"
-            fi
-
-            # Check for consent.enabled (default: true)
-            if grep -A1 '^consent:' "$config_file" 2>/dev/null | grep -q 'enabled.*false'; then
-                CONSENT_ENABLED="false"
-            else
-                CONSENT_ENABLED="true"
             fi
 
             # Use defaults if not found
@@ -260,6 +231,9 @@ function clean() {
 
     echo "Removing certificates in the $BACKEND_DIR/$SECURITY_DIR"
     rm -rf "$BACKEND_DIR/$SECURITY_DIR"
+
+    echo "Removing runtime secrets in the $BACKEND_DIR/config/secrets"
+    rm -rf "$BACKEND_DIR/config/secrets"
 
     echo "Removing certificates in the $VANILLA_SAMPLE_APP_DIR"
     rm -f "$VANILLA_SAMPLE_APP_DIR/server.cert"
@@ -329,8 +303,8 @@ function initialize_databases() {
 
     mkdir -p "$REPOSITORY_DB_DIR"
 
-    db_files=("configdb.db" "runtimedb.db" "userdb.db")
-    script_paths=("configdb/sqlite.sql" "runtimedb/sqlite.sql" "userdb/sqlite.sql")
+    db_files=("configdb.db" "runtime_transient.db" "entitydb.db" "runtime_persistent.db")
+    script_paths=("configdb/sqlite.sql" "runtime_transient/sqlite.sql" "entitydb/sqlite.sql" "runtime_persistent/sqlite.sql")
 
     for ((i = 0; i < ${#db_files[@]}; i++)); do
         db_file="${db_files[$i]}"
@@ -376,11 +350,13 @@ function build_frontend() {
     echo "================================================================"
     echo "Building frontend apps..."
     ensure_pnpm
-    
+
+    sync_quickstart_bundles
+
     # Install dependencies
     echo "Installing frontend dependencies..."
     pnpm install --frozen-lockfile
-    
+
     echo "Building frontend applications & packages..."
     pnpm build:frontend
     
@@ -389,57 +365,76 @@ function build_frontend() {
     echo "================================================================"
 }
 
-function build_sdks_js() {
-    ensure_pnpm
-    
-    echo "Installing SDK dependencies..."
-    pnpm install --frozen-lockfile
-    
-    echo "Building JavaScript ecosystem SDK packages..."
-    pnpm --filter './sdks/**' build
+function build_cli() {
+    echo "Building CLI tool..."
+    bash "$SCRIPT_DIR/tools/cli/scripts/build.sh"
+}
+
+function test_cli() {
+    echo "Running CLI tool tests..."
+    cd "$SCRIPT_DIR/tools/cli" && go test -v -race -count=1 ./...
     cd "$SCRIPT_DIR" || exit 1
 }
 
-function test_sdks_js() {
-    ensure_pnpm
-    
-    echo "Installing SDK dependencies..."
-    pnpm install --frozen-lockfile
-    
-    echo "Running JavaScript ecosystem SDK tests..."
-    pnpm --filter './sdks/**' test
+function build_i18n_extractor() {
+    local tool_bin="$SCRIPT_DIR/backend/bin/tools"
+    mkdir -p "$tool_bin"
+    echo "Building i18n-extractor..."
+    cd "$SCRIPT_DIR/tools/i18n-extractor" && go build -o "$tool_bin/i18n-extractor" .
     cd "$SCRIPT_DIR" || exit 1
 }
 
-function lint_sdks_js() {
-    ensure_pnpm
-    
-    echo "Installing SDK dependencies..."
-    pnpm install --frozen-lockfile
-    
-    echo "Linting JavaScript ecosystem SDK packages..."
-    pnpm --filter './sdks/**' lint
+function test_i18n_extractor() {
+    echo "Running i18n-extractor tests..."
+    cd "$SCRIPT_DIR/tools/i18n-extractor" && go test -v .
     cd "$SCRIPT_DIR" || exit 1
 }
 
-function build_sdks() {
+function lint_cli() {
+    local golangci_lint="$SCRIPT_DIR/backend/bin/tools/golangci-lint"
+    echo "Linting CLI tool..."
+    cd "$SCRIPT_DIR/tools/cli" && "$golangci_lint" run ./...
+    cd "$SCRIPT_DIR" || exit 1
+}
+
+function lint_i18n_extractor() {
+    local golangci_lint="$SCRIPT_DIR/backend/bin/tools/golangci-lint"
+    echo "Linting i18n-extractor..."
+    cd "$SCRIPT_DIR/tools/i18n-extractor" && "$golangci_lint" run ./...
+    cd "$SCRIPT_DIR" || exit 1
+}
+
+function lint_tools() {
     echo "================================================================"
-    echo "Building SDKs..."
-    build_sdks_js
+    echo "Linting tools..."
+    lint_cli
+    lint_i18n_extractor
     echo "================================================================"
 }
 
-function test_sdks() {
+function build_npm_tools() {
+    ensure_pnpm
+    echo "Installing tools dependencies..."
+    pnpm install --frozen-lockfile
+    echo "Building npm-based tools..."
+    pnpm --filter './tools/**' build
+    cd "$SCRIPT_DIR" || exit 1
+}
+
+function build_tools() {
     echo "================================================================"
-    echo "Running SDK tests..."
-    test_sdks_js
+    echo "Building tools..."
+    build_cli
+    build_i18n_extractor
+    build_npm_tools
     echo "================================================================"
 }
 
-function lint_sdks() {
+function test_tools() {
     echo "================================================================"
-    echo "Linting SDKs..."
-    lint_sdks_js
+    echo "Running tool tests..."
+    test_cli
+    test_i18n_extractor
     echo "================================================================"
 }
 
@@ -470,26 +465,30 @@ function prepare_backend_for_packaging() {
     fi
 
     cp "$BUILD_DIR/$binary_name" "$DIST_DIR/$PRODUCT_FOLDER/"
-    cp -r "$REPOSITORY_DIR" "$DIST_DIR/$PRODUCT_FOLDER/"
+    cp "$BACKEND_DIR/deployment.yaml" "$DIST_DIR/$PRODUCT_FOLDER/"
+    cp -r "$BACKEND_DIR/config" "$DIST_DIR/$PRODUCT_FOLDER/"
+    if [ -d "$REPOSITORY_DB_DIR" ]; then
+        cp -r "$REPOSITORY_DB_DIR" "$DIST_DIR/$PRODUCT_FOLDER/"
+    fi
     cp "$VERSION_FILE" "$DIST_DIR/$PRODUCT_FOLDER/"
     cp -r "$SERVER_SCRIPTS_DIR" "$DIST_DIR/$PRODUCT_FOLDER/"
     cp -r "$SERVER_DB_SCRIPTS_DIR" "$DIST_DIR/$PRODUCT_FOLDER/"
     mkdir -p "$DIST_DIR/$PRODUCT_FOLDER/$SECURITY_DIR"
+    # Never ship key material: strip any dev certs/keys that "cp -r config" above may have copied in.
+    rm -f "$DIST_DIR/$PRODUCT_FOLDER/$SECURITY_DIR"/*.cert "$DIST_DIR/$PRODUCT_FOLDER/$SECURITY_DIR"/*.key
+    # Ship an empty config/secrets directory (like config/certs) so a named volume mounted there
+    # inherits the runtime user's ownership instead of being created as root. Never ship the dev
+    # Direct Auth Secret that "cp -r config" may have copied in; setup.sh generates a fresh one.
+    mkdir -p "$DIST_DIR/$PRODUCT_FOLDER/config/secrets"
+    rm -f "$DIST_DIR/$PRODUCT_FOLDER/config/secrets/direct_auth_secret"
 
     # Copy bootstrap directory
     echo "Copying bootstrap scripts..."
     cp -r "$BACKEND_DIR/bootstrap" "$DIST_DIR/$PRODUCT_FOLDER/"
-    # Ensure execute permissions on bootstrap scripts
-    chmod +x "$DIST_DIR/$PRODUCT_FOLDER/bootstrap/"*.sh 2>/dev/null || true
+    # Never ship the dev-only CORS seed that `run` stages into the source bootstrap dir.
+    rm -f "$DIST_DIR/$PRODUCT_FOLDER/bootstrap/02-server-configurations.yaml"
 
-    echo "=== Ensuring server certificates exist in the distribution ==="
-    ensure_certificates "$DIST_DIR/$PRODUCT_FOLDER/$SECURITY_DIR" "server"
-    ensure_certificates "$DIST_DIR/$PRODUCT_FOLDER/$SECURITY_DIR" "signing"
-    echo "================================================================"
-
-    echo "=== Ensuring crypto file exists in the distribution ==="
-    ensure_crypto_file "$DIST_DIR/$PRODUCT_FOLDER/$SECURITY_DIR"
-    echo "================================================================"
+    # Key material is not generated into the distribution; setup.sh generates it per deployment.
 }
 
 function prepare_frontend_for_packaging() {
@@ -522,6 +521,26 @@ function prepare_frontend_for_packaging() {
     echo "================================================================"
 }
 
+function sync_quickstart_bundles() {
+    # Stage Quick start declarative bundles into the console's public dir.
+    echo "Syncing quick start sample bundles to console welcome data dir..."
+    rm -rf "$QUICKSTART_BUNDLE_STAGE_DIR"
+    for entry in "${QUICKSTART_SAMPLE_BUNDLES[@]}"; do
+        local dest_name="${entry%%:*}"
+        local src_dir="${entry#*:}"
+        local dest_dir="$QUICKSTART_BUNDLE_STAGE_DIR/$dest_name"
+        if [ -d "$src_dir" ]; then
+            echo "  Staging '$dest_name' from $src_dir"
+            mkdir -p "$dest_dir"
+            shopt -s dotglob
+            cp -r "$src_dir/"* "$dest_dir"
+            shopt -u dotglob
+        else
+            echo "  Warning: quick start bundle source not found at $src_dir (dest '$dest_name')"
+        fi
+    done
+}
+
 function package() {
     echo "================================================================"
     echo "Packaging backend & frontend artifacts..."
@@ -545,105 +564,28 @@ function package() {
         chmod +x "$DIST_DIR/$PRODUCT_FOLDER/setup.sh"
     fi
 
-    if [ "$WITHOUT_CONSENT" != "true" ]; then
-        echo "Packaging consent server..."
-        bash "$SCRIPT_DIR/scripts/package-consent-server.sh" \
-                "$GO_OS" "$GO_ARCH" "$(cd "$DIST_DIR/$PRODUCT_FOLDER" && pwd)"
-    else
-        echo "Skipping consent server packaging (--without-consent)..."
-        local target_yaml="$DIST_DIR/$PRODUCT_FOLDER/repository/conf/deployment.yaml"
-        if command -v yq >/dev/null 2>&1; then
-            yq eval '.consent.enabled = false' -i "$target_yaml" 2>/dev/null || sed -i.bak '/^consent:/ { n; s/enabled: true/enabled: false/; }' "$target_yaml" || true
-        else
-            sed -i.bak '/^consent:/ { n; s/enabled: true/enabled: false/; }' "$target_yaml" || true
-        fi
-        rm -f "${target_yaml}.bak" 2>/dev/null || true
-    fi
-
     echo "Creating zip file..."
+    rm -f "$DIST_DIR/$PRODUCT_FOLDER.zip"
     (cd "$DIST_DIR" && find "$PRODUCT_FOLDER" | sort | zip "$PRODUCT_FOLDER.zip" -@)
     rm -rf "${DIST_DIR:?}/$PRODUCT_FOLDER" "$BUILD_DIR"
-    echo "================================================================"
-}
-
-function build_sample_app() {
-    echo "================================================================"
-    echo "Building sample apps..."
-
-    # Build React Vanilla sample
-    echo "=== Building React Vanilla sample app ==="
-    echo "=== Ensuring React Vanilla sample app certificates exist ==="
-    ensure_certificates "$VANILLA_SAMPLE_APP_DIR" "server"
-
-    cd "$VANILLA_SAMPLE_APP_DIR" || exit 1
-    echo "Installing React Vanilla sample dependencies..."
-    npm ci
-
-    echo "Building React Vanilla sample app..."
-    npm run build
-
-    cd - || exit 1
-    echo "✅ React Vanilla sample app built successfully."
-
-    # Build React SDK sample
-    echo "=== Building React SDK sample app ==="
-
-    # Ensure certificates exist for React SDK sample
-    echo "=== Ensuring React SDK sample app certificates exist ==="
-    ensure_certificates "$REACT_SDK_SAMPLE_APP_DIR" "server"
-
-    cd "$REACT_SDK_SAMPLE_APP_DIR" || exit 1
-    echo "Installing React SDK sample dependencies..."
-    pnpm install
-
-    echo "Building React SDK sample app..."
-    pnpm run build
-
-    cd - || exit 1
-    echo "✅ React SDK sample app built successfully."
-
-    # Build React API-based sample
-    echo "=== Building React API-based sample app ==="
-
-    # Ensure certificates exist for React API-based sample
-    echo "=== Ensuring React API-based sample app certificates exist ==="
-    ensure_certificates "$REACT_API_SAMPLE_APP_DIR" "server"
-
-    cd "$REACT_API_SAMPLE_APP_DIR" || exit 1
-    echo "Installing React API-based sample dependencies..."
-    npm ci
-
-    echo "Building React API-based sample app..."
-    npm run build
-
-    cd - || exit 1
-    echo "✅ React API-based sample app built successfully."
-
-    # Build Wayfinder sample (Wayfinder)
-    echo "=== Building Wayfinder sample app ==="
-
-    cd "$WAYFINDER_SAMPLE_APP_DIR/frontend" || exit 1
-    echo "Installing Wayfinder sample frontend dependencies..."
-    npm ci
-
-    echo "Building Wayfinder sample frontend..."
-    npm run build
-
-    cd "$SCRIPT_DIR" || exit 1
-
-    for svc in backend ai-agent; do
-        echo "Installing Wayfinder sample $svc dependencies..."
-        (cd "$WAYFINDER_SAMPLE_APP_DIR/$svc" && npm ci)
-    done
-
-    echo "✅ Wayfinder sample app built successfully."
-
     echo "================================================================"
 }
 
 function package_sample_app() {
     echo "================================================================"
     echo "Packaging sample apps..."
+    ensure_pnpm
+
+    # pnpm pack rewrites workspace: dependencies to real versions, which
+    # requires the workspace to be installed.
+    echo "Installing workspace dependencies..."
+    pnpm install --frozen-lockfile
+
+    # Samples are packaged from source; ship certificates for the samples that
+    # expect them at the package root (react-api-based ignores them via .gitignore).
+    echo "=== Ensuring sample app certificates exist ==="
+    ensure_certificates "$VANILLA_SAMPLE_APP_DIR" "server"
+    ensure_certificates "$REACT_SDK_SAMPLE_APP_DIR" "server"
 
     # Package React Vanilla sample
     echo "=== Packaging React Vanilla sample app ==="
@@ -665,263 +607,97 @@ function package_sample_app() {
 }
 
 function package_vanilla_sample() {
-    # Use appropriate binary name based on OS
-    local binary_name="$VANILLA_SAMPLE_APP_SERVER_BINARY_NAME"
-    local executable_name="$VANILLA_SAMPLE_APP_SERVER_BINARY_NAME-$SAMPLE_DIST_OS-$SAMPLE_DIST_ARCH"
+    local tgz
 
-    if [ "$SAMPLE_DIST_OS" = "win" ]; then
-        binary_name="${VANILLA_SAMPLE_APP_SERVER_BINARY_NAME}.exe"
-        executable_name="${VANILLA_SAMPLE_APP_SERVER_BINARY_NAME}-${SAMPLE_DIST_OS}-${SAMPLE_DIST_ARCH}.exe"
-    fi
-
-    mkdir -p "$DIST_DIR/$VANILLA_SAMPLE_APP_FOLDER"
-
-    # Copy the built app files
-    cp -r "$VANILLA_SAMPLE_APP_SERVER_DIR/app" "$DIST_DIR/$VANILLA_SAMPLE_APP_FOLDER/"
-
-    cd "$VANILLA_SAMPLE_APP_SERVER_DIR" || exit 1
-
-    mkdir -p "executables"
-
-    # Install dependencies to ensure pkg is available
-    npm ci
-
-    npx pkg . -t "$SAMPLE_DIST_NODE_VERSION-$SAMPLE_DIST_OS-$SAMPLE_DIST_ARCH" -o "executables/$executable_name"
-
+    cd "$VANILLA_SAMPLE_APP_DIR" || exit 1
+    pnpm pack --pack-destination "$SCRIPT_DIR/$DIST_DIR"
     cd "$SCRIPT_DIR" || exit 1
 
-    # Copy the server binary
-    cp "$VANILLA_SAMPLE_APP_SERVER_DIR/executables/$executable_name" "$DIST_DIR/$VANILLA_SAMPLE_APP_FOLDER/$binary_name"
-
-    # Copy README and other necessary files
-    if [ -f "$VANILLA_SAMPLE_APP_DIR/README.md" ]; then
-        cp "$VANILLA_SAMPLE_APP_DIR/README.md" "$DIST_DIR/$VANILLA_SAMPLE_APP_FOLDER/"
-    fi
-
-    # Ensure the certificates exist in the sample app directory
-    echo "=== Ensuring certificates exist in the React Vanilla sample distribution ==="
-    ensure_certificates "$DIST_DIR/$VANILLA_SAMPLE_APP_FOLDER" "server"
-
-    # Copy the appropriate startup script based on the target OS
-    if [ "$SAMPLE_DIST_OS" = "win" ]; then
-        echo "Including Windows start script (start.ps1)..."
-        cp -r "$VANILLA_SAMPLE_APP_SERVER_DIR/start.ps1" "$DIST_DIR/$VANILLA_SAMPLE_APP_FOLDER"
-    else
-        echo "Including Unix start script (start.sh)..."
-        cp -r "$VANILLA_SAMPLE_APP_SERVER_DIR/start.sh" "$DIST_DIR/$VANILLA_SAMPLE_APP_FOLDER"
-    fi
-
-    # Copy ThunderID declarative resource configs
-    if [ -d "$VANILLA_SAMPLE_APP_DIR/thunderid-config" ]; then
-        echo "Copying ThunderID config..."
-        cp -r "$VANILLA_SAMPLE_APP_DIR/thunderid-config" "$DIST_DIR/$VANILLA_SAMPLE_APP_FOLDER/"
-    else
-        echo "Error: thunderid-config directory not found at $VANILLA_SAMPLE_APP_DIR/thunderid-config"
-        echo "  VANILLA_SAMPLE_APP_DIR=$VANILLA_SAMPLE_APP_DIR"
-        echo "  VANILLA_SAMPLE_APP_FOLDER=$VANILLA_SAMPLE_APP_FOLDER"
-        echo "  DIST_DIR=$DIST_DIR"
+    tgz=$(ls "$DIST_DIR"/thunderid-react-vanilla-sample-*.tgz 2>/dev/null | head -1)
+    if [ -z "$tgz" ]; then
+        echo "Error: pnpm pack did not produce a tgz for react-vanilla-sample"
         exit 1
     fi
 
-    echo "Creating React Vanilla sample zip file..."
+    tar xzf "$tgz" -C "$DIST_DIR"
+    mv "$DIST_DIR/package" "$DIST_DIR/$VANILLA_SAMPLE_APP_FOLDER"
     (cd "$DIST_DIR" && find "$VANILLA_SAMPLE_APP_FOLDER" | sort | zip "$VANILLA_SAMPLE_APP_FOLDER.zip" -@)
-    rm -rf "${DIST_DIR:?}/$VANILLA_SAMPLE_APP_FOLDER"
+    rm -rf "${DIST_DIR:?}/$VANILLA_SAMPLE_APP_FOLDER" "$tgz"
 
     echo "✅ React Vanilla sample app packaged successfully as $DIST_DIR/$VANILLA_SAMPLE_APP_FOLDER.zip"
 }
 
 function package_react_sdk_sample() {
-    mkdir -p "$DIST_DIR/$REACT_SDK_SAMPLE_APP_FOLDER"
+    local tgz
 
-    # Copy the built React app (dist folder)
-    if [ -d "$REACT_SDK_SAMPLE_APP_DIR/dist" ]; then
-        echo "Copying React SDK sample build output..."
-        cp -r "$REACT_SDK_SAMPLE_APP_DIR/dist" "$DIST_DIR/$REACT_SDK_SAMPLE_APP_FOLDER/"
-    else
-        echo "Warning: React SDK sample build output not found at $REACT_SDK_SAMPLE_APP_DIR/dist"
+    cd "$REACT_SDK_SAMPLE_APP_DIR" || exit 1
+    pnpm pack --pack-destination "$SCRIPT_DIR/$DIST_DIR"
+    cd "$SCRIPT_DIR" || exit 1
+
+    tgz=$(ls "$DIST_DIR"/thunderid-react-sdk-sample-*.tgz 2>/dev/null | head -1)
+    if [ -z "$tgz" ]; then
+        echo "Error: pnpm pack did not produce a tgz for react-sdk-sample"
         exit 1
     fi
 
-    # Copy README and other necessary files
-    if [ -f "$REACT_SDK_SAMPLE_APP_DIR/README.md" ]; then
-        cp "$REACT_SDK_SAMPLE_APP_DIR/README.md" "$DIST_DIR/$REACT_SDK_SAMPLE_APP_FOLDER/"
-    fi
-
-    if [ -f "$REACT_SDK_SAMPLE_APP_DIR/.env.example" ]; then
-        cp "$REACT_SDK_SAMPLE_APP_DIR/.env.example" "$DIST_DIR/$REACT_SDK_SAMPLE_APP_FOLDER/"
-    fi
-
-    # Copy the appropriate startup script based on the target OS
-    if [ "$SAMPLE_DIST_OS" = "win" ]; then
-        echo "Including Windows start script (start.ps1)..."
-        cp -r "$REACT_SDK_SAMPLE_APP_DIR/start.ps1" "$DIST_DIR/$REACT_SDK_SAMPLE_APP_FOLDER"
-    else
-        echo "Including Unix start script (start.sh)..."
-        cp -r "$REACT_SDK_SAMPLE_APP_DIR/start.sh" "$DIST_DIR/$REACT_SDK_SAMPLE_APP_FOLDER"
-    fi
-
-    # Copy ThunderID declarative resource configs
-    if [ -d "$REACT_SDK_SAMPLE_APP_DIR/thunderid-config" ]; then
-        echo "Copying ThunderID config..."
-        cp -r "$REACT_SDK_SAMPLE_APP_DIR/thunderid-config" "$DIST_DIR/$REACT_SDK_SAMPLE_APP_FOLDER/"
-    else
-        echo "Error: thunderid-config directory not found at $REACT_SDK_SAMPLE_APP_DIR/thunderid-config"
-        echo "  REACT_SDK_SAMPLE_APP_DIR=$REACT_SDK_SAMPLE_APP_DIR"
-        echo "  REACT_SDK_SAMPLE_APP_FOLDER=$REACT_SDK_SAMPLE_APP_FOLDER"
-        echo "  DIST_DIR=$DIST_DIR"
-        exit 1
-    fi
-
-    echo "Creating React SDK sample zip file..."
+    tar xzf "$tgz" -C "$DIST_DIR"
+    mv "$DIST_DIR/package" "$DIST_DIR/$REACT_SDK_SAMPLE_APP_FOLDER"
     (cd "$DIST_DIR" && find "$REACT_SDK_SAMPLE_APP_FOLDER" | sort | zip "$REACT_SDK_SAMPLE_APP_FOLDER.zip" -@)
-    rm -rf "${DIST_DIR:?}/$REACT_SDK_SAMPLE_APP_FOLDER"
+    rm -rf "${DIST_DIR:?}/$REACT_SDK_SAMPLE_APP_FOLDER" "$tgz"
 
     echo "✅ React SDK sample app packaged successfully as $DIST_DIR/$REACT_SDK_SAMPLE_APP_FOLDER.zip"
 }
 
 function package_react_api_based_sample() {
-    mkdir -p "$DIST_DIR/$REACT_API_SAMPLE_APP_FOLDER"
+    local tgz
 
-    # Copy the built React app (dist folder)
-    if [ -d "$REACT_API_SAMPLE_APP_DIR/dist" ]; then
-        echo "Copying React API-based sample build output..."
-        cp -r "$REACT_API_SAMPLE_APP_DIR/dist" "$DIST_DIR/$REACT_API_SAMPLE_APP_FOLDER/"
-    else
-        echo "Warning: React API-based sample build output not found at $REACT_API_SAMPLE_APP_DIR/dist"
+    cd "$REACT_API_SAMPLE_APP_DIR" || exit 1
+    pnpm pack --pack-destination "$SCRIPT_DIR/$DIST_DIR"
+    cd "$SCRIPT_DIR" || exit 1
+
+    tgz=$(ls "$DIST_DIR"/thunderid-react-api-based-sample-*.tgz 2>/dev/null | head -1)
+    if [ -z "$tgz" ]; then
+        echo "Error: pnpm pack did not produce a tgz for react-api-based-sample"
         exit 1
     fi
 
-    # Copy README if it exists
-    if [ -f "$REACT_API_SAMPLE_APP_DIR/README.md" ]; then
-        cp "$REACT_API_SAMPLE_APP_DIR/README.md" "$DIST_DIR/$REACT_API_SAMPLE_APP_FOLDER/"
-    fi
+    tar xzf "$tgz" -C "$DIST_DIR"
+    mv "$DIST_DIR/package" "$DIST_DIR/$REACT_API_SAMPLE_APP_FOLDER"
 
-    # Ensure the certificates exist in the sample app dist directory
-    echo "=== Ensuring certificates exist in the React API-based sample distribution ==="
-    ensure_certificates "$DIST_DIR/$REACT_API_SAMPLE_APP_FOLDER/dist" "server"
+    # Certs are gitignored in this sample so pnpm pack excludes them; inject them
+    # into the package root where vite.config.ts expects them.
+    ensure_certificates "$DIST_DIR/$REACT_API_SAMPLE_APP_FOLDER" "server"
 
-    # Copy the appropriate startup script based on the target OS
-    if [ "$SAMPLE_DIST_OS" = "win" ]; then
-        echo "Including Windows start script (start.ps1)..."
-        cp -r "$REACT_API_SAMPLE_APP_DIR/start.ps1" "$DIST_DIR/$REACT_API_SAMPLE_APP_FOLDER"
-    else
-        echo "Including Unix start script (start.sh)..."
-        cp -r "$REACT_API_SAMPLE_APP_DIR/start.sh" "$DIST_DIR/$REACT_API_SAMPLE_APP_FOLDER"
-    fi
-
-    # Copy ThunderID declarative resource configs
-    if [ -d "$REACT_API_SAMPLE_APP_DIR/thunderid-config" ]; then
-        echo "Copying ThunderID config..."
-        cp -r "$REACT_API_SAMPLE_APP_DIR/thunderid-config" "$DIST_DIR/$REACT_API_SAMPLE_APP_FOLDER/"
-    else
-        echo "Error: thunderid-config directory not found at $REACT_API_SAMPLE_APP_DIR/thunderid-config"
-        echo "  REACT_API_SAMPLE_APP_DIR=$REACT_API_SAMPLE_APP_DIR"
-        echo "  REACT_API_SAMPLE_APP_FOLDER=$REACT_API_SAMPLE_APP_FOLDER"
-        echo "  DIST_DIR=$DIST_DIR"
-        exit 1
-    fi
-
-    echo "Creating React API-based sample zip file..."
     (cd "$DIST_DIR" && find "$REACT_API_SAMPLE_APP_FOLDER" | sort | zip "$REACT_API_SAMPLE_APP_FOLDER.zip" -@)
-    rm -rf "${DIST_DIR:?}/$REACT_API_SAMPLE_APP_FOLDER"
+    rm -rf "${DIST_DIR:?}/$REACT_API_SAMPLE_APP_FOLDER" "$tgz"
 
     echo "✅ React API-based sample app packaged successfully as $DIST_DIR/$REACT_API_SAMPLE_APP_FOLDER.zip"
 }
 
 function package_wayfinder_sample() {
-    local dist_folder="$DIST_DIR/$WAYFINDER_SAMPLE_APP_FOLDER"
-    mkdir -p "$dist_folder"
+    local tgz
 
-    # Frontend is built ahead of time; the backend and ai-agent services ship as
-    # source because pkg cannot bundle Node 22's node:sqlite binding and the chat
-    # agent requires runtime LLM keys from .env.
-    if [ -d "$WAYFINDER_SAMPLE_APP_DIR/frontend/dist" ]; then
-        echo "Copying Wayfinder sample frontend build output..."
-        mkdir -p "$dist_folder/frontend"
-        cp -r "$WAYFINDER_SAMPLE_APP_DIR/frontend/dist" "$dist_folder/frontend/"
-        cp "$WAYFINDER_SAMPLE_APP_DIR/frontend/package.json" "$dist_folder/frontend/"
-        cp "$WAYFINDER_SAMPLE_APP_DIR/frontend/package-lock.json" "$dist_folder/frontend/" 2>/dev/null || true
-        cp "$WAYFINDER_SAMPLE_APP_DIR/frontend/index.html" "$dist_folder/frontend/" 2>/dev/null || true
-        cp "$WAYFINDER_SAMPLE_APP_DIR/frontend/vite.config.js" "$dist_folder/frontend/" 2>/dev/null || true
-        if [ -d "$WAYFINDER_SAMPLE_APP_DIR/frontend/src" ]; then
-            cp -r "$WAYFINDER_SAMPLE_APP_DIR/frontend/src" "$dist_folder/frontend/"
-        fi
-        if [ -d "$WAYFINDER_SAMPLE_APP_DIR/frontend/public" ]; then
-            cp -r "$WAYFINDER_SAMPLE_APP_DIR/frontend/public" "$dist_folder/frontend/"
-        fi
-        if [ -f "$WAYFINDER_SAMPLE_APP_DIR/frontend/.env.example" ]; then
-            cp "$WAYFINDER_SAMPLE_APP_DIR/frontend/.env.example" "$dist_folder/frontend/"
-        fi
-        if [ -f "$WAYFINDER_SAMPLE_APP_DIR/frontend/README.md" ]; then
-            cp "$WAYFINDER_SAMPLE_APP_DIR/frontend/README.md" "$dist_folder/frontend/"
-        fi
-    else
-        echo "Error: Wayfinder sample frontend build output not found at $WAYFINDER_SAMPLE_APP_DIR/frontend/dist"
+    cd "$WAYFINDER_SAMPLE_APP_DIR" || exit 1
+    pnpm pack --pack-destination "$SCRIPT_DIR/$DIST_DIR"
+    cd "$SCRIPT_DIR" || exit 1
+
+    tgz=$(ls "$DIST_DIR"/thunderid-wayfinder-sample-*.tgz 2>/dev/null | head -1)
+    if [ -z "$tgz" ]; then
+        echo "Error: pnpm pack did not produce a tgz for wayfinder-sample"
         exit 1
     fi
 
-    for svc in backend ai-agent; do
-        local svc_src="$WAYFINDER_SAMPLE_APP_DIR/$svc"
-        local svc_dest="$dist_folder/$svc"
-        echo "Copying Wayfinder sample $svc source..."
-        mkdir -p "$svc_dest"
-        # Copy package metadata, source, and per-service docs but skip node_modules
-        cp "$svc_src/package.json" "$svc_dest/"
-        cp "$svc_src/package-lock.json" "$svc_dest/" 2>/dev/null || true
-        if [ -f "$svc_src/tsconfig.json" ]; then
-            cp "$svc_src/tsconfig.json" "$svc_dest/"
-        fi
-        if [ -f "$svc_src/README.md" ]; then
-            cp "$svc_src/README.md" "$svc_dest/"
-        fi
-        if [ -f "$svc_src/.env.example" ]; then
-            cp "$svc_src/.env.example" "$svc_dest/"
-        fi
-        if [ -d "$svc_src/src" ]; then
-            cp -r "$svc_src/src" "$svc_dest/"
-        fi
-        if [ -d "$svc_src/scripts" ]; then
-            cp -r "$svc_src/scripts" "$svc_dest/"
-        fi
-        # ai-agent ships a single TypeScript entry file at the root
-        if [ -f "$svc_src/agent.ts" ]; then
-            cp "$svc_src/agent.ts" "$svc_dest/"
+    tar xzf "$tgz" -C "$DIST_DIR"
+    mv "$DIST_DIR/package" "$DIST_DIR/$WAYFINDER_SAMPLE_APP_FOLDER"
+
+    for dir in frontend backend smtp-server ai-agent; do
+        if [ -f "$DIST_DIR/$WAYFINDER_SAMPLE_APP_FOLDER/$dir/.env.example" ]; then
+            cp "$DIST_DIR/$WAYFINDER_SAMPLE_APP_FOLDER/$dir/.env.example" "$DIST_DIR/$WAYFINDER_SAMPLE_APP_FOLDER/$dir/.env"
         fi
     done
 
-    # Copy top-level files
-    if [ -f "$WAYFINDER_SAMPLE_APP_DIR/README.md" ]; then
-        cp "$WAYFINDER_SAMPLE_APP_DIR/README.md" "$dist_folder/"
-    fi
-    if [ -f "$WAYFINDER_SAMPLE_APP_DIR/package.json" ]; then
-        cp "$WAYFINDER_SAMPLE_APP_DIR/package.json" "$dist_folder/"
-    fi
-
-    # Startup script for the appropriate OS
-    if [ "$SAMPLE_DIST_OS" = "win" ]; then
-        echo "Including Windows start script (start.ps1)..."
-        cp "$WAYFINDER_SAMPLE_APP_DIR/start.ps1" "$dist_folder/"
-    else
-        echo "Including Unix start script (start.sh)..."
-        cp "$WAYFINDER_SAMPLE_APP_DIR/start.sh" "$dist_folder/"
-        chmod +x "$dist_folder/start.sh"
-    fi
-
-    # ThunderID declarative resource configs
-    if [ -d "$WAYFINDER_SAMPLE_APP_DIR/thunderid-config" ]; then
-        echo "Copying ThunderID config..."
-        cp -r "$WAYFINDER_SAMPLE_APP_DIR/thunderid-config" "$dist_folder/"
-    else
-        echo "Error: thunderid-config directory not found at $WAYFINDER_SAMPLE_APP_DIR/thunderid-config"
-        echo "  WAYFINDER_SAMPLE_APP_DIR=$WAYFINDER_SAMPLE_APP_DIR"
-        echo "  WAYFINDER_SAMPLE_APP_FOLDER=$WAYFINDER_SAMPLE_APP_FOLDER"
-        echo "  DIST_DIR=$DIST_DIR"
-        exit 1
-    fi
-
-    echo "Creating Wayfinder sample zip file..."
     (cd "$DIST_DIR" && find "$WAYFINDER_SAMPLE_APP_FOLDER" | sort | zip "$WAYFINDER_SAMPLE_APP_FOLDER.zip" -@)
-    rm -rf "${DIST_DIR:?}/$WAYFINDER_SAMPLE_APP_FOLDER"
+    rm -rf "${DIST_DIR:?}/$WAYFINDER_SAMPLE_APP_FOLDER" "$tgz"
 
     echo "✅ Wayfinder sample app packaged successfully as $DIST_DIR/$WAYFINDER_SAMPLE_APP_FOLDER.zip"
 }
@@ -1117,13 +893,27 @@ function ensure_certificates() {
     if [[ ! -f "$local_cert_file" || ! -f "$local_key_file" ]]; then
         mkdir -p "$LOCAL_CERT_DIR"
         echo "Generating certificates (${cert_name_prefix}) in $LOCAL_CERT_DIR..."
-        OPENSSL_ERR=$(
-            openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
-                -keyout "$local_key_file" \
-                -out "$local_cert_file" \
-                -subj "/O=WSO2/OU=${PRODUCT_NAME}/CN=localhost" \
-                > /dev/null 2>&1
-        )
+        if [[ "$cert_name_prefix" == ecdsa* ]]; then
+            OPENSSL_ERR=$(
+                openssl ecparam -name prime256v1 -genkey -noout -param_enc named_curve \
+                    -out "$local_key_file" && \
+                openssl req -new -x509 -nodes -days 3650 \
+                    -key "$local_key_file" \
+                    -out "$local_cert_file" \
+                    -subj "/O=WSO2/OU=${PRODUCT_NAME}/CN=localhost" \
+                    -addext "subjectAltName=DNS:localhost,IP:127.0.0.1" \
+                    2>&1 >/dev/null
+            )
+        else
+            OPENSSL_ERR=$(
+                openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
+                    -keyout "$local_key_file" \
+                    -out "$local_cert_file" \
+                    -subj "/O=WSO2/OU=${PRODUCT_NAME}/CN=localhost" \
+                    -addext "subjectAltName=DNS:localhost,IP:127.0.0.1" \
+                    2>&1 >/dev/null
+            )
+        fi
         if [[ $? -ne 0 ]]; then
             echo "Error generating certificates: $OPENSSL_ERR"
             exit 1
@@ -1177,7 +967,43 @@ function ensure_crypto_file() {
         
         echo "Successfully generated and added new crypto key to $KEY_FILE."
     fi
-    
+
+    echo "================================================================"
+}
+
+function ensure_direct_auth_secret_file() {
+    local SECRET_DIR="$1"
+
+    # Path referenced by server.security.direct_auth_secret (file://config/secrets/direct_auth_secret)
+    # in deployment.yaml. The server reads the secret from here at load time.
+    local SECRET_FILE="$SECRET_DIR/direct_auth_secret"
+
+    echo "=== Ensuring Direct Auth Secret file exists ==="
+
+    if [ -f "$SECRET_FILE" ]; then
+        echo "Direct Auth Secret file already present in $SECRET_FILE. Skipping generation."
+    else
+        echo "Direct Auth Secret file not found. Generating new secret at $SECRET_FILE..."
+
+        # Generate 32-byte secret (64 hex characters) using openssl.
+        local NEW_SECRET
+        if ! NEW_SECRET=$(openssl rand -hex 32); then
+            echo "ERROR: Failed to generate Direct Auth Secret using openssl."
+            exit 1
+        fi
+
+        # Ensure the target directory exists.
+        mkdir -p "$SECRET_DIR"
+
+        # Write the secret without a trailing newline so it is used verbatim.
+        echo -n "$NEW_SECRET" > "$SECRET_FILE"
+
+        echo "Successfully generated and added new Direct Auth Secret to $SECRET_FILE."
+    fi
+
+    # Restrict the secret to the owner, whether newly generated or pre-existing.
+    chmod 600 "$SECRET_FILE"
+
     echo "================================================================"
 }
 
@@ -1189,11 +1015,8 @@ function run() {
         fi
         pkill -f "pnpm.*dev" 2>/dev/null
         pkill -f "vite" 2>/dev/null
-        if [ ! -z "$BACKEND_PID" ]; then 
+        if [ ! -z "$BACKEND_PID" ]; then
             kill $BACKEND_PID 2>/dev/null
-        fi
-        if [ ! -z "$CONSENT_PID" ]; then 
-            kill $CONSENT_PID 2>/dev/null
         fi
         sleep 1
         echo "✅ All servers stopped successfully."
@@ -1203,65 +1026,52 @@ function run() {
     echo "Running frontend apps..."
     run_frontend
 
-    if [ "$CONSENT_ENABLED" = "true" ] && [ "$WITHOUT_CONSENT" != "true" ]; then
-        echo "Running consent server..."
-        run_consent
-    fi
+    # Ensure runtime prerequisites (certificates, crypto material, databases) so the
+    # in-process bootstrap can create the default resources before the server starts.
+    echo "=== Ensuring server certificates exist ==="
+    ensure_certificates "$BACKEND_DIR/$SECURITY_DIR" "server"
+    ensure_certificates "$BACKEND_DIR/$SECURITY_DIR" "signing"
+    ensure_certificates "$BACKEND_DIR/$SECURITY_DIR" "ecdsa-signing"
 
-    # Save original skip security value and temporarily set to true
-    ORIGINAL_SKIP_SECURITY="${SKIP_SECURITY:-}"
-    export SKIP_SECURITY=true
-    run_backend false
+    echo "=== Ensuring sample app certificates exist ==="
+    ensure_certificates "$VANILLA_SAMPLE_APP_DIR" "server"
+    ensure_certificates "$REACT_API_SAMPLE_APP_DIR" "server"
 
-    # Run initial data setup
-    echo "⚙️  Running initial data setup..."
+    ensure_crypto_file "$BACKEND_DIR/$SECURITY_DIR"
+    ensure_direct_auth_secret_file "$BACKEND_DIR/config/secrets"
+
+    echo "Initializing databases..."
+    initialize_databases
+
+    # Create default resources via the in-process bootstrap one-shot (security stays
+    # enabled; the bootstrap runs through the service layer under a runtime context).
+    echo "⚙️  Creating default resources..."
     echo ""
-    
-    # Wait for server to be ready
-    MAX_RETRIES=30
-    RETRY_INTERVAL=2
-    retries=0
-    
-    echo "[INFO] Waiting for ${PRODUCT_NAME} server to be ready..."
-    while [ $retries -lt $MAX_RETRIES ]; do
-        if curl -k -s -f "$BASE_URL/health/readiness" > /dev/null 2>&1; then
-            echo "✓ Server is ready!"
-            break
-        fi
-        
-        retries=$((retries + 1))
-        if [ $retries -ge $MAX_RETRIES ]; then
-            echo "❌ Server did not become ready after $MAX_RETRIES attempts"
-            echo "💡 Please ensure the ${PRODUCT_NAME} server is running at $BASE_URL"
-            exit 1
-        fi
-        
-        echo "[WAITING] Attempt $retries/$MAX_RETRIES - Server not ready yet, retrying in ${RETRY_INTERVAL}s..."
-        sleep $RETRY_INTERVAL
-    done
-    
-    echo ""
-    
-    # Run the bootstrap script directly with environment variable and arguments
-    API_BASE="$BASE_URL" \
-        ADMIN_USERNAME="${ADMIN_USERNAME:-}" \
-        ADMIN_PASSWORD="${ADMIN_PASSWORD:-}" \
-        "$BACKEND_BASE_DIR/cmd/server/bootstrap/01-default-resources.sh" \
-        --console-redirect-uris "https://localhost:$CONSOLE_APP_DEFAULT_PORT/console"
 
-    if [ $? -ne 0 ]; then
+    # Dev-only: seed CORS allowed origins for the Gate and Console apps so they can call
+    # the backend without manual configuration. Regenerated on every run and picked up by
+    # the bootstrap one-shot; it is git-ignored and never packaged (see build()).
+    cat > "$BACKEND_DIR/bootstrap/02-server-configurations.yaml" <<EOF
+resource_type: server_config
+name: cors
+value:
+  allowedOrigins:
+    - "https://localhost:$GATE_APP_DEFAULT_PORT"
+    - "https://localhost:$CONSOLE_APP_DEFAULT_PORT"
+EOF
+
+    # Local dev only: default to admin/admin if not supplied. This path never produces a
+    # shared or distributed artifact, so a fixed default here is acceptable.
+    if ! ( cd "$BACKEND_DIR" && \
+        ADMIN_USERNAME="${ADMIN_USERNAME:-admin}" \
+        ADMIN_PASSWORD="${ADMIN_PASSWORD:-admin}" \
+        PUBLIC_URL="$PUBLIC_URL" \
+        go run . bootstrap --console-redirect-uris "https://localhost:$CONSOLE_APP_DEFAULT_PORT/console" ); then
         echo "❌ Initial data setup failed"
         echo "💡 Check the logs above for more details"
         exit 1
     fi
 
-    echo "🔒 Restoring security setting and restarting backend..."
-    # Restore original SKIP_SECURITY value
-    if [ -n "$ORIGINAL_SKIP_SECURITY" ]; then
-        export SKIP_SECURITY="$ORIGINAL_SKIP_SECURITY"
-    else
-        unset SKIP_SECURITY
-    fi
     # Start backend with initial output but without final output/wait
     start_backend false
 
@@ -1289,20 +1099,17 @@ function run_backend() {
     echo "=== Ensuring server certificates exist ==="
     ensure_certificates "$BACKEND_DIR/$SECURITY_DIR" "server"
     ensure_certificates "$BACKEND_DIR/$SECURITY_DIR" "signing"
+    ensure_certificates "$BACKEND_DIR/$SECURITY_DIR" "ecdsa-signing"
 
     echo "=== Ensuring sample app certificates exist ==="
     ensure_certificates "$VANILLA_SAMPLE_APP_DIR" "server"
     ensure_certificates "$REACT_API_SAMPLE_APP_DIR" "server"
 
     ensure_crypto_file "$BACKEND_DIR/$SECURITY_DIR"
+    ensure_direct_auth_secret_file "$BACKEND_DIR/config/secrets"
 
     echo "Initializing databases..."
     initialize_databases
-
-    if [ "$CONSENT_ENABLED" = "true" ] && [ "$WITHOUT_CONSENT" != "true" ] && [ -z "$CONSENT_PID" ]; then
-        echo "Running consent server..."
-        run_consent
-    fi
 
     start_backend "$show_final_output" "$debug"
 }
@@ -1338,7 +1145,7 @@ function start_backend() {
         echo "👉 Backend : $BASE_URL"
         echo "Press Ctrl+C to stop."
 
-        trap 'echo -e "\n🛑 Shutting down servers..."; kill $BACKEND_PID 2>/dev/null; [ -n "$CONSENT_PID" ] && kill $CONSENT_PID 2>/dev/null; echo "✅ Servers stopped successfully."; exit 0' SIGINT
+        trap 'echo -e "\n🛑 Shutting down servers..."; kill $BACKEND_PID 2>/dev/null; echo "✅ Servers stopped successfully."; exit 0' SIGINT
 
         wait $BACKEND_PID 2>/dev/null
     fi
@@ -1348,7 +1155,9 @@ function run_frontend() {
     echo "================================================================"
     echo "Running frontend apps..."
     ensure_pnpm
-    
+
+    sync_quickstart_bundles
+
     # Install dependencies
     echo "Installing frontend dependencies..."
     pnpm install --frozen-lockfile
@@ -1357,8 +1166,10 @@ function run_frontend() {
     pnpm build:frontend
     
     echo "Starting frontend applications in the background..."
-    # Start frontend processes in background
-    pnpm -r --parallel --filter "@thunderid/console" --filter "@thunderid/gate" dev &
+    # In dev the apps are served on their own origins, so point them at the backend via
+    # THUNDERID_DEV_SERVER_URL (injected into __DEV_SERVER_URL__; applied only in dev builds).
+    THUNDERID_DEV_SERVER_URL="$PUBLIC_URL" \
+        pnpm -r --parallel --filter "@thunderid/console" --filter "@thunderid/gate" dev &
     FRONTEND_PID=$!
     
     # Return to script directory
@@ -1388,45 +1199,6 @@ function run_docs() {
     echo "================================================================"
 }
 
-function run_consent() {
-    local consent_dir="$TARGET_DIR/consent"
-    local consent_port="${CONSENT_SERVER_PORT:-9090}"
-
-    if [ ! -f "$consent_dir/consent-server" ]; then
-        echo "=== Downloading consent server ==="
-        ./scripts/package-consent-server.sh "$GO_OS" "$GO_ARCH" "$TARGET_DIR"
-    fi
-
-    if [ ! -f "$consent_dir/consent-server" ]; then
-        echo "Error: Consent server binary not found at $consent_dir/consent-server"
-        exit 1
-    fi
-
-    echo "=== Starting consent server ==="
-    (cd "$consent_dir" && ./consent-server) &
-    CONSENT_PID=$!
-    CONSENT_TIMEOUT=30
-    CONSENT_ELAPSED=0
-    while [ $CONSENT_ELAPSED -lt $CONSENT_TIMEOUT ]; do
-        if ! kill -0 "$CONSENT_PID" 2>/dev/null; then
-            echo "Error: Consent server process exited unexpectedly"
-            exit 1
-        fi
-        if curl -s -f "http://localhost:${consent_port}/health/readiness" > /dev/null 2>&1; then
-            echo "Consent server is ready"
-            break
-        fi
-        sleep 1
-        CONSENT_ELAPSED=$((CONSENT_ELAPSED + 1))
-    done
-    if [ $CONSENT_ELAPSED -ge $CONSENT_TIMEOUT ]; then
-        echo "Error: Consent server failed to become ready within ${CONSENT_TIMEOUT}s"
-        exit 1
-    fi
-    
-    echo "Consent server started (PID: $CONSENT_PID)"
-}
-
 case "$1" in
     clean)
         clean
@@ -1441,19 +1213,14 @@ case "$1" in
     build_docs)
         build_docs
         ;;
-    build_sdks)
-        build_sdks
+    build_tools)
+        build_tools
         ;;
-    test_sdks)
-        test_sdks
+    test_tools)
+        test_tools
         ;;
-    lint_sdks)
-        lint_sdks
-        ;;
-    build_samples)
-        build_sdks_js
-        build_sample_app
-        package_sample_app
+    lint_tools)
+        lint_tools
         ;;
     package_samples)
         package_sample_app
@@ -1461,9 +1228,7 @@ case "$1" in
     build)
         build_backend
         build_frontend
-        build_sdks
         package
-        build_sample_app
         package_sample_app
         ;;
     test_unit)
@@ -1502,10 +1267,10 @@ case "$1" in
         echo "  build_backend            - Build only the ${PRODUCT_NAME} backend server"
         echo "  build_frontend           - Build only the Next.js frontend applications"
         echo "  build_docs               - Build only the documentation"
-        echo "  build_sdks               - Build all SDK packages"
-        echo "  test_sdks                - Run tests for all SDK packages"
-        echo "  lint_sdks                - Run linting for all SDK packages"
-        echo "  build_samples            - Build the sample applications"
+        echo "  build_tools              - Build all tool binaries (CLI + i18n-extractor + npm tools)"
+        echo "  test_tools               - Run tests for all tools (CLI + i18n-extractor)"
+        echo "  lint_tools               - Run linting for all tools (CLI + i18n-extractor)"
+        echo "  package_samples          - Package the sample applications (samples are distributed as source)"
         echo "  test_unit                - Run unit tests with coverage"
         echo "  test_integration         - Run integration tests. Use -run and -package for filtering"
         echo "  merge_coverage           - Merge unit and integration test coverage reports"
@@ -1515,8 +1280,6 @@ case "$1" in
         echo "  debug_backend            - Run the ${PRODUCT_NAME} backend for development in debug mode"
         echo "  run_frontend             - Run the ${PRODUCT_NAME} frontend for development"
         echo "  run_docs                 - Run the documentation development server with live reload"
-        echo ""
-        echo "  --without-consent        - Skip packaging/running the consent server"
         exit 1
         ;;
 esac

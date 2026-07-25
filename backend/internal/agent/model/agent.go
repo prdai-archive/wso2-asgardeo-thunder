@@ -24,7 +24,8 @@ package model
 import (
 	"encoding/json"
 
-	inboundmodel "github.com/thunder-id/thunderid/internal/inboundclient/model"
+	"github.com/thunder-id/thunderid/pkg/thunderidengine/providers"
+
 	"github.com/thunder-id/thunderid/internal/system/utils"
 )
 
@@ -33,16 +34,16 @@ import (
 // deserialize nested maps; the entity parser converts it to json.RawMessage before storage.
 type AgentRequestWithID struct {
 	ID          string                 `json:"id"                    yaml:"id"`
-	OUID        string                 `json:"ouId,omitempty"        yaml:"ou_id,omitempty"`
-	OUHandle    string                 `json:"ouHandle,omitempty"    yaml:"ou_handle,omitempty"`
+	OUID        string                 `json:"ouId,omitempty"        yaml:"ouId,omitempty"`
+	OUHandle    string                 `json:"ouHandle,omitempty"    yaml:"ouHandle,omitempty"`
 	Type        string                 `json:"type"                  yaml:"type"`
 	Name        string                 `json:"name"                  yaml:"name"`
 	Description string                 `json:"description,omitempty" yaml:"description,omitempty"`
 	Owner       string                 `json:"owner,omitempty"       yaml:"owner,omitempty"`
 	Attributes  map[string]interface{} `json:"attributes,omitempty"  yaml:"attributes,omitempty"`
 
-	inboundmodel.InboundAuthProfile `yaml:",inline"`
-	InboundAuthConfig               []inboundmodel.InboundAuthConfigWithSecret `json:"inboundAuthConfig,omitempty" yaml:"inbound_auth_config,omitempty"`
+	providers.InboundAuthProfile `yaml:",inline"`
+	InboundAuthConfig            []providers.InboundAuthConfigWithSecret `json:"inboundAuthConfig,omitempty" yaml:"inboundAuthConfig,omitempty"`
 }
 
 // Agent is the service-level model for agent create operations.
@@ -56,22 +57,22 @@ type Agent struct {
 	Owner       string          `json:"owner,omitempty"`
 	Attributes  json.RawMessage `json:"attributes,omitempty"`
 
-	inboundmodel.InboundAuthProfile
-	InboundAuthConfig []inboundmodel.InboundAuthConfigWithSecret `json:"inboundAuthConfig,omitempty"`
+	providers.InboundAuthProfile
+	InboundAuthConfig []providers.InboundAuthConfigWithSecret `json:"inboundAuthConfig,omitempty"`
 }
 
 // CreateAgentRequest is the HTTP request body for creating an agent.
 type CreateAgentRequest struct {
-	OUID        string          `json:"ouId"`
+	OUID        string          `json:"ouId" native:"required"`
 	OUHandle    string          `json:"ouHandle,omitempty"`
-	Type        string          `json:"type"`
-	Name        string          `json:"name"`
+	Type        string          `json:"type" native:"required"`
+	Name        string          `json:"name" native:"required,min=3,max=100"`
 	Description string          `json:"description,omitempty"`
 	Owner       string          `json:"owner,omitempty"`
 	Attributes  json.RawMessage `json:"attributes,omitempty"`
 
-	inboundmodel.InboundAuthProfile
-	InboundAuthConfig []inboundmodel.InboundAuthConfigWithSecret `json:"inboundAuthConfig,omitempty"`
+	providers.InboundAuthProfile
+	InboundAuthConfig []providers.InboundAuthConfigWithSecret `json:"inboundAuthConfig,omitempty"`
 }
 
 // UpdateAgentRequest is the HTTP request body for updating an agent.
@@ -84,8 +85,8 @@ type UpdateAgentRequest struct {
 	Owner       string          `json:"owner,omitempty"`
 	Attributes  json.RawMessage `json:"attributes,omitempty"`
 
-	inboundmodel.InboundAuthProfile
-	InboundAuthConfig []inboundmodel.InboundAuthConfigWithSecret `json:"inboundAuthConfig,omitempty"`
+	providers.InboundAuthProfile
+	InboundAuthConfig []providers.InboundAuthConfigWithSecret `json:"inboundAuthConfig,omitempty"`
 }
 
 // AgentCompleteResponse is returned on create and update operations. Includes clientSecret
@@ -100,14 +101,14 @@ type AgentCompleteResponse struct {
 	Owner       string          `json:"owner,omitempty"`
 	Attributes  json.RawMessage `json:"attributes,omitempty"`
 
-	inboundmodel.InboundAuthProfile
-	InboundAuthConfig []inboundmodel.InboundAuthConfigWithSecret `json:"inboundAuthConfig,omitempty"`
+	providers.InboundAuthProfile
+	InboundAuthConfig []providers.InboundAuthConfigWithSecret `json:"inboundAuthConfig,omitempty"`
 }
 
 // AgentGetResponse is returned on read operations. Excludes secrets (no clientSecret).
 type AgentGetResponse struct {
 	ID          string `json:"id,omitempty"          yaml:"id,omitempty"`
-	OUID        string `json:"ouId,omitempty"        yaml:"ou_id,omitempty"`
+	OUID        string `json:"ouId,omitempty"        yaml:"ouId,omitempty"`
 	OUHandle    string `json:"ouHandle,omitempty"    yaml:"-"`
 	Type        string `json:"type,omitempty"        yaml:"type,omitempty"`
 	Name        string `json:"name,omitempty"        yaml:"name,omitempty"`
@@ -119,8 +120,8 @@ type AgentGetResponse struct {
 	Attributes     json.RawMessage        `json:"attributes,omitempty" yaml:"-"`
 	AttributesYAML map[string]interface{} `json:"-"                    yaml:"attributes,omitempty"`
 
-	inboundmodel.InboundAuthProfile `yaml:",inline"`
-	InboundAuthConfig               []inboundmodel.InboundAuthConfigWithSecret `json:"inboundAuthConfig,omitempty" yaml:"inbound_auth_config,omitempty"`
+	providers.InboundAuthProfile `yaml:",inline"`
+	InboundAuthConfig            []providers.InboundAuthConfigWithSecret `json:"inboundAuthConfig,omitempty" yaml:"inboundAuthConfig,omitempty"`
 }
 
 // BasicAgentResponse is the summary view used in list responses.
@@ -159,5 +160,16 @@ type AgentGroupListResponse struct {
 	StartIndex   int          `json:"startIndex"`
 	Count        int          `json:"count"`
 	Groups       []AgentGroup `json:"groups"`
+	Links        []utils.Link `json:"links"`
+}
+
+// AgentRoleListResponse is the paginated response for an agent's assigned roles (direct and
+// group-inherited). Roles are represented by name only, matching what the underlying role
+// lookup returns.
+type AgentRoleListResponse struct {
+	TotalResults int          `json:"totalResults"`
+	StartIndex   int          `json:"startIndex"`
+	Count        int          `json:"count"`
+	Roles        []string     `json:"roles"`
 	Links        []utils.Link `json:"links"`
 }

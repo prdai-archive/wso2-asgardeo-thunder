@@ -23,9 +23,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/suite"
 	"github.com/thunder-id/thunderid/tests/integration/flow/common"
 	"github.com/thunder-id/thunderid/tests/integration/testutils"
-	"github.com/stretchr/testify/suite"
 )
 
 var (
@@ -89,16 +89,16 @@ var (
 						},
 						"action": map[string]interface{}{
 							"ref":      "action_001",
-							"nextNode": "basic_auth",
+							"nextNode": "credentials_auth",
 						},
 					},
 				},
 			},
 			{
-				"id":   "basic_auth",
+				"id":   "credentials_auth",
 				"type": "TASK_EXECUTION",
 				"executor": map[string]interface{}{
-					"name": "BasicAuthExecutor",
+					"name": "CredentialsAuthExecutor",
 					"inputs": []map[string]interface{}{
 						{
 							"ref":        "input_001",
@@ -345,8 +345,9 @@ func (ts *FlowAuthzTestSuite) TearDownSuite() {
 func (ts *FlowAuthzTestSuite) TestAuthorizationFlow_UserWithDirectRoleAssignment() {
 	// Initiate authentication flow with requested permissions
 	inputs := map[string]string{
-		"applicationId":         authzTestAppID,
-		"requested_permissions": "read write",
+		"applicationId":              authzTestAppID,
+		"requested_permissions":      "read write",
+		"resource_server_identifier": "document-mgmt",
 	}
 
 	flowStep, err := common.InitiateAuthenticationFlow(authzTestAppID, false, inputs, "")
@@ -390,8 +391,9 @@ func (ts *FlowAuthzTestSuite) TestAuthorizationFlow_UserWithDirectRoleAssignment
 func (ts *FlowAuthzTestSuite) TestAuthorizationFlow_UserWithNoRole() {
 	// Initiate authentication flow with requested permissions
 	inputs := map[string]string{
-		"applicationId":         authzTestAppID,
-		"requested_permissions": "read write",
+		"applicationId":              authzTestAppID,
+		"requested_permissions":      "read write",
+		"resource_server_identifier": "document-mgmt",
 	}
 
 	flowStep, err := common.InitiateAuthenticationFlow(authzTestAppID, false, inputs, "")
@@ -427,8 +429,9 @@ func (ts *FlowAuthzTestSuite) TestAuthorizationFlow_UserWithNoRole() {
 func (ts *FlowAuthzTestSuite) TestAuthorizationFlow_UserWithPartialPermissions() {
 	// Initiate authentication flow requesting 3 permissions (user only has 2)
 	inputs := map[string]string{
-		"applicationId":         authzTestAppID,
-		"requested_permissions": "read write delete",
+		"applicationId":              authzTestAppID,
+		"requested_permissions":      "read write delete",
+		"resource_server_identifier": "document-mgmt",
 	}
 
 	flowStep, err := common.InitiateAuthenticationFlow(authzTestAppID, false, inputs, "")

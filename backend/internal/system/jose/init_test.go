@@ -24,12 +24,15 @@ import (
 	"errors"
 	"testing"
 
+	engineconfig "github.com/thunder-id/thunderid/pkg/thunderidengine/config"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/suite"
 
 	"github.com/thunder-id/thunderid/internal/system/config"
 	"github.com/thunder-id/thunderid/internal/system/cryptolib"
+	joseconfig "github.com/thunder-id/thunderid/internal/system/jose/config"
 	"github.com/thunder-id/thunderid/internal/system/jose/jwe"
 	"github.com/thunder-id/thunderid/internal/system/jose/jwt"
 	kmprovider "github.com/thunder-id/thunderid/internal/system/kmprovider/common"
@@ -56,7 +59,7 @@ func (suite *JOSEInitTestSuite) SetupTest() {
 
 	// Initialize server runtime config for testing
 	testConfig := &config.Config{
-		JWT: config.JWTConfig{
+		JWT: engineconfig.JWTConfig{
 			PreferredKeyID: "test-key-id",
 			Issuer:         "test-issuer",
 			Audience:       "test-audience",
@@ -64,7 +67,7 @@ func (suite *JOSEInitTestSuite) SetupTest() {
 			Leeway:         300,
 		},
 		Crypto: config.CryptoConfig{
-			Encryption: config.EncryptionConfig{
+			Encryption: engineconfig.EncryptionConfig{
 				Key: "0579f866ac7c9273580d0ff163fa01a7b2401a7ff3ddc3e3b14ae3136fa6025e",
 			},
 		},
@@ -89,7 +92,7 @@ func (suite *JOSEInitTestSuite) TestInitialize_Success() {
 			},
 		}, nil)
 
-	jwtService, jweService, err := Initialize(suite.mockRuntime)
+	jwtService, jweService, err := Initialize(suite.mockRuntime, joseconfig.Config{PreferredKeyID: "test-key-id"})
 
 	assert.NoError(suite.T(), err)
 	assert.NotNil(suite.T(), jwtService)
@@ -103,7 +106,7 @@ func (suite *JOSEInitTestSuite) TestInitialize_JWTInitializationFailure() {
 		GetPublicKeys(mock.Anything, kmprovider.PublicKeyFilter{KeyID: "test-key-id"}).
 		Return(nil, errors.New("provider unavailable"))
 
-	jwtService, jweService, err := Initialize(suite.mockRuntime)
+	jwtService, jweService, err := Initialize(suite.mockRuntime, joseconfig.Config{PreferredKeyID: "test-key-id"})
 
 	assert.Error(suite.T(), err)
 	assert.Nil(suite.T(), jwtService)
@@ -118,7 +121,7 @@ func (suite *JOSEInitTestSuite) TestInitialize_NilRuntimeProvider() {
 		}
 	}()
 
-	jwtService, jweService, err := Initialize(nil)
+	jwtService, jweService, err := Initialize(nil, joseconfig.Config{PreferredKeyID: "test-key-id"})
 
 	assert.Error(suite.T(), err)
 	assert.Nil(suite.T(), jwtService)
@@ -137,7 +140,7 @@ func (suite *JOSEInitTestSuite) TestInitialize_ValidatesServiceInterfaces() {
 			},
 		}, nil)
 
-	jwtService, jweService, err := Initialize(suite.mockRuntime)
+	jwtService, jweService, err := Initialize(suite.mockRuntime, joseconfig.Config{PreferredKeyID: "test-key-id"})
 
 	assert.NoError(suite.T(), err)
 	if jwtService != nil {

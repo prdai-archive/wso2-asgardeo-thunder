@@ -16,8 +16,14 @@
  * under the License.
  */
 
-import {BaseSignIn, ThemeProvider} from '@thunderid/react';
+import {
+  AuthenticatorTypes,
+  getConnectionIcon,
+  useIdentityProviders,
+  type IdentityProvider,
+} from '@thunderid/configure-connections';
 import {type Theme} from '@thunderid/design';
+import {BaseSignIn, ThemeProvider} from '@thunderid/react';
 import type {RecursivePartial} from '@thunderid/types';
 import {
   Box,
@@ -37,10 +43,6 @@ import {
 import {AppWindowMac, KeyRound} from '@wso2/oxygen-ui-icons-react';
 import type {JSX} from 'react';
 import {useTranslation} from 'react-i18next';
-import useIdentityProviders from '../../../integrations/api/useIdentityProviders';
-import {AuthenticatorTypes} from '@/features/integrations/models/authenticators';
-import {type IdentityProvider} from '@/features/integrations/models/identity-provider';
-import getIntegrationIcon from '@/features/integrations/utils/getIntegrationIcon';
 
 /**
  * Props for the {@link Preview} component that displays a live preview of the application sign-in page.
@@ -137,7 +139,7 @@ export default function Preview({appLogo, selectedTheme, integrations}: PreviewP
       }
     : undefined;
 
-  const hasUsernamePassword: boolean = integrations[AuthenticatorTypes.BASIC_AUTH] ?? false;
+  const hasUsernamePassword: boolean = integrations[AuthenticatorTypes.CREDENTIALS_AUTH] ?? false;
   const hasPasskey: boolean = integrations[AuthenticatorTypes.PASSKEY] ?? false;
   const selectedProviders: IdentityProvider[] =
     identityProviders?.filter((idp: IdentityProvider): boolean => integrations[idp.id]) ?? [];
@@ -344,7 +346,7 @@ export default function Preview({appLogo, selectedTheme, integrations}: PreviewP
                                 fullWidth
                                 variant="outlined"
                                 disabled
-                                startIcon={getIntegrationIcon(provider.type)}
+                                startIcon={getConnectionIcon(provider.type)}
                               >
                                 {t('applications:onboarding.preview.continueWith', {providerName: provider.name})}
                               </Button>

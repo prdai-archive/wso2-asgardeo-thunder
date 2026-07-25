@@ -17,6 +17,7 @@
  */
 
 import type {InboundAuthConfig} from './inbound-auth';
+import type {AttestationConfig} from './oauth';
 import type {AssertionConfig} from './token';
 
 /**
@@ -60,6 +61,7 @@ export type BasicApplication = Pick<
   | 'registrationFlowId'
   | 'isRegistrationFlowEnabled'
   | 'template'
+  | 'isReadOnly'
 > & {
   /**
    * OAuth2 client identifier
@@ -117,8 +119,10 @@ export type BasicApplication = Pick<
  *       scopes: ['openid', 'profile', 'email'],
  *       token: {
  *         accessToken: {
- *           validityPeriod: 3600,
- *           userAttributes: ['email', 'username']
+ *           userConfig: {
+ *             validityPeriod: 3600,
+ *             attributes: ['email', 'username']
+ *           }
  *         },
  *         idToken: {
  *           validityPeriod: 3600,
@@ -217,6 +221,12 @@ export interface Application {
   isRecoveryFlowEnabled?: boolean;
 
   /**
+   * SignOut flow ID
+   * @example 'b1c2d3e4-5f6a-7b8c-9d0e-1f2a3b4c5d6e'
+   */
+  signOutFlowId?: string;
+
+  /**
    * User attributes to include
    * @example ['email', 'username', 'given_name', 'family_name', 'roles']
    */
@@ -248,6 +258,14 @@ export interface Application {
    * @example 'react', 'nextjs', 'browser', 'mobile'
    */
   template?: string;
+
+  /**
+   * Flow Secret used to authenticate the application when it initiates a flow directly via the
+   * Flow Execution API. Issued to backend / server-side (non-public) applications and returned
+   * only once, in the create response. Not present in GET responses.
+   * @example 'a1b2c3d4e5f6...'
+   */
+  flowSecret?: string;
 
   /**
    * Inbound authentication configuration
@@ -288,4 +306,17 @@ export interface Application {
    * Defines how assertions are generated for this application.
    */
   assertion?: AssertionConfig;
+
+  /**
+   * Platform attestation configuration used to verify the binary identity of a mobile client
+   * when it initiates a flow directly, independent of the OAuth2 protocol. The service account
+   * credentials are write-only and never returned in GET responses. null or undefined means no
+   * attestation is configured.
+   */
+  attestation?: AttestationConfig | null;
+
+  /**
+   * Whether this application is read-only (declarative/immutable)
+   */
+  isReadOnly?: boolean;
 }

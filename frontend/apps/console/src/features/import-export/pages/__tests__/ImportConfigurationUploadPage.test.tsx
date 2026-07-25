@@ -20,6 +20,7 @@ import {render, screen, userEvent, waitFor, fireEvent} from '@thunderid/test-uti
 import {afterEach, describe, expect, it, vi} from 'vitest';
 
 const mockNavigate = vi.fn();
+let mockPathname = '/import-configuration';
 
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({t: (key: string) => key}),
@@ -27,12 +28,26 @@ vi.mock('react-i18next', () => ({
 
 vi.mock('react-router', async () => {
   const actual = await vi.importActual<typeof import('react-router')>('react-router');
-  return {...actual, useNavigate: () => mockNavigate};
+  return {...actual, useNavigate: () => mockNavigate, useLocation: () => ({pathname: mockPathname})};
 });
 
 vi.mock('@thunderid/logger/react', () => ({
   useLogger: () => ({error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn()}),
 }));
+
+vi.mock('@thunderid/contexts', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@thunderid/contexts')>();
+  return {
+    ...actual,
+    useConfig: () => ({
+      config: {
+        brand: {
+          product_name: 'ThunderID',
+        },
+      },
+    }),
+  };
+});
 
 vi.mock('@wso2/oxygen-ui-icons-react', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@wso2/oxygen-ui-icons-react')>();
@@ -48,6 +63,7 @@ import ImportConfigurationUploadPage from '../ImportConfigurationUploadPage';
 
 afterEach(() => {
   vi.clearAllMocks();
+  mockPathname = '/import-configuration';
 });
 
 describe('ImportConfigurationUploadPage', () => {
@@ -82,13 +98,13 @@ describe('ImportConfigurationUploadPage', () => {
     expect(screen.getByRole('button', {name: 'common:actions.continue'})).toBeDisabled();
   });
 
-  it('navigates to /welcome on cancel', async () => {
+  it('navigates to /home on cancel', async () => {
     const user = userEvent.setup();
     render(<ImportConfigurationUploadPage />);
 
     await user.click(screen.getByRole('button', {name: 'common:actions.cancel'}));
 
-    expect(mockNavigate).toHaveBeenCalledWith('/welcome');
+    expect(mockNavigate).toHaveBeenCalledWith('/home');
   });
 
   it('navigates to /home on close', async () => {
@@ -98,6 +114,25 @@ describe('ImportConfigurationUploadPage', () => {
     await user.click(screen.getByRole('button', {name: 'common:actions.close'}));
 
     expect(mockNavigate).toHaveBeenCalledWith('/home');
+  });
+
+  it('navigates to /import-export when the default breadcrumb is clicked outside the welcome flow', async () => {
+    const user = userEvent.setup();
+    render(<ImportConfigurationUploadPage />);
+
+    await user.click(screen.getByText('landing.title'));
+
+    expect(mockNavigate).toHaveBeenCalledWith('/import-export');
+  });
+
+  it('navigates to /welcome when the welcome breadcrumb is clicked from the welcome flow', async () => {
+    mockPathname = '/welcome/import-configuration';
+    const user = userEvent.setup();
+    render(<ImportConfigurationUploadPage />);
+
+    await user.click(screen.getByText('common:welcome.header'));
+
+    expect(mockNavigate).toHaveBeenCalledWith('/welcome');
   });
 
   it('shows error when non-yaml file is selected', () => {
@@ -171,7 +206,7 @@ describe('ImportConfigurationUploadPage', () => {
     const user = userEvent.setup();
     render(<ImportConfigurationUploadPage />);
 
-    const yamlContent = '---\n# resource_type: application\nname: test-app\n';
+    const yamlContent = 'resource_type: application\nname: test-app\n';
     const yamlFile = new File([yamlContent], 'config.yaml', {type: 'text/yaml'});
     Object.defineProperty(yamlFile, 'text', {value: () => Promise.resolve(yamlContent)});
 
@@ -181,7 +216,7 @@ describe('ImportConfigurationUploadPage', () => {
     await waitFor(
       () => {
         expect(mockNavigate).toHaveBeenCalledWith(
-          '/welcome/open-project/validate',
+          '/welcome/import-configuration/validate',
           expect.objectContaining({
             state: expect.objectContaining({
               method: 'file',
@@ -199,7 +234,7 @@ describe('ImportConfigurationUploadPage', () => {
     const user = userEvent.setup();
     render(<ImportConfigurationUploadPage />);
 
-    const yamlContent = '---\n# resource_type: application\nname: test-app\n';
+    const yamlContent = 'resource_type: application\nname: test-app\n';
     const envContent = 'KEY=VALUE';
     const yamlFile = new File([yamlContent], 'config.yaml', {type: 'text/yaml'});
     const envFile = new File([envContent], '.env', {type: 'text/plain'});
@@ -215,11 +250,167 @@ describe('ImportConfigurationUploadPage', () => {
     await waitFor(
       () => {
         expect(mockNavigate).toHaveBeenCalledWith(
-          '/welcome/open-project/validate',
+          '/welcome/import-configuration/validate',
           expect.objectContaining({state: expect.objectContaining({method: 'file'}) as Record<string, unknown>}),
         );
       },
       {timeout: 5000},
     );
+  });
+
+  it('accepts a server_config resource without flagging it as unknown', async () => {
+    const user = userEvent.setup();
+    render(<ImportConfigurationUploadPage />);
+
+    const yamlContent =
+      'resource_type: server_config\nname: cors\nvalue:\n  allowedOrigins:\n    - https://example.com\n';
+    const yamlFile = new File([yamlContent], 'config.yaml', {type: 'text/yaml'});
+    Object.defineProperty(yamlFile, 'text', {value: () => Promise.resolve(yamlContent)});
+
+    await user.upload(document.getElementById('file-upload') as HTMLInputElement, yamlFile);
+    await user.click(screen.getByRole('button', {name: 'common:actions.continue'}));
+
+    await waitFor(
+      () => {
+        expect(mockNavigate).toHaveBeenCalledWith(
+          '/welcome/import-configuration/validate',
+          expect.objectContaining({
+            state: expect.objectContaining({
+              method: 'file',
+              parseErrors: [],
+              parseStats: {successCount: 1, failCount: 0},
+            }) as Record<string, unknown>,
+          }),
+        );
+      },
+      {timeout: 5000},
+    );
+  });
+
+  it('detects resource types from the resource_type YAML field (not comments)', async () => {
+    const user = userEvent.setup();
+    render(<ImportConfigurationUploadPage />);
+
+    const yamlContent =
+      'resource_type: application\n' +
+      'id: claims-demo-m2m-app\n' +
+      'name: Claims Demo M2M Application\n' +
+      'ouHandle: default\n' +
+      '---\n' +
+      'resource_type: agent\n' +
+      'id: claims-demo-agent\n' +
+      'name: Claims Demo Agent\n' +
+      'ouHandle: default\n' +
+      'type: default\n';
+    const yamlFile = new File([yamlContent], 'config.yaml', {type: 'text/yaml'});
+    Object.defineProperty(yamlFile, 'text', {value: () => Promise.resolve(yamlContent)});
+
+    await user.upload(document.getElementById('file-upload') as HTMLInputElement, yamlFile);
+    await user.click(screen.getByRole('button', {name: 'common:actions.continue'}));
+
+    await waitFor(
+      () => {
+        expect(mockNavigate).toHaveBeenCalledWith(
+          '/welcome/import-configuration/validate',
+          expect.objectContaining({
+            state: expect.objectContaining({
+              method: 'file',
+              parseErrors: [],
+              parseStats: {successCount: 2, failCount: 0},
+            }) as Record<string, unknown>,
+          }),
+        );
+      },
+      {timeout: 5000},
+    );
+
+    const {state} = (mockNavigate.mock.calls[0] as [string, {state: {configData: Record<string, unknown[]>}}])[1];
+    expect(Object.keys(state.configData)).toEqual(['application', 'agent']);
+    expect(state.configData.application).toHaveLength(1);
+    expect(state.configData.agent).toHaveLength(1);
+  });
+
+  it('shows error when file.text() throws during continue', async () => {
+    const user = userEvent.setup();
+    render(<ImportConfigurationUploadPage />);
+
+    const yamlFile = new File(['key: value'], 'config.yaml', {type: 'text/yaml'});
+    Object.defineProperty(yamlFile, 'text', {value: () => Promise.reject(new Error('read error'))});
+
+    await user.upload(document.getElementById('file-upload') as HTMLInputElement, yamlFile);
+    await user.click(screen.getByRole('button', {name: 'common:actions.continue'}));
+
+    await waitFor(() => {
+      expect(screen.getByRole('alert')).toBeInTheDocument();
+    });
+  });
+
+  it('accepts .yml file format (not just .yaml)', async () => {
+    const user = userEvent.setup();
+    render(<ImportConfigurationUploadPage />);
+
+    const input = document.getElementById('file-upload') as HTMLInputElement;
+    const file = new File(['key: value'], 'config.yml', {type: 'text/yaml'});
+    await user.upload(input, file);
+
+    expect(screen.getByText('config.yml')).toBeInTheDocument();
+  });
+
+  it('handles drag and drop events on config file area', () => {
+    render(<ImportConfigurationUploadPage />);
+
+    const dropZone = screen.getByText('upload.dropConfig').closest('div')?.parentElement;
+    expect(dropZone).toBeInTheDocument();
+
+    // Simulate drag enter
+    fireEvent.dragEnter(dropZone!, {
+      dataTransfer: {files: []},
+    });
+
+    // Simulate drag over
+    fireEvent.dragOver(dropZone!, {
+      dataTransfer: {files: []},
+    });
+
+    // Simulate drag leave
+    fireEvent.dragLeave(dropZone!, {
+      dataTransfer: {files: []},
+    });
+  });
+
+  it('handles drag and drop events on env file area', () => {
+    render(<ImportConfigurationUploadPage />);
+
+    const envLabel = screen.getByText('upload.env.title');
+    const dropZone = envLabel.closest('div')?.nextElementSibling;
+    expect(dropZone).toBeInTheDocument();
+
+    // Simulate drag enter
+    fireEvent.dragEnter(dropZone!, {
+      dataTransfer: {files: []},
+    });
+
+    // Simulate drag over
+    fireEvent.dragOver(dropZone!, {
+      dataTransfer: {files: []},
+    });
+
+    // Simulate drag leave
+    fireEvent.dragLeave(dropZone!, {
+      dataTransfer: {files: []},
+    });
+  });
+
+  it('accepts .yml file format via drag and drop', () => {
+    render(<ImportConfigurationUploadPage />);
+
+    const dropZone = screen.getByText('upload.dropConfig').closest('div')?.parentElement;
+    const ymlFile = new File(['key: value'], 'config.yml', {type: 'text/yaml'});
+
+    fireEvent.drop(dropZone!, {
+      dataTransfer: {files: [ymlFile]},
+    });
+
+    expect(screen.getByText('config.yml')).toBeInTheDocument();
   });
 });

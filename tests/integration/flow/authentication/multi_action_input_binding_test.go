@@ -30,7 +30,7 @@ import (
 )
 
 const (
-	mockMultiActionGooglePort = 8099
+	mockMultiActionGooglePort = 8093
 )
 
 var (
@@ -53,19 +53,19 @@ var (
 							{
 								"ref":        "input_001",
 								"identifier": "username",
-								"type":       "string",
+								"type":       "TEXT_INPUT",
 								"required":   true,
 							},
 							{
 								"ref":        "input_002",
 								"identifier": "password",
-								"type":       "string",
+								"type":       "PASSWORD_INPUT",
 								"required":   true,
 							},
 						},
 						"action": map[string]interface{}{
 							"ref":      "action_basic",
-							"nextNode": "basic_auth",
+							"nextNode": "credentials_auth",
 						},
 					},
 					{
@@ -77,10 +77,10 @@ var (
 				},
 			},
 			{
-				"id":   "basic_auth",
+				"id":   "credentials_auth",
 				"type": "TASK_EXECUTION",
 				"executor": map[string]interface{}{
-					"name": "BasicAuthExecutor",
+					"name": "CredentialsAuthExecutor",
 				},
 				"onSuccess": "auth_assert",
 			},
@@ -241,10 +241,6 @@ func (ts *MultiActionInputBindingTestSuite) SetupSuite() {
 			{Name: "client_secret", Value: "test_multi_action_google_secret", IsSecret: true},
 			{Name: "redirect_uri", Value: "http://localhost:3000/callback", IsSecret: false},
 			{Name: "scopes", Value: "openid email profile", IsSecret: false},
-			{Name: "authorization_endpoint", Value: ts.mockGoogleServer.GetURL() + "/o/oauth2/v2/auth", IsSecret: false},
-			{Name: "token_endpoint", Value: ts.mockGoogleServer.GetURL() + "/token", IsSecret: false},
-			{Name: "userinfo_endpoint", Value: ts.mockGoogleServer.GetURL() + "/v1/userinfo", IsSecret: false},
-			{Name: "jwks_endpoint", Value: ts.mockGoogleServer.GetURL() + "/oauth2/v3/certs", IsSecret: false},
 		},
 	}
 

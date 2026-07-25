@@ -25,17 +25,20 @@ import (
 	"errors"
 	"fmt"
 
+	tidcommon "github.com/thunder-id/thunderid/pkg/thunderidengine/common"
+	"github.com/thunder-id/thunderid/pkg/thunderidengine/providers"
+
 	"github.com/thunder-id/thunderid/internal/agent/model"
 	"github.com/thunder-id/thunderid/internal/cert"
 	"github.com/thunder-id/thunderid/internal/entity"
 	"github.com/thunder-id/thunderid/internal/inboundclient"
 	inboundmodel "github.com/thunder-id/thunderid/internal/inboundclient/model"
-	oauth2const "github.com/thunder-id/thunderid/internal/oauth/oauth2/constants"
 	oauthutils "github.com/thunder-id/thunderid/internal/oauth/oauth2/utils"
 	oupkg "github.com/thunder-id/thunderid/internal/ou"
-	"github.com/thunder-id/thunderid/internal/system/error/serviceerror"
-	"github.com/thunder-id/thunderid/internal/system/i18n/core"
+	"github.com/thunder-id/thunderid/internal/role"
+	serverconst "github.com/thunder-id/thunderid/internal/system/constants"
 	"github.com/thunder-id/thunderid/internal/system/log"
+	"github.com/thunder-id/thunderid/internal/system/resourcedependency"
 	"github.com/thunder-id/thunderid/internal/system/security"
 	sysutils "github.com/thunder-id/thunderid/internal/system/utils"
 )
@@ -43,18 +46,23 @@ import (
 // AgentServiceInterface defines the operations exposed by the agent service.
 type AgentServiceInterface interface {
 	CreateAgent(ctx context.Context, agent *model.Agent) (*model.AgentCompleteResponse,
-		*serviceerror.ServiceError)
+		*tidcommon.ServiceError)
 	GetAgent(ctx context.Context, agentID string, includeDisplay bool) (*model.AgentGetResponse,
-		*serviceerror.ServiceError)
+		*tidcommon.ServiceError)
 	GetAgentList(ctx context.Context, limit, offset int, filters map[string]interface{},
-		includeDisplay bool) (*model.AgentListResponse, *serviceerror.ServiceError)
+		includeDisplay bool) (*model.AgentListResponse, *tidcommon.ServiceError)
 	UpdateAgent(ctx context.Context, agentID string, req *model.UpdateAgentRequest) (
-		*model.AgentCompleteResponse, *serviceerror.ServiceError)
-	DeleteAgent(ctx context.Context, agentID string) *serviceerror.ServiceError
+		*model.AgentCompleteResponse, *tidcommon.ServiceError)
+	DeleteAgent(ctx context.Context, agentID string) *tidcommon.ServiceError
 	GetAgentGroups(ctx context.Context, agentID string, limit, offset int) (
-		*model.AgentGroupListResponse, *serviceerror.ServiceError)
+		*model.AgentGroupListResponse, *tidcommon.ServiceError)
+	GetAgentRoles(ctx context.Context, agentID string, limit, offset int) (
+		*model.AgentRoleListResponse, *tidcommon.ServiceError)
 	ValidateAgent(ctx context.Context, agent *model.Agent, excludeID string) (
-		clientID, clientSecret string, client inboundmodel.InboundClient, svcErr *serviceerror.ServiceError)
+		clientID, clientSecret string, client inboundmodel.InboundClient, svcErr *tidcommon.ServiceError)
+	GetResourceDependencies(
+		ctx context.Context, resourceType, id string) ([]resourcedependency.ResourceDependency, error)
+	SetDependencyRegistry(r resourcedependency.Registry)
 }
 
 type agentService struct {
@@ -62,24 +70,28 @@ type agentService struct {
 	entityService        entity.EntityServiceInterface
 	inboundClientService inboundclient.InboundClientServiceInterface
 	ouService            oupkg.OrganizationUnitServiceInterface
+	dependencyRegistry   resourcedependency.Registry
+	roleService          role.RoleServiceInterface
 }
 
 func newAgentService(
 	entityService entity.EntityServiceInterface,
 	inboundClientService inboundclient.InboundClientServiceInterface,
 	ouService oupkg.OrganizationUnitServiceInterface,
+	roleService role.RoleServiceInterface,
 ) AgentServiceInterface {
 	return &agentService{
 		logger:               log.GetLogger().With(log.String(log.LoggerKeyComponentName, "AgentService")),
 		entityService:        entityService,
 		inboundClientService: inboundClientService,
 		ouService:            ouService,
+		roleService:          roleService,
 	}
 }
 
 // CreateAgent creates an agent entity with optional inbound auth profile.
 func (s *agentService) CreateAgent(ctx context.Context, agent *model.Agent) (
-	*model.AgentCompleteResponse, *serviceerror.ServiceError) {
+	*model.AgentCompleteResponse, *tidcommon.ServiceError) {
 	if agent == nil {
 		return nil, &ErrorInvalidRequestFormat
 	}
@@ -95,8 +107,8 @@ func (s *agentService) CreateAgent(ctx context.Context, agent *model.Agent) (
 		var err error
 		agentID, err = sysutils.GenerateUUIDv7()
 		if err != nil {
-			s.logger.Error("Failed to generate agent ID", log.Error(err))
-			return nil, &serviceerror.InternalServerError
+			s.logger.Error(ctx, "Failed to generate agent ID", log.Error(err))
+			return nil, &tidcommon.InternalServerError
 		}
 	}
 
@@ -110,8 +122,8 @@ func (s *agentService) CreateAgent(ctx context.Context, agent *model.Agent) (
 	e, sysCredsJSON, buildErr := buildAgentEntity(agentID, agent.Type, agent.OUID, agent.Attributes,
 		agent.Name, agent.Description, owner, clientID, clientSecret)
 	if buildErr != nil {
-		s.logger.Error("Failed to build agent entity", log.Error(buildErr))
-		return nil, &serviceerror.InternalServerError
+		s.logger.Error(ctx, "Failed to build agent entity", log.Error(buildErr))
+		return nil, &tidcommon.InternalServerError
 	}
 
 	createdEntity, entErr := s.entityService.CreateEntity(ctx, e, sysCredsJSON)
@@ -119,13 +131,14 @@ func (s *agentService) CreateAgent(ctx context.Context, agent *model.Agent) (
 		if mapped := mapEntityError(entErr); mapped != nil {
 			return nil, mapped
 		}
-		s.logger.Error("Failed to create agent entity", log.String("agentID", agentID), log.Error(entErr))
-		return nil, &serviceerror.InternalServerError
+		s.logger.Error(ctx, "Failed to create agent entity",
+			log.String("agentID", agentID), log.Error(entErr))
+		return nil, &tidcommon.InternalServerError
 	}
 
 	authFlowID, regFlowID := agent.AuthFlowID, agent.RegistrationFlowID
 	assertion, loginConsent := agent.Assertion, agent.LoginConsent
-	var inboundConfigs []inboundmodel.InboundAuthConfigWithSecret
+	var inboundConfigs []providers.InboundAuthConfigWithSecret
 
 	if needsInboundClient(agent) {
 		resolvedClient, resolvedOAuth, svcErr := s.createInboundForAgent(ctx, agentID, agent, clientSecret)
@@ -138,8 +151,8 @@ func (s *agentService) CreateAgent(ctx context.Context, agent *model.Agent) (
 		assertion = resolvedClient.Assertion
 		loginConsent = resolvedClient.LoginConsent
 		if resolvedOAuth != nil {
-			inboundConfigs = []inboundmodel.InboundAuthConfigWithSecret{{
-				Type:        inboundmodel.OAuthInboundAuthType,
+			inboundConfigs = []providers.InboundAuthConfigWithSecret{{
+				Type:        providers.OAuthInboundAuthType,
 				OAuthConfig: oauthProfileToComplete(clientID, resolvedOAuth),
 			}}
 		}
@@ -149,7 +162,7 @@ func (s *agentService) CreateAgent(ctx context.Context, agent *model.Agent) (
 		agent.Type, agent.Name, agent.Description, createdEntity.Attributes,
 		authFlowID, regFlowID, agent.IsRegistrationFlowEnabled,
 		agent.ThemeID, agent.LayoutID, assertion, loginConsent,
-		agent.AllowedUserTypes, agent.Certificate, inboundConfigs)
+		agent.AllowedUserTypes, inboundConfigs)
 	resp.OUID = agent.OUID
 	s.populateOUHandleForComplete(ctx, resp)
 	return resp, nil
@@ -157,7 +170,7 @@ func (s *agentService) CreateAgent(ctx context.Context, agent *model.Agent) (
 
 // GetAgent returns a single agent by ID.
 func (s *agentService) GetAgent(ctx context.Context, agentID string, includeDisplay bool) (
-	*model.AgentGetResponse, *serviceerror.ServiceError) {
+	*model.AgentGetResponse, *tidcommon.ServiceError) {
 	if agentID == "" {
 		return nil, &ErrorMissingAgentID
 	}
@@ -167,10 +180,11 @@ func (s *agentService) GetAgent(ctx context.Context, agentID string, includeDisp
 		if errors.Is(err, entity.ErrEntityNotFound) {
 			return nil, &ErrorAgentNotFound
 		}
-		s.logger.Error("Failed to retrieve agent entity", log.String("agentID", agentID), log.Error(err))
-		return nil, &serviceerror.InternalServerError
+		s.logger.Error(ctx, "Failed to retrieve agent entity",
+			log.String("agentID", agentID), log.Error(err))
+		return nil, &tidcommon.InternalServerError
 	}
-	if e.Category != entity.EntityCategoryAgent {
+	if e.Category != providers.EntityCategoryAgent {
 		return nil, &ErrorAgentNotFound
 	}
 
@@ -189,7 +203,7 @@ func (s *agentService) GetAgent(ctx context.Context, agentID string, includeDisp
 // GetAgentList returns a paginated list of agents.
 func (s *agentService) GetAgentList(ctx context.Context, limit, offset int,
 	filters map[string]interface{}, includeDisplay bool) (
-	*model.AgentListResponse, *serviceerror.ServiceError) {
+	*model.AgentListResponse, *tidcommon.ServiceError) {
 	if svcErr := validatePaginationParams(limit, offset); svcErr != nil {
 		return nil, svcErr
 	}
@@ -197,16 +211,16 @@ func (s *agentService) GetAgentList(ctx context.Context, limit, offset int,
 		limit = 30
 	}
 
-	totalCount, err := s.entityService.GetEntityListCount(ctx, entity.EntityCategoryAgent, filters)
+	totalCount, err := s.entityService.GetEntityListCount(ctx, providers.EntityCategoryAgent, filters)
 	if err != nil {
-		s.logger.Error("Failed to get agent list count", log.Error(err))
-		return nil, &serviceerror.InternalServerError
+		s.logger.Error(ctx, "Failed to get agent list count", log.Error(err))
+		return nil, &tidcommon.InternalServerError
 	}
 
-	entities, err := s.entityService.GetEntityList(ctx, entity.EntityCategoryAgent, limit, offset, filters)
+	entities, err := s.entityService.GetEntityList(ctx, providers.EntityCategoryAgent, limit, offset, filters)
 	if err != nil {
-		s.logger.Error("Failed to get agent list", log.Error(err))
-		return nil, &serviceerror.InternalServerError
+		s.logger.Error(ctx, "Failed to get agent list", log.Error(err))
+		return nil, &tidcommon.InternalServerError
 	}
 
 	return s.buildListResponse(ctx, entities, totalCount, limit, offset, includeDisplay), nil
@@ -214,7 +228,7 @@ func (s *agentService) GetAgentList(ctx context.Context, limit, offset int,
 
 // UpdateAgent applies a full-replacement update to the agent.
 func (s *agentService) UpdateAgent(ctx context.Context, agentID string,
-	req *model.UpdateAgentRequest) (*model.AgentCompleteResponse, *serviceerror.ServiceError) {
+	req *model.UpdateAgentRequest) (*model.AgentCompleteResponse, *tidcommon.ServiceError) {
 	if agentID == "" {
 		return nil, &ErrorMissingAgentID
 	}
@@ -229,11 +243,11 @@ func (s *agentService) UpdateAgent(ctx context.Context, agentID string,
 		if errors.Is(err, entity.ErrEntityNotFound) {
 			return nil, &ErrorAgentNotFound
 		}
-		s.logger.Error("Failed to retrieve agent entity for update",
+		s.logger.Error(ctx, "Failed to retrieve agent entity for update",
 			log.String("agentID", agentID), log.Error(err))
-		return nil, &serviceerror.InternalServerError
+		return nil, &tidcommon.InternalServerError
 	}
-	if existing.Category != entity.EntityCategoryAgent {
+	if existing.Category != providers.EntityCategoryAgent {
 		return nil, &ErrorAgentNotFound
 	}
 	if existing.IsReadOnly {
@@ -252,9 +266,9 @@ func (s *agentService) UpdateAgent(ctx context.Context, agentID string,
 	var existingOAuthMethod string
 	existingOAuth, oauthErr := s.inboundClientService.GetOAuthProfileByEntityID(ctx, agentID)
 	if oauthErr != nil && !errors.Is(oauthErr, inboundclient.ErrInboundClientNotFound) {
-		s.logger.Error("Failed to load existing OAuth profile",
+		s.logger.Error(ctx, "Failed to load existing OAuth profile",
 			log.String("agentID", agentID), log.Error(oauthErr))
-		return nil, &serviceerror.InternalServerError
+		return nil, &tidcommon.InternalServerError
 	}
 	if existingOAuth != nil {
 		existingOAuthMethod = existingOAuth.TokenEndpointAuthMethod
@@ -277,7 +291,7 @@ func (s *agentService) UpdateAgent(ctx context.Context, agentID string,
 	}
 
 	resolvedClient, resolvedOAuth, svcErr := s.reconcileInboundForUpdate(
-		ctx, agentID, req, clientID, clientSecret, currentName, req.Name)
+		ctx, agentID, req, clientID, clientSecret)
 	if svcErr != nil {
 		return nil, svcErr
 	}
@@ -287,18 +301,18 @@ func (s *agentService) UpdateAgent(ctx context.Context, agentID string,
 		clientSecret = ""
 	}
 
-	updatedEntity := &entity.Entity{
+	updatedEntity := &providers.Entity{
 		ID:         agentID,
-		Category:   entity.EntityCategoryAgent,
+		Category:   providers.EntityCategoryAgent,
 		Type:       req.Type,
-		State:      entity.EntityStateActive,
+		State:      providers.EntityStateActive,
 		OUID:       ouID,
 		Attributes: req.Attributes,
 	}
 	sysAttrsJSON, marshalErr := buildSystemAttributesJSON(req.Name, req.Description, owner, clientID)
 	if marshalErr != nil {
-		s.logger.Error("Failed to build system attributes for update", log.Error(marshalErr))
-		return nil, &serviceerror.InternalServerError
+		s.logger.Error(ctx, "Failed to build system attributes for update", log.Error(marshalErr))
+		return nil, &tidcommon.InternalServerError
 	}
 	updatedEntity.SystemAttributes = sysAttrsJSON
 
@@ -306,17 +320,17 @@ func (s *agentService) UpdateAgent(ctx context.Context, agentID string,
 		if mapped := mapEntityError(err); mapped != nil {
 			return nil, mapped
 		}
-		s.logger.Error("Failed to update agent entity", log.String("agentID", agentID), log.Error(err))
-		return nil, &serviceerror.InternalServerError
+		s.logger.Error(ctx, "Failed to update agent entity", log.String("agentID", agentID), log.Error(err))
+		return nil, &tidcommon.InternalServerError
 	}
 
 	if clientSecret != "" {
 		sysCredsJSON, credErr := buildSystemCredentialsJSON(clientSecret)
 		if credErr == nil && sysCredsJSON != nil {
 			if err := s.entityService.UpdateSystemCredentials(ctx, agentID, sysCredsJSON); err != nil {
-				s.logger.Error("Failed to update agent system credentials",
+				s.logger.Error(ctx, "Failed to update agent system credentials",
 					log.String("agentID", agentID), log.Error(err))
-				return nil, &serviceerror.InternalServerError
+				return nil, &tidcommon.InternalServerError
 			}
 		}
 	}
@@ -325,10 +339,10 @@ func (s *agentService) UpdateAgent(ctx context.Context, agentID string,
 	regFlowID := resolvedClient.RegistrationFlowID
 	assertion := resolvedClient.Assertion
 	loginConsent := resolvedClient.LoginConsent
-	var inboundConfigs []inboundmodel.InboundAuthConfigWithSecret
+	var inboundConfigs []providers.InboundAuthConfigWithSecret
 	if resolvedOAuth != nil {
-		inboundConfigs = []inboundmodel.InboundAuthConfigWithSecret{{
-			Type:        inboundmodel.OAuthInboundAuthType,
+		inboundConfigs = []providers.InboundAuthConfigWithSecret{{
+			Type:        providers.OAuthInboundAuthType,
 			OAuthConfig: oauthProfileToComplete(clientID, resolvedOAuth),
 		}}
 	}
@@ -337,14 +351,20 @@ func (s *agentService) UpdateAgent(ctx context.Context, agentID string,
 		req.Type, req.Name, req.Description, req.Attributes,
 		authFlowID, regFlowID, resolvedClient.IsRegistrationFlowEnabled,
 		req.ThemeID, req.LayoutID, assertion, loginConsent,
-		req.AllowedUserTypes, req.Certificate, inboundConfigs)
+		req.AllowedUserTypes, inboundConfigs)
 	resp.OUID = ouID
 	s.populateOUHandleForComplete(ctx, resp)
 	return resp, nil
 }
 
 // DeleteAgent removes the agent and its associated inbound client.
-func (s *agentService) DeleteAgent(ctx context.Context, agentID string) *serviceerror.ServiceError {
+// SetDependencyRegistry injects the dependency registry. Called by servicemanager after the
+// provider services are initialized to avoid a cyclic import.
+func (s *agentService) SetDependencyRegistry(r resourcedependency.Registry) {
+	s.dependencyRegistry = r
+}
+
+func (s *agentService) DeleteAgent(ctx context.Context, agentID string) *tidcommon.ServiceError {
 	if agentID == "" {
 		return &ErrorMissingAgentID
 	}
@@ -354,39 +374,133 @@ func (s *agentService) DeleteAgent(ctx context.Context, agentID string) *service
 		if errors.Is(err, entity.ErrEntityNotFound) {
 			return &ErrorAgentNotFound
 		}
-		s.logger.Error("Failed to retrieve agent for delete", log.String("agentID", agentID), log.Error(err))
-		return &serviceerror.InternalServerError
+		s.logger.Error(ctx, "Failed to retrieve agent for delete",
+			log.String("agentID", agentID), log.Error(err))
+		return &tidcommon.InternalServerError
 	}
-	if existing.Category != entity.EntityCategoryAgent {
+	if existing.Category != providers.EntityCategoryAgent {
 		return &ErrorAgentNotFound
 	}
 	if existing.IsReadOnly {
 		return &ErrorCannotModifyDeclarativeResource
 	}
 
+	// Remove dependents that must be deleted with the agent (e.g. its role assignments and group
+	// memberships). Run before the deletes so a cleanup failure aborts and leaves the agent
+	// retriable. Fails closed when the registry is unavailable.
+	if s.dependencyRegistry == nil {
+		s.logger.Error(ctx, "Dependency registry not set; refusing to delete agent",
+			log.String("agentID", agentID))
+		return &tidcommon.InternalServerError
+	}
+	if _, err := s.dependencyRegistry.CascadeDelete(ctx, resourcedependency.ResourceTypeAgent, agentID); err != nil {
+		s.logger.Error(ctx, "Failed to cascade-delete agent dependencies",
+			log.String("agentID", agentID), log.Error(err))
+		return &tidcommon.InternalServerError
+	}
+
 	if err := s.inboundClientService.DeleteInboundClient(ctx, agentID); err != nil &&
 		!errors.Is(err, inboundclient.ErrInboundClientNotFound) {
-		if svcErr := s.translateInboundClientError(err); svcErr != nil {
+		if svcErr := s.translateInboundClientError(ctx, err); svcErr != nil {
 			return svcErr
 		}
-		s.logger.Error("Failed to delete inbound client for agent",
+		s.logger.Error(ctx, "Failed to delete inbound client for agent",
 			log.Error(err), log.String("agentID", agentID))
-		return &serviceerror.InternalServerError
+		return &tidcommon.InternalServerError
 	}
 
 	if err := s.entityService.DeleteEntity(ctx, agentID); err != nil {
 		if errors.Is(err, entity.ErrEntityNotFound) {
 			return nil
 		}
-		s.logger.Error("Failed to delete agent entity", log.String("agentID", agentID), log.Error(err))
-		return &serviceerror.InternalServerError
+		s.logger.Error(ctx, "Failed to delete agent entity", log.String("agentID", agentID), log.Error(err))
+		return &tidcommon.InternalServerError
 	}
 	return nil
 }
 
+// GetResourceDependencies returns the agents that reference the resource identified by
+// (resourceType, id). It implements the resourcedependency.Provider interface.
+//
+// Agents reference a user through their owner attribute, which lives on the agent entity rather
+// than in the inbound-client store, so user dependencies are resolved separately. All other
+// reference types are resolved via the inbound-client store, which decides what is tracked. The
+// number of referencing entities is bounded by MaxCompositeStoreRecords.
+func (s *agentService) GetResourceDependencies(
+	ctx context.Context, resourceType, id string) ([]resourcedependency.ResourceDependency, error) {
+	if resourceType == resourcedependency.ResourceTypeUser {
+		return s.getAgentsByOwner(ctx, id)
+	}
+
+	ids, _, err := s.inboundClientService.GetEntityIDsByReference(
+		ctx, resourceType, id, serverconst.MaxCompositeStoreRecords, 0)
+	if err != nil {
+		s.logger.Error(ctx, "Failed to get entity IDs by reference", log.Error(err))
+		return nil, err
+	}
+	if len(ids) == 0 {
+		return []resourcedependency.ResourceDependency{}, nil
+	}
+
+	entities, err := s.entityService.GetEntitiesByIDs(ctx, ids)
+	if err != nil {
+		s.logger.Error(ctx, "Failed to get entities by IDs", log.Error(err))
+		return nil, err
+	}
+
+	usages := make([]resourcedependency.ResourceDependency, 0, len(entities))
+	for _, e := range entities {
+		// Applications and agents share the inbound-client store; only report agents.
+		if e.Category != providers.EntityCategoryAgent {
+			continue
+		}
+		name, _, _, _ := readSystemAttributes(e.SystemAttributes)
+		usages = append(usages, resourcedependency.ResourceDependency{
+			ResourceType:     resourcedependency.ResourceTypeAgent,
+			ID:               e.ID,
+			DisplayName:      name,
+			BehaviorOnDelete: resourcedependency.BehaviorFallback,
+		})
+	}
+	return usages, nil
+}
+
+// getAgentsByOwner returns the agents that list the given user as their owner. The owner is stored
+// in the agent entity's system attributes, which the entity list filter does not search (it only
+// matches the public attributes column), so agents are listed and matched on owner in memory. The
+// number of agents scanned is bounded by MaxCompositeStoreRecords.
+func (s *agentService) getAgentsByOwner(
+	ctx context.Context, ownerID string) ([]resourcedependency.ResourceDependency, error) {
+	entities, err := s.entityService.GetEntityList(
+		ctx, providers.EntityCategoryAgent, serverconst.MaxCompositeStoreRecords, 0, nil)
+	if err != nil {
+		s.logger.Error(ctx, "Failed to list agents", log.Error(err))
+		return nil, err
+	}
+
+	usages := make([]resourcedependency.ResourceDependency, 0)
+	for _, e := range entities {
+		if e.Category != providers.EntityCategoryAgent {
+			continue
+		}
+		name, _, owner, _ := readSystemAttributes(e.SystemAttributes)
+		if owner != ownerID {
+			continue
+		}
+		// An agent cannot exist without its owner, so ownership blocks the owner's deletion.
+		usages = append(usages, resourcedependency.ResourceDependency{
+			ResourceType:     resourcedependency.ResourceTypeAgent,
+			ID:               e.ID,
+			DisplayName:      name,
+			BehaviorOnDelete: resourcedependency.BehaviorRestrict,
+		})
+	}
+	return usages, nil
+}
+
 // GetAgentGroups returns the groups the agent belongs to.
 func (s *agentService) GetAgentGroups(ctx context.Context, agentID string, limit, offset int) (
-	*model.AgentGroupListResponse, *serviceerror.ServiceError) {
+	*model.AgentGroupListResponse, *tidcommon.ServiceError) {
 	if agentID == "" {
 		return nil, &ErrorMissingAgentID
 	}
@@ -402,23 +516,25 @@ func (s *agentService) GetAgentGroups(ctx context.Context, agentID string, limit
 		if errors.Is(err, entity.ErrEntityNotFound) {
 			return nil, &ErrorAgentNotFound
 		}
-		s.logger.Error("Failed to retrieve agent for groups", log.String("agentID", agentID), log.Error(err))
-		return nil, &serviceerror.InternalServerError
+		s.logger.Error(ctx, "Failed to retrieve agent for groups",
+			log.String("agentID", agentID), log.Error(err))
+		return nil, &tidcommon.InternalServerError
 	}
-	if existing.Category != entity.EntityCategoryAgent {
+	if existing.Category != providers.EntityCategoryAgent {
 		return nil, &ErrorAgentNotFound
 	}
 
 	totalCount, err := s.entityService.GetGroupCountForEntity(ctx, agentID)
 	if err != nil {
-		s.logger.Error("Failed to get agent group count", log.String("agentID", agentID), log.Error(err))
-		return nil, &serviceerror.InternalServerError
+		s.logger.Error(ctx, "Failed to get agent group count",
+			log.String("agentID", agentID), log.Error(err))
+		return nil, &tidcommon.InternalServerError
 	}
 
 	groups, err := s.entityService.GetEntityGroups(ctx, agentID, limit, offset)
 	if err != nil {
-		s.logger.Error("Failed to get agent groups", log.String("agentID", agentID), log.Error(err))
-		return nil, &serviceerror.InternalServerError
+		s.logger.Error(ctx, "Failed to get agent groups", log.String("agentID", agentID), log.Error(err))
+		return nil, &tidcommon.InternalServerError
 	}
 
 	out := make([]model.AgentGroup, 0, len(groups))
@@ -437,10 +553,84 @@ func (s *agentService) GetAgentGroups(ctx context.Context, agentID string, limit
 	return resp, nil
 }
 
+// GetAgentRoles returns the roles assigned to the agent, either directly or through its
+// group memberships.
+func (s *agentService) GetAgentRoles(ctx context.Context, agentID string, limit, offset int) (
+	*model.AgentRoleListResponse, *tidcommon.ServiceError) {
+	if agentID == "" {
+		return nil, &ErrorMissingAgentID
+	}
+	if svcErr := validatePaginationParams(limit, offset); svcErr != nil {
+		return nil, svcErr
+	}
+	if limit == 0 {
+		limit = 30
+	}
+
+	existing, err := s.entityService.GetEntity(ctx, agentID)
+	if err != nil {
+		if errors.Is(err, entity.ErrEntityNotFound) {
+			return nil, &ErrorAgentNotFound
+		}
+		s.logger.Error(ctx, "Failed to retrieve agent for roles",
+			log.String("agentID", agentID), log.Error(err))
+		return nil, &tidcommon.InternalServerError
+	}
+	if existing.Category != providers.EntityCategoryAgent {
+		return nil, &ErrorAgentNotFound
+	}
+
+	groupCount, err := s.entityService.GetGroupCountForEntity(ctx, agentID)
+	if err != nil {
+		s.logger.Error(ctx, "Failed to get agent group count",
+			log.String("agentID", agentID), log.Error(err))
+		return nil, &tidcommon.InternalServerError
+	}
+
+	groupIDs := make([]string, 0, groupCount)
+	if groupCount > 0 {
+		groups, groupErr := s.entityService.GetEntityGroups(ctx, agentID, groupCount, 0)
+		if groupErr != nil {
+			s.logger.Error(ctx, "Failed to get agent groups for role lookup",
+				log.String("agentID", agentID), log.Error(groupErr))
+			return nil, &tidcommon.InternalServerError
+		}
+		for _, g := range groups {
+			groupIDs = append(groupIDs, g.ID)
+		}
+	}
+
+	roles, svcErr := s.roleService.GetUserRoles(ctx, agentID, groupIDs)
+	if svcErr != nil {
+		s.logger.Error(ctx, "Failed to get agent roles", log.String("agentID", agentID))
+		return nil, svcErr
+	}
+
+	totalCount := len(roles)
+	end := offset + limit
+	if offset > totalCount {
+		offset = totalCount
+	}
+	if end > totalCount {
+		end = totalCount
+	}
+	page := roles[offset:end]
+
+	resp := &model.AgentRoleListResponse{
+		TotalResults: totalCount,
+		StartIndex:   offset + 1,
+		Count:        len(page),
+		Roles:        page,
+		Links: sysutils.BuildPaginationLinks(
+			fmt.Sprintf("%s/%s/roles", agentBasePath, agentID), limit, offset, totalCount, ""),
+	}
+	return resp, nil
+}
+
 // ValidateAgent validates an Agent without persisting. It resolves OAuth credentials
 // using the entity ID (excludeID) for exclusion, allowing declarative reload of an existing agent.
 func (s *agentService) ValidateAgent(ctx context.Context, agent *model.Agent, excludeID string) (
-	string, string, inboundmodel.InboundClient, *serviceerror.ServiceError) {
+	string, string, inboundmodel.InboundClient, *tidcommon.ServiceError) {
 	if agent == nil {
 		return "", "", inboundmodel.InboundClient{}, &ErrorInvalidRequestFormat
 	}
@@ -453,8 +643,8 @@ func (s *agentService) ValidateAgent(ctx context.Context, agent *model.Agent, ex
 			if svcErr.Code == oupkg.ErrorOrganizationUnitNotFound.Code {
 				return "", "", inboundmodel.InboundClient{}, &ErrorOrganizationUnitNotFound
 			}
-			s.logger.Error("Failed to resolve OU handle", log.Any("error", svcErr))
-			return "", "", inboundmodel.InboundClient{}, &serviceerror.InternalServerError
+			s.logger.Error(ctx, "Failed to resolve OU handle", log.Any("error", svcErr))
+			return "", "", inboundmodel.InboundClient{}, &tidcommon.InternalServerError
 		}
 		agent.OUID = ou.ID
 	}
@@ -475,8 +665,8 @@ func (s *agentService) ValidateAgent(ctx context.Context, agent *model.Agent, ex
 		if clientID == "" {
 			generated, err := oauthutils.GenerateOAuth2ClientID()
 			if err != nil {
-				s.logger.Error("Failed to generate client ID", log.Error(err))
-				return "", "", inboundmodel.InboundClient{}, &serviceerror.InternalServerError
+				s.logger.Error(ctx, "Failed to generate client ID", log.Error(err))
+				return "", "", inboundmodel.InboundClient{}, &tidcommon.InternalServerError
 			}
 			clientID = generated
 		} else if taken, checkErr := s.isClientIDTaken(ctx, clientID, excludeID); checkErr != nil {
@@ -488,8 +678,8 @@ func (s *agentService) ValidateAgent(ctx context.Context, agent *model.Agent, ex
 		if requiresClientSecret(oauthCfg) && oauthCfg.ClientSecret == "" {
 			generated, err := oauthutils.GenerateOAuth2ClientSecret()
 			if err != nil {
-				s.logger.Error("Failed to generate client secret", log.Error(err))
-				return "", "", inboundmodel.InboundClient{}, &serviceerror.InternalServerError
+				s.logger.Error(ctx, "Failed to generate client secret", log.Error(err))
+				return "", "", inboundmodel.InboundClient{}, &tidcommon.InternalServerError
 			}
 			clientSecret = generated
 		} else {
@@ -501,8 +691,8 @@ func (s *agentService) ValidateAgent(ctx context.Context, agent *model.Agent, ex
 		if svcErr := translateInboundClientFKError(err); svcErr != nil {
 			return "", "", inboundmodel.InboundClient{}, svcErr
 		}
-		s.logger.Error("Failed to resolve inbound auth profile handles", log.Error(err))
-		return "", "", inboundmodel.InboundClient{}, &serviceerror.InternalServerError
+		s.logger.Error(ctx, "Failed to resolve inbound auth profile handles", log.Error(err))
+		return "", "", inboundmodel.InboundClient{}, &tidcommon.InternalServerError
 	}
 
 	client := buildInboundClientRecord("", agent.AuthFlowID, agent.RegistrationFlowID,
@@ -513,11 +703,11 @@ func (s *agentService) ValidateAgent(ctx context.Context, agent *model.Agent, ex
 		oauthProfile := buildOAuthProfile(agent.InboundAuthConfig)
 		hasSecret := clientSecret != ""
 		if err := s.inboundClientService.Validate(ctx, &client, oauthProfile, hasSecret); err != nil {
-			if svcErr := s.translateInboundClientError(err); svcErr != nil {
+			if svcErr := s.translateInboundClientError(ctx, err); svcErr != nil {
 				return "", "", inboundmodel.InboundClient{}, svcErr
 			}
-			s.logger.Error("Inbound client validation failed", log.Error(err))
-			return "", "", inboundmodel.InboundClient{}, &serviceerror.InternalServerError
+			s.logger.Error(ctx, "Inbound client validation failed", log.Error(err))
+			return "", "", inboundmodel.InboundClient{}, &tidcommon.InternalServerError
 		}
 	}
 
@@ -527,13 +717,13 @@ func (s *agentService) ValidateAgent(ctx context.Context, agent *model.Agent, ex
 // deleteEntityCompensation deletes the entity row as a best-effort rollback after a failed downstream operation.
 func (s *agentService) deleteEntityCompensation(ctx context.Context, agentID string) {
 	if err := s.entityService.DeleteEntity(ctx, agentID); err != nil {
-		s.logger.Error("Failed to delete entity during compensation",
+		s.logger.Error(ctx, "Failed to delete entity during compensation",
 			log.String("agentID", agentID), log.Error(err))
 	}
 }
 
 // validateOUExists returns an error if the given OU is empty or does not exist.
-func (s *agentService) validateOUExists(ctx context.Context, ouID string) *serviceerror.ServiceError {
+func (s *agentService) validateOUExists(ctx context.Context, ouID string) *tidcommon.ServiceError {
 	if ouID == "" {
 		return &ErrorOrganizationUnitNotFound
 	}
@@ -542,8 +732,8 @@ func (s *agentService) validateOUExists(ctx context.Context, ouID string) *servi
 		if err.Code == oupkg.ErrorOrganizationUnitNotFound.Code {
 			return &ErrorOrganizationUnitNotFound
 		}
-		s.logger.Error("Failed to verify OU existence", log.String("ouID", ouID), log.Any("error", err))
-		return &serviceerror.InternalServerError
+		s.logger.Error(ctx, "Failed to verify OU existence", log.String("ouID", ouID), log.Any("error", err))
+		return &tidcommon.InternalServerError
 	}
 	if !exists {
 		return &ErrorOrganizationUnitNotFound
@@ -555,15 +745,15 @@ func (s *agentService) validateOUExists(ctx context.Context, ouID string) *servi
 // existing one — and validates it exists when the owner is changing.
 func (s *agentService) resolveUpdateOUID(
 	ctx context.Context, req *model.UpdateAgentRequest, existingOUID string,
-) (string, *serviceerror.ServiceError) {
+) (string, *tidcommon.ServiceError) {
 	if req.OUID == "" && req.OUHandle != "" {
 		ou, ouSvcErr := s.ouService.GetOrganizationUnitByPath(ctx, req.OUHandle)
 		if ouSvcErr != nil {
 			if ouSvcErr.Code == oupkg.ErrorOrganizationUnitNotFound.Code {
 				return "", &ErrorOrganizationUnitNotFound
 			}
-			s.logger.Error("Failed to resolve OU handle", log.Any("error", ouSvcErr))
-			return "", &serviceerror.InternalServerError
+			s.logger.Error(ctx, "Failed to resolve OU handle", log.Any("error", ouSvcErr))
+			return "", &tidcommon.InternalServerError
 		}
 		req.OUID = ou.ID
 	}
@@ -581,7 +771,7 @@ func (s *agentService) resolveUpdateOUID(
 
 func (s *agentService) resolveUpdateOwner(
 	ctx context.Context, requestedOwner, currentOwner string,
-) (string, *serviceerror.ServiceError) {
+) (string, *tidcommon.ServiceError) {
 	owner := requestedOwner
 	if owner == "" {
 		owner = currentOwner
@@ -595,7 +785,7 @@ func (s *agentService) resolveUpdateOwner(
 }
 
 // validateOwnerExists returns an error when the given owner ID does not resolve to an existing entity.
-func (s *agentService) validateOwnerExists(ctx context.Context, ownerID string) *serviceerror.ServiceError {
+func (s *agentService) validateOwnerExists(ctx context.Context, ownerID string) *tidcommon.ServiceError {
 	if ownerID == "" {
 		return nil
 	}
@@ -604,14 +794,15 @@ func (s *agentService) validateOwnerExists(ctx context.Context, ownerID string) 
 		if errors.Is(err, entity.ErrEntityNotFound) {
 			return &ErrorOwnerNotFound
 		}
-		s.logger.Error("Failed to verify owner existence", log.String("ownerID", ownerID), log.Error(err))
-		return &serviceerror.InternalServerError
+		s.logger.Error(ctx, "Failed to verify owner existence",
+			log.String("ownerID", ownerID), log.Error(err))
+		return &tidcommon.InternalServerError
 	}
 	return nil
 }
 
 // validateNameUnique returns an error if another agent already uses the given name (excludeID is exempt on updates).
-func (s *agentService) validateNameUnique(ctx context.Context, name, excludeID string) *serviceerror.ServiceError {
+func (s *agentService) validateNameUnique(ctx context.Context, name, excludeID string) *tidcommon.ServiceError {
 	if name == "" {
 		return &ErrorInvalidAgentName
 	}
@@ -623,8 +814,8 @@ func (s *agentService) validateNameUnique(ctx context.Context, name, excludeID s
 		if errors.Is(err, entity.ErrAmbiguousEntity) {
 			return &ErrorAgentAlreadyExistsWithName
 		}
-		s.logger.Error("Failed to verify agent name uniqueness", log.Error(err))
-		return &serviceerror.InternalServerError
+		s.logger.Error(ctx, "Failed to verify agent name uniqueness", log.Error(err))
+		return &tidcommon.InternalServerError
 	}
 	if id == nil || *id == "" {
 		return nil
@@ -636,7 +827,7 @@ func (s *agentService) validateNameUnique(ctx context.Context, name, excludeID s
 	// IdentifyEntity searches across all entity categories; apps also store their name in
 	// system attributes under the same key.
 	found, getErr := s.entityService.GetEntity(ctx, *id)
-	if getErr != nil || found.Category != entity.EntityCategoryAgent {
+	if getErr != nil || found.Category != providers.EntityCategoryAgent {
 		return nil
 	}
 	return &ErrorAgentAlreadyExistsWithName
@@ -644,8 +835,8 @@ func (s *agentService) validateNameUnique(ctx context.Context, name, excludeID s
 
 // resolveOAuthCredentials resolves the clientID and clientSecret for an agent OAuth profile.
 func (s *agentService) resolveOAuthCredentials(ctx context.Context,
-	configs []inboundmodel.InboundAuthConfigWithSecret, existingClientID, existingOAuthMethod string,
-) (string, string, *serviceerror.ServiceError) {
+	configs []providers.InboundAuthConfigWithSecret, existingClientID, existingOAuthMethod string,
+) (string, string, *tidcommon.ServiceError) {
 	oauthCfg, svcErr := pickOAuthConfig(configs)
 	if svcErr != nil {
 		return "", "", svcErr
@@ -661,8 +852,8 @@ func (s *agentService) resolveOAuthCredentials(ctx context.Context,
 	if clientID == "" {
 		generated, err := oauthutils.GenerateOAuth2ClientID()
 		if err != nil {
-			s.logger.Error("Failed to generate client ID", log.Error(err))
-			return "", "", &serviceerror.InternalServerError
+			s.logger.Error(ctx, "Failed to generate client ID", log.Error(err))
+			return "", "", &tidcommon.InternalServerError
 		}
 		clientID = generated
 	} else if clientID != existingClientID {
@@ -678,13 +869,13 @@ func (s *agentService) resolveOAuthCredentials(ctx context.Context,
 	clientSecret := oauthCfg.ClientSecret
 	requiresSecret := requiresClientSecret(oauthCfg)
 	if requiresSecret && clientSecret == "" {
-		existingWasSecretBased := existingOAuthMethod == string(oauth2const.TokenEndpointAuthMethodClientSecretBasic) ||
-			existingOAuthMethod == string(oauth2const.TokenEndpointAuthMethodClientSecretPost)
+		existingWasSecretBased := existingOAuthMethod == string(providers.TokenEndpointAuthMethodClientSecretBasic) ||
+			existingOAuthMethod == string(providers.TokenEndpointAuthMethodClientSecretPost)
 		if !existingWasSecretBased {
 			generated, err := oauthutils.GenerateOAuth2ClientSecret()
 			if err != nil {
-				s.logger.Error("Failed to generate client secret", log.Error(err))
-				return "", "", &serviceerror.InternalServerError
+				s.logger.Error(ctx, "Failed to generate client secret", log.Error(err))
+				return "", "", &tidcommon.InternalServerError
 			}
 			clientSecret = generated
 		}
@@ -694,15 +885,15 @@ func (s *agentService) resolveOAuthCredentials(ctx context.Context,
 
 // isClientIDTaken reports whether the given clientID is already used by a different entity.
 func (s *agentService) isClientIDTaken(
-	ctx context.Context, clientID, excludeID string) (bool, *serviceerror.ServiceError) {
+	ctx context.Context, clientID, excludeID string) (bool, *tidcommon.ServiceError) {
 	id, err := s.entityService.IdentifyEntity(ctx, map[string]interface{}{fieldClientID: clientID})
 	if err != nil {
 		if errors.Is(err, entity.ErrEntityNotFound) {
 			return false, nil
 		}
-		s.logger.Error("Failed to check client ID availability", log.MaskedString("clientID", clientID),
+		s.logger.Error(ctx, "Failed to check client ID availability", log.MaskedString("clientID", clientID),
 			log.Error(err))
-		return false, &serviceerror.InternalServerError
+		return false, &tidcommon.InternalServerError
 	}
 	if id == nil || *id == "" {
 		return false, nil
@@ -716,7 +907,7 @@ func (s *agentService) isClientIDTaken(
 // createInboundForAgent creates the inbound client row; applies server defaults via CreateInboundClient.
 func (s *agentService) createInboundForAgent(ctx context.Context, agentID string,
 	agent *model.Agent, clientSecret string) (
-	inboundmodel.InboundClient, *inboundmodel.OAuthProfile, *serviceerror.ServiceError) {
+	inboundmodel.InboundClient, *providers.OAuthProfile, *tidcommon.ServiceError) {
 	client := buildInboundClientRecord(agentID, agent.AuthFlowID, agent.RegistrationFlowID,
 		agent.IsRegistrationFlowEnabled, agent.ThemeID, agent.LayoutID, agent.Assertion,
 		agent.LoginConsent, agent.AllowedUserTypes)
@@ -724,22 +915,23 @@ func (s *agentService) createInboundForAgent(ctx context.Context, agentID string
 	oauthProfile := buildOAuthProfile(agent.InboundAuthConfig)
 
 	hasSecret := clientSecret != ""
-	if err := s.inboundClientService.CreateInboundClient(ctx, &client, agent.Certificate,
-		oauthProfile, hasSecret, agent.Name); err != nil {
-		if svcErr := s.translateInboundClientError(err); svcErr != nil {
+	if err := s.inboundClientService.CreateInboundClient(
+		ctx, &client, oauthProfile, hasSecret,
+	); err != nil {
+		if svcErr := s.translateInboundClientError(ctx, err); svcErr != nil {
 			return inboundmodel.InboundClient{}, nil, svcErr
 		}
-		s.logger.Error("Failed to create inbound client for agent",
+		s.logger.Error(ctx, "Failed to create inbound client for agent",
 			log.Error(err), log.String("agentID", agentID))
-		return inboundmodel.InboundClient{}, nil, &serviceerror.InternalServerError
+		return inboundmodel.InboundClient{}, nil, &tidcommon.InternalServerError
 	}
 	return client, oauthProfile, nil
 }
 
 // reconcileInboundForUpdate creates, updates, or removes the inbound client row and returns the mutated structs.
 func (s *agentService) reconcileInboundForUpdate(ctx context.Context, agentID string,
-	req *model.UpdateAgentRequest, clientID, clientSecret, oldName, newName string,
-) (inboundmodel.InboundClient, *inboundmodel.OAuthProfile, *serviceerror.ServiceError) {
+	req *model.UpdateAgentRequest, clientID, clientSecret string,
+) (inboundmodel.InboundClient, *providers.OAuthProfile, *tidcommon.ServiceError) {
 	wantsInbound := updateNeedsInboundClient(req)
 
 	existingClient, getErr := s.inboundClientService.GetInboundClientByEntityID(ctx, agentID)
@@ -749,12 +941,12 @@ func (s *agentService) reconcileInboundForUpdate(ctx context.Context, agentID st
 		if hasExisting {
 			if err := s.inboundClientService.DeleteInboundClient(ctx, agentID); err != nil &&
 				!errors.Is(err, inboundclient.ErrInboundClientNotFound) {
-				if svcErr := s.translateInboundClientError(err); svcErr != nil {
+				if svcErr := s.translateInboundClientError(ctx, err); svcErr != nil {
 					return inboundmodel.InboundClient{}, nil, svcErr
 				}
-				s.logger.Error("Failed to remove inbound client during update",
+				s.logger.Error(ctx, "Failed to remove inbound client during update",
 					log.Error(err), log.String("agentID", agentID))
-				return inboundmodel.InboundClient{}, nil, &serviceerror.InternalServerError
+				return inboundmodel.InboundClient{}, nil, &tidcommon.InternalServerError
 			}
 		}
 		return inboundmodel.InboundClient{}, nil, nil
@@ -767,37 +959,32 @@ func (s *agentService) reconcileInboundForUpdate(ctx context.Context, agentID st
 	hasSecret := clientSecret != ""
 
 	if hasExisting {
-		entityName := newName
-		if entityName == "" {
-			entityName = oldName
-		}
-		if err := s.inboundClientService.UpdateInboundClient(ctx, &client, req.Certificate,
-			oauthProfile, hasSecret, clientID, entityName); err != nil {
-			if svcErr := s.translateInboundClientError(err); svcErr != nil {
+		if err := s.inboundClientService.UpdateInboundClient(ctx, &client,
+			oauthProfile, hasSecret, clientID); err != nil {
+			if svcErr := s.translateInboundClientError(ctx, err); svcErr != nil {
 				return inboundmodel.InboundClient{}, nil, svcErr
 			}
-			s.logger.Error("Failed to update inbound client",
+			s.logger.Error(ctx, "Failed to update inbound client",
 				log.Error(err), log.String("agentID", agentID))
-			return inboundmodel.InboundClient{}, nil, &serviceerror.InternalServerError
+			return inboundmodel.InboundClient{}, nil, &tidcommon.InternalServerError
 		}
 		return client, oauthProfile, nil
 	}
 
-	if err := s.inboundClientService.CreateInboundClient(ctx, &client, req.Certificate,
-		oauthProfile, hasSecret, newName); err != nil {
-		if svcErr := s.translateInboundClientError(err); svcErr != nil {
+	if err := s.inboundClientService.CreateInboundClient(ctx, &client, oauthProfile, hasSecret); err != nil {
+		if svcErr := s.translateInboundClientError(ctx, err); svcErr != nil {
 			return inboundmodel.InboundClient{}, nil, svcErr
 		}
-		s.logger.Error("Failed to create inbound client during update",
+		s.logger.Error(ctx, "Failed to create inbound client during update",
 			log.Error(err), log.String("agentID", agentID))
-		return inboundmodel.InboundClient{}, nil, &serviceerror.InternalServerError
+		return inboundmodel.InboundClient{}, nil, &tidcommon.InternalServerError
 	}
 	return client, oauthProfile, nil
 }
 
 // composeGetResponse builds the GET response by loading inbound client, OAuth profile, and certificates for the entity.
-func (s *agentService) composeGetResponse(ctx context.Context, e *entity.Entity) (
-	*model.AgentGetResponse, *serviceerror.ServiceError) {
+func (s *agentService) composeGetResponse(ctx context.Context, e *providers.Entity) (
+	*model.AgentGetResponse, *tidcommon.ServiceError) {
 	name, description, owner, clientID := readSystemAttributes(e.SystemAttributes)
 
 	resp := &model.AgentGetResponse{
@@ -815,9 +1002,9 @@ func (s *agentService) composeGetResponse(ctx context.Context, e *entity.Entity)
 	inbound, err := s.inboundClientService.GetInboundClientByEntityID(ctx, e.ID)
 	if err != nil {
 		if !errors.Is(err, inboundclient.ErrInboundClientNotFound) {
-			s.logger.Error("Failed to load inbound client for agent",
+			s.logger.Error(ctx, "Failed to load inbound client for agent",
 				log.String("agentID", e.ID), log.Error(err))
-			return nil, &serviceerror.InternalServerError
+			return nil, &tidcommon.InternalServerError
 		}
 		return resp, nil
 	}
@@ -833,30 +1020,24 @@ func (s *agentService) composeGetResponse(ctx context.Context, e *entity.Entity)
 
 	oauth, oauthErr := s.inboundClientService.GetOAuthProfileByEntityID(ctx, e.ID)
 	if oauthErr != nil && !errors.Is(oauthErr, inboundclient.ErrInboundClientNotFound) {
-		s.logger.Error("Failed to load OAuth profile for agent",
+		s.logger.Error(ctx, "Failed to load OAuth profile for agent",
 			log.String("agentID", e.ID), log.Error(oauthErr))
-		return nil, &serviceerror.InternalServerError
+		return nil, &tidcommon.InternalServerError
 	}
 	if oauthErr == nil && oauth != nil {
-		resp.InboundAuthConfig = []inboundmodel.InboundAuthConfigWithSecret{
+		resp.InboundAuthConfig = []providers.InboundAuthConfigWithSecret{
 			{
-				Type:        inboundmodel.OAuthInboundAuthType,
+				Type:        providers.OAuthInboundAuthType,
 				OAuthConfig: oauthProfileToComplete(clientID, oauth),
 			},
 		}
 	}
 
-	entityCert, certOpErr := s.inboundClientService.GetCertificate(ctx, cert.CertificateReferenceTypeApplication, e.ID)
-	if certOpErr != nil {
-		return nil, s.translateCertOperationError(certOpErr)
-	}
-	resp.Certificate = entityCert
-
 	if clientID != "" {
 		oauthCert, oauthCertOpErr := s.inboundClientService.GetCertificate(
 			ctx, cert.CertificateReferenceTypeOAuthApp, clientID)
 		if oauthCertOpErr != nil {
-			return nil, s.translateCertOperationError(oauthCertOpErr)
+			return nil, s.translateCertOperationError(ctx, oauthCertOpErr)
 		}
 		if len(resp.InboundAuthConfig) > 0 && resp.InboundAuthConfig[0].OAuthConfig != nil {
 			resp.InboundAuthConfig[0].OAuthConfig.Certificate = oauthCert
@@ -867,7 +1048,7 @@ func (s *agentService) composeGetResponse(ctx context.Context, e *entity.Entity)
 }
 
 // buildListResponse builds the paged agent list response from a slice of entities and pagination metadata.
-func (s *agentService) buildListResponse(ctx context.Context, entities []entity.Entity,
+func (s *agentService) buildListResponse(ctx context.Context, entities []providers.Entity,
 	totalCount, limit, offset int, includeDisplay bool) *model.AgentListResponse {
 	agents := make([]model.BasicAgentResponse, 0, len(entities))
 	for i := range entities {
@@ -905,7 +1086,8 @@ func (s *agentService) buildListResponse(ctx context.Context, entities []entity.
 func (s *agentService) lookupOUHandle(ctx context.Context, ouID string) string {
 	handles, err := s.ouService.GetOrganizationUnitHandlesByIDs(ctx, []string{ouID})
 	if err != nil {
-		s.logger.Debug("Failed to resolve OU handle for agent", log.String("ouID", ouID), log.Any("error", err))
+		s.logger.Debug(ctx, "Failed to resolve OU handle for agent",
+			log.String("ouID", ouID), log.Any("error", err))
 		return ""
 	}
 	return handles[ouID]
@@ -949,7 +1131,7 @@ func (s *agentService) populateOUHandlesForList(ctx context.Context, agents []mo
 	}
 	handles, err := s.ouService.GetOrganizationUnitHandlesByIDs(ctx, ids)
 	if err != nil {
-		s.logger.Debug("Failed to resolve OU handles for agent list", log.Any("error", err))
+		s.logger.Debug(ctx, "Failed to resolve OU handles for agent list", log.Any("error", err))
 		return
 	}
 	for i := range agents {
@@ -972,7 +1154,6 @@ func needsInboundClient(agent *model.Agent) bool {
 		agent.Assertion != nil ||
 		agent.LoginConsent != nil ||
 		len(agent.AllowedUserTypes) > 0 ||
-		agent.Certificate != nil ||
 		len(agent.InboundAuthConfig) > 0
 }
 
@@ -989,12 +1170,11 @@ func updateNeedsInboundClient(req *model.UpdateAgentRequest) bool {
 		req.Assertion != nil ||
 		req.LoginConsent != nil ||
 		len(req.AllowedUserTypes) > 0 ||
-		req.Certificate != nil ||
 		len(req.InboundAuthConfig) > 0
 }
 
 // validateBaseFields validates the mandatory top-level fields required for both create and update.
-func validateBaseFields(name, agentType string) *serviceerror.ServiceError {
+func validateBaseFields(name, agentType string) *tidcommon.ServiceError {
 	if name == "" {
 		return &ErrorInvalidAgentName
 	}
@@ -1005,7 +1185,7 @@ func validateBaseFields(name, agentType string) *serviceerror.ServiceError {
 }
 
 // validatePaginationParams validates that limit and offset are within acceptable bounds.
-func validatePaginationParams(limit, offset int) *serviceerror.ServiceError {
+func validatePaginationParams(limit, offset int) *tidcommon.ServiceError {
 	if limit < 0 || limit > 100 {
 		return &ErrorInvalidLimit
 	}
@@ -1028,12 +1208,12 @@ func normalizeLoginConsent(lc *inboundmodel.LoginConsentConfig) {
 // pickOAuthConfig returns the single OAuth-typed entry from a request input, or nil if absent.
 // Returns ErrorMultipleOAuthConfigs if more than one OAuth entry is present.
 func pickOAuthConfig(
-	configs []inboundmodel.InboundAuthConfigWithSecret,
-) (*inboundmodel.OAuthConfigWithSecret, *serviceerror.ServiceError) {
-	var found *inboundmodel.OAuthConfigWithSecret
+	configs []providers.InboundAuthConfigWithSecret,
+) (*providers.OAuthConfigWithSecret, *tidcommon.ServiceError) {
+	var found *providers.OAuthConfigWithSecret
 	isOAuthConfig := false
 	for i := range configs {
-		if configs[i].Type != inboundmodel.OAuthInboundAuthType {
+		if configs[i].Type != providers.OAuthInboundAuthType {
 			continue
 		}
 		if isOAuthConfig {
@@ -1048,7 +1228,7 @@ func pickOAuthConfig(
 }
 
 // requiresClientSecret reports whether the OAuth config implies a confidential client requiring a secret.
-func requiresClientSecret(cfg *inboundmodel.OAuthConfigWithSecret) bool {
+func requiresClientSecret(cfg *providers.OAuthConfigWithSecret) bool {
 	if cfg == nil {
 		return false
 	}
@@ -1056,11 +1236,11 @@ func requiresClientSecret(cfg *inboundmodel.OAuthConfigWithSecret) bool {
 		return false
 	}
 	switch cfg.TokenEndpointAuthMethod {
-	case oauth2const.TokenEndpointAuthMethodClientSecretBasic,
-		oauth2const.TokenEndpointAuthMethodClientSecretPost:
+	case providers.TokenEndpointAuthMethodClientSecretBasic,
+		providers.TokenEndpointAuthMethodClientSecretPost:
 		return true
-	case oauth2const.TokenEndpointAuthMethodNone,
-		oauth2const.TokenEndpointAuthMethodPrivateKeyJWT:
+	case providers.TokenEndpointAuthMethodNone,
+		providers.TokenEndpointAuthMethodPrivateKeyJWT:
 		return false
 	}
 	// Default to client_secret_basic when unspecified.
@@ -1069,7 +1249,7 @@ func requiresClientSecret(cfg *inboundmodel.OAuthConfigWithSecret) bool {
 
 // buildAgentEntity constructs the entity row and system credentials JSON for a new or updated agent.
 func buildAgentEntity(agentID, agentType, ouID string, attributes json.RawMessage,
-	name, description, owner, clientID, clientSecret string) (*entity.Entity, json.RawMessage, error) {
+	name, description, owner, clientID, clientSecret string) (*providers.Entity, json.RawMessage, error) {
 	sysAttrsJSON, err := buildSystemAttributesJSON(name, description, owner, clientID)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to build agent system attributes: %w", err)
@@ -1080,11 +1260,11 @@ func buildAgentEntity(agentID, agentType, ouID string, attributes json.RawMessag
 		return nil, nil, fmt.Errorf("failed to build agent system credentials: %w", err)
 	}
 
-	e := &entity.Entity{
+	e := &providers.Entity{
 		ID:               agentID,
-		Category:         entity.EntityCategoryAgent,
+		Category:         providers.EntityCategoryAgent,
 		Type:             agentType,
-		State:            entity.EntityStateActive,
+		State:            providers.EntityStateActive,
 		OUID:             ouID,
 		Attributes:       attributes,
 		SystemAttributes: sysAttrsJSON,
@@ -1165,22 +1345,23 @@ func buildInboundClientRecord(agentID, authFlowID, regFlowID string, isRegEnable
 }
 
 // buildOAuthProfile maps the agent OAuth config to the inbound client profile shape.
-func buildOAuthProfile(configs []inboundmodel.InboundAuthConfigWithSecret) *inboundmodel.OAuthProfile {
+func buildOAuthProfile(configs []providers.InboundAuthConfigWithSecret) *providers.OAuthProfile {
 	cfg, _ := pickOAuthConfig(configs)
 	if cfg == nil {
 		return nil
 	}
 	authMethod := cfg.TokenEndpointAuthMethod
 	if authMethod == "" {
-		authMethod = oauth2const.TokenEndpointAuthMethodClientSecretBasic
+		authMethod = providers.TokenEndpointAuthMethodClientSecretBasic
 	}
 	grantTypes := sysutils.ConvertToStringSlice(cfg.GrantTypes)
 	if len(grantTypes) == 0 {
 		// Default to client_credentials for agents.
-		grantTypes = []string{string(oauth2const.GrantTypeClientCredentials)}
+		grantTypes = []string{string(providers.GrantTypeClientCredentials)}
 	}
-	return &inboundmodel.OAuthProfile{
+	return &providers.OAuthProfile{
 		RedirectURIs:                       cfg.RedirectURIs,
+		PostLogoutRedirectURIs:             cfg.PostLogoutRedirectURIs,
 		GrantTypes:                         grantTypes,
 		ResponseTypes:                      sysutils.ConvertToStringSlice(cfg.ResponseTypes),
 		TokenEndpointAuthMethod:            string(authMethod),
@@ -1188,6 +1369,7 @@ func buildOAuthProfile(configs []inboundmodel.InboundAuthConfigWithSecret) *inbo
 		PublicClient:                       cfg.PublicClient,
 		RequirePushedAuthorizationRequests: cfg.RequirePushedAuthorizationRequests,
 		DPoPBoundAccessTokens:              cfg.DPoPBoundAccessTokens,
+		IncludeActClaim:                    cfg.IncludeActClaim,
 		Certificate:                        cfg.Certificate,
 		Token:                              cfg.Token,
 		Scopes:                             cfg.Scopes,
@@ -1197,21 +1379,23 @@ func buildOAuthProfile(configs []inboundmodel.InboundAuthConfigWithSecret) *inbo
 }
 
 // oauthProfileToComplete converts a stored OAuth profile into the create/update shape.
-func oauthProfileToComplete(clientID string, p *inboundmodel.OAuthProfile) *inboundmodel.OAuthConfigWithSecret {
+func oauthProfileToComplete(clientID string, p *providers.OAuthProfile) *providers.OAuthConfigWithSecret {
 	if p == nil {
 		return nil
 	}
 	grants, respTypes := convertGrantAndResponseTypes(p)
-	return &inboundmodel.OAuthConfigWithSecret{
+	return &providers.OAuthConfigWithSecret{
 		ClientID:                           clientID,
 		RedirectURIs:                       p.RedirectURIs,
+		PostLogoutRedirectURIs:             p.PostLogoutRedirectURIs,
 		GrantTypes:                         grants,
 		ResponseTypes:                      respTypes,
-		TokenEndpointAuthMethod:            oauth2const.TokenEndpointAuthMethod(p.TokenEndpointAuthMethod),
+		TokenEndpointAuthMethod:            providers.TokenEndpointAuthMethod(p.TokenEndpointAuthMethod),
 		PKCERequired:                       p.PKCERequired,
 		PublicClient:                       p.PublicClient,
 		RequirePushedAuthorizationRequests: p.RequirePushedAuthorizationRequests,
 		DPoPBoundAccessTokens:              p.DPoPBoundAccessTokens,
+		IncludeActClaim:                    p.IncludeActClaim,
 		Certificate:                        p.Certificate,
 		Token:                              p.Token,
 		Scopes:                             p.Scopes,
@@ -1223,15 +1407,15 @@ func oauthProfileToComplete(clientID string, p *inboundmodel.OAuthProfile) *inbo
 // convertGrantAndResponseTypes adapts the stored string slices to the typed enums shared by
 // both response shapes.
 func convertGrantAndResponseTypes(
-	p *inboundmodel.OAuthProfile,
-) ([]oauth2const.GrantType, []oauth2const.ResponseType) {
-	grants := make([]oauth2const.GrantType, 0, len(p.GrantTypes))
+	p *providers.OAuthProfile,
+) ([]providers.GrantType, []providers.ResponseType) {
+	grants := make([]providers.GrantType, 0, len(p.GrantTypes))
 	for _, g := range p.GrantTypes {
-		grants = append(grants, oauth2const.GrantType(g))
+		grants = append(grants, providers.GrantType(g))
 	}
-	respTypes := make([]oauth2const.ResponseType, 0, len(p.ResponseTypes))
+	respTypes := make([]providers.ResponseType, 0, len(p.ResponseTypes))
 	for _, r := range p.ResponseTypes {
-		respTypes = append(respTypes, oauth2const.ResponseType(r))
+		respTypes = append(respTypes, providers.ResponseType(r))
 	}
 	return grants, respTypes
 }
@@ -1241,7 +1425,7 @@ func buildCompleteResponse(agentID, owner, clientID, clientSecret, agentType, na
 	attributes json.RawMessage, authFlowID, regFlowID string, isRegEnabled bool,
 	themeID, layoutID string, assertion *inboundmodel.AssertionConfig,
 	loginConsent *inboundmodel.LoginConsentConfig, allowedUserTypes []string,
-	certificate *inboundmodel.Certificate, inboundAuthConfig []inboundmodel.InboundAuthConfigWithSecret,
+	inboundAuthConfig []providers.InboundAuthConfigWithSecret,
 ) *model.AgentCompleteResponse {
 	resp := &model.AgentCompleteResponse{
 		ID:          agentID,
@@ -1250,7 +1434,7 @@ func buildCompleteResponse(agentID, owner, clientID, clientSecret, agentType, na
 		Description: description,
 		Owner:       owner,
 		Attributes:  attributes,
-		InboundAuthProfile: inboundmodel.InboundAuthProfile{
+		InboundAuthProfile: providers.InboundAuthProfile{
 			AuthFlowID:                authFlowID,
 			RegistrationFlowID:        regFlowID,
 			IsRegistrationFlowEnabled: isRegEnabled,
@@ -1259,7 +1443,6 @@ func buildCompleteResponse(agentID, owner, clientID, clientSecret, agentType, na
 			Assertion:                 assertion,
 			LoginConsent:              loginConsent,
 			AllowedUserTypes:          allowedUserTypes,
-			Certificate:               certificate,
 		},
 	}
 	if len(inboundAuthConfig) > 0 {
@@ -1270,12 +1453,12 @@ func buildCompleteResponse(agentID, owner, clientID, clientSecret, agentType, na
 
 // annotateOAuthConfig stamps clientID and clientSecret onto the OAuth entry.
 func annotateOAuthConfig(
-	in []inboundmodel.InboundAuthConfigWithSecret, clientID, clientSecret string,
-) []inboundmodel.InboundAuthConfigWithSecret {
-	out := make([]inboundmodel.InboundAuthConfigWithSecret, len(in))
+	in []providers.InboundAuthConfigWithSecret, clientID, clientSecret string,
+) []providers.InboundAuthConfigWithSecret {
+	out := make([]providers.InboundAuthConfigWithSecret, len(in))
 	for i, cfg := range in {
 		copyCfg := cfg
-		if copyCfg.Type == inboundmodel.OAuthInboundAuthType && copyCfg.OAuthConfig != nil {
+		if copyCfg.Type == providers.OAuthInboundAuthType && copyCfg.OAuthConfig != nil {
 			c := *copyCfg.OAuthConfig
 			if clientID != "" {
 				c.ClientID = clientID
@@ -1291,7 +1474,7 @@ func annotateOAuthConfig(
 }
 
 // mapEntityError maps entity-layer errors to agent-service errors.
-func mapEntityError(err error) *serviceerror.ServiceError {
+func mapEntityError(err error) *tidcommon.ServiceError {
 	switch {
 	case errors.Is(err, entity.ErrEntityNotFound):
 		return &ErrorAgentNotFound
@@ -1306,7 +1489,7 @@ func mapEntityError(err error) *serviceerror.ServiceError {
 }
 
 // translateInboundClientError maps inbound-client-layer errors to agent-service errors.
-func (s *agentService) translateInboundClientError(err error) *serviceerror.ServiceError {
+func (s *agentService) translateInboundClientError(ctx context.Context, err error) *tidcommon.ServiceError {
 	if err == nil {
 		return nil
 	}
@@ -1330,29 +1513,25 @@ func (s *agentService) translateInboundClientError(err error) *serviceerror.Serv
 	}
 	var opErr *inboundclient.CertOperationError
 	if errors.As(err, &opErr) {
-		return s.translateCertOperationError(opErr)
-	}
-	var consentErr *inboundclient.ConsentSyncError
-	if errors.As(err, &consentErr) {
-		return translateConsentSyncError(consentErr)
+		return s.translateCertOperationError(ctx, opErr)
 	}
 	return nil
 }
 
 // translateOAuthValidationError maps OAuth redirect URI, grant type, response type,
 // token endpoint auth method, and public client validation errors to agent-service errors.
-func translateOAuthValidationError(err error) *serviceerror.ServiceError {
+func translateOAuthValidationError(err error) *tidcommon.ServiceError {
 	switch {
 	// OAuth: redirect URI
 	case errors.Is(err, inboundclient.ErrOAuthInvalidRedirectURI):
 		return &ErrorInvalidRedirectURI
 	case errors.Is(err, inboundclient.ErrOAuthRedirectURIFragmentNotAllowed):
-		return serviceerror.CustomServiceError(ErrorInvalidRedirectURI, core.I18nMessage{
+		return tidcommon.CustomServiceError(ErrorInvalidRedirectURI, tidcommon.I18nMessage{
 			Key:          "error.agentservice.redirect_uri_fragment_not_allowed_description",
 			DefaultValue: "Redirect URIs must not contain a fragment component",
 		})
 	case errors.Is(err, inboundclient.ErrOAuthAuthCodeRequiresRedirectURIs):
-		return serviceerror.CustomServiceError(ErrorInvalidOAuthConfiguration, core.I18nMessage{
+		return tidcommon.CustomServiceError(ErrorInvalidOAuthConfiguration, tidcommon.I18nMessage{
 			Key:          "error.agentservice.auth_code_requires_redirect_uris_description",
 			DefaultValue: "authorization_code grant type requires redirect URIs",
 		})
@@ -1363,27 +1542,27 @@ func translateOAuthValidationError(err error) *serviceerror.ServiceError {
 	case errors.Is(err, inboundclient.ErrOAuthInvalidResponseType):
 		return &ErrorInvalidResponseType
 	case errors.Is(err, inboundclient.ErrOAuthClientCredentialsCannotUseResponseTypes):
-		return serviceerror.CustomServiceError(ErrorInvalidOAuthConfiguration, core.I18nMessage{
+		return tidcommon.CustomServiceError(ErrorInvalidOAuthConfiguration, tidcommon.I18nMessage{
 			Key:          "error.agentservice.client_credentials_cannot_use_response_types_description",
 			DefaultValue: "client_credentials grant type cannot be used with response types",
 		})
 	case errors.Is(err, inboundclient.ErrOAuthAuthCodeRequiresCodeResponseType):
-		return serviceerror.CustomServiceError(ErrorInvalidOAuthConfiguration, core.I18nMessage{
+		return tidcommon.CustomServiceError(ErrorInvalidOAuthConfiguration, tidcommon.I18nMessage{
 			Key:          "error.agentservice.auth_code_requires_code_response_type_description",
 			DefaultValue: "authorization_code grant type requires 'code' response type",
 		})
-	case errors.Is(err, inboundclient.ErrOAuthRefreshTokenCannotBeSoleGrant):
-		return serviceerror.CustomServiceError(ErrorInvalidOAuthConfiguration, core.I18nMessage{
-			Key:          "error.agentservice.refresh_token_cannot_be_sole_grant_description",
-			DefaultValue: "refresh_token grant type cannot be used without another grant type",
+	case errors.Is(err, inboundclient.ErrOAuthRefreshTokenRequiresTokenIssuingGrant):
+		return tidcommon.CustomServiceError(ErrorInvalidOAuthConfiguration, tidcommon.I18nMessage{
+			Key:          "error.agentservice.refresh_token_requires_token_issuing_grant_description",
+			DefaultValue: "refresh_token grant type requires a token-issuing grant type",
 		})
 	case errors.Is(err, inboundclient.ErrOAuthPKCERequiresAuthCode):
-		return serviceerror.CustomServiceError(ErrorInvalidOAuthConfiguration, core.I18nMessage{
+		return tidcommon.CustomServiceError(ErrorInvalidOAuthConfiguration, tidcommon.I18nMessage{
 			Key:          "error.agentservice.pkce_requires_authorization_code_description",
 			DefaultValue: "PKCE can only be enabled when the authorization_code grant type is selected",
 		})
 	case errors.Is(err, inboundclient.ErrOAuthResponseTypesRequireAuthCode):
-		return serviceerror.CustomServiceError(ErrorInvalidOAuthConfiguration, core.I18nMessage{
+		return tidcommon.CustomServiceError(ErrorInvalidOAuthConfiguration, tidcommon.I18nMessage{
 			Key:          "error.agentservice.response_types_require_authorization_code_description",
 			DefaultValue: "Response types can only be configured with the authorization_code grant type",
 		})
@@ -1392,44 +1571,49 @@ func translateOAuthValidationError(err error) *serviceerror.ServiceError {
 	case errors.Is(err, inboundclient.ErrOAuthInvalidTokenEndpointAuthMethod):
 		return &ErrorInvalidTokenEndpointAuthMethod
 	case errors.Is(err, inboundclient.ErrOAuthPrivateKeyJWTRequiresCertificate):
-		return serviceerror.CustomServiceError(ErrorInvalidOAuthConfiguration, core.I18nMessage{
+		return tidcommon.CustomServiceError(ErrorInvalidOAuthConfiguration, tidcommon.I18nMessage{
 			Key:          "error.agentservice.private_key_jwt_requires_certificate_description",
 			DefaultValue: "private_key_jwt authentication method requires a certificate",
 		})
+	case errors.Is(err, inboundclient.ErrOAuthCertificateRequiresClientID):
+		return tidcommon.CustomServiceError(ErrorInvalidOAuthConfiguration, tidcommon.I18nMessage{
+			Key:          "error.agentservice.certificate_requires_client_id_description",
+			DefaultValue: "certificate configuration requires an OAuth client ID",
+		})
 	case errors.Is(err, inboundclient.ErrOAuthPrivateKeyJWTCannotHaveClientSecret):
-		return serviceerror.CustomServiceError(ErrorInvalidOAuthConfiguration, core.I18nMessage{
+		return tidcommon.CustomServiceError(ErrorInvalidOAuthConfiguration, tidcommon.I18nMessage{
 			Key:          "error.agentservice.private_key_jwt_cannot_have_client_secret_description",
 			DefaultValue: "private_key_jwt authentication method cannot have a client secret",
 		})
 	case errors.Is(err, inboundclient.ErrOAuthClientSecretCannotHaveCertificate):
-		return serviceerror.CustomServiceError(ErrorInvalidOAuthConfiguration, core.I18nMessage{
+		return tidcommon.CustomServiceError(ErrorInvalidOAuthConfiguration, tidcommon.I18nMessage{
 			Key:          "error.agentservice.client_secret_cannot_have_certificate_description",
 			DefaultValue: "client_secret authentication methods cannot have a certificate",
 		})
 	case errors.Is(err, inboundclient.ErrOAuthNoneAuthRequiresPublicClient):
-		return serviceerror.CustomServiceError(ErrorInvalidOAuthConfiguration, core.I18nMessage{
+		return tidcommon.CustomServiceError(ErrorInvalidOAuthConfiguration, tidcommon.I18nMessage{
 			Key:          "error.agentservice.none_auth_method_requires_public_client_description",
 			DefaultValue: "'none' authentication method requires the client to be a public client",
 		})
 	case errors.Is(err, inboundclient.ErrOAuthNoneAuthCannotHaveCertOrSecret):
-		return serviceerror.CustomServiceError(ErrorInvalidOAuthConfiguration, core.I18nMessage{
+		return tidcommon.CustomServiceError(ErrorInvalidOAuthConfiguration, tidcommon.I18nMessage{
 			Key:          "error.agentservice.none_auth_method_cannot_have_cert_or_secret_description",
 			DefaultValue: "'none' authentication method cannot have a certificate or client secret",
 		})
 	case errors.Is(err, inboundclient.ErrOAuthClientCredentialsCannotUseNoneAuth):
-		return serviceerror.CustomServiceError(ErrorInvalidOAuthConfiguration, core.I18nMessage{
+		return tidcommon.CustomServiceError(ErrorInvalidOAuthConfiguration, tidcommon.I18nMessage{
 			Key:          "error.agentservice.client_credentials_cannot_use_none_auth_description",
 			DefaultValue: "client_credentials grant type cannot use 'none' authentication method",
 		})
 
 	// OAuth: public client
 	case errors.Is(err, inboundclient.ErrOAuthPublicClientMustUseNoneAuth):
-		return serviceerror.CustomServiceError(ErrorInvalidPublicClientConfiguration, core.I18nMessage{
+		return tidcommon.CustomServiceError(ErrorInvalidPublicClientConfiguration, tidcommon.I18nMessage{
 			Key:          "error.agentservice.public_client_must_use_none_auth_description",
 			DefaultValue: "Public clients must use 'none' as token endpoint authentication method",
 		})
 	case errors.Is(err, inboundclient.ErrOAuthPublicClientMustHavePKCE):
-		return serviceerror.CustomServiceError(ErrorInvalidPublicClientConfiguration, core.I18nMessage{
+		return tidcommon.CustomServiceError(ErrorInvalidPublicClientConfiguration, tidcommon.I18nMessage{
 			Key:          "error.agentservice.public_client_must_have_pkce_description",
 			DefaultValue: "Public clients must have PKCE required set to true",
 		})
@@ -1438,66 +1622,66 @@ func translateOAuthValidationError(err error) *serviceerror.ServiceError {
 }
 
 // translateUserInfoValidationError maps OAuth userinfo validation errors to agent-service errors.
-func translateUserInfoValidationError(err error) *serviceerror.ServiceError {
+func translateUserInfoValidationError(err error) *tidcommon.ServiceError {
 	switch {
 	case errors.Is(err, inboundclient.ErrOAuthUserInfoUnsupportedSigningAlg):
-		return serviceerror.CustomServiceError(ErrorInvalidOAuthConfiguration, core.I18nMessage{
+		return tidcommon.CustomServiceError(ErrorInvalidOAuthConfiguration, tidcommon.I18nMessage{
 			Key:          "error.agentservice.userinfo_unsupported_signing_alg_description",
 			DefaultValue: "userinfo signing algorithm is not supported",
 		})
 	case errors.Is(err, inboundclient.ErrOAuthUserInfoUnsupportedEncryptionAlg):
-		return serviceerror.CustomServiceError(ErrorInvalidOAuthConfiguration, core.I18nMessage{
+		return tidcommon.CustomServiceError(ErrorInvalidOAuthConfiguration, tidcommon.I18nMessage{
 			Key:          "error.agentservice.userinfo_unsupported_encryption_alg_description",
 			DefaultValue: "userinfo encryption algorithm is not supported",
 		})
 	case errors.Is(err, inboundclient.ErrOAuthUserInfoUnsupportedEncryptionEnc):
-		return serviceerror.CustomServiceError(ErrorInvalidOAuthConfiguration, core.I18nMessage{
+		return tidcommon.CustomServiceError(ErrorInvalidOAuthConfiguration, tidcommon.I18nMessage{
 			Key:          "error.agentservice.userinfo_unsupported_encryption_enc_description",
 			DefaultValue: "userinfo content-encryption algorithm is not supported",
 		})
 	case errors.Is(err, inboundclient.ErrOAuthUserInfoEncryptionAlgRequiresEnc):
-		return serviceerror.CustomServiceError(ErrorInvalidOAuthConfiguration, core.I18nMessage{
+		return tidcommon.CustomServiceError(ErrorInvalidOAuthConfiguration, tidcommon.I18nMessage{
 			Key:          "error.agentservice.userinfo_encryption_alg_requires_enc_description",
 			DefaultValue: "userinfo encryptionEnc is required when encryptionAlg is set",
 		})
 	case errors.Is(err, inboundclient.ErrOAuthUserInfoEncryptionEncRequiresAlg):
-		return serviceerror.CustomServiceError(ErrorInvalidOAuthConfiguration, core.I18nMessage{
+		return tidcommon.CustomServiceError(ErrorInvalidOAuthConfiguration, tidcommon.I18nMessage{
 			Key:          "error.agentservice.userinfo_encryption_enc_requires_alg_description",
 			DefaultValue: "userinfo encryptionAlg is required when encryptionEnc is set",
 		})
 	case errors.Is(err, inboundclient.ErrOAuthUserInfoEncryptionRequiresCertificate):
-		return serviceerror.CustomServiceError(ErrorInvalidOAuthConfiguration, core.I18nMessage{
+		return tidcommon.CustomServiceError(ErrorInvalidOAuthConfiguration, tidcommon.I18nMessage{
 			Key:          "error.agentservice.userinfo_encryption_requires_certificate_description",
 			DefaultValue: "a certificate (JWKS or JWKS_URI) is required when userinfo encryption is configured",
 		})
 	case errors.Is(err, inboundclient.ErrOAuthUserInfoJWKSURINotSSRFSafe):
-		return serviceerror.CustomServiceError(ErrorInvalidOAuthConfiguration, core.I18nMessage{
+		return tidcommon.CustomServiceError(ErrorInvalidOAuthConfiguration, tidcommon.I18nMessage{
 			Key:          "error.agentservice.userinfo_jwks_uri_not_ssrf_safe_description",
 			DefaultValue: "userinfo JWKS URI must be a publicly reachable HTTPS URL",
 		})
 	case errors.Is(err, inboundclient.ErrOAuthUserInfoUnsupportedResponseType):
-		return serviceerror.CustomServiceError(ErrorInvalidOAuthConfiguration, core.I18nMessage{
+		return tidcommon.CustomServiceError(ErrorInvalidOAuthConfiguration, tidcommon.I18nMessage{
 			Key:          "error.agentservice.userinfo_unsupported_response_type_description",
 			DefaultValue: "userinfo responseType is not supported",
 		})
 	case errors.Is(err, inboundclient.ErrOAuthUserInfoJWSRequiresSigningAlg):
-		return serviceerror.CustomServiceError(ErrorInvalidOAuthConfiguration, core.I18nMessage{
+		return tidcommon.CustomServiceError(ErrorInvalidOAuthConfiguration, tidcommon.I18nMessage{
 			Key:          "error.agentservice.userinfo_jws_requires_signing_alg_description",
 			DefaultValue: "signingAlg is required when userinfo responseType is JWS",
 		})
 	case errors.Is(err, inboundclient.ErrOAuthUserInfoJWERequiresEncryption):
-		return serviceerror.CustomServiceError(ErrorInvalidOAuthConfiguration, core.I18nMessage{
+		return tidcommon.CustomServiceError(ErrorInvalidOAuthConfiguration, tidcommon.I18nMessage{
 			Key:          "error.agentservice.userinfo_jwe_requires_encryption_description",
 			DefaultValue: "encryptionAlg and encryptionEnc are required when userinfo responseType is JWE",
 		})
 	case errors.Is(err, inboundclient.ErrOAuthUserInfoNestedJWTRequiresAll):
-		return serviceerror.CustomServiceError(ErrorInvalidOAuthConfiguration, core.I18nMessage{
+		return tidcommon.CustomServiceError(ErrorInvalidOAuthConfiguration, tidcommon.I18nMessage{
 			Key: "error.agentservice.userinfo_nested_jwt_requires_all_description",
 			DefaultValue: "signingAlg, encryptionAlg, and encryptionEnc are required " +
 				"when userinfo responseType is NESTED_JWT",
 		})
 	case errors.Is(err, inboundclient.ErrOAuthUserInfoAlgRequiresResponseType):
-		return serviceerror.CustomServiceError(ErrorInvalidOAuthConfiguration, core.I18nMessage{
+		return tidcommon.CustomServiceError(ErrorInvalidOAuthConfiguration, tidcommon.I18nMessage{
 			Key:          "error.agentservice.userinfo_alg_requires_response_type_description",
 			DefaultValue: "userinfo responseType is required when signingAlg or encryptionAlg is set",
 		})
@@ -1506,45 +1690,45 @@ func translateUserInfoValidationError(err error) *serviceerror.ServiceError {
 }
 
 // translateIDTokenValidationError maps OAuth ID token validation errors to agent-service errors.
-func translateIDTokenValidationError(err error) *serviceerror.ServiceError {
+func translateIDTokenValidationError(err error) *tidcommon.ServiceError {
 	switch {
 	case errors.Is(err, inboundclient.ErrOAuthIDTokenEncryptionFieldsNotAllowed):
-		return serviceerror.CustomServiceError(ErrorInvalidOAuthConfiguration, core.I18nMessage{
+		return tidcommon.CustomServiceError(ErrorInvalidOAuthConfiguration, tidcommon.I18nMessage{
 			Key:          "error.agentservice.idtoken_encryption_fields_not_allowed_description",
 			DefaultValue: "idToken encryptionAlg and encryptionEnc must not be set when responseType is JWT",
 		})
 	case errors.Is(err, inboundclient.ErrOAuthIDTokenUnsupportedResponseType):
-		return serviceerror.CustomServiceError(ErrorInvalidOAuthConfiguration, core.I18nMessage{
+		return tidcommon.CustomServiceError(ErrorInvalidOAuthConfiguration, tidcommon.I18nMessage{
 			Key:          "error.agentservice.idtoken_unsupported_response_type_description",
 			DefaultValue: "ID token responseType is not supported",
 		})
 	case errors.Is(err, inboundclient.ErrOAuthIDTokenUnsupportedEncryptionAlg):
-		return serviceerror.CustomServiceError(ErrorInvalidOAuthConfiguration, core.I18nMessage{
+		return tidcommon.CustomServiceError(ErrorInvalidOAuthConfiguration, tidcommon.I18nMessage{
 			Key:          "error.agentservice.idtoken_unsupported_encryption_alg_description",
 			DefaultValue: "ID token encryption algorithm is not supported",
 		})
 	case errors.Is(err, inboundclient.ErrOAuthIDTokenUnsupportedEncryptionEnc):
-		return serviceerror.CustomServiceError(ErrorInvalidOAuthConfiguration, core.I18nMessage{
+		return tidcommon.CustomServiceError(ErrorInvalidOAuthConfiguration, tidcommon.I18nMessage{
 			Key:          "error.agentservice.idtoken_unsupported_encryption_enc_description",
 			DefaultValue: "ID token content-encryption algorithm is not supported",
 		})
 	case errors.Is(err, inboundclient.ErrOAuthIDTokenEncryptionAlgRequiresEnc):
-		return serviceerror.CustomServiceError(ErrorInvalidOAuthConfiguration, core.I18nMessage{
+		return tidcommon.CustomServiceError(ErrorInvalidOAuthConfiguration, tidcommon.I18nMessage{
 			Key:          "error.agentservice.idtoken_encryption_alg_requires_enc_description",
 			DefaultValue: "idToken encryptionEnc is required when encryptionAlg is set",
 		})
 	case errors.Is(err, inboundclient.ErrOAuthIDTokenEncryptionEncRequiresAlg):
-		return serviceerror.CustomServiceError(ErrorInvalidOAuthConfiguration, core.I18nMessage{
+		return tidcommon.CustomServiceError(ErrorInvalidOAuthConfiguration, tidcommon.I18nMessage{
 			Key:          "error.agentservice.idtoken_encryption_enc_requires_alg_description",
 			DefaultValue: "idToken encryptionAlg is required when encryptionEnc is set",
 		})
 	case errors.Is(err, inboundclient.ErrOAuthIDTokenEncryptionRequiresCertificate):
-		return serviceerror.CustomServiceError(ErrorInvalidOAuthConfiguration, core.I18nMessage{
+		return tidcommon.CustomServiceError(ErrorInvalidOAuthConfiguration, tidcommon.I18nMessage{
 			Key:          "error.agentservice.idtoken_encryption_requires_certificate_description",
 			DefaultValue: "a certificate (JWKS or JWKS_URI) is required when ID token encryption is configured",
 		})
 	case errors.Is(err, inboundclient.ErrOAuthIDTokenJWKSURINotSSRFSafe):
-		return serviceerror.CustomServiceError(ErrorInvalidOAuthConfiguration, core.I18nMessage{
+		return tidcommon.CustomServiceError(ErrorInvalidOAuthConfiguration, tidcommon.I18nMessage{
 			Key:          "error.agentservice.idtoken_jwks_uri_not_ssrf_safe_description",
 			DefaultValue: "idToken JWKS URI must be a publicly reachable HTTPS URL",
 		})
@@ -1553,7 +1737,7 @@ func translateIDTokenValidationError(err error) *serviceerror.ServiceError {
 }
 
 // translateInboundClientFKError maps foreign-key reference errors to agent-service errors.
-func translateInboundClientFKError(err error) *serviceerror.ServiceError {
+func translateInboundClientFKError(err error) *tidcommon.ServiceError {
 	switch {
 	case errors.Is(err, inboundclient.ErrFKInvalidAuthFlow):
 		return &ErrorInvalidAuthFlowID
@@ -1562,7 +1746,7 @@ func translateInboundClientFKError(err error) *serviceerror.ServiceError {
 	case errors.Is(err, inboundclient.ErrFKFlowDefinitionRetrievalFailed):
 		return &ErrorWhileRetrievingFlowDefinition
 	case errors.Is(err, inboundclient.ErrFKFlowServerError):
-		return &serviceerror.InternalServerError
+		return &tidcommon.InternalServerError
 	case errors.Is(err, inboundclient.ErrFKThemeNotFound):
 		return &ErrorThemeNotFound
 	case errors.Is(err, inboundclient.ErrFKLayoutNotFound):
@@ -1570,7 +1754,7 @@ func translateInboundClientFKError(err error) *serviceerror.ServiceError {
 	case errors.Is(err, inboundclient.ErrFKInvalidUserType):
 		return &ErrorInvalidUserType
 	case errors.Is(err, inboundclient.ErrUserSchemaLookupFailed):
-		return &serviceerror.InternalServerError
+		return &tidcommon.InternalServerError
 	case errors.Is(err, inboundclient.ErrInvalidUserAttribute):
 		return &ErrorInvalidUserAttribute
 	}
@@ -1578,7 +1762,7 @@ func translateInboundClientFKError(err error) *serviceerror.ServiceError {
 }
 
 // translateCertValidationError maps certificate validation errors to agent-service errors.
-func translateCertValidationError(err error) *serviceerror.ServiceError {
+func translateCertValidationError(err error) *tidcommon.ServiceError {
 	switch {
 	case errors.Is(err, inboundclient.ErrCertValueRequired):
 		return &ErrorInvalidCertificateValue
@@ -1591,13 +1775,14 @@ func translateCertValidationError(err error) *serviceerror.ServiceError {
 }
 
 // translateCertOperationError maps a typed CertOperationError to an agent-service error.
-func (s *agentService) translateCertOperationError(err *inboundclient.CertOperationError) *serviceerror.ServiceError {
+func (s *agentService) translateCertOperationError(
+	ctx context.Context, err *inboundclient.CertOperationError) *tidcommon.ServiceError {
 	if !err.IsClientError() {
-		s.logger.Error("Certificate operation failed",
+		s.logger.Error(ctx, "Certificate operation failed",
 			log.Any("operation", err.Operation),
 			log.Any("refType", err.RefType),
 			log.Any("serviceError", err.Underlying))
-		return &serviceerror.InternalServerError
+		return &tidcommon.InternalServerError
 	}
 	var key, prefix string
 	switch err.Operation {
@@ -1619,24 +1804,10 @@ func (s *agentService) translateCertOperationError(err *inboundclient.CertOperat
 				"Failed to delete agent certificate: "
 		}
 	default:
-		return &serviceerror.InternalServerError
+		return &tidcommon.InternalServerError
 	}
-	return serviceerror.CustomServiceError(ErrorCertificateClientError, core.I18nMessage{
+	return tidcommon.CustomServiceError(ErrorCertificateClientError, tidcommon.I18nMessage{
 		Key:          key,
 		DefaultValue: prefix + err.Underlying.ErrorDescription.DefaultValue,
 	})
-}
-
-// translateConsentSyncError maps a typed ConsentSyncError to an agent-service error.
-func translateConsentSyncError(err *inboundclient.ConsentSyncError) *serviceerror.ServiceError {
-	if err.IsClientError() {
-		return serviceerror.CustomServiceError(ErrorConsentSyncFailed, core.I18nMessage{
-			Key: "error.agentservice.consent_sync_failed_description",
-			DefaultValue: fmt.Sprintf(
-				ErrorConsentSyncFailed.ErrorDescription.DefaultValue+" : code - %s",
-				err.Underlying.Code,
-			),
-		})
-	}
-	return &serviceerror.InternalServerError
 }

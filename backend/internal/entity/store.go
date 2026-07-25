@@ -31,16 +31,17 @@ import (
 	"github.com/thunder-id/thunderid/internal/system/database/provider"
 	"github.com/thunder-id/thunderid/internal/system/log"
 	"github.com/thunder-id/thunderid/internal/system/transaction"
+	"github.com/thunder-id/thunderid/pkg/thunderidengine/providers"
 )
 
 // entityStoreInterface defines the interface for entity store operations.
 type entityStoreInterface interface {
-	// Entity CRUD
-	CreateEntity(ctx context.Context, entity Entity,
+	// providers.Entity CRUD
+	CreateEntity(ctx context.Context, entity providers.Entity,
 		credentials json.RawMessage, systemCredentials json.RawMessage) error
-	GetEntity(ctx context.Context, id string) (Entity, error)
+	GetEntity(ctx context.Context, id string) (providers.Entity, error)
 	GetEntityWithCredentials(ctx context.Context, id string) (*entityWithCredentials, error)
-	UpdateEntity(ctx context.Context, entity *Entity) error
+	UpdateEntity(ctx context.Context, entity *providers.Entity) error
 	UpdateAttributes(ctx context.Context, entityID string, attributes json.RawMessage) error
 	UpdateSystemAttributes(ctx context.Context, entityID string,
 		attrs json.RawMessage) error
@@ -52,23 +53,22 @@ type entityStoreInterface interface {
 
 	// Query
 	IdentifyEntity(ctx context.Context, filters map[string]interface{}) (*string, error)
-	SearchEntities(ctx context.Context, filters map[string]interface{}) ([]Entity, error)
+	SearchEntities(ctx context.Context, filters map[string]interface{}) ([]providers.Entity, error)
 	GetEntityListCount(ctx context.Context, category string,
 		filters map[string]interface{}) (int, error)
 	GetEntityList(ctx context.Context, category string,
-		limit, offset int, filters map[string]interface{}) ([]Entity, error)
+		limit, offset int, filters map[string]interface{}) ([]providers.Entity, error)
 	GetEntityListCountByOUIDs(ctx context.Context, category string,
 		ouIDs []string, filters map[string]interface{}) (int, error)
 	GetEntityListByOUIDs(ctx context.Context, category string,
-		ouIDs []string, limit, offset int, filters map[string]interface{}) ([]Entity, error)
+		ouIDs []string, limit, offset int, filters map[string]interface{}) ([]providers.Entity, error)
 	ValidateEntityIDs(ctx context.Context, entityIDs []string) ([]string, error)
-	GetEntitiesByIDs(ctx context.Context, entityIDs []string) ([]Entity, error)
+	GetEntitiesByIDs(ctx context.Context, entityIDs []string) ([]providers.Entity, error)
 	ValidateEntityIDsInOUs(ctx context.Context, entityIDs []string, ouIDs []string) ([]string, error)
 
 	// Groups
 	GetGroupCountForEntity(ctx context.Context, entityID string) (int, error)
-	GetEntityGroups(ctx context.Context, entityID string, limit, offset int) ([]EntityGroup, error)
-	GetTransitiveEntityGroups(ctx context.Context, entityID string) ([]EntityGroup, error)
+	GetEntityGroups(ctx context.Context, entityID string, limit, offset int) ([]providers.EntityGroup, error)
 
 	// Declarative
 	IsEntityDeclarative(ctx context.Context, id string) (bool, error)
@@ -94,7 +94,7 @@ func newEntityDBStore() (entityStoreInterface, transaction.Transactioner, error)
 	runtime := config.GetServerRuntime()
 
 	dbProvider := getDBProvider()
-	client, err := dbProvider.GetUserDBClient()
+	client, err := dbProvider.GetEntityDBClient()
 	if err != nil {
 		return nil, nil, err
 	}
@@ -133,9 +133,9 @@ func (es *entityDBStore) LoadIndexedAttributes(attributes []string) error {
 }
 
 // CreateEntity creates a new entity in the database.
-func (es *entityDBStore) CreateEntity(ctx context.Context, entity Entity,
+func (es *entityDBStore) CreateEntity(ctx context.Context, entity providers.Entity,
 	credentials json.RawMessage, systemCredentials json.RawMessage) error {
-	dbClient, err := es.dbProvider.GetUserDBClient()
+	dbClient, err := es.dbProvider.GetEntityDBClient()
 	if err != nil {
 		return fmt.Errorf("failed to get database client: %w", err)
 	}
@@ -190,23 +190,23 @@ func (es *entityDBStore) CreateEntity(ctx context.Context, entity Entity,
 }
 
 // GetEntity retrieves an entity by ID (without credentials).
-func (es *entityDBStore) GetEntity(ctx context.Context, id string) (Entity, error) {
-	dbClient, err := es.dbProvider.GetUserDBClient()
+func (es *entityDBStore) GetEntity(ctx context.Context, id string) (providers.Entity, error) {
+	dbClient, err := es.dbProvider.GetEntityDBClient()
 	if err != nil {
-		return Entity{}, fmt.Errorf("failed to get database client: %w", err)
+		return providers.Entity{}, fmt.Errorf("failed to get database client: %w", err)
 	}
 
 	results, err := dbClient.QueryContext(ctx, QueryGetEntityByID, id, es.deploymentID)
 	if err != nil {
-		return Entity{}, fmt.Errorf("failed to execute query: %w", err)
+		return providers.Entity{}, fmt.Errorf("failed to execute query: %w", err)
 	}
 
 	if len(results) == 0 {
-		return Entity{}, ErrEntityNotFound
+		return providers.Entity{}, ErrEntityNotFound
 	}
 
 	if len(results) != 1 {
-		return Entity{}, fmt.Errorf("unexpected number of results: %d", len(results))
+		return providers.Entity{}, fmt.Errorf("unexpected number of results: %d", len(results))
 	}
 
 	return buildEntityFromResultRow(results[0])
@@ -215,7 +215,7 @@ func (es *entityDBStore) GetEntity(ctx context.Context, id string) (Entity, erro
 // GetEntityWithCredentials retrieves an entity with all credential columns.
 func (es *entityDBStore) GetEntityWithCredentials(ctx context.Context, id string) (
 	*entityWithCredentials, error) {
-	dbClient, err := es.dbProvider.GetUserDBClient()
+	dbClient, err := es.dbProvider.GetEntityDBClient()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get database client: %w", err)
 	}
@@ -247,8 +247,8 @@ func (es *entityDBStore) GetEntityWithCredentials(ctx context.Context, id string
 }
 
 // UpdateEntity fully updates an entity including system attributes, and re-syncs all identifiers.
-func (es *entityDBStore) UpdateEntity(ctx context.Context, entity *Entity) error {
-	dbClient, err := es.dbProvider.GetUserDBClient()
+func (es *entityDBStore) UpdateEntity(ctx context.Context, entity *providers.Entity) error {
+	dbClient, err := es.dbProvider.GetEntityDBClient()
 	if err != nil {
 		return fmt.Errorf("failed to get database client: %w", err)
 	}
@@ -300,7 +300,7 @@ func (es *entityDBStore) UpdateEntity(ctx context.Context, entity *Entity) error
 
 // UpdateAttributes updates only the schema attributes of an entity and re-syncs attribute-sourced identifiers.
 func (es *entityDBStore) UpdateAttributes(ctx context.Context, entityID string, attributes json.RawMessage) error {
-	dbClient, err := es.dbProvider.GetUserDBClient()
+	dbClient, err := es.dbProvider.GetEntityDBClient()
 	if err != nil {
 		return fmt.Errorf("failed to get database client: %w", err)
 	}
@@ -330,7 +330,7 @@ func (es *entityDBStore) UpdateAttributes(ctx context.Context, entityID string, 
 // UpdateSystemAttributes updates the system attributes of an entity and re-syncs system-sourced identifiers.
 func (es *entityDBStore) UpdateSystemAttributes(ctx context.Context, entityID string,
 	attrs json.RawMessage) error {
-	dbClient, err := es.dbProvider.GetUserDBClient()
+	dbClient, err := es.dbProvider.GetEntityDBClient()
 	if err != nil {
 		return fmt.Errorf("failed to get database client: %w", err)
 	}
@@ -360,7 +360,7 @@ func (es *entityDBStore) UpdateSystemAttributes(ctx context.Context, entityID st
 // UpdateCredentials updates the credentials of an entity.
 func (es *entityDBStore) UpdateCredentials(ctx context.Context, entityID string,
 	creds json.RawMessage) error {
-	dbClient, err := es.dbProvider.GetUserDBClient()
+	dbClient, err := es.dbProvider.GetEntityDBClient()
 	if err != nil {
 		return fmt.Errorf("failed to get database client: %w", err)
 	}
@@ -381,7 +381,7 @@ func (es *entityDBStore) UpdateCredentials(ctx context.Context, entityID string,
 // UpdateSystemCredentials updates the system credentials of an entity.
 func (es *entityDBStore) UpdateSystemCredentials(ctx context.Context, entityID string,
 	creds json.RawMessage) error {
-	dbClient, err := es.dbProvider.GetUserDBClient()
+	dbClient, err := es.dbProvider.GetEntityDBClient()
 	if err != nil {
 		return fmt.Errorf("failed to get database client: %w", err)
 	}
@@ -401,7 +401,7 @@ func (es *entityDBStore) UpdateSystemCredentials(ctx context.Context, entityID s
 
 // DeleteEntity deletes an entity and its indexed identifiers from the database.
 func (es *entityDBStore) DeleteEntity(ctx context.Context, id string) error {
-	dbClient, err := es.dbProvider.GetUserDBClient()
+	dbClient, err := es.dbProvider.GetEntityDBClient()
 	if err != nil {
 		return fmt.Errorf("failed to get database client: %w", err)
 	}
@@ -435,7 +435,7 @@ func (es *entityDBStore) syncAttributeIdentifiers(ctx context.Context, entityID 
 		return nil
 	}
 
-	dbClient, err := es.dbProvider.GetUserDBClient()
+	dbClient, err := es.dbProvider.GetEntityDBClient()
 	if err != nil {
 		return fmt.Errorf("failed to get database client: %w", err)
 	}
@@ -451,7 +451,7 @@ func (es *entityDBStore) syncAttributeIdentifiers(ctx context.Context, entityID 
 // IdentifyEntity identifies an entity with the given filters.
 func (es *entityDBStore) IdentifyEntity(ctx context.Context,
 	filters map[string]interface{}) (*string, error) {
-	dbClient, err := es.dbProvider.GetUserDBClient()
+	dbClient, err := es.dbProvider.GetEntityDBClient()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get database client: %w", err)
 	}
@@ -506,14 +506,15 @@ func (es *entityDBStore) IdentifyEntity(ctx context.Context,
 
 	if len(results) == 0 {
 		if es.logger.IsDebugEnabled() {
-			es.logger.Debug("Entity not found with the provided filters", log.MaskedMap("filters", filters))
+			es.logger.Debug(ctx, "Entity not found with the provided filters",
+				log.MaskedMap("filters", filters))
 		}
 		return nil, ErrEntityNotFound
 	}
 
 	if len(results) != 1 {
 		if es.logger.IsDebugEnabled() {
-			es.logger.Debug(
+			es.logger.Debug(ctx,
 				"Unexpected number of results for the provided filters",
 				log.MaskedMap("filters", filters),
 				log.Int("result_count", len(results)),
@@ -536,8 +537,8 @@ func (es *entityDBStore) IdentifyEntity(ctx context.Context,
 // Results are capped at MaxPageSize (100) entries; matches beyond that limit are not returned.
 // Column-level filters (category, ouId) should be handled at the service layer.
 func (es *entityDBStore) SearchEntities(ctx context.Context,
-	filters map[string]interface{}) ([]Entity, error) {
-	dbClient, err := es.dbProvider.GetUserDBClient()
+	filters map[string]interface{}) ([]providers.Entity, error) {
+	dbClient, err := es.dbProvider.GetEntityDBClient()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get database client: %w", err)
 	}
@@ -568,7 +569,7 @@ func (es *entityDBStore) GetIndexedAttributes() map[string]bool {
 // GetEntityListCount retrieves the total count of entities by category.
 func (es *entityDBStore) GetEntityListCount(ctx context.Context, category string,
 	filters map[string]interface{}) (int, error) {
-	dbClient, err := es.dbProvider.GetUserDBClient()
+	dbClient, err := es.dbProvider.GetEntityDBClient()
 	if err != nil {
 		return 0, fmt.Errorf("failed to get database client: %w", err)
 	}
@@ -583,8 +584,8 @@ func (es *entityDBStore) GetEntityListCount(ctx context.Context, category string
 
 // GetEntityList retrieves a list of entities by category.
 func (es *entityDBStore) GetEntityList(ctx context.Context, category string,
-	limit, offset int, filters map[string]interface{}) ([]Entity, error) {
-	dbClient, err := es.dbProvider.GetUserDBClient()
+	limit, offset int, filters map[string]interface{}) ([]providers.Entity, error) {
+	dbClient, err := es.dbProvider.GetEntityDBClient()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get database client: %w", err)
 	}
@@ -608,7 +609,7 @@ func (es *entityDBStore) GetEntityListCountByOUIDs(ctx context.Context, category
 	if len(ouIDs) == 0 {
 		return 0, nil
 	}
-	dbClient, err := es.dbProvider.GetUserDBClient()
+	dbClient, err := es.dbProvider.GetEntityDBClient()
 	if err != nil {
 		return 0, fmt.Errorf("failed to get database client: %w", err)
 	}
@@ -623,8 +624,8 @@ func (es *entityDBStore) GetEntityListCountByOUIDs(ctx context.Context, category
 
 // GetEntityListByOUIDs retrieves a list of entities scoped to OU IDs.
 func (es *entityDBStore) GetEntityListByOUIDs(ctx context.Context, category string,
-	ouIDs []string, limit, offset int, filters map[string]interface{}) ([]Entity, error) {
-	dbClient, err := es.dbProvider.GetUserDBClient()
+	ouIDs []string, limit, offset int, filters map[string]interface{}) ([]providers.Entity, error) {
+	dbClient, err := es.dbProvider.GetEntityDBClient()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get database client: %w", err)
 	}
@@ -648,7 +649,7 @@ func (es *entityDBStore) ValidateEntityIDs(ctx context.Context, entityIDs []stri
 		return []string{}, nil
 	}
 
-	dbClient, err := es.dbProvider.GetUserDBClient()
+	dbClient, err := es.dbProvider.GetEntityDBClient()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get database client: %w", err)
 	}
@@ -681,19 +682,19 @@ func (es *entityDBStore) ValidateEntityIDs(ctx context.Context, entityIDs []stri
 }
 
 // GetEntitiesByIDs retrieves entities by a list of IDs.
-func (es *entityDBStore) GetEntitiesByIDs(ctx context.Context, entityIDs []string) ([]Entity, error) {
+func (es *entityDBStore) GetEntitiesByIDs(ctx context.Context, entityIDs []string) ([]providers.Entity, error) {
 	const batchSize = 100
 
 	if len(entityIDs) == 0 {
-		return []Entity{}, nil
+		return []providers.Entity{}, nil
 	}
 
-	dbClient, err := es.dbProvider.GetUserDBClient()
+	dbClient, err := es.dbProvider.GetEntityDBClient()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get database client: %w", err)
 	}
 
-	entities := make([]Entity, 0, len(entityIDs))
+	entities := make([]providers.Entity, 0, len(entityIDs))
 
 	for start := 0; start < len(entityIDs); start += batchSize {
 		end := start + batchSize
@@ -733,7 +734,7 @@ func (es *entityDBStore) ValidateEntityIDsInOUs(
 		return append([]string{}, entityIDs...), nil
 	}
 
-	dbClient, err := es.dbProvider.GetUserDBClient()
+	dbClient, err := es.dbProvider.GetEntityDBClient()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get database client: %w", err)
 	}
@@ -766,7 +767,7 @@ func (es *entityDBStore) ValidateEntityIDsInOUs(
 
 // GetGroupCountForEntity retrieves the total count of groups an entity belongs to.
 func (es *entityDBStore) GetGroupCountForEntity(ctx context.Context, entityID string) (int, error) {
-	dbClient, err := es.dbProvider.GetUserDBClient()
+	dbClient, err := es.dbProvider.GetEntityDBClient()
 	if err != nil {
 		return 0, fmt.Errorf("failed to get database client: %w", err)
 	}
@@ -788,8 +789,8 @@ func (es *entityDBStore) GetGroupCountForEntity(ctx context.Context, entityID st
 
 // GetEntityGroups retrieves groups that an entity belongs to with pagination.
 func (es *entityDBStore) GetEntityGroups(
-	ctx context.Context, entityID string, limit, offset int) ([]EntityGroup, error) {
-	dbClient, err := es.dbProvider.GetUserDBClient()
+	ctx context.Context, entityID string, limit, offset int) ([]providers.EntityGroup, error) {
+	dbClient, err := es.dbProvider.GetEntityDBClient()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get database client: %w", err)
 	}
@@ -800,33 +801,7 @@ func (es *entityDBStore) GetEntityGroups(
 		return nil, fmt.Errorf("failed to get groups for entity: %w", err)
 	}
 
-	groups := make([]EntityGroup, 0, len(results))
-	for _, row := range results {
-		group, err := buildGroupFromResultRow(row)
-		if err != nil {
-			return nil, fmt.Errorf("failed to build group from result row: %w", err)
-		}
-		groups = append(groups, group)
-	}
-
-	return groups, nil
-}
-
-// GetTransitiveEntityGroups retrieves all groups an entity belongs to, including nested group membership.
-func (es *entityDBStore) GetTransitiveEntityGroups(
-	ctx context.Context, entityID string) ([]EntityGroup, error) {
-	dbClient, err := es.dbProvider.GetUserDBClient()
-	if err != nil {
-		return nil, fmt.Errorf("failed to get database client: %w", err)
-	}
-
-	results, err := dbClient.QueryContext(ctx, QueryGetTransitiveGroupsForEntity,
-		entityID, es.deploymentID)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get transitive groups for entity: %w", err)
-	}
-
-	groups := make([]EntityGroup, 0, len(results))
+	groups := make([]providers.EntityGroup, 0, len(results))
 	for _, row := range results {
 		group, err := buildGroupFromResultRow(row)
 		if err != nil {
@@ -848,30 +823,30 @@ func (es *entityDBStore) IsEntityDeclarative(ctx context.Context, id string) (bo
 }
 
 // Helper functions
-func buildEntityFromResultRow(row map[string]interface{}) (Entity, error) {
+func buildEntityFromResultRow(row map[string]interface{}) (providers.Entity, error) {
 	entityID, ok := row["id"].(string)
 	if !ok {
-		return Entity{}, fmt.Errorf("failed to parse id as string")
+		return providers.Entity{}, fmt.Errorf("failed to parse id as string")
 	}
 
 	ouID, ok := row["ou_id"].(string)
 	if !ok {
-		return Entity{}, fmt.Errorf("failed to parse ou_id as string")
+		return providers.Entity{}, fmt.Errorf("failed to parse ou_id as string")
 	}
 
 	category, ok := row["category"].(string)
 	if !ok {
-		return Entity{}, fmt.Errorf("failed to parse category as string")
+		return providers.Entity{}, fmt.Errorf("failed to parse category as string")
 	}
 
 	entityType, ok := row["type"].(string)
 	if !ok {
-		return Entity{}, fmt.Errorf("failed to parse type as string")
+		return providers.Entity{}, fmt.Errorf("failed to parse type as string")
 	}
 
 	state, ok := row["state"].(string)
 	if !ok {
-		return Entity{}, fmt.Errorf("failed to parse state as string")
+		return providers.Entity{}, fmt.Errorf("failed to parse state as string")
 	}
 
 	var attributes string
@@ -881,19 +856,19 @@ func buildEntityFromResultRow(row map[string]interface{}) (Entity, error) {
 	case []byte:
 		attributes = string(v)
 	default:
-		return Entity{}, fmt.Errorf("failed to parse attributes as string")
+		return providers.Entity{}, fmt.Errorf("failed to parse attributes as string")
 	}
 
-	entity := Entity{
+	entity := providers.Entity{
 		ID:       entityID,
-		Category: EntityCategory(category),
+		Category: providers.EntityCategory(category),
 		Type:     entityType,
-		State:    EntityState(state),
+		State:    providers.EntityState(state),
 		OUID:     ouID,
 	}
 
 	if err := json.Unmarshal([]byte(attributes), &entity.Attributes); err != nil {
-		return Entity{}, fmt.Errorf("failed to unmarshal attributes")
+		return providers.Entity{}, fmt.Errorf("failed to unmarshal attributes")
 	}
 
 	entity.SystemAttributes = parseJSONColumn(row, "system_attributes")
@@ -901,27 +876,27 @@ func buildEntityFromResultRow(row map[string]interface{}) (Entity, error) {
 	return entity, nil
 }
 
-func buildGroupFromResultRow(row map[string]interface{}) (EntityGroup, error) {
+func buildGroupFromResultRow(row map[string]interface{}) (providers.EntityGroup, error) {
 	groupID, ok := row["id"].(string)
 	if !ok {
-		return EntityGroup{}, fmt.Errorf("failed to parse id as string")
+		return providers.EntityGroup{}, fmt.Errorf("failed to parse id as string")
 	}
 
 	name, ok := row["name"].(string)
 	if !ok {
-		return EntityGroup{}, fmt.Errorf("failed to parse name as string")
+		return providers.EntityGroup{}, fmt.Errorf("failed to parse name as string")
 	}
 
 	ouID, ok := row["ou_id"].(string)
 	if !ok {
-		return EntityGroup{}, fmt.Errorf("failed to parse ou_id as string")
+		return providers.EntityGroup{}, fmt.Errorf("failed to parse ou_id as string")
 	}
 
-	return EntityGroup{ID: groupID, Name: name, OUID: ouID}, nil
+	return providers.EntityGroup{ID: groupID, Name: name, OUID: ouID}, nil
 }
 
-func buildEntitiesFromResults(results []map[string]interface{}) ([]Entity, error) {
-	entities := make([]Entity, 0, len(results))
+func buildEntitiesFromResults(results []map[string]interface{}) ([]providers.Entity, error) {
+	entities := make([]providers.Entity, 0, len(results))
 	for _, row := range results {
 		entity, err := buildEntityFromResultRow(row)
 		if err != nil {

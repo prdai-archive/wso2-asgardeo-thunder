@@ -19,13 +19,17 @@
 package resource
 
 import (
+	"context"
+	"errors"
 	"net/http"
 	"net/url"
 	"strconv"
 
+	tidcommon "github.com/thunder-id/thunderid/pkg/thunderidengine/common"
+	"github.com/thunder-id/thunderid/pkg/thunderidengine/providers"
+
 	serverconst "github.com/thunder-id/thunderid/internal/system/constants"
 	"github.com/thunder-id/thunderid/internal/system/error/apierror"
-	"github.com/thunder-id/thunderid/internal/system/error/serviceerror"
 	sysutils "github.com/thunder-id/thunderid/internal/system/utils"
 )
 
@@ -48,18 +52,18 @@ func (h *resourceHandler) HandleResourceServerListRequest(w http.ResponseWriter,
 	ctx := r.Context()
 	limit, offset, svcErr := parsePaginationParams(r.URL.Query())
 	if svcErr != nil {
-		handleError(w, svcErr)
+		handleError(ctx, w, svcErr)
 		return
 	}
 
 	result, svcErr := h.resourceService.GetResourceServerList(ctx, limit, offset)
 	if svcErr != nil {
-		handleError(w, svcErr)
+		handleError(ctx, w, svcErr)
 		return
 	}
 
 	response := toResourceServerListResponse(result)
-	sysutils.WriteSuccessResponse(w, http.StatusOK, response)
+	sysutils.WriteSuccessResponse(ctx, w, http.StatusOK, response)
 }
 
 // HandleResourceServerPostRequest handles creating a resource server.
@@ -67,28 +71,33 @@ func (h *resourceHandler) HandleResourceServerPostRequest(w http.ResponseWriter,
 	ctx := r.Context()
 	req, err := sysutils.DecodeJSONBody[CreateResourceServerRequest](r)
 	if err != nil {
-		handleError(w, &ErrorInvalidRequestFormat)
+		var valErr *sysutils.ValidationError
+		if errors.As(err, &valErr) {
+			sysutils.WriteStructuredErrorResponse(w, http.StatusBadRequest, "Validation Failed", valErr.Errors)
+			return
+		}
+		handleError(ctx, w, &ErrorInvalidRequestFormat)
 		return
 	}
 
 	sanitized := sanitizeCreateResourceServerRequest(req)
-	serviceReq := ResourceServer{
+	serviceReq := providers.ResourceServer{
 		Name:        sanitized.Name,
 		Description: sanitized.Description,
-		Handle:      sanitized.Handle,
 		Identifier:  sanitized.Identifier,
+		Type:        sanitized.Type,
 		OUID:        sanitized.OUID,
 		Delimiter:   sanitized.Delimiter,
 	}
 
 	result, svcErr := h.resourceService.CreateResourceServer(ctx, serviceReq)
 	if svcErr != nil {
-		handleError(w, svcErr)
+		handleError(ctx, w, svcErr)
 		return
 	}
 
 	response := toResourceServerResponse(result)
-	sysutils.WriteSuccessResponse(w, http.StatusCreated, response)
+	sysutils.WriteSuccessResponse(ctx, w, http.StatusCreated, response)
 }
 
 // HandleResourceServerGetRequest handles getting a resource server.
@@ -97,12 +106,12 @@ func (h *resourceHandler) HandleResourceServerGetRequest(w http.ResponseWriter, 
 	id := r.PathValue("id")
 	result, svcErr := h.resourceService.GetResourceServer(ctx, id)
 	if svcErr != nil {
-		handleError(w, svcErr)
+		handleError(ctx, w, svcErr)
 		return
 	}
 
 	response := toResourceServerResponse(result)
-	sysutils.WriteSuccessResponse(w, http.StatusOK, response)
+	sysutils.WriteSuccessResponse(ctx, w, http.StatusOK, response)
 }
 
 // HandleResourceServerPutRequest handles updating a resource server.
@@ -111,27 +120,31 @@ func (h *resourceHandler) HandleResourceServerPutRequest(w http.ResponseWriter, 
 	id := r.PathValue("id")
 	req, err := sysutils.DecodeJSONBody[UpdateResourceServerRequest](r)
 	if err != nil {
-		handleError(w, &ErrorInvalidRequestFormat)
+		var valErr *sysutils.ValidationError
+		if errors.As(err, &valErr) {
+			sysutils.WriteStructuredErrorResponse(w, http.StatusBadRequest, "Validation Failed", valErr.Errors)
+			return
+		}
+		handleError(ctx, w, &ErrorInvalidRequestFormat)
 		return
 	}
 
 	sanitized := sanitizeUpdateResourceServerRequest(req)
-	serviceReq := ResourceServer{
+	serviceReq := providers.ResourceServer{
 		Name:        sanitized.Name,
 		Description: sanitized.Description,
-		Handle:      sanitized.Handle,
 		Identifier:  sanitized.Identifier,
 		OUID:        sanitized.OUID,
 	}
 
 	result, svcErr := h.resourceService.UpdateResourceServer(ctx, id, serviceReq)
 	if svcErr != nil {
-		handleError(w, svcErr)
+		handleError(ctx, w, svcErr)
 		return
 	}
 
 	response := toResourceServerResponse(result)
-	sysutils.WriteSuccessResponse(w, http.StatusOK, response)
+	sysutils.WriteSuccessResponse(ctx, w, http.StatusOK, response)
 }
 
 // HandleResourceServerDeleteRequest handles deleting a resource server.
@@ -140,7 +153,7 @@ func (h *resourceHandler) HandleResourceServerDeleteRequest(w http.ResponseWrite
 	id := r.PathValue("id")
 	svcErr := h.resourceService.DeleteResourceServer(ctx, id)
 	if svcErr != nil {
-		handleError(w, svcErr)
+		handleError(ctx, w, svcErr)
 		return
 	}
 
@@ -155,7 +168,7 @@ func (h *resourceHandler) HandleResourceListRequest(w http.ResponseWriter, r *ht
 	rsID := r.PathValue("rsId")
 	limit, offset, svcErr := parsePaginationParams(r.URL.Query())
 	if svcErr != nil {
-		handleError(w, svcErr)
+		handleError(ctx, w, svcErr)
 		return
 	}
 
@@ -169,12 +182,12 @@ func (h *resourceHandler) HandleResourceListRequest(w http.ResponseWriter, r *ht
 
 	result, svcErr := h.resourceService.GetResourceList(ctx, rsID, parentID, limit, offset)
 	if svcErr != nil {
-		handleError(w, svcErr)
+		handleError(ctx, w, svcErr)
 		return
 	}
 
 	response := toResourceListResponse(result)
-	sysutils.WriteSuccessResponse(w, http.StatusOK, response)
+	sysutils.WriteSuccessResponse(ctx, w, http.StatusOK, response)
 }
 
 // HandleResourcePostRequest handles creating a resource.
@@ -183,12 +196,17 @@ func (h *resourceHandler) HandleResourcePostRequest(w http.ResponseWriter, r *ht
 	rsID := r.PathValue("rsId")
 	req, err := sysutils.DecodeJSONBody[CreateResourceRequest](r)
 	if err != nil {
-		handleError(w, &ErrorInvalidRequestFormat)
+		var valErr *sysutils.ValidationError
+		if errors.As(err, &valErr) {
+			sysutils.WriteStructuredErrorResponse(w, http.StatusBadRequest, "Validation Failed", valErr.Errors)
+			return
+		}
+		handleError(ctx, w, &ErrorInvalidRequestFormat)
 		return
 	}
 
 	sanitized := sanitizeCreateResourceRequest(req)
-	serviceReq := Resource{
+	serviceReq := providers.Resource{
 		Name:        sanitized.Name,
 		Handle:      sanitized.Handle,
 		Description: sanitized.Description,
@@ -200,12 +218,12 @@ func (h *resourceHandler) HandleResourcePostRequest(w http.ResponseWriter, r *ht
 
 	result, svcErr := h.resourceService.CreateResource(ctx, rsID, serviceReq)
 	if svcErr != nil {
-		handleError(w, svcErr)
+		handleError(ctx, w, svcErr)
 		return
 	}
 
 	response := toResourceResponse(result)
-	sysutils.WriteSuccessResponse(w, http.StatusCreated, response)
+	sysutils.WriteSuccessResponse(ctx, w, http.StatusCreated, response)
 }
 
 // HandleResourceGetRequest handles getting a resource.
@@ -216,12 +234,12 @@ func (h *resourceHandler) HandleResourceGetRequest(w http.ResponseWriter, r *htt
 
 	result, svcErr := h.resourceService.GetResource(ctx, rsID, id)
 	if svcErr != nil {
-		handleError(w, svcErr)
+		handleError(ctx, w, svcErr)
 		return
 	}
 
 	response := toResourceResponse(result)
-	sysutils.WriteSuccessResponse(w, http.StatusOK, response)
+	sysutils.WriteSuccessResponse(ctx, w, http.StatusOK, response)
 }
 
 // HandleResourcePutRequest handles updating a resource.
@@ -232,24 +250,30 @@ func (h *resourceHandler) HandleResourcePutRequest(w http.ResponseWriter, r *htt
 
 	req, err := sysutils.DecodeJSONBody[UpdateResourceRequest](r)
 	if err != nil {
-		handleError(w, &ErrorInvalidRequestFormat)
+		var valErr *sysutils.ValidationError
+		if errors.As(err, &valErr) {
+			sysutils.WriteStructuredErrorResponse(w, http.StatusBadRequest, "Validation Failed", valErr.Errors)
+			return
+		}
+
+		handleError(ctx, w, &ErrorInvalidRequestFormat)
 		return
 	}
 
 	sanitized := sanitizeUpdateResourceRequest(req)
-	serviceReq := Resource{
+	serviceReq := providers.Resource{
 		Name:        sanitized.Name,
 		Description: sanitized.Description,
 	}
 
 	result, svcErr := h.resourceService.UpdateResource(ctx, rsID, id, serviceReq)
 	if svcErr != nil {
-		handleError(w, svcErr)
+		handleError(ctx, w, svcErr)
 		return
 	}
 
 	response := toResourceResponse(result)
-	sysutils.WriteSuccessResponse(w, http.StatusOK, response)
+	sysutils.WriteSuccessResponse(ctx, w, http.StatusOK, response)
 }
 
 // HandleResourceDeleteRequest handles deleting a resource.
@@ -260,7 +284,7 @@ func (h *resourceHandler) HandleResourceDeleteRequest(w http.ResponseWriter, r *
 
 	svcErr := h.resourceService.DeleteResource(ctx, rsID, id)
 	if svcErr != nil {
-		handleError(w, svcErr)
+		handleError(ctx, w, svcErr)
 		return
 	}
 
@@ -275,18 +299,24 @@ func (h *resourceHandler) HandleActionListAtResourceServerRequest(w http.Respons
 	rsID := r.PathValue("rsId")
 	limit, offset, svcErr := parsePaginationParams(r.URL.Query())
 	if svcErr != nil {
-		handleError(w, svcErr)
+		handleError(ctx, w, svcErr)
 		return
 	}
 
-	result, svcErr := h.resourceService.GetActionList(ctx, rsID, nil, limit, offset)
+	kind, svcErr := parseActionKindParam(r.URL.Query())
 	if svcErr != nil {
-		handleError(w, svcErr)
+		handleError(ctx, w, svcErr)
+		return
+	}
+
+	result, svcErr := h.resourceService.GetActionList(ctx, rsID, nil, kind, limit, offset)
+	if svcErr != nil {
+		handleError(ctx, w, svcErr)
 		return
 	}
 
 	response := toActionListResponse(result)
-	sysutils.WriteSuccessResponse(w, http.StatusOK, response)
+	sysutils.WriteSuccessResponse(ctx, w, http.StatusOK, response)
 }
 
 // HandleActionPostAtResourceServerRequest handles creating an action at resource server level.
@@ -295,25 +325,31 @@ func (h *resourceHandler) HandleActionPostAtResourceServerRequest(w http.Respons
 	rsID := r.PathValue("rsId")
 	req, err := sysutils.DecodeJSONBody[CreateActionRequest](r)
 	if err != nil {
-		handleError(w, &ErrorInvalidRequestFormat)
+		var valErr *sysutils.ValidationError
+		if errors.As(err, &valErr) {
+			sysutils.WriteStructuredErrorResponse(w, http.StatusBadRequest, "Validation Failed", valErr.Errors)
+			return
+		}
+		handleError(ctx, w, &ErrorInvalidRequestFormat)
 		return
 	}
 
 	sanitized := sanitizeCreateActionRequest(req)
-	serviceReq := Action{
+	serviceReq := providers.Action{
 		Name:        sanitized.Name,
 		Handle:      sanitized.Handle,
 		Description: sanitized.Description,
+		Kind:        sanitized.Kind,
 	}
 
 	result, svcErr := h.resourceService.CreateAction(ctx, rsID, nil, serviceReq)
 	if svcErr != nil {
-		handleError(w, svcErr)
+		handleError(ctx, w, svcErr)
 		return
 	}
 
 	response := toActionResponse(result)
-	sysutils.WriteSuccessResponse(w, http.StatusCreated, response)
+	sysutils.WriteSuccessResponse(ctx, w, http.StatusCreated, response)
 }
 
 // HandleActionGetAtResourceServerRequest handles getting an action at resource server level.
@@ -324,12 +360,12 @@ func (h *resourceHandler) HandleActionGetAtResourceServerRequest(w http.Response
 
 	result, svcErr := h.resourceService.GetAction(ctx, rsID, nil, id)
 	if svcErr != nil {
-		handleError(w, svcErr)
+		handleError(ctx, w, svcErr)
 		return
 	}
 
 	response := toActionResponse(result)
-	sysutils.WriteSuccessResponse(w, http.StatusOK, response)
+	sysutils.WriteSuccessResponse(ctx, w, http.StatusOK, response)
 }
 
 // HandleActionPutAtResourceServerRequest handles updating an action at resource server level.
@@ -340,24 +376,29 @@ func (h *resourceHandler) HandleActionPutAtResourceServerRequest(w http.Response
 
 	req, err := sysutils.DecodeJSONBody[UpdateActionRequest](r)
 	if err != nil {
-		handleError(w, &ErrorInvalidRequestFormat)
+		var valErr *sysutils.ValidationError
+		if errors.As(err, &valErr) {
+			sysutils.WriteStructuredErrorResponse(w, http.StatusBadRequest, "Validation Failed", valErr.Errors)
+			return
+		}
+		handleError(ctx, w, &ErrorInvalidRequestFormat)
 		return
 	}
 
 	sanitized := sanitizeUpdateActionRequest(req)
-	serviceReq := Action{
+	serviceReq := providers.Action{
 		Name:        sanitized.Name,
 		Description: sanitized.Description,
 	}
 
 	result, svcErr := h.resourceService.UpdateAction(ctx, rsID, nil, id, serviceReq)
 	if svcErr != nil {
-		handleError(w, svcErr)
+		handleError(ctx, w, svcErr)
 		return
 	}
 
 	response := toActionResponse(result)
-	sysutils.WriteSuccessResponse(w, http.StatusOK, response)
+	sysutils.WriteSuccessResponse(ctx, w, http.StatusOK, response)
 }
 
 // HandleActionDeleteAtResourceServerRequest handles deleting an action at resource server level.
@@ -368,7 +409,7 @@ func (h *resourceHandler) HandleActionDeleteAtResourceServerRequest(w http.Respo
 
 	svcErr := h.resourceService.DeleteAction(ctx, rsID, nil, id)
 	if svcErr != nil {
-		handleError(w, svcErr)
+		handleError(ctx, w, svcErr)
 		return
 	}
 
@@ -384,18 +425,24 @@ func (h *resourceHandler) HandleActionListAtResourceRequest(w http.ResponseWrite
 	resourceID := r.PathValue("resourceId")
 	limit, offset, svcErr := parsePaginationParams(r.URL.Query())
 	if svcErr != nil {
-		handleError(w, svcErr)
+		handleError(ctx, w, svcErr)
 		return
 	}
 
-	result, svcErr := h.resourceService.GetActionList(ctx, rsID, &resourceID, limit, offset)
+	kind, svcErr := parseActionKindParam(r.URL.Query())
 	if svcErr != nil {
-		handleError(w, svcErr)
+		handleError(ctx, w, svcErr)
+		return
+	}
+
+	result, svcErr := h.resourceService.GetActionList(ctx, rsID, &resourceID, kind, limit, offset)
+	if svcErr != nil {
+		handleError(ctx, w, svcErr)
 		return
 	}
 
 	response := toActionListResponse(result)
-	sysutils.WriteSuccessResponse(w, http.StatusOK, response)
+	sysutils.WriteSuccessResponse(ctx, w, http.StatusOK, response)
 }
 
 // HandleActionPostAtResourceRequest handles creating an action at resource level.
@@ -406,25 +453,31 @@ func (h *resourceHandler) HandleActionPostAtResourceRequest(w http.ResponseWrite
 
 	req, err := sysutils.DecodeJSONBody[CreateActionRequest](r)
 	if err != nil {
-		handleError(w, &ErrorInvalidRequestFormat)
+		var valErr *sysutils.ValidationError
+		if errors.As(err, &valErr) {
+			sysutils.WriteStructuredErrorResponse(w, http.StatusBadRequest, "Validation Failed", valErr.Errors)
+			return
+		}
+		handleError(ctx, w, &ErrorInvalidRequestFormat)
 		return
 	}
 
 	sanitized := sanitizeCreateActionRequest(req)
-	serviceReq := Action{
+	serviceReq := providers.Action{
 		Name:        sanitized.Name,
 		Handle:      sanitized.Handle,
 		Description: sanitized.Description,
+		Kind:        sanitized.Kind,
 	}
 
 	result, svcErr := h.resourceService.CreateAction(ctx, rsID, &resourceID, serviceReq)
 	if svcErr != nil {
-		handleError(w, svcErr)
+		handleError(ctx, w, svcErr)
 		return
 	}
 
 	response := toActionResponse(result)
-	sysutils.WriteSuccessResponse(w, http.StatusCreated, response)
+	sysutils.WriteSuccessResponse(ctx, w, http.StatusCreated, response)
 }
 
 // HandleActionGetAtResourceRequest handles getting an action at resource level.
@@ -436,12 +489,12 @@ func (h *resourceHandler) HandleActionGetAtResourceRequest(w http.ResponseWriter
 
 	result, svcErr := h.resourceService.GetAction(ctx, rsID, &resourceID, id)
 	if svcErr != nil {
-		handleError(w, svcErr)
+		handleError(ctx, w, svcErr)
 		return
 	}
 
 	response := toActionResponse(result)
-	sysutils.WriteSuccessResponse(w, http.StatusOK, response)
+	sysutils.WriteSuccessResponse(ctx, w, http.StatusOK, response)
 }
 
 // HandleActionPutAtResourceRequest handles updating an action at resource level.
@@ -453,24 +506,24 @@ func (h *resourceHandler) HandleActionPutAtResourceRequest(w http.ResponseWriter
 
 	req, err := sysutils.DecodeJSONBody[UpdateActionRequest](r)
 	if err != nil {
-		handleError(w, &ErrorInvalidRequestFormat)
+		handleError(ctx, w, &ErrorInvalidRequestFormat)
 		return
 	}
 
 	sanitized := sanitizeUpdateActionRequest(req)
-	serviceReq := Action{
+	serviceReq := providers.Action{
 		Name:        sanitized.Name,
 		Description: sanitized.Description,
 	}
 
 	result, svcErr := h.resourceService.UpdateAction(ctx, rsID, &resourceID, id, serviceReq)
 	if svcErr != nil {
-		handleError(w, svcErr)
+		handleError(ctx, w, svcErr)
 		return
 	}
 
 	response := toActionResponse(result)
-	sysutils.WriteSuccessResponse(w, http.StatusOK, response)
+	sysutils.WriteSuccessResponse(ctx, w, http.StatusOK, response)
 }
 
 // HandleActionDeleteAtResourceRequest handles deleting an action at resource level.
@@ -482,7 +535,7 @@ func (h *resourceHandler) HandleActionDeleteAtResourceRequest(w http.ResponseWri
 
 	svcErr := h.resourceService.DeleteAction(ctx, rsID, &resourceID, id)
 	if svcErr != nil {
-		handleError(w, svcErr)
+		handleError(ctx, w, svcErr)
 		return
 	}
 
@@ -492,7 +545,7 @@ func (h *resourceHandler) HandleActionDeleteAtResourceRequest(w http.ResponseWri
 // Helper functions
 
 // parsePaginationParams parses 'limit' and 'offset' query parameters.
-func parsePaginationParams(query url.Values) (int, int, *serviceerror.ServiceError) {
+func parsePaginationParams(query url.Values) (int, int, *tidcommon.ServiceError) {
 	limit := serverconst.DefaultPageSize
 	offset := 0
 
@@ -515,10 +568,24 @@ func parsePaginationParams(query url.Values) (int, int, *serviceerror.ServiceErr
 	return limit, offset, nil
 }
 
+// parseActionKindParam parses the optional 'kind' query parameter for action-list endpoints.
+// An omitted parameter yields an empty kind (no filter); any value other than the supported action
+// kinds (tool|resource) is rejected with ErrorInvalidRequestFormat.
+func parseActionKindParam(query url.Values) (providers.ActionKind, *tidcommon.ServiceError) {
+	if !query.Has("kind") {
+		return "", nil
+	}
+	kind := providers.ActionKind(query.Get("kind"))
+	if !kind.IsValid() {
+		return "", &ErrorInvalidRequestFormat
+	}
+	return kind, nil
+}
+
 // handleError writes an error response based on the provided service error.
-func handleError(w http.ResponseWriter, svcErr *serviceerror.ServiceError) {
+func handleError(ctx context.Context, w http.ResponseWriter, svcErr *tidcommon.ServiceError) {
 	statusCode := http.StatusInternalServerError
-	if svcErr.Type == serviceerror.ClientErrorType {
+	if svcErr.Type == tidcommon.ClientErrorType {
 		switch svcErr.Code {
 		case ErrorResourceServerNotFound.Code, ErrorResourceNotFound.Code, ErrorActionNotFound.Code:
 			statusCode = http.StatusNotFound
@@ -535,7 +602,7 @@ func handleError(w http.ResponseWriter, svcErr *serviceerror.ServiceError) {
 		Description: svcErr.ErrorDescription,
 	}
 
-	sysutils.WriteErrorResponse(w, statusCode, errResp)
+	sysutils.WriteErrorResponse(ctx, w, statusCode, errResp)
 }
 
 // Sanitization functions
@@ -545,8 +612,8 @@ func sanitizeCreateResourceServerRequest(req *CreateResourceServerRequest) Creat
 	return CreateResourceServerRequest{
 		Name:        sysutils.SanitizeString(req.Name),
 		Description: sysutils.SanitizeString(req.Description),
-		Handle:      sysutils.SanitizeString(req.Handle),
 		Identifier:  sysutils.SanitizeString(req.Identifier),
+		Type:        req.Type,
 		OUID:        sysutils.SanitizeString(req.OUID),
 		Delimiter:   sysutils.SanitizeString(req.Delimiter),
 	}
@@ -557,7 +624,6 @@ func sanitizeUpdateResourceServerRequest(req *UpdateResourceServerRequest) Updat
 	return UpdateResourceServerRequest{
 		Name:        sysutils.SanitizeString(req.Name),
 		Description: sysutils.SanitizeString(req.Description),
-		Handle:      sysutils.SanitizeString(req.Handle),
 		Identifier:  sysutils.SanitizeString(req.Identifier),
 		OUID:        sysutils.SanitizeString(req.OUID),
 	}
@@ -594,6 +660,7 @@ func sanitizeCreateActionRequest(req *CreateActionRequest) CreateActionRequest {
 		Name:        sysutils.SanitizeString(req.Name),
 		Handle:      sysutils.SanitizeString(req.Handle),
 		Description: sysutils.SanitizeString(req.Description),
+		Kind:        req.Kind,
 	}
 }
 
@@ -607,14 +674,18 @@ func sanitizeUpdateActionRequest(req *UpdateActionRequest) UpdateActionRequest {
 
 // Response transformation functions
 
-// toResourceServerResponse transforms a ResourceServer to ResourceServerResponse.
-func toResourceServerResponse(rs *ResourceServer) *ResourceServerResponse {
+// toResourceServerResponse transforms a providers.ResourceServer to ResourceServerResponse.
+func toResourceServerResponse(rs *providers.ResourceServer) *ResourceServerResponse {
+	resType := rs.Type
+	if resType == "" {
+		resType = providers.ResourceServerTypeCustom
+	}
 	return &ResourceServerResponse{
 		ID:          rs.ID,
 		Name:        rs.Name,
 		Description: rs.Description,
-		Handle:      rs.Handle,
 		Identifier:  rs.Identifier,
+		Type:        resType,
 		OUID:        rs.OUID,
 		Delimiter:   rs.Delimiter,
 		IsReadOnly:  rs.IsReadOnly,
@@ -642,8 +713,8 @@ func toResourceServerListResponse(list *ResourceServerList) *ResourceServerListR
 	}
 }
 
-// toResourceResponse transforms a Resource to ResourceResponse.
-func toResourceResponse(res *Resource) *ResourceResponse {
+// toResourceResponse transforms a providers.Resource to ResourceResponse.
+func toResourceResponse(res *providers.Resource) *ResourceResponse {
 	return &ResourceResponse{
 		ID:          res.ID,
 		Name:        res.Name,
@@ -675,14 +746,15 @@ func toResourceListResponse(list *ResourceList) *ResourceListResponse {
 	}
 }
 
-// toActionResponse transforms an Action to ActionResponse.
-func toActionResponse(action *Action) *ActionResponse {
+// toActionResponse transforms an providers.Action to ActionResponse.
+func toActionResponse(action *providers.Action) *ActionResponse {
 	return &ActionResponse{
 		ID:          action.ID,
 		Name:        action.Name,
 		Handle:      action.Handle,
 		Description: action.Description,
 		Permission:  action.Permission,
+		Kind:        action.Kind,
 	}
 }
 

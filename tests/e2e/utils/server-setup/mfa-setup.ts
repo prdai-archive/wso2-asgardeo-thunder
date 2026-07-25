@@ -41,7 +41,7 @@ export interface SetupConfig {
     username: string;
     password: string;
     email: string;
-    mobileNumber: string;
+    mobile_number: string;
     given_name: string;
   };
 }
@@ -179,12 +179,19 @@ export class MFASetup {
    * Get admin authentication token
    */
   private async getAdminToken(): Promise<string> {
+    // Use the native app declared in tests/e2e/thunderid-config.yaml with a fixed UUID.
+    // It uses only client_credentials so it is not subject to the redirect-based flow guard,
+    // but as a backend app it must present its Flow Secret to initiate a flow.
+    const adminAppId = "019e3a5c-0501-7f3e-a66e-66fc7918c3a7";
+    const adminFlowSecret = "e2e-admin-native-app-secret";
+
     // Step 1: Start authentication flow
     const flowResponse = await this.request.post(`${this.config.serverUrl}/flow/execute`, {
       data: {
-        applicationId: this.config.applicationId,
+        applicationId: adminAppId,
         flowType: "AUTHENTICATION",
       },
+      headers: { "Flow-Secret": adminFlowSecret },
       ignoreHTTPSErrors: true,
     });
 
@@ -205,6 +212,10 @@ export class MFASetup {
           username: this.config.adminUsername,
           password: this.config.adminPassword,
           requested_permissions: "system",
+          // Scope the permission evaluation to the System resource server (identifier from
+          // backend/cmd/server/bootstrap/01-default-resources.yaml). Direct /flow/execute calls
+          // do not pass through the OAuth layer, so the target resource server must be declared here.
+          resource_server_identifier: "https://localhost:8090/mcp",
         },
         action: "action_001",
       },
@@ -226,28 +237,13 @@ export class MFASetup {
     const senderName = "E2E Mock SMS Sender";
 
     // Try to create the notification sender
-    const response = await this.request.post(`${this.config.serverUrl}/notification-senders/message`, {
+    const response = await this.request.post(`${this.config.serverUrl}/connections/sms-gateway`, {
       data: {
         name: senderName,
         description: "Mock SMS sender for e2e MFA testing",
-        provider: "custom",
-        properties: [
-          {
-            name: "url",
-            value: this.config.mockSmsUrl,
-            isSecret: false,
-          },
-          {
-            name: "http_method",
-            value: "POST",
-            isSecret: false,
-          },
-          {
-            name: "content_type",
-            value: "JSON",
-            isSecret: false,
-          },
-        ],
+        url: this.config.mockSmsUrl,
+        httpMethod: "POST",
+        contentType: "JSON",
       },
       headers: {
         Authorization: `Bearer ${adminToken}`,
@@ -276,7 +272,7 @@ export class MFASetup {
    * Get existing notification sender by name
    */
   private async getExistingNotificationSender(adminToken: string, name: string): Promise<string> {
-    const response = await this.request.get(`${this.config.serverUrl}/notification-senders/message`, {
+    const response = await this.request.get(`${this.config.serverUrl}/connections/sms-gateway`, {
       headers: {
         Authorization: `Bearer ${adminToken}`,
       },
@@ -442,7 +438,7 @@ export class MFASetup {
           password: this.config.testUser.password,
           given_name: this.config.testUser.given_name,
           email: this.config.testUser.email,
-          mobileNumber: this.config.testUser.mobileNumber,
+          mobile_number: this.config.testUser.mobile_number,
         },
       },
       headers: {
@@ -572,7 +568,7 @@ export class MFASetup {
       });
 
       const response = await requestContext.delete(
-        `${this.config.serverUrl}/notification-senders/message/${senderId}`,
+        `${this.config.serverUrl}/connections/sms-gateway/${senderId}`,
         {
           headers: {
             Authorization: `Bearer ${adminToken}`,

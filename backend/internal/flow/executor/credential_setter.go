@@ -22,15 +22,16 @@ import (
 	"encoding/json"
 
 	"github.com/thunder-id/thunderid/internal/entityprovider"
-	"github.com/thunder-id/thunderid/internal/flow/common"
 	"github.com/thunder-id/thunderid/internal/flow/core"
 	"github.com/thunder-id/thunderid/internal/system/log"
+	"github.com/thunder-id/thunderid/pkg/thunderidengine/providers"
 )
 
 // credentialSetter allows users to set their credentials for an existing user account.
 type credentialSetter struct {
-	core.ExecutorInterface
+	providers.Executor
 	entityProvider entityprovider.EntityProviderInterface
+	authnProvider  providers.AuthnProviderManager
 	logger         *log.Logger
 }
 
@@ -38,88 +39,91 @@ type credentialSetter struct {
 func newCredentialSetter(
 	flowFactory core.FlowFactoryInterface,
 	entityProvider entityprovider.EntityProviderInterface,
+	authnProvider providers.AuthnProviderManager,
 ) *credentialSetter {
 	logger := log.GetLogger().With(log.String(log.LoggerKeyComponentName, "CredentialSetter"))
 	base := flowFactory.CreateExecutor(
 		ExecutorNameCredentialSetter,
-		common.ExecutorTypeRegistration,
-		[]common.Input{
+		providers.ExecutorTypeRegistration,
+		[]providers.Input{
 			{
 				Identifier: userAttributePassword,
-				Type:       common.InputTypePassword,
+				Type:       providers.InputTypePassword,
 				Required:   true,
 			},
 		},
-		[]common.Input{
+		[]providers.Input{
 			{
 				Identifier: userAttributeUserID,
-				Type:       common.InputTypeText,
+				Type:       providers.InputTypeText,
 				Required:   true,
 			},
 		},
+		&providers.ExecutorMeta{},
 	)
 	return &credentialSetter{
-		ExecutorInterface: base,
-		entityProvider:    entityProvider,
-		logger:            logger,
+		Executor:       base,
+		entityProvider: entityProvider,
+		authnProvider:  authnProvider,
+		logger:         logger,
 	}
 }
 
 // Execute sets the password for the user identified by userID in RuntimeData.
-func (e *credentialSetter) Execute(ctx *core.NodeContext) (*common.ExecutorResponse, error) {
+func (e *credentialSetter) Execute(ctx *providers.NodeContext) (*providers.ExecutorResponse, error) {
 	logger := e.logger.With(log.String(log.LoggerKeyExecutionID, ctx.ExecutionID))
-	logger.Debug("Executing credential set")
+	logger.Debug(ctx.Context, "Executing credential set")
 
-	execResp := &common.ExecutorResponse{
+	execResp := &providers.ExecutorResponse{
 		AdditionalData: make(map[string]string),
 		RuntimeData:    make(map[string]string),
 	}
 
 	// Check if password is provided
 	if !e.HasRequiredInputs(ctx, execResp) {
-		logger.Debug("Requested credentials not provided, requesting input")
-		execResp.Status = common.ExecUserInputRequired
+		logger.Debug(ctx.Context, "Requested credentials not provided, requesting input")
+		execResp.Status = providers.ExecUserInputRequired
 		return execResp, nil
 	}
 
 	// Validate prerequisites
-	if !e.ValidatePrerequisites(ctx, execResp) {
-		logger.Debug("Prerequisites not met for credential setter")
+	if !e.ValidatePrerequisites(ctx, execResp, e.authnProvider) {
+		logger.Debug(ctx.Context, "Prerequisites not met for credential setter")
 		return execResp, nil
 	}
 
 	// Get userID from context
-	userID := e.GetUserIDFromContext(ctx)
+	userID := e.GetUserIDFromContext(ctx, execResp, e.authnProvider)
 	if userID == "" {
-		logger.Debug("User ID not found in flow context")
-		execResp.Status = common.ExecFailure
-		execResp.FailureReason = "User ID not found in flow context"
+		logger.Debug(ctx.Context, "User ID not found in flow context")
+		execResp.Status = providers.ExecFailure
+		execResp.Error = &ErrUserIDMissingInContext
 		return execResp, nil
 	}
 
 	var credentialKey, credentialValue string
 	requiredInputs := e.GetRequiredInputs(ctx)
 	if len(requiredInputs) == 0 {
-		logger.Debug("No required inputs configured for credential setter")
-		execResp.Status = common.ExecFailure
-		execResp.FailureReason = "No credential input configured for credential setter"
+		logger.Debug(ctx.Context, "No required inputs configured for credential setter")
+		execResp.Status = providers.ExecFailure
+		execResp.Error = &ErrCredentialInputMissing
 		return execResp, nil
 	}
 
 	input := requiredInputs[0]
 	credentialKey = input.Identifier
 	if credentialKey == "" {
-		logger.Debug("Required input has empty identifier in credential setter")
-		execResp.Status = common.ExecFailure
-		execResp.FailureReason = "Invalid credential input configuration"
+		logger.Debug(ctx.Context, "Required input has empty identifier in credential setter")
+		execResp.Status = providers.ExecFailure
+		execResp.Error = &ErrCredentialInputInvalid
 		return execResp, nil
 	}
 	credentialValue = ctx.UserInputs[credentialKey]
 
 	if credentialValue == "" {
-		logger.Debug("Credential value is empty", log.String("credentialKey", credentialKey))
-		execResp.Status = common.ExecFailure
-		execResp.FailureReason = "Credential value cannot be empty"
+		logger.Debug(ctx.Context, "Credential value is empty", log.String("credentialKey", credentialKey))
+		execResp.Status = providers.ExecFailure
+		execResp.Error = &ErrCredentialValueEmpty
 		return execResp, nil
 	}
 
@@ -128,22 +132,24 @@ func (e *credentialSetter) Execute(ctx *core.NodeContext) (*common.ExecutorRespo
 		credentialKey: credentialValue,
 	})
 	if err != nil {
-		logger.Debug("Failed to marshal credentials", log.Error(err))
-		execResp.Status = common.ExecFailure
-		execResp.FailureReason = "Failed to process credentials"
+		logger.Debug(ctx.Context, "Failed to marshal credentials", log.Error(err))
+		execResp.Status = providers.ExecFailure
+		execResp.Error = &ErrCredentialProcessingFailed
 		return execResp, nil
 	}
 
 	// Update user credentials
 	svcErr := e.entityProvider.UpdateCredentials(userID, credentials)
 	if svcErr != nil {
-		logger.Debug("Failed to update user credentials", log.MaskedString(log.LoggerKeyUserID, userID))
-		execResp.Status = common.ExecFailure
-		execResp.FailureReason = "Failed to set credentials"
+		logger.Debug(ctx.Context, "Failed to update user credentials",
+			log.MaskedString(log.LoggerKeyUserID, userID))
+		execResp.Status = providers.ExecFailure
+		execResp.Error = &ErrCredentialSetFailed
 		return execResp, nil
 	}
 
-	logger.Debug("Successfully set credentials for user", log.MaskedString(log.LoggerKeyUserID, userID))
-	execResp.Status = common.ExecComplete
+	logger.Debug(ctx.Context, "Successfully set credentials for user",
+		log.MaskedString(log.LoggerKeyUserID, userID))
+	execResp.Status = providers.ExecComplete
 	return execResp, nil
 }

@@ -17,8 +17,8 @@
  */
 
 /* eslint-disable @typescript-eslint/no-unsafe-assignment */
+import {screen, cleanup, fireEvent} from '@testing-library/react';
 import type {EmbeddedFlowComponent} from '@thunderid/react';
-import {screen, cleanup} from '@testing-library/react';
 import {describe, it, expect, afterEach, vi} from 'vitest';
 import renderWithProviders from '../../../test/renderWithProviders';
 import FlowComponentRenderer from '../FlowComponentRenderer';
@@ -104,6 +104,52 @@ describe('FlowComponentRenderer — COPYABLE_TEXT routing', () => {
     expect(screen.getByRole('button')).toBeTruthy();
   });
 
+  it('renders QrCodeAdapter when component type is QR_CODE', () => {
+    const component = {
+      id: 'qr-1',
+      type: 'QR_CODE',
+      source: 'openid4vpWalletUri',
+    } as unknown as EmbeddedFlowComponent;
+
+    renderWithProviders(
+      <FlowComponentRenderer
+        component={component}
+        index={0}
+        values={{}}
+        isLoading={false}
+        resolve={identity}
+        onInputChange={noop}
+        onSubmit={noop}
+        additionalData={{openid4vpWalletUri: 'eudi-openid4vp://?client_id=test&request_uri=https%3A%2F%2Fexample.com'}}
+      />,
+    );
+
+    expect(screen.getByRole('link', {name: 'Open wallet on this device'})).toBeTruthy();
+  });
+
+  it('returns null for QR_CODE when source key is absent from additionalData', () => {
+    const component = {
+      id: 'qr-2',
+      type: 'QR_CODE',
+      source: 'openid4vpWalletUri',
+    } as unknown as EmbeddedFlowComponent;
+
+    const {container} = renderWithProviders(
+      <FlowComponentRenderer
+        component={component}
+        index={0}
+        values={{}}
+        isLoading={false}
+        resolve={identity}
+        onInputChange={noop}
+        onSubmit={noop}
+        additionalData={{}}
+      />,
+    );
+
+    expect(container.firstChild).toBeNull();
+  });
+
   it('returns null for an unknown component type', () => {
     const component = {
       id: 'unknown-1',
@@ -123,5 +169,98 @@ describe('FlowComponentRenderer — COPYABLE_TEXT routing', () => {
     );
 
     expect(container.firstChild).toBeNull();
+  });
+});
+
+describe('FlowComponentRenderer — BLOCK with STACK-nested actions', () => {
+  const blockWithStackedActions = {
+    id: 'block_onboarding_mode',
+    type: 'BLOCK',
+    components: [
+      {
+        id: 'stack_actions',
+        type: 'STACK',
+        direction: 'row',
+        justify: 'center',
+        components: [
+          {id: 'action_create', type: 'ACTION', label: 'Create User', variant: 'PRIMARY', eventType: 'SUBMIT'},
+          {id: 'action_invite', type: 'ACTION', label: 'Invite User', variant: 'OUTLINED', eventType: 'SUBMIT'},
+        ],
+      },
+    ],
+  } as unknown as EmbeddedFlowComponent;
+
+  it('renders submit actions nested inside a stack', () => {
+    renderWithProviders(
+      <FlowComponentRenderer
+        component={blockWithStackedActions}
+        index={0}
+        values={{}}
+        isLoading={false}
+        resolve={identity}
+        onInputChange={noop}
+        onSubmit={noop}
+      />,
+    );
+
+    expect(screen.getByRole('button', {name: 'Create User'})).toBeTruthy();
+    expect(screen.getByRole('button', {name: 'Invite User'})).toBeTruthy();
+  });
+
+  it('exposes the component id on rendered action buttons', () => {
+    renderWithProviders(
+      <FlowComponentRenderer
+        component={blockWithStackedActions}
+        index={0}
+        values={{}}
+        isLoading={false}
+        resolve={identity}
+        onInputChange={noop}
+        onSubmit={noop}
+      />,
+    );
+
+    // Consumers (e.g. the flow preview) map DOM buttons back to their flow
+    // components through this id.
+    expect(screen.getByRole('button', {name: 'Create User'}).id).toBe('action_create');
+    expect(screen.getByRole('button', {name: 'Invite User'}).id).toBe('action_invite');
+  });
+
+  it('dispatches the secondary stacked action on click', () => {
+    const onSubmit = vi.fn();
+    renderWithProviders(
+      <FlowComponentRenderer
+        component={blockWithStackedActions}
+        index={0}
+        values={{}}
+        isLoading={false}
+        resolve={identity}
+        onInputChange={noop}
+        onSubmit={onSubmit}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', {name: 'Invite User'}));
+
+    expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({id: 'action_invite'}), {});
+  });
+
+  it('dispatches the primary stacked action via form submit', () => {
+    const onSubmit = vi.fn();
+    renderWithProviders(
+      <FlowComponentRenderer
+        component={blockWithStackedActions}
+        index={0}
+        values={{}}
+        isLoading={false}
+        resolve={identity}
+        onInputChange={noop}
+        onSubmit={onSubmit}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', {name: 'Create User'}));
+
+    expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({id: 'action_create'}), {});
   });
 });

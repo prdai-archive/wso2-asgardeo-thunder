@@ -19,7 +19,6 @@
 import userEvent from '@testing-library/user-event';
 import {DesignContext, type DesignContextType} from '@thunderid/design';
 import {screen, fireEvent, waitFor, render as testRender} from '@thunderid/test-utils';
-import {act} from 'react';
 import {describe, it, expect, vi, beforeEach} from 'vitest';
 import SignUpBox from '../SignUpBox';
 
@@ -97,23 +96,24 @@ const createMockSignUpRenderProps = (overrides: Partial<MockSignUpRenderProps> =
 });
 
 let mockSignUpRenderProps: MockSignUpRenderProps = createMockSignUpRenderProps();
-let capturedOnFlowChange: ((response: unknown) => void) | undefined;
 let capturedAfterSignUpUrl: string | undefined;
+let mockMeta: {application?: {url?: string}} | null = null;
 
 vi.mock('@thunderid/react', async () => {
   const actual = await vi.importActual('@thunderid/react');
   return {
     ...actual,
+    useThunderID: () => ({
+      resolveFlowTemplateLiterals: (t: string) => t,
+      meta: mockMeta,
+    }),
     SignUp: ({
       children,
-      onFlowChange = undefined,
       afterSignUpUrl = undefined,
     }: {
       children: (props: typeof mockSignUpRenderProps) => React.ReactNode;
-      onFlowChange?: (response: unknown) => void;
       afterSignUpUrl?: string;
     }) => {
-      capturedOnFlowChange = onFlowChange;
       capturedAfterSignUpUrl = afterSignUpUrl;
       return <div data-testid="thunderid-signup">{children(mockSignUpRenderProps)}</div>;
     },
@@ -138,8 +138,8 @@ describe('SignUpBox', () => {
       isDesignEnabled: false,
     });
     mockSignUpRenderProps = createMockSignUpRenderProps();
-    capturedOnFlowChange = undefined;
     capturedAfterSignUpUrl = undefined;
+    mockMeta = null;
   });
 
   it('renders without crashing', () => {
@@ -177,77 +177,6 @@ describe('SignUpBox', () => {
     render(<SignUpBox />);
 
     expect(screen.getByText(/Already have an account/)).toBeInTheDocument();
-
-    expect(capturedOnFlowChange).toBeDefined();
-
-    act(() => {
-      capturedOnFlowChange!({data: {additionalData: {}}});
-    });
-
-    // Link remains visible after any flow change
-    expect(screen.getByText(/Already have an account/)).toBeInTheDocument();
-  });
-
-  it('shows flowError alert when onFlowChange reports failureReason', () => {
-    mockSignUpRenderProps = createMockSignUpRenderProps({
-      components: [{id: 'block', type: 'BLOCK', components: []}],
-    });
-    render(<SignUpBox />);
-
-    expect(capturedOnFlowChange).toBeDefined();
-
-    act(() => {
-      capturedOnFlowChange!({
-        failureReason: 'A user with this email already exists. Please use a different value.',
-        data: {additionalData: {}},
-      });
-    });
-
-    expect(
-      screen.getByText('A user with this email already exists. Please use a different value.'),
-    ).toBeInTheDocument();
-  });
-
-  it('clears flowError when submit is triggered', async () => {
-    mockSignUpRenderProps = createMockSignUpRenderProps({
-      components: [
-        {
-          id: 'block-1',
-          type: 'BLOCK',
-          components: [
-            {
-              id: 'submit-btn',
-              type: 'ACTION',
-              eventType: 'SUBMIT',
-              label: 'Register',
-              variant: 'PRIMARY',
-            },
-          ],
-        },
-      ],
-    });
-    render(<SignUpBox />);
-
-    expect(capturedOnFlowChange).toBeDefined();
-
-    act(() => {
-      capturedOnFlowChange!({
-        failureReason: 'A user with this email already exists. Please use a different value.',
-        data: {additionalData: {}},
-      });
-    });
-
-    expect(
-      screen.getByText('A user with this email already exists. Please use a different value.'),
-    ).toBeInTheDocument();
-
-    fireEvent.click(screen.getByText('Register'));
-
-    await waitFor(() => {
-      expect(
-        screen.queryByText('A user with this email already exists. Please use a different value.'),
-      ).not.toBeInTheDocument();
-    });
   });
 
   it('renders TEXT component as heading', () => {
@@ -550,10 +479,17 @@ describe('SignUpBox', () => {
     expect(screen.getByText('Sign in')).toBeInTheDocument();
   });
 
-  it('passes afterSignUpUrl as an absolute URL with origin and BASE_URL prefix to SignUp component', () => {
+  it('falls back to sign-in URL as afterSignUpUrl when meta has no application URL', () => {
+    mockMeta = null;
     render(<SignUpBox />);
     const expectedUrl = `${window.location.origin}${import.meta.env.BASE_URL.replace(/\/$/, '')}/signin`;
     expect(capturedAfterSignUpUrl).toBe(expectedUrl);
+  });
+
+  it('uses application URL from flow meta as afterSignUpUrl when available', () => {
+    mockMeta = {application: {url: 'https://myapp.example.com/home'}};
+    render(<SignUpBox />);
+    expect(capturedAfterSignUpUrl).toBe('https://myapp.example.com/home');
   });
 
   it('navigates to sign in page when clicking sign in link', async () => {

@@ -19,11 +19,14 @@
 package observability
 
 import (
+	"context"
 	"testing"
 	"time"
 
 	"github.com/thunder-id/thunderid/internal/system/config"
 	"github.com/thunder-id/thunderid/internal/system/observability/event"
+	engineconfig "github.com/thunder-id/thunderid/pkg/thunderidengine/config"
+	"github.com/thunder-id/thunderid/pkg/thunderidengine/providers"
 )
 
 // setupTestService creates a test service with controlled configuration.
@@ -33,11 +36,11 @@ func setupTestService(enabled bool) ObservabilityServiceInterface {
 
 	// Create a test config
 	cfg := &config.Config{
-		Observability: config.ObservabilityConfig{
+		Observability: engineconfig.ObservabilityConfig{
 			Enabled:     enabled,
 			FailureMode: "lenient",
-			Output: config.ObservabilityOutputConfig{
-				Console: config.ObservabilityConsoleConfig{
+			Output: engineconfig.ObservabilityOutputConfig{
+				Console: engineconfig.ObservabilityConsoleConfig{
 					Enabled: true,
 					Format:  "json",
 				},
@@ -52,7 +55,7 @@ func setupTestService(enabled bool) ObservabilityServiceInterface {
 	}
 
 	// Use Initialize to create a new instance (no singleton)
-	return Initialize()
+	return Initialize(cfg.Observability)
 }
 
 func TestInitialize(t *testing.T) {
@@ -124,10 +127,10 @@ func TestService_PublishEvent(t *testing.T) {
 	// This test just verifies PublishEvent doesn't panic
 
 	evt := event.NewEvent("trace-123", string(event.EventTypeTokenIssued), "test")
-	evt.WithStatus(event.StatusSuccess)
+	evt.WithStatus(providers.StatusSuccess)
 
 	// Should not panic
-	svc.PublishEvent(evt)
+	svc.PublishEvent(context.Background(), evt)
 
 	// Give it time to process (async processing)
 	time.Sleep(100 * time.Millisecond)
@@ -145,7 +148,7 @@ func TestService_PublishEventDisabled(t *testing.T) {
 	evt := event.NewEvent("trace-123", string(event.EventTypeTokenIssuanceStarted), "test")
 
 	// Should not panic even when disabled
-	svc.PublishEvent(evt)
+	svc.PublishEvent(context.Background(), evt)
 }
 
 func TestService_PublishNilEvent(t *testing.T) {
@@ -153,7 +156,7 @@ func TestService_PublishNilEvent(t *testing.T) {
 	defer svc.Shutdown()
 
 	// Should not panic
-	svc.PublishEvent(nil)
+	svc.PublishEvent(context.Background(), nil)
 }
 
 func TestService_GetConfig(t *testing.T) {

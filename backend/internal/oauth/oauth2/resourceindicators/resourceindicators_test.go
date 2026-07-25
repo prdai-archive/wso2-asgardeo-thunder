@@ -22,13 +22,14 @@ import (
 	"context"
 	"testing"
 
+	tidcommon "github.com/thunder-id/thunderid/pkg/thunderidengine/common"
+	"github.com/thunder-id/thunderid/pkg/thunderidengine/providers"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/suite"
 
 	"github.com/thunder-id/thunderid/internal/oauth/oauth2/constants"
-	"github.com/thunder-id/thunderid/internal/resource"
-	"github.com/thunder-id/thunderid/internal/system/error/serviceerror"
 	"github.com/thunder-id/thunderid/tests/mocks/resourcemock"
 )
 
@@ -85,7 +86,7 @@ func (suite *ResourceIndicatorsTestSuite) TestResolveResourceServers_Empty() {
 }
 
 func (suite *ResourceIndicatorsTestSuite) TestResolveResourceServers_Found() {
-	rs := resource.ResourceServer{ID: "rs01", Identifier: "https://api.example.com"}
+	rs := providers.ResourceServer{ID: "rs01", Identifier: "https://api.example.com"}
 	suite.mockResourceService.On("GetResourceServerByIdentifier", mock.Anything, "https://api.example.com").
 		Return(&rs, nil)
 
@@ -93,11 +94,11 @@ func (suite *ResourceIndicatorsTestSuite) TestResolveResourceServers_Found() {
 		[]string{"https://api.example.com"})
 
 	assert.Nil(suite.T(), err)
-	assert.Equal(suite.T(), []*resource.ResourceServer{&rs}, resolved)
+	assert.Equal(suite.T(), []*providers.ResourceServer{&rs}, resolved)
 }
 
 func (suite *ResourceIndicatorsTestSuite) TestResolveResourceServers_NotFound_ReturnsInvalidTarget() {
-	svcErr := &serviceerror.ServiceError{Type: serviceerror.ClientErrorType, Code: "RSE-4041"}
+	svcErr := &tidcommon.ServiceError{Type: tidcommon.ClientErrorType, Code: "RSE-4041"}
 	suite.mockResourceService.On("GetResourceServerByIdentifier", mock.Anything, "https://unknown.example.com").
 		Return(nil, svcErr)
 
@@ -110,7 +111,7 @@ func (suite *ResourceIndicatorsTestSuite) TestResolveResourceServers_NotFound_Re
 }
 
 func (suite *ResourceIndicatorsTestSuite) TestResolveResourceServers_StoreFailure_ReturnsServerError() {
-	svcErr := &serviceerror.ServiceError{Type: serviceerror.ServerErrorType, Code: "SSE-5000"}
+	svcErr := &tidcommon.ServiceError{Type: tidcommon.ServerErrorType, Code: "SSE-5000"}
 	suite.mockResourceService.On("GetResourceServerByIdentifier", mock.Anything, "https://api.example.com").
 		Return(nil, svcErr)
 
@@ -123,171 +124,261 @@ func (suite *ResourceIndicatorsTestSuite) TestResolveResourceServers_StoreFailur
 	assert.Equal(suite.T(), "Failed to resolve resource server", err.ErrorDescription)
 }
 
-// ComposeAudiences §4 fallback-only clientID tests
+// ResolveTargetResourceServer tests
 
-func (suite *ResourceIndicatorsTestSuite) TestComposeAudiences_RSContributes_NoClientID() {
-	// When at least one RS contributes, clientID must NOT appear in aud.
-	rs := &resource.ResourceServer{ID: "rs01", Identifier: "https://rs01.example.com"}
-	auds, err := ComposeAudiences(context.Background(), suite.mockResourceService,
-		"client123", []*resource.ResourceServer{rs}, []string{"read"})
+func (suite *ResourceIndicatorsTestSuite) TestResolveTargetResourceServer_SingleResource_Resolves() {
+	rs := providers.ResourceServer{ID: "rs01", Identifier: "https://api.example.com"}
+	suite.mockResourceService.On("GetResourceServerByIdentifier", mock.Anything, "https://api.example.com").
+		Return(&rs, nil)
 
-	assert.Nil(suite.T(), err)
-	assert.Equal(suite.T(), []string{"https://rs01.example.com"}, auds)
-}
-
-func (suite *ResourceIndicatorsTestSuite) TestComposeAudiences_NoRS_FallbackToClientID() {
-	// When no RS contributes (explicit empty resolvedRSes), aud falls back to clientID.
-	auds, err := ComposeAudiences(context.Background(), suite.mockResourceService,
-		"client123", []*resource.ResourceServer{}, []string{})
+	resolved, err := ResolveTargetResourceServer(context.Background(), suite.mockResourceService,
+		[]string{"https://api.example.com"})
 
 	assert.Nil(suite.T(), err)
-	assert.Equal(suite.T(), []string{"client123"}, auds)
+	assert.Equal(suite.T(), &rs, resolved)
 }
 
-func (suite *ResourceIndicatorsTestSuite) TestComposeAudiences_NilResolvedRSes_NoScopes_FallbackToClientID() {
-	// resolvedRSes==nil, no scopes → implicit discovery skipped → fallback to clientID.
-	suite.mockResourceService.On("FindResourceServersByPermissions", mock.Anything, mock.Anything).
-		Return([]resource.ResourceServer{}, nil).Maybe()
+func (suite *ResourceIndicatorsTestSuite) TestResolveTargetResourceServer_MultipleResources_ReturnsInvalidTarget() {
+	resolved, err := ResolveTargetResourceServer(context.Background(), suite.mockResourceService,
+		[]string{"https://a.example.com", "https://b.example.com"})
 
-	auds, err := ComposeAudiences(context.Background(), suite.mockResourceService,
-		"client123", nil, []string{})
-
-	assert.Nil(suite.T(), err)
-	assert.Equal(suite.T(), []string{"client123"}, auds)
+	assert.Nil(suite.T(), resolved)
+	assert.NotNil(suite.T(), err)
+	assert.Equal(suite.T(), constants.ErrorInvalidTarget, err.Error)
 }
 
-func (suite *ResourceIndicatorsTestSuite) TestComposeAudiences_ImplicitDiscovery_RSFound() {
-	// resolvedRSes==nil with scopes → implicit discovery returns RS → aud contains RS only, no clientID.
-	suite.mockResourceService.On("FindResourceServersByPermissions", mock.Anything, []string{"read"}).
-		Return([]resource.ResourceServer{
-			{ID: "rs01", Identifier: "https://rs01.example.com"},
-		}, nil)
-
-	auds, err := ComposeAudiences(context.Background(), suite.mockResourceService,
-		"client123", nil, []string{"read"})
-
-	assert.Nil(suite.T(), err)
-	assert.Equal(suite.T(), []string{"https://rs01.example.com"}, auds)
-}
-
-func (suite *ResourceIndicatorsTestSuite) TestComposeAudiences_ImplicitDiscovery_NoRSFound_FallbackToClientID() {
-	// resolvedRSes==nil with scopes → implicit discovery returns nothing → fallback to clientID.
-	suite.mockResourceService.On("FindResourceServersByPermissions", mock.Anything, []string{"openid"}).
-		Return([]resource.ResourceServer{}, nil)
-
-	auds, err := ComposeAudiences(context.Background(), suite.mockResourceService,
-		"client123", nil, []string{"openid"})
-
-	assert.Nil(suite.T(), err)
-	assert.Equal(suite.T(), []string{"client123"}, auds)
-}
-
-func (suite *ResourceIndicatorsTestSuite) TestComposeAudiences_EmptyClientID_NoRS_ReturnsEmptySlice() {
-	// No RS and empty clientID → return empty slice (no fallback possible).
-	auds, err := ComposeAudiences(context.Background(), suite.mockResourceService,
-		"", []*resource.ResourceServer{}, []string{})
-
-	assert.Nil(suite.T(), err)
-	assert.Empty(suite.T(), auds)
-}
-
-func (suite *ResourceIndicatorsTestSuite) TestComposeAudiences_MultipleRS_Deduped() {
-	// Multiple RSes with duplicate identifiers are deduped; clientID is absent.
-	rs1 := &resource.ResourceServer{ID: "rs01", Identifier: "https://rs01.example.com"}
-	rs2 := &resource.ResourceServer{ID: "rs01", Identifier: "https://rs01.example.com"}
-	auds, err := ComposeAudiences(context.Background(), suite.mockResourceService,
-		"client123", []*resource.ResourceServer{rs1, rs2}, []string{"read"})
-
-	assert.Nil(suite.T(), err)
-	assert.Equal(suite.T(), []string{"https://rs01.example.com"}, auds)
-}
-
-func (suite *ResourceIndicatorsTestSuite) TestComposeAudiences_ImplicitDiscovery_ServiceError() {
-	// FindResourceServersByPermissions failure returns server error.
-	svcErr := &serviceerror.ServiceError{Code: "internal_error"}
-	suite.mockResourceService.On("FindResourceServersByPermissions", mock.Anything, []string{"read"}).
+func (suite *ResourceIndicatorsTestSuite) TestResolveTargetResourceServer_UnknownIdentifier_ReturnsInvalidTarget() {
+	svcErr := &tidcommon.ServiceError{Type: tidcommon.ClientErrorType, Code: "RSE-4041"}
+	suite.mockResourceService.On("GetResourceServerByIdentifier", mock.Anything, "https://unknown.example.com").
 		Return(nil, svcErr)
 
-	auds, err := ComposeAudiences(context.Background(), suite.mockResourceService,
-		"client123", nil, []string{"read"})
+	resolved, err := ResolveTargetResourceServer(context.Background(), suite.mockResourceService,
+		[]string{"https://unknown.example.com"})
 
-	assert.Nil(suite.T(), auds)
+	assert.Nil(suite.T(), resolved)
+	assert.NotNil(suite.T(), err)
+	assert.Equal(suite.T(), constants.ErrorInvalidTarget, err.Error)
+}
+
+func (suite *ResourceIndicatorsTestSuite) TestResolveTargetResourceServer_LookupServerError_ReturnsServerError() {
+	svcErr := &tidcommon.ServiceError{Type: tidcommon.ServerErrorType, Code: "SSE-5000"}
+	suite.mockResourceService.On("GetResourceServerByIdentifier", mock.Anything, "https://api.example.com").
+		Return(nil, svcErr)
+
+	resolved, err := ResolveTargetResourceServer(context.Background(), suite.mockResourceService,
+		[]string{"https://api.example.com"})
+
+	assert.Nil(suite.T(), resolved)
 	assert.NotNil(suite.T(), err)
 	assert.Equal(suite.T(), constants.ErrorServerError, err.Error)
 }
 
-// ContributingAudiences tests
+// When no resource is supplied, the resolver asks the provider to resolve the empty identifier; a
+// default-aware provider turns this into the deployment's configured default resource server.
+func (suite *ResourceIndicatorsTestSuite) TestResolveTargetResourceServer_NoResource_ProviderResolvesDefault() {
+	rs := providers.ResourceServer{ID: "rs-1", Identifier: "https://api.example.com"}
+	suite.mockResourceService.On("GetResourceServerByIdentifier", mock.Anything, "").
+		Return(&rs, nil)
 
-func (suite *ResourceIndicatorsTestSuite) TestContributingAudiences_Empty() {
-	auds := ContributingAudiences([]*resource.ResourceServer{})
-	assert.Nil(suite.T(), auds)
+	resolved, err := ResolveTargetResourceServer(context.Background(), suite.mockResourceService,
+		[]string{})
+
+	assert.Nil(suite.T(), err)
+	assert.Equal(suite.T(), &rs, resolved)
 }
 
-func (suite *ResourceIndicatorsTestSuite) TestContributingAudiences_SkipsEmptyIdentifier() {
-	rs := &resource.ResourceServer{ID: "rs01", Identifier: ""}
-	auds := ContributingAudiences([]*resource.ResourceServer{rs})
-	assert.Empty(suite.T(), auds)
+func (suite *ResourceIndicatorsTestSuite) TestResolveTargetResourceServer_NoResource_ProviderClientError() {
+	svcErr := &tidcommon.ServiceError{Type: tidcommon.ClientErrorType, Code: "RSE-4041"}
+	suite.mockResourceService.On("GetResourceServerByIdentifier", mock.Anything, "").
+		Return(nil, svcErr)
+
+	resolved, err := ResolveTargetResourceServer(context.Background(), suite.mockResourceService,
+		[]string{})
+
+	assert.Nil(suite.T(), resolved)
+	assert.NotNil(suite.T(), err)
+	assert.Equal(suite.T(), constants.ErrorInvalidTarget, err.Error)
 }
 
-func (suite *ResourceIndicatorsTestSuite) TestContributingAudiences_PreservesOrder() {
-	rs1 := &resource.ResourceServer{ID: "rs01", Identifier: "https://b.example.com"}
-	rs2 := &resource.ResourceServer{ID: "rs02", Identifier: "https://a.example.com"}
-	auds := ContributingAudiences([]*resource.ResourceServer{rs1, rs2})
-	assert.Equal(suite.T(), []string{"https://b.example.com", "https://a.example.com"}, auds)
+func (suite *ResourceIndicatorsTestSuite) TestResolveTargetResourceServer_NoResource_ProviderServerError() {
+	svcErr := &tidcommon.ServiceError{Type: tidcommon.ServerErrorType, Code: "SCE-5000"}
+	suite.mockResourceService.On("GetResourceServerByIdentifier", mock.Anything, "").
+		Return(nil, svcErr)
+
+	resolved, err := ResolveTargetResourceServer(context.Background(), suite.mockResourceService,
+		[]string{})
+
+	assert.Nil(suite.T(), resolved)
+	assert.NotNil(suite.T(), err)
+	assert.Equal(suite.T(), constants.ErrorServerError, err.Error)
 }
 
-// FilterByIdentifiers tests
+func (suite *ResourceIndicatorsTestSuite) TestResolveTargetResourceServer_NilResourceService_ReturnsInvalidTarget() {
+	resolved, err := ResolveTargetResourceServer(context.Background(), nil, []string{})
 
-func (suite *ResourceIndicatorsTestSuite) TestFilterByIdentifiers_Empty() {
-	result := FilterByIdentifiers([]*resource.ResourceServer{}, []string{"https://api.example.com"})
+	assert.Nil(suite.T(), resolved)
+	assert.NotNil(suite.T(), err)
+	assert.Equal(suite.T(), constants.ErrorInvalidTarget, err.Error)
+}
+
+// DownscopeToResourceServer tests
+
+func (suite *ResourceIndicatorsTestSuite) TestDownscopeToResourceServer_DropsInvalidScopes() {
+	suite.mockResourceService.On("ValidatePermissions", mock.Anything, "rs01", []string{"read", "write", "delete"}).
+		Return([]string{"write"}, nil)
+
+	scopes, err := DownscopeToResourceServer(context.Background(), suite.mockResourceService, "rs01",
+		[]string{"read", "write", "delete"})
+
+	assert.Nil(suite.T(), err)
+	assert.Equal(suite.T(), []string{"read", "delete"}, scopes)
+}
+
+func (suite *ResourceIndicatorsTestSuite) TestDownscopeToResourceServer_PreservesOrder() {
+	suite.mockResourceService.On("ValidatePermissions", mock.Anything, "rs01", []string{"c", "a", "b"}).
+		Return([]string{}, nil)
+
+	scopes, err := DownscopeToResourceServer(context.Background(), suite.mockResourceService, "rs01",
+		[]string{"c", "a", "b"})
+
+	assert.Nil(suite.T(), err)
+	assert.Equal(suite.T(), []string{"c", "a", "b"}, scopes)
+}
+
+func (suite *ResourceIndicatorsTestSuite) TestDownscopeToResourceServer_EmptyScopes_Unchanged() {
+	scopes, err := DownscopeToResourceServer(context.Background(), suite.mockResourceService, "rs01",
+		[]string{})
+
+	assert.Nil(suite.T(), err)
+	assert.Empty(suite.T(), scopes)
+}
+
+func (suite *ResourceIndicatorsTestSuite) TestDownscopeToResourceServer_ValidatePermissionsError_ReturnsServerError() {
+	svcErr := &tidcommon.ServiceError{Type: tidcommon.ServerErrorType, Code: "RSE-5000"}
+	suite.mockResourceService.On("ValidatePermissions", mock.Anything, "rs01", []string{"read"}).
+		Return(nil, svcErr)
+
+	scopes, err := DownscopeToResourceServer(context.Background(), suite.mockResourceService, "rs01",
+		[]string{"read"})
+
+	assert.Nil(suite.T(), scopes)
+	assert.NotNil(suite.T(), err)
+	assert.Equal(suite.T(), constants.ErrorServerError, err.Error)
+}
+
+// ComputeRSValidScopes tests
+
+func (suite *ResourceIndicatorsTestSuite) TestComputeRSValidScopes_Empty() {
+	result, err := ComputeRSValidScopes(context.Background(), suite.mockResourceService,
+		[]*providers.ResourceServer{}, []string{"read"})
+	assert.Nil(suite.T(), err)
 	assert.Empty(suite.T(), result)
 }
 
-func (suite *ResourceIndicatorsTestSuite) TestFilterByIdentifiers_AllMatch() {
-	rs1 := &resource.ResourceServer{ID: "rs01", Identifier: "https://rs01.example.com"}
-	rs2 := &resource.ResourceServer{ID: "rs02", Identifier: "https://rs02.example.com"}
-	result := FilterByIdentifiers([]*resource.ResourceServer{rs1, rs2},
-		[]string{"https://rs01.example.com", "https://rs02.example.com"})
-	assert.Equal(suite.T(), []*resource.ResourceServer{rs1, rs2}, result)
+func (suite *ResourceIndicatorsTestSuite) TestComputeRSValidScopes_DropsInvalidPerRS() {
+	rs := &providers.ResourceServer{ID: "rs01", Identifier: "https://rs01.example.com"}
+	suite.mockResourceService.On("ValidatePermissions", mock.Anything, "rs01", []string{"read", "write"}).
+		Return([]string{"write"}, nil)
+
+	result, err := ComputeRSValidScopes(context.Background(), suite.mockResourceService,
+		[]*providers.ResourceServer{rs}, []string{"read", "write"})
+
+	assert.Nil(suite.T(), err)
+	assert.Equal(suite.T(), map[string][]string{"rs01": {"read"}}, result)
 }
 
-func (suite *ResourceIndicatorsTestSuite) TestFilterByIdentifiers_Subset() {
-	rs1 := &resource.ResourceServer{ID: "rs01", Identifier: "https://rs01.example.com"}
-	rs2 := &resource.ResourceServer{ID: "rs02", Identifier: "https://rs02.example.com"}
-	result := FilterByIdentifiers([]*resource.ResourceServer{rs1, rs2},
-		[]string{"https://rs01.example.com"})
-	assert.Equal(suite.T(), []*resource.ResourceServer{rs1}, result)
+func (suite *ResourceIndicatorsTestSuite) TestComputeRSValidScopes_ValidatePermissionsError_ReturnsServerError() {
+	rs := &providers.ResourceServer{ID: "rs01", Identifier: "https://rs01.example.com"}
+	svcErr := &tidcommon.ServiceError{Type: tidcommon.ServerErrorType, Code: "RSE-5000"}
+	suite.mockResourceService.On("ValidatePermissions", mock.Anything, "rs01", []string{"read"}).
+		Return(nil, svcErr)
+
+	result, err := ComputeRSValidScopes(context.Background(), suite.mockResourceService,
+		[]*providers.ResourceServer{rs}, []string{"read"})
+
+	assert.Nil(suite.T(), result)
+	assert.NotNil(suite.T(), err)
+	assert.Equal(suite.T(), constants.ErrorServerError, err.Error)
 }
 
-func (suite *ResourceIndicatorsTestSuite) TestFilterByIdentifiers_NoMatch() {
-	rs1 := &resource.ResourceServer{ID: "rs01", Identifier: "https://rs01.example.com"}
-	result := FilterByIdentifiers([]*resource.ResourceServer{rs1}, []string{"https://other.example.com"})
-	assert.Empty(suite.T(), result)
+// ResolveAndDownscope tests
+
+func (suite *ResourceIndicatorsTestSuite) TestResolveAndDownscope_NoResources_Unchanged() {
+	resolved, scopes, err := ResolveAndDownscope(context.Background(), suite.mockResourceService,
+		[]string{}, []string{"read", "write"})
+
+	assert.Nil(suite.T(), err)
+	assert.Nil(suite.T(), resolved)
+	assert.Equal(suite.T(), []string{"read", "write"}, scopes)
 }
 
-func (suite *ResourceIndicatorsTestSuite) TestFilterByIdentifiers_PreservesOrder() {
-	rs1 := &resource.ResourceServer{ID: "rs01", Identifier: "https://b.example.com"}
-	rs2 := &resource.ResourceServer{ID: "rs02", Identifier: "https://a.example.com"}
-	result := FilterByIdentifiers([]*resource.ResourceServer{rs1, rs2},
-		[]string{"https://b.example.com", "https://a.example.com"})
-	assert.Equal(suite.T(), []*resource.ResourceServer{rs1, rs2}, result)
+func (suite *ResourceIndicatorsTestSuite) TestResolveAndDownscope_Downscopes() {
+	rs := providers.ResourceServer{ID: "rs01", Identifier: "https://rs01.example.com"}
+	suite.mockResourceService.On("GetResourceServerByIdentifier", mock.Anything, "https://rs01.example.com").
+		Return(&rs, nil)
+	suite.mockResourceService.On("ValidatePermissions", mock.Anything, "rs01", []string{"read", "write"}).
+		Return([]string{"write"}, nil)
+
+	resolved, scopes, err := ResolveAndDownscope(context.Background(), suite.mockResourceService,
+		[]string{"https://rs01.example.com"}, []string{"read", "write"})
+
+	assert.Nil(suite.T(), err)
+	assert.Equal(suite.T(), []*providers.ResourceServer{&rs}, resolved)
+	assert.Equal(suite.T(), []string{"read"}, scopes)
 }
 
-// UnionScopes tests
+func (suite *ResourceIndicatorsTestSuite) TestResolveAndDownscope_UnknownIdentifier_ReturnsInvalidTarget() {
+	svcErr := &tidcommon.ServiceError{Type: tidcommon.ClientErrorType, Code: "RSE-4041"}
+	suite.mockResourceService.On("GetResourceServerByIdentifier", mock.Anything, "https://unknown.example.com").
+		Return(nil, svcErr)
 
-func (suite *ResourceIndicatorsTestSuite) TestUnionScopes_Empty() {
-	result := UnionScopes(map[string][]string{})
-	assert.Empty(suite.T(), result)
+	resolved, scopes, err := ResolveAndDownscope(context.Background(), suite.mockResourceService,
+		[]string{"https://unknown.example.com"}, []string{"read"})
+
+	assert.Nil(suite.T(), resolved)
+	assert.Nil(suite.T(), scopes)
+	assert.NotNil(suite.T(), err)
+	assert.Equal(suite.T(), constants.ErrorInvalidTarget, err.Error)
 }
 
-func (suite *ResourceIndicatorsTestSuite) TestUnionScopes_Deduped() {
-	input := map[string][]string{
-		"rs01": {"read", "write"},
-		"rs02": {"write", "delete"},
-	}
-	result := UnionScopes(input)
-	assert.Contains(suite.T(), result, "read")
-	assert.Contains(suite.T(), result, "write")
-	assert.Contains(suite.T(), result, "delete")
-	assert.Equal(suite.T(), 3, len(result))
+func (suite *ResourceIndicatorsTestSuite) TestResolveTargetResourceServer_InvalidResourceURI_ReturnsInvalidTarget() {
+	resolved, err := ResolveTargetResourceServer(context.Background(), suite.mockResourceService,
+		[]string{"api.example.com/resource"})
+
+	assert.Nil(suite.T(), resolved)
+	assert.NotNil(suite.T(), err)
+	assert.Equal(suite.T(), constants.ErrorInvalidTarget, err.Error)
+}
+
+// ResolveAudienceBinding tests
+
+func (suite *ResourceIndicatorsTestSuite) TestResolveAudienceBinding_NoResourceNoPermissionScopes_ReturnsNil() {
+	rs, err := ResolveAudienceBinding(context.Background(), suite.mockResourceService, nil, nil)
+
+	assert.Nil(suite.T(), rs)
+	assert.Nil(suite.T(), err)
+}
+
+func (suite *ResourceIndicatorsTestSuite) TestResolveAudienceBinding_PermissionScopes_ResolvesDefault() {
+	suite.mockResourceService.On("GetResourceServerByIdentifier", mock.Anything, "").
+		Return(&providers.ResourceServer{ID: "rs-1", Identifier: "https://api.example.com"}, nil)
+
+	rs, err := ResolveAudienceBinding(context.Background(), suite.mockResourceService,
+		nil, []string{"read"})
+
+	assert.Nil(suite.T(), err)
+	assert.NotNil(suite.T(), rs)
+	assert.Equal(suite.T(), "rs-1", rs.ID)
+}
+
+func (suite *ResourceIndicatorsTestSuite) TestResolveAudienceBinding_ExplicitResourceNoPermissionScopes_Resolves() {
+	rs := providers.ResourceServer{ID: "rs01", Identifier: "https://api.example.com"}
+	suite.mockResourceService.On("GetResourceServerByIdentifier", mock.Anything, "https://api.example.com").
+		Return(&rs, nil)
+
+	resolved, err := ResolveAudienceBinding(context.Background(), suite.mockResourceService,
+		[]string{"https://api.example.com"}, nil)
+
+	assert.Nil(suite.T(), err)
+	assert.Equal(suite.T(), &rs, resolved)
 }

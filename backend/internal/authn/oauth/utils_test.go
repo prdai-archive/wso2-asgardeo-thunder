@@ -20,17 +20,20 @@ package oauth
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
 	"testing"
 
+	tidcommon "github.com/thunder-id/thunderid/pkg/thunderidengine/common"
+	"github.com/thunder-id/thunderid/pkg/thunderidengine/providers"
+
 	"github.com/stretchr/testify/suite"
 
 	"github.com/thunder-id/thunderid/internal/idp"
 	"github.com/thunder-id/thunderid/internal/system/cmodels"
-	"github.com/thunder-id/thunderid/internal/system/error/serviceerror"
 	"github.com/thunder-id/thunderid/internal/system/log"
 	"github.com/thunder-id/thunderid/tests/mocks/httpmock"
 )
@@ -52,7 +55,7 @@ func (suite *OAuthUtilsTestSuite) TestParseIDPConfig() {
 	tokenEndpointProp, _ := cmodels.NewProperty("token_endpoint", "https://localhost:8090/token", false)
 	userInfoProp, _ := cmodels.NewProperty("userinfo_endpoint", "https://localhost:8090/userinfo", false)
 
-	idpDTO := &idp.IDPDTO{
+	idpDTO := &providers.IDPDTO{
 		Properties: []cmodels.Property{
 			*clientIDProp,
 			*clientSecretProp,
@@ -82,7 +85,7 @@ func (suite *OAuthUtilsTestSuite) TestParseIDPConfigWithSpaceSeparatedScopes() {
 	clientIDProp, _ := cmodels.NewProperty("client_id", "test_client", false)
 	scopesProp, _ := cmodels.NewProperty("scopes", "openid profile email", false)
 
-	idpDTO := &idp.IDPDTO{
+	idpDTO := &providers.IDPDTO{
 		Properties: []cmodels.Property{
 			*clientIDProp,
 			*scopesProp,
@@ -103,7 +106,7 @@ func (suite *OAuthUtilsTestSuite) TestParseIDPConfigWithAdditionalParams() {
 	clientIDProp, _ := cmodels.NewProperty("client_id", "test_client", false)
 	customProp, _ := cmodels.NewProperty("custom_param", "custom_value", false)
 
-	idpDTO := &idp.IDPDTO{
+	idpDTO := &providers.IDPDTO{
 		Properties: []cmodels.Property{
 			*clientIDProp,
 			*customProp,
@@ -116,11 +119,33 @@ func (suite *OAuthUtilsTestSuite) TestParseIDPConfigWithAdditionalParams() {
 	suite.Equal("custom_value", config.AdditionalParams["custom_param"])
 }
 
+func (suite *OAuthUtilsTestSuite) TestParseIDPConfigExcludesInternalPropsFromAdditionalParams() {
+	clientIDProp, _ := cmodels.NewProperty("client_id", "test_client", false)
+	issuerProp, _ := cmodels.NewProperty(idp.PropIssuer, "https://idp.example.com/oauth2/token", false)
+	teProp, _ := cmodels.NewProperty(idp.PropTokenExchangeEnabled, "true", false)
+	customProp, _ := cmodels.NewProperty("custom_param", "custom_value", false)
+
+	idpDTO := &providers.IDPDTO{
+		Properties: []cmodels.Property{
+			*clientIDProp, *issuerProp, *teProp, *customProp,
+		},
+	}
+
+	config, err := parseIDPConfig(idpDTO)
+	suite.Nil(err)
+	suite.NotNil(config)
+	// Internal/server-side properties must not leak into the external authorize request.
+	suite.NotContains(config.AdditionalParams, idp.PropIssuer)
+	suite.NotContains(config.AdditionalParams, idp.PropTokenExchangeEnabled)
+	// Genuinely custom params still pass through.
+	suite.Equal("custom_value", config.AdditionalParams["custom_param"])
+}
+
 func (suite *OAuthUtilsTestSuite) TestParseIDPConfigWithEmptyValues() {
 	clientIDProp, _ := cmodels.NewProperty("client_id", "test_client", false)
 	emptyProp, _ := cmodels.NewProperty("custom_param", "", false)
 
-	idpDTO := &idp.IDPDTO{
+	idpDTO := &providers.IDPDTO{
 		Properties: []cmodels.Property{
 			*clientIDProp,
 			*emptyProp,
@@ -145,7 +170,7 @@ func (suite *OAuthUtilsTestSuite) TestBuildTokenRequestSuccess() {
 	code := "auth_code_123"
 	logger := log.GetLogger()
 
-	req, err := buildTokenRequest(config, code, logger)
+	req, err := buildTokenRequest(context.Background(), config, code, logger)
 
 	suite.Nil(err)
 	suite.NotNil(req)
@@ -173,11 +198,11 @@ func (suite *OAuthUtilsTestSuite) TestBuildTokenRequestWithInvalidURL() {
 	}
 	logger := log.GetLogger()
 
-	req, err := buildTokenRequest(config, "code123", logger)
+	req, err := buildTokenRequest(context.Background(), config, "code123", logger)
 
 	suite.Nil(req)
 	suite.NotNil(err)
-	suite.Equal(serviceerror.InternalServerError.Code, err.Code)
+	suite.Equal(tidcommon.InternalServerError.Code, err.Code)
 }
 
 func (suite *OAuthUtilsTestSuite) TestSendTokenRequestSuccess() {
@@ -224,7 +249,7 @@ func (suite *OAuthUtilsTestSuite) TestSendTokenRequestHTTPError() {
 
 	suite.Nil(resp)
 	suite.NotNil(err)
-	suite.Equal(serviceerror.InternalServerError.Code, err.Code)
+	suite.Equal(tidcommon.InternalServerError.Code, err.Code)
 }
 
 func (suite *OAuthUtilsTestSuite) TestSendTokenRequestNonOKStatus() {
@@ -244,7 +269,7 @@ func (suite *OAuthUtilsTestSuite) TestSendTokenRequestNonOKStatus() {
 
 	suite.Nil(resp)
 	suite.NotNil(err)
-	suite.Equal(serviceerror.InternalServerError.Code, err.Code)
+	suite.Equal(tidcommon.InternalServerError.Code, err.Code)
 }
 
 func (suite *OAuthUtilsTestSuite) TestSendTokenRequestInvalidJSON() {
@@ -263,7 +288,7 @@ func (suite *OAuthUtilsTestSuite) TestSendTokenRequestInvalidJSON() {
 
 	suite.Nil(resp)
 	suite.NotNil(err)
-	suite.Equal(serviceerror.InternalServerError.Code, err.Code)
+	suite.Equal(tidcommon.InternalServerError.Code, err.Code)
 }
 
 func (suite *OAuthUtilsTestSuite) TestBuildUserInfoRequestSuccess() {
@@ -271,7 +296,7 @@ func (suite *OAuthUtilsTestSuite) TestBuildUserInfoRequestSuccess() {
 	accessToken := "access_token_123"
 	logger := log.GetLogger()
 
-	req, err := buildUserInfoRequest(userInfoEndpoint, accessToken, logger)
+	req, err := buildUserInfoRequest(context.Background(), userInfoEndpoint, accessToken, logger)
 
 	suite.Nil(err)
 	suite.NotNil(req)
@@ -284,11 +309,11 @@ func (suite *OAuthUtilsTestSuite) TestBuildUserInfoRequestSuccess() {
 func (suite *OAuthUtilsTestSuite) TestBuildUserInfoRequestWithInvalidURL() {
 	logger := log.GetLogger()
 
-	req, err := buildUserInfoRequest("://invalid-url", "token", logger)
+	req, err := buildUserInfoRequest(context.Background(), "://invalid-url", "token", logger)
 
 	suite.Nil(req)
 	suite.NotNil(err)
-	suite.Equal(serviceerror.InternalServerError.Code, err.Code)
+	suite.Equal(tidcommon.InternalServerError.Code, err.Code)
 }
 
 func (suite *OAuthUtilsTestSuite) TestSendUserInfoRequestSuccess() {
@@ -329,7 +354,7 @@ func (suite *OAuthUtilsTestSuite) TestSendUserInfoRequestHTTPError() {
 
 	suite.Nil(resp)
 	suite.NotNil(err)
-	suite.Equal(serviceerror.InternalServerError.Code, err.Code)
+	suite.Equal(tidcommon.InternalServerError.Code, err.Code)
 }
 
 func (suite *OAuthUtilsTestSuite) TestSendUserInfoRequestNonOKStatus() {
@@ -349,7 +374,7 @@ func (suite *OAuthUtilsTestSuite) TestSendUserInfoRequestNonOKStatus() {
 
 	suite.Nil(resp)
 	suite.NotNil(err)
-	suite.Equal(serviceerror.InternalServerError.Code, err.Code)
+	suite.Equal(tidcommon.InternalServerError.Code, err.Code)
 }
 
 func (suite *OAuthUtilsTestSuite) TestSendUserInfoRequestInvalidJSON() {
@@ -368,7 +393,7 @@ func (suite *OAuthUtilsTestSuite) TestSendUserInfoRequestInvalidJSON() {
 
 	suite.Nil(resp)
 	suite.NotNil(err)
-	suite.Equal(serviceerror.InternalServerError.Code, err.Code)
+	suite.Equal(tidcommon.InternalServerError.Code, err.Code)
 }
 
 func (suite *OAuthUtilsTestSuite) TestProcessSubClaimSuccess() {
@@ -546,7 +571,7 @@ func (suite *OAuthUtilsTestSuite) TestParseIDPConfigWithLogoutAndJwks() {
 	logoutProp, _ := cmodels.NewProperty("logout_endpoint", "https://localhost:8090/logout", false)
 	jwksProp, _ := cmodels.NewProperty("jwks_endpoint", "https://localhost:8090/jwks", false)
 
-	idpDTO := &idp.IDPDTO{
+	idpDTO := &providers.IDPDTO{
 		Properties: []cmodels.Property{
 			*clientIDProp,
 			*scopesProp,
@@ -625,4 +650,62 @@ func (suite *OAuthUtilsTestSuite) TestSendTokenRequestCloseErrorAndDoReturnsResp
 	got2, err2 := sendTokenRequest(req, mockHTTPClient2, logger)
 	suite.Nil(got2)
 	suite.NotNil(err2)
+}
+
+func (suite *OAuthUtilsTestSuite) TestValidateNonce() {
+	tests := []struct {
+		name          string
+		claims        map[string]interface{}
+		expectedNonce string
+		expectError   bool
+	}{
+		{
+			name:          "Success",
+			claims:        map[string]interface{}{"nonce": "abc123"},
+			expectedNonce: "abc123",
+			expectError:   false,
+		},
+		{
+			name:          "MissingNonceInClaims",
+			claims:        map[string]interface{}{},
+			expectedNonce: "abc123",
+			expectError:   true,
+		},
+		{
+			name:          "EmptyNonceInClaims",
+			claims:        map[string]interface{}{"nonce": ""},
+			expectedNonce: "abc123",
+			expectError:   true,
+		},
+		{
+			name:          "NonStringNonceInClaims",
+			claims:        map[string]interface{}{"nonce": 12345},
+			expectedNonce: "abc123",
+			expectError:   true,
+		},
+		{
+			name:          "EmptyExpectedNonce",
+			claims:        map[string]interface{}{"nonce": "abc123"},
+			expectedNonce: "",
+			expectError:   true,
+		},
+		{
+			name:          "Mismatch",
+			claims:        map[string]interface{}{"nonce": "abc123"},
+			expectedNonce: "xyz789",
+			expectError:   true,
+		},
+	}
+
+	for _, tc := range tests {
+		suite.Run(tc.name, func() {
+			err := ValidateNonce(context.Background(), tc.claims, tc.expectedNonce, log.GetLogger())
+			if tc.expectError {
+				suite.NotNil(err)
+				suite.Equal(tidcommon.InternalServerError.Code, err.Code)
+			} else {
+				suite.Nil(err)
+			}
+		})
+	}
 }

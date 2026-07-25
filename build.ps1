@@ -1,6 +1,6 @@
 #!/usr/bin/env pwsh
 # ----------------------------------------------------------------------------
-# Copyright (c) 2025, WSO2 LLC. (https://www.wso2.com).
+# Copyright (c) 2025-2026, WSO2 LLC. (https://www.wso2.com).
 #
 # WSO2 LLC. licenses this file to you under the Apache License,
 # Version 2.0 (the "License"); you may not use this file except
@@ -33,29 +33,8 @@ param(
     [string]$TestRun,
     
     [Parameter(Position = 4)]
-    [string]$TestPackage,
-
-    [switch]$WithoutConsent
+    [string]$TestPackage
 )
-
-# Accept --without-consent anywhere in positional arguments.
-$positionalArgs = @($Command, $GO_OS, $GO_ARCH, $TestRun, $TestPackage)
-$withoutConsentFromArgs = $false
-
-for ($i = 0; $i -lt $positionalArgs.Count; $i++) {
-    if ($positionalArgs[$i] -ceq "--without-consent") {
-        $withoutConsentFromArgs = $true
-        $positionalArgs[$i] = $null
-    }
-}
-
-$Command = $positionalArgs[0]
-$GO_OS = $positionalArgs[1]
-$GO_ARCH = $positionalArgs[2]
-$TestRun = $positionalArgs[3]
-$TestPackage = $positionalArgs[4]
-
-$skipConsent = $WithoutConsent.IsPresent -or $withoutConsentFromArgs -or ($env:WITHOUT_CONSENT -eq "true")
 
 $PRODUCT_NAME = "ThunderID"
 $PRODUCT_NAME_LOWERCASE = $PRODUCT_NAME.ToLower()
@@ -121,22 +100,6 @@ if ([string]::IsNullOrEmpty($GO_ARCH)) {
 
 Write-Host "Using GO OS: $GO_OS and ARCH: $GO_ARCH"
 
-$SAMPLE_DIST_NODE_VERSION = "node18"
-$SAMPLE_DIST_OS = $GO_OS
-$SAMPLE_DIST_ARCH = $GO_ARCH
-
-# Transform OS for node packaging executor
-if ($SAMPLE_DIST_OS -eq "darwin") {
-    $SAMPLE_DIST_OS = "macos"
-}
-elseif ($SAMPLE_DIST_OS -eq "windows") {
-    $SAMPLE_DIST_OS = "win"
-}
-
-if ($SAMPLE_DIST_ARCH -eq "amd64") {
-    $SAMPLE_DIST_ARCH = "x64"
-}
-
 # --- Package Distribution details ---
 $GO_PACKAGE_OS = $GO_OS
 $GO_PACKAGE_ARCH = $GO_ARCH
@@ -164,29 +127,30 @@ $BINARY_NAME = $PRODUCT_NAME_LOWERCASE
 $PRODUCT_FOLDER = "${BINARY_NAME}-${PRODUCT_VERSION}-${GO_PACKAGE_OS}-${GO_PACKAGE_ARCH}"
 
 # --- Sample App Distribution details ---
-$SAMPLE_PACKAGE_OS = $SAMPLE_DIST_OS
-$SAMPLE_PACKAGE_ARCH = $SAMPLE_DIST_ARCH
 
 # React Vanilla Sample
-$VANILLA_SAMPLE_APP_SERVER_BINARY_NAME = "server"
 $vanillaPackageJson = Get-Content "samples/apps/react-vanilla-sample/package.json" -Raw | ConvertFrom-Json
 $VANILLA_SAMPLE_APP_VERSION = $vanillaPackageJson.version
-$VANILLA_SAMPLE_APP_FOLDER = "sample-app-react-vanilla-${VANILLA_SAMPLE_APP_VERSION}-${SAMPLE_PACKAGE_OS}-${SAMPLE_PACKAGE_ARCH}"
+$VANILLA_SAMPLE_APP_FOLDER = "sample-app-react-vanilla-${VANILLA_SAMPLE_APP_VERSION}"
 
 # React SDK Sample
 $reactSdkPackageJson = Get-Content "samples/apps/react-sdk-sample/package.json" -Raw | ConvertFrom-Json
 $REACT_SDK_SAMPLE_APP_VERSION = $reactSdkPackageJson.version
-$REACT_SDK_SAMPLE_APP_FOLDER = "sample-app-react-sdk-${REACT_SDK_SAMPLE_APP_VERSION}-${SAMPLE_PACKAGE_OS}-${SAMPLE_PACKAGE_ARCH}"
+$REACT_SDK_SAMPLE_APP_FOLDER = "sample-app-react-sdk-${REACT_SDK_SAMPLE_APP_VERSION}"
 
 # React API-based Sample
 $reactApiPackageJson = Get-Content "samples/apps/react-api-based-sample/package.json" -Raw | ConvertFrom-Json
 $REACT_API_SAMPLE_APP_VERSION = $reactApiPackageJson.version
-$REACT_API_SAMPLE_APP_FOLDER = "sample-app-react-api-based-${REACT_API_SAMPLE_APP_VERSION}-${SAMPLE_PACKAGE_OS}-${SAMPLE_PACKAGE_ARCH}"
+$REACT_API_SAMPLE_APP_FOLDER = "sample-app-react-api-based-${REACT_API_SAMPLE_APP_VERSION}"
 
 # Wayfinder Sample
 $agentIdPackageJson = Get-Content "samples/apps/wayfinder-sample/package.json" -Raw | ConvertFrom-Json
 $WAYFINDER_SAMPLE_APP_VERSION = $agentIdPackageJson.version
-$WAYFINDER_SAMPLE_APP_FOLDER = "sample-app-wayfinder-${WAYFINDER_SAMPLE_APP_VERSION}-${SAMPLE_PACKAGE_OS}-${SAMPLE_PACKAGE_ARCH}"
+$WAYFINDER_SAMPLE_APP_FOLDER = "sample-app-wayfinder-${WAYFINDER_SAMPLE_APP_VERSION}"
+
+# PNPM version to use for frontend builds and docs build
+$rootPackageJson = Get-Content "package.json" -Raw | ConvertFrom-Json
+$PNPM_VERSION = $rootPackageJson.devEngines.packageManager.version
 
 # Directories
 $TARGET_DIR = Join-Path $SCRIPT_DIR "target"
@@ -196,11 +160,10 @@ $BUILD_DIR = Join-Path $OUTPUT_DIR ".build"
 $LOCAL_CERT_DIR = Join-Path $OUTPUT_DIR ".cert"
 $BACKEND_BASE_DIR = "backend"
 $BACKEND_DIR = Join-Path $BACKEND_BASE_DIR "cmd/server"
-$REPOSITORY_DIR = Join-Path $BACKEND_BASE_DIR "cmd/server/repository"
-$REPOSITORY_DB_DIR = Join-Path $REPOSITORY_DIR "database"
+$REPOSITORY_DB_DIR = Join-Path $BACKEND_DIR "database"
 $SERVER_SCRIPTS_DIR = Join-Path $BACKEND_BASE_DIR "scripts"
 $SERVER_DB_SCRIPTS_DIR = Join-Path $BACKEND_BASE_DIR "dbscripts"
-$SECURITY_DIR = "repository/resources/security"
+$SECURITY_DIR = "config/certs"
 $FRONTEND_BASE_DIR = "frontend"
 $GATE_APP_DIST_DIR = "apps/gate"
 $CONSOLE_APP_DIST_DIR = "apps/console"
@@ -213,6 +176,14 @@ $REACT_SDK_SAMPLE_APP_DIR = Join-Path $SAMPLE_BASE_DIR "apps/react-sdk-sample"
 $REACT_API_SAMPLE_APP_DIR = Join-Path $SAMPLE_BASE_DIR "apps/react-api-based-sample"
 $WAYFINDER_SAMPLE_APP_DIR = Join-Path $SAMPLE_BASE_DIR "apps/wayfinder-sample"
 
+# Quick start declarative bundles staged into the console's welcome feature so they're inlined
+# into the console JS bundle at build time.
+# Add a new bundle as a single line. Name may include "/" for grouping.
+$QUICKSTART_SAMPLE_BUNDLES = @(
+    @{ Name = "wayfinder"; Source = (Join-Path $WAYFINDER_SAMPLE_APP_DIR "thunderid-config") }
+)
+$QUICKSTART_BUNDLE_STAGE_DIR = Join-Path $FRONTEND_CONSOLE_APP_SOURCE_DIR "src/features/welcome/data/sample-bundles"
+
 # Default ports
 $GATE_APP_DEFAULT_PORT = 5190
 $CONSOLE_APP_DEFAULT_PORT = 5191
@@ -222,7 +193,7 @@ $DOCS_DEFAULT_PORT = 3000
 # Read Configuration from deployment.yaml
 # ============================================================================
 
-$CONFIG_FILE = "./backend/cmd/server/repository/conf/deployment.yaml"
+$CONFIG_FILE = "./backend/cmd/server/deployment.yaml"
 
 # Function to read config with fallback
 function Read-Config {
@@ -232,7 +203,6 @@ function Read-Config {
         $script:PORT = 8090
         $script:HTTP_ONLY = "false"
         $script:PUBLIC_HOSTNAME = ""
-        $script:CONSENT_ENABLED = $true
     }
     else {
         # Try yq first (YAML parser)
@@ -241,8 +211,6 @@ function Read-Config {
             $script:PORT = & yq eval '.server.port // 8090' $CONFIG_FILE 2>$null
             $script:HTTP_ONLY = & yq eval '.server.http_only // false' $CONFIG_FILE 2>$null
             $script:PUBLIC_HOSTNAME = & yq eval '.server.public_hostname // ""' $CONFIG_FILE 2>$null
-            $consentEnabled = & yq eval '.consent.enabled // true' $CONFIG_FILE 2>$null
-            $script:CONSENT_ENABLED = ($consentEnabled -eq "true")
         }
         else {
             # Fallback: basic parsing with regex
@@ -279,15 +247,6 @@ function Read-Config {
             else {
                 $script:PUBLIC_HOSTNAME = ""
             }
-
-            # Try to extract consent.enabled
-            if ($content -match 'consent:[\s\S]*?enabled:\s*(true|false)') {
-                $script:CONSENT_ENABLED = ($matches[1] -eq "true")
-            }
-            else {
-                $script:CONSENT_ENABLED = $true
-            }
-
         }
     }
     
@@ -353,6 +312,11 @@ function Clean {
     Write-Host "Removing certificates in $BACKEND_DIR/$SECURITY_DIR"
     if (Test-Path (Join-Path $BACKEND_DIR $SECURITY_DIR)) {
         Remove-Item -Path (Join-Path $BACKEND_DIR $SECURITY_DIR) -Recurse -Force -ErrorAction SilentlyContinue
+    }
+
+    Write-Host "Removing runtime secrets in $BACKEND_DIR/config/secrets"
+    if (Test-Path (Join-Path $BACKEND_DIR "config/secrets")) {
+        Remove-Item -Path (Join-Path $BACKEND_DIR "config/secrets") -Recurse -Force -ErrorAction SilentlyContinue
     }
 
     Write-Host "Removing certificates in $VANILLA_SAMPLE_APP_DIR"
@@ -446,7 +410,7 @@ function Build-Backend {
 function Ensure-Pnpm {
     if (-not (Get-Command pnpm -ErrorAction SilentlyContinue)) {
         Write-Host "pnpm not found, installing..."
-        & npm install -g pnpm
+        & npm install -g "pnpm@$PNPM_VERSION"
     }
 }
 
@@ -454,7 +418,9 @@ function Build-Frontend {
     Write-Host "================================================================"
     Write-Host "Building frontend apps..."
     Ensure-Pnpm
-    
+
+    Sync-QuickstartBundles
+
     # Install dependencies
     try {
         Write-Host "Installing frontend dependencies..."
@@ -489,54 +455,102 @@ function Build-Docs {
     Write-Host "================================================================"
 }
 
-function Build-JavaScript-SDKs {
+function Build-CLI {
+    Write-Host "Building CLI tool..."
+    & bash "$PSScriptRoot/tools/cli/scripts/build.sh"
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+}
+
+function Test-CLI {
+    Write-Host "Running CLI tool tests..."
+    Push-Location "$PSScriptRoot/tools/cli"
+    try {
+        & go test -v -race -count=1 ./...
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    } finally {
+        Pop-Location
+    }
+}
+
+function Build-I18n-Extractor {
+    $toolBin = Join-Path $PSScriptRoot "backend/bin/tools"
+    New-Item -ItemType Directory -Force -Path $toolBin | Out-Null
+    Write-Host "Building i18n-extractor..."
+    Push-Location "$PSScriptRoot/tools/i18n-extractor"
+    try {
+        & go build -o "$toolBin/i18n-extractor.exe" .
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    } finally {
+        Pop-Location
+    }
+}
+
+function Test-I18n-Extractor {
+    Write-Host "Running i18n-extractor tests..."
+    Push-Location "$PSScriptRoot/tools/i18n-extractor"
+    try {
+        & go test -v .
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    } finally {
+        Pop-Location
+    }
+}
+
+function Lint-CLI {
+    $golangciLint = Join-Path $PSScriptRoot "backend/bin/tools/golangci-lint.exe"
+    Write-Host "Linting CLI tool..."
+    Push-Location "$PSScriptRoot/tools/cli"
+    try {
+        & $golangciLint run ./...
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    } finally {
+        Pop-Location
+    }
+}
+
+function Lint-I18n-Extractor {
+    $golangciLint = Join-Path $PSScriptRoot "backend/bin/tools/golangci-lint.exe"
+    Write-Host "Linting i18n-extractor..."
+    Push-Location "$PSScriptRoot/tools/i18n-extractor"
+    try {
+        & $golangciLint run ./...
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    } finally {
+        Pop-Location
+    }
+}
+
+function Lint-Tools {
+    Write-Host "================================================================"
+    Write-Host "Linting tools..."
+    Lint-CLI
+    Lint-I18n-Extractor
+    Write-Host "================================================================"
+}
+
+function Build-Npm-Tools {
     Ensure-Pnpm
-    
-    Write-Host "Installing SDK dependencies..."
+    Write-Host "Installing tools dependencies..."
     & pnpm install --frozen-lockfile
-    
-    Write-Host "Building JavaScript ecosystem SDK packages..."
-    & pnpm --filter './sdks/**' build
+    Write-Host "Building npm-based tools..."
+    & pnpm --filter './tools/**' build
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 }
 
-function Test-JavaScript-SDKs {
-    Ensure-Pnpm
-    
-    Write-Host "Installing SDK dependencies..."
-    & pnpm install --frozen-lockfile
-    
-    Write-Host "Running JavaScript ecosystem SDK tests..."
-    & pnpm --filter './sdks/**' test
-}
-
-function Lint-JavaScript-SDKs {
-    Ensure-Pnpm
-    
-    Write-Host "Installing SDK dependencies..."
-    & pnpm install --frozen-lockfile
-    
-    Write-Host "Linting JavaScript ecosystem SDK packages..."
-    & pnpm --filter './sdks/**' lint
-}
-
-function Build-SDKs {
+function Build-Tools {
     Write-Host "================================================================"
-    Write-Host "Building SDKs..."
-    Build-JavaScript-SDKs
+    Write-Host "Building tools..."
+    Build-CLI
+    Build-I18n-Extractor
+    Build-Npm-Tools
     Write-Host "================================================================"
 }
 
-function Test-SDKs {
+function Test-Tools {
     Write-Host "================================================================"
-    Write-Host "Running SDK tests..."
-    Test-JavaScript-SDKs
-    Write-Host "================================================================"
-}
-
-function Lint-SDKs {
-    Write-Host "================================================================"
-    Write-Host "Linting SDKs..."
-    Lint-JavaScript-SDKs
+    Write-Host "Running tool tests..."
+    Test-CLI
+    Test-I18n-Extractor
     Write-Host "================================================================"
 }
 
@@ -566,8 +580,8 @@ function Initialize-Databases {
 
     New-Item -Path $REPOSITORY_DB_DIR -ItemType Directory -Force | Out-Null
 
-    $db_files = @("configdb.db", "runtimedb.db", "userdb.db")
-    $script_paths = @("configdb/sqlite.sql", "runtimedb/sqlite.sql", "userdb/sqlite.sql")
+    $db_files = @("configdb.db", "runtime_transient.db", "entitydb.db", "runtime_persistent.db")
+    $script_paths = @("configdb/sqlite.sql", "runtime_transient/sqlite.sql", "entitydb/sqlite.sql", "runtime_persistent/sqlite.sql")
 
     for ($i = 0; $i -lt $db_files.Length; $i++) {
         $db_file = $db_files[$i]
@@ -620,26 +634,31 @@ function Prepare-Backend-For-Packaging {
 
     $package_folder = Join-Path $DIST_DIR $PRODUCT_FOLDER
     Copy-Item -Path (Join-Path $BUILD_DIR $binary_name) -Destination $package_folder -Force
-    Copy-Item -Path $REPOSITORY_DIR -Destination $package_folder -Recurse -Force
+    Copy-Item -Path (Join-Path $BACKEND_DIR "deployment.yaml") -Destination $package_folder -Force
+    Copy-Item -Path (Join-Path $BACKEND_DIR "config") -Destination $package_folder -Recurse -Force
+    if (Test-Path $REPOSITORY_DB_DIR) {
+        Copy-Item -Path $REPOSITORY_DB_DIR -Destination $package_folder -Recurse -Force
+    }
     Copy-Item -Path $VERSION_FILE -Destination $package_folder -Force
     Copy-Item -Path $SERVER_SCRIPTS_DIR -Destination $package_folder -Recurse -Force
     Copy-Item -Path $SERVER_DB_SCRIPTS_DIR -Destination $package_folder -Recurse -Force
     
     $security_dir = Join-Path $package_folder $SECURITY_DIR
     New-Item -Path $security_dir -ItemType Directory -Force | Out-Null
+    # Never ship key material: strip any dev certs/keys that copying config above may have brought in.
+    Remove-Item -Path (Join-Path $security_dir "*.cert") -Force -ErrorAction SilentlyContinue
+    Remove-Item -Path (Join-Path $security_dir "*.key") -Force -ErrorAction SilentlyContinue
+    # Never ship runtime secrets: strip the dev Direct Auth Secret that copying config may have brought in.
+    # setup.ps1 generates a fresh per-deployment secret.
+    Remove-Item -Path (Join-Path $package_folder "config/secrets") -Recurse -Force -ErrorAction SilentlyContinue
 
     # Copy bootstrap directory
     Write-Host "Copying bootstrap scripts..."
     Copy-Item -Path (Join-Path $BACKEND_DIR "bootstrap") -Destination $package_folder -Recurse -Force
+    # Never ship the dev-only CORS seed that Run stages into the source bootstrap dir.
+    Remove-Item -Path (Join-Path $package_folder "bootstrap/02-server-configurations.yaml") -Force -ErrorAction SilentlyContinue
 
-    Write-Host "=== Ensuring server certificates exist in the distribution ==="
-    Ensure-Certificates -cert_dir $security_dir -cert_name_prefix "server"
-    Ensure-Certificates -cert_dir $security_dir -cert_name_prefix "signing"
-    Write-Host "================================================================"
-
-    Write-Host "=== Ensuring crypto file exists in the distribution ==="
-    Ensure-Crypto-File -conf_dir (Join-Path $package_folder "repository/conf")
-    Write-Host "================================================================"
+    # Key material is not generated into the distribution; setup.ps1 generates it per deployment.
 }
 
 function Prepare-Frontend-For-Packaging {
@@ -671,6 +690,25 @@ function Prepare-Frontend-For-Packaging {
     Write-Host "================================================================"
 }
 
+function Sync-QuickstartBundles {
+    # Stage Quick start declarative bundles into the console's public dir.
+    Write-Host "Syncing quick start sample bundles to console welcome data dir..."
+    if (Test-Path $QUICKSTART_BUNDLE_STAGE_DIR) {
+        Remove-Item -Path $QUICKSTART_BUNDLE_STAGE_DIR -Recurse -Force
+    }
+    foreach ($bundle in $QUICKSTART_SAMPLE_BUNDLES) {
+        $dest_dir = Join-Path $QUICKSTART_BUNDLE_STAGE_DIR $bundle.Name
+        if (Test-Path $bundle.Source) {
+            Write-Host "  Staging '$($bundle.Name)' from $($bundle.Source)"
+            New-Item -Path $dest_dir -ItemType Directory -Force | Out-Null
+            Copy-Item -Path (Join-Path $bundle.Source "*") -Destination $dest_dir -Recurse -Force
+        }
+        else {
+            Write-Host "  Warning: Quick start bundle source not found at $($bundle.Source) (dest '$($bundle.Name)')"
+        }
+    }
+}
+
 function Package {
     Write-Host "================================================================"
     Write-Host "Packaging backend & frontend artifacts..."
@@ -693,56 +731,6 @@ function Package {
         Copy-Item -Path "setup.sh" -Destination $package_folder -Force
     }
 
-    if (-not $skipConsent) {
-        Write-Host "Packaging consent server..."
-        $packageFolderAbs = (Resolve-Path -Path $package_folder).Path
-        & (Join-Path $SCRIPT_DIR "scripts/package-consent-server.ps1") `
-            -GoOS $GO_OS -GoArch $GO_ARCH -DistOutputPath $packageFolderAbs
-        if ($LASTEXITCODE -ne 0) {
-            throw "Consent server packaging failed with exit code $LASTEXITCODE"
-        }
-    } else {
-        Write-Host "Skipping consent server packaging (--without-consent)..."
-        $targetYaml = Join-Path $package_folder "repository/conf/deployment.yaml"
-        $yqPatched = $false
-        if (Get-Command yq -ErrorAction SilentlyContinue) {
-            & yq eval '.consent.enabled = false' -i $targetYaml
-            if ($LASTEXITCODE -eq 0) {
-                $yqPatched = $true
-            }
-        }
-        if (-not $yqPatched) {
-            $content = Get-Content $targetYaml
-            $inConsent = $false
-            for ($i = 0; $i -lt $content.Length; $i++) {
-                if ($content[$i] -match '^consent:') {
-                    $inConsent = $true
-                } elseif ($inConsent -and $content[$i] -match '^\s*enabled:\s*true') {
-                    $content[$i] = $content[$i] -replace 'enabled:\s*true', 'enabled: false'
-                    $inConsent = $false
-                } elseif ($inConsent -and $content[$i] -match '^\S') {
-                    $inConsent = $false
-                }
-            }
-            $content | Set-Content $targetYaml
-        }
-        $consentDisabled = $false
-        $inConsentBlock = $false
-        foreach ($line in (Get-Content $targetYaml)) {
-            if ($line -match '^consent:') {
-                $inConsentBlock = $true
-            } elseif ($inConsentBlock -and $line -match '^\s+enabled:\s*false') {
-                $consentDisabled = $true
-                break
-            } elseif ($inConsentBlock -and $line -match '^\S') {
-                break
-            }
-        }
-        if (-not $consentDisabled) {
-            throw "Failed to disable consent in '$targetYaml' — packaging cannot continue with consent still enabled."
-        }
-    }
-
     Write-Host "Creating zip file..."
     $zipFile = Join-Path $DIST_DIR "$PRODUCT_FOLDER.zip"
     if (Test-Path $zipFile) {
@@ -759,171 +747,24 @@ function Package {
     Write-Host "================================================================"
 }
 
-function Build-Sample-App {
-    Write-Host "================================================================"
-    Write-Host "Building sample apps..."
-
-    # Build React Vanilla sample
-    Write-Host "=== Building React Vanilla sample app ==="
-    Write-Host "=== Ensuring React Vanilla sample app certificates exist ==="
-    Ensure-Certificates -cert_dir $VANILLA_SAMPLE_APP_DIR -cert_name_prefix "server"
-
-    Push-Location $VANILLA_SAMPLE_APP_DIR
-    try {
-        Write-Host "Installing React Vanilla sample dependencies..."
-        & npm ci
-        if ($LASTEXITCODE -ne 0) {
-            throw "npm ci failed with exit code $LASTEXITCODE"
-        }
-
-        Write-Host "Building React Vanilla sample app (TypeScript + Vite)..."
-
-        Write-Host " - Running TypeScript build (tsc -b)..."
-        & npx tsc -b
-        if ($LASTEXITCODE -ne 0) {
-            throw "tsc build failed with exit code $LASTEXITCODE"
-        }
-
-        Write-Host " - Running Vite build..."
-        & npx vite build
-        if ($LASTEXITCODE -ne 0) {
-            throw "vite build failed with exit code $LASTEXITCODE"
-        }
-
-        # Replicate npm script: copy dist to server/app and copy certs
-        $serverDir = Join-Path $VANILLA_SAMPLE_APP_DIR "server"
-        $serverAppDir = Join-Path $serverDir "app"
-        if (Test-Path $serverAppDir) {
-            Remove-Item -Path $serverAppDir -Recurse -Force
-        }
-        New-Item -Path $serverAppDir -ItemType Directory -Force | Out-Null
-
-        $distFull = Resolve-Path -Path "dist" | Select-Object -ExpandProperty Path
-        Copy-Item -Path (Join-Path $distFull "*") -Destination $serverAppDir -Recurse -Force
-
-        # Copy server certs into server directory
-        if (Test-Path (Join-Path $VANILLA_SAMPLE_APP_DIR "server.key")) {
-            Copy-Item -Path (Join-Path $VANILLA_SAMPLE_APP_DIR "server.key") -Destination $serverDir -Force
-        }
-        if (Test-Path (Join-Path $VANILLA_SAMPLE_APP_DIR "server.cert")) {
-            Copy-Item -Path (Join-Path $VANILLA_SAMPLE_APP_DIR "server.cert") -Destination $serverDir -Force
-        }
-
-        # Install server dependencies
-        Push-Location $serverDir
-        try {
-            Write-Host " - Installing server dependencies..."
-            & npm ci
-            if ($LASTEXITCODE -ne 0) {
-                throw "npm ci (server) failed with exit code $LASTEXITCODE"
-            }
-        }
-        finally {
-            Pop-Location
-        }
-    }
-    finally {
-        Pop-Location
-    }
-
-    Write-Host "✅ React Vanilla sample app built successfully."
-
-    # Build React SDK sample
-    Write-Host "=== Building React SDK sample app ==="
-
-    # Ensure certificates exist for React SDK sample
-    Write-Host "=== Ensuring React SDK sample app certificates exist ==="
-    Ensure-Certificates -cert_dir $REACT_SDK_SAMPLE_APP_DIR -cert_name_prefix "server"
-
-    Push-Location $REACT_SDK_SAMPLE_APP_DIR
-    try {
-        Write-Host "Installing React SDK sample dependencies..."
-        & npm ci
-        if ($LASTEXITCODE -ne 0) {
-            throw "npm ci failed with exit code $LASTEXITCODE"
-        }
-
-        Write-Host "Building React SDK sample app..."
-        & npm run build
-        if ($LASTEXITCODE -ne 0) {
-            throw "npm run build failed with exit code $LASTEXITCODE"
-        }
-    }
-    finally {
-        Pop-Location
-    }
-
-    Write-Host "✅ React SDK sample app built successfully."
-
-    # Build React API-based sample
-    Write-Host "=== Building React API-based sample app ==="
-
-    # Ensure certificates exist for React API-based sample
-    Write-Host "=== Ensuring React API-based sample app certificates exist ==="
-    Ensure-Certificates -cert_dir $REACT_API_SAMPLE_APP_DIR
-
-    Push-Location $REACT_API_SAMPLE_APP_DIR
-    try {
-        Write-Host "Installing React API-based sample dependencies..."
-        & npm ci
-        if ($LASTEXITCODE -ne 0) {
-            throw "npm ci failed with exit code $LASTEXITCODE"
-        }
-
-        Write-Host "Building React API-based sample app..."
-        & npm run build
-        if ($LASTEXITCODE -ne 0) {
-            throw "npm run build failed with exit code $LASTEXITCODE"
-        }
-    }
-    finally {
-        Pop-Location
-    }
-
-    Write-Host "✅ React API-based sample app built successfully."
-
-    # Build Wayfinder sample (Wayfinder)
-    Write-Host "=== Building Wayfinder sample app ==="
-
-    Push-Location (Join-Path $WAYFINDER_SAMPLE_APP_DIR "frontend")
-    try {
-        Write-Host "Installing Wayfinder sample frontend dependencies..."
-        & npm ci
-        if ($LASTEXITCODE -ne 0) {
-            throw "npm ci failed with exit code $LASTEXITCODE"
-        }
-
-        Write-Host "Building Wayfinder sample frontend..."
-        & npm run build
-        if ($LASTEXITCODE -ne 0) {
-            throw "npm run build failed with exit code $LASTEXITCODE"
-        }
-    }
-    finally {
-        Pop-Location
-    }
-
-    foreach ($svc in @("backend", "ai-agent")) {
-        Write-Host "Installing Wayfinder sample $svc dependencies..."
-        Push-Location (Join-Path $WAYFINDER_SAMPLE_APP_DIR $svc)
-        try {
-            & npm ci
-            if ($LASTEXITCODE -ne 0) {
-                throw "npm ci ($svc) failed with exit code $LASTEXITCODE"
-            }
-        }
-        finally {
-            Pop-Location
-        }
-    }
-
-    Write-Host "✅ Wayfinder sample app built successfully."
-    Write-Host "================================================================"
-}
-
 function Package-Sample-App {
     Write-Host "================================================================"
     Write-Host "Packaging sample apps..."
+    Ensure-Pnpm
+
+    # pnpm pack rewrites workspace: dependencies to real versions, which
+    # requires the workspace to be installed.
+    Write-Host "Installing workspace dependencies..."
+    & pnpm install --frozen-lockfile
+    if ($LASTEXITCODE -ne 0) {
+        throw "pnpm install failed with exit code $LASTEXITCODE"
+    }
+
+    # Samples are packaged from source; ship certificates for the samples that
+    # expect them at the package root (react-api-based ignores them via .gitignore).
+    Write-Host "=== Ensuring sample app certificates exist ==="
+    Ensure-Certificates -cert_dir $VANILLA_SAMPLE_APP_DIR -cert_name_prefix "server"
+    Ensure-Certificates -cert_dir $REACT_SDK_SAMPLE_APP_DIR -cert_name_prefix "server"
 
     # Package React Vanilla sample
     Write-Host "=== Packaging React Vanilla sample app ==="
@@ -945,72 +786,17 @@ function Package-Sample-App {
 }
 
 function Package-Vanilla-Sample {
-    # Use appropriate binary name based on OS
-    $binary_name = $VANILLA_SAMPLE_APP_SERVER_BINARY_NAME
-    $executable_name = "$VANILLA_SAMPLE_APP_SERVER_BINARY_NAME-$SAMPLE_DIST_OS-$SAMPLE_DIST_ARCH"
+    Push-Location $VANILLA_SAMPLE_APP_DIR
+    & pnpm pack --pack-destination (Resolve-Path $DIST_DIR).Path
+    Pop-Location
 
-    if ($SAMPLE_DIST_OS -eq "win") {
-        $binary_name = "${VANILLA_SAMPLE_APP_SERVER_BINARY_NAME}.exe"
-        $executable_name = "${VANILLA_SAMPLE_APP_SERVER_BINARY_NAME}-${SAMPLE_DIST_OS}-${SAMPLE_DIST_ARCH}.exe"
+    $tgz = Get-ChildItem -Path $DIST_DIR -Filter "thunderid-react-vanilla-sample-*.tgz" | Select-Object -First 1
+    if (-not $tgz) {
+        throw "pnpm pack did not produce a tgz for react-vanilla-sample"
     }
 
-    $vanilla_sample_app_folder = Join-Path $DIST_DIR $VANILLA_SAMPLE_APP_FOLDER
-    New-Item -Path $vanilla_sample_app_folder -ItemType Directory -Force | Out-Null
-    $vanilla_sample_app_folder = (Resolve-Path -Path $vanilla_sample_app_folder).Path
-
-    # Copy the built app files
-    $serverAppSource = Join-Path $VANILLA_SAMPLE_APP_SERVER_DIR "app"
-    if (-not (Test-Path $serverAppSource)) {
-        Write-Host "Server app folder '$serverAppSource' not found; falling back to copying from '$VANILLA_SAMPLE_APP_DIR/dist'..."
-        New-Item -Path $VANILLA_SAMPLE_APP_SERVER_DIR -ItemType Directory -Force | Out-Null
-        New-Item -Path $serverAppSource -ItemType Directory -Force | Out-Null
-
-        $distFull = Resolve-Path -Path (Join-Path $VANILLA_SAMPLE_APP_DIR "dist") | Select-Object -ExpandProperty Path
-        Copy-Item -Path (Join-Path $distFull "*") -Destination $serverAppSource -Recurse -Force
-    }
-
-    Copy-Item -Path $serverAppSource -Destination $vanilla_sample_app_folder -Recurse -Force
-
-    Push-Location $VANILLA_SAMPLE_APP_SERVER_DIR
-    try {
-        New-Item -Path "executables" -ItemType Directory -Force | Out-Null
-
-        # Install dependencies to ensure pkg is available
-        & npm ci
-        if ($LASTEXITCODE -ne 0) {
-            throw "npm ci failed with exit code $LASTEXITCODE"
-        }
-
-        & npx pkg . -t $SAMPLE_DIST_NODE_VERSION-$SAMPLE_DIST_OS-$SAMPLE_DIST_ARCH -o executables/$VANILLA_SAMPLE_APP_SERVER_BINARY_NAME-$SAMPLE_DIST_OS-$SAMPLE_DIST_ARCH
-        if ($LASTEXITCODE -ne 0) {
-            throw "npx pkg failed with exit code $LASTEXITCODE"
-        }
-    }
-    finally {
-        Pop-Location
-    }
-
-    # Copy the server binary
-    Copy-Item -Path (Join-Path $VANILLA_SAMPLE_APP_SERVER_DIR "executables/$executable_name") -Destination (Join-Path $vanilla_sample_app_folder $binary_name) -Force
-
-    # Copy README and other necessary files
-    if (Test-Path (Join-Path $VANILLA_SAMPLE_APP_DIR "README.md")) {
-        Copy-Item -Path (Join-Path $VANILLA_SAMPLE_APP_DIR "README.md") -Destination $vanilla_sample_app_folder -Force
-    }
-
-    # Ensure the certificates exist in the sample app directory
-    Write-Host "=== Ensuring certificates exist in the React Vanilla sample distribution ==="
-    Ensure-Certificates -cert_dir $vanilla_sample_app_folder -cert_name_prefix "server"
-
-    # Copy the appropriate startup script based on the target OS
-    if ($SAMPLE_DIST_OS -eq "win") {
-        Write-Host "Including Windows start script (start.ps1)..."
-        Copy-Item -Path (Join-Path $VANILLA_SAMPLE_APP_SERVER_DIR "start.ps1") -Destination $vanilla_sample_app_folder -Force
-    }
-    else {
-        Write-Host "Including Unix start script (start.sh)..."
-        Copy-Item -Path (Join-Path $VANILLA_SAMPLE_APP_SERVER_DIR "start.sh") -Destination $vanilla_sample_app_folder -Force
-    }
+    tar xzf $tgz.FullName -C $DIST_DIR
+    Rename-Item -Path (Join-Path $DIST_DIR "package") -NewName $VANILLA_SAMPLE_APP_FOLDER
 
     Write-Host "Creating React Vanilla sample zip file..."
     $distAbs = (Resolve-Path -Path $DIST_DIR).Path
@@ -1020,45 +806,25 @@ function Package-Vanilla-Sample {
     }
 
     Add-Type -AssemblyName System.IO.Compression.FileSystem
-    [System.IO.Compression.ZipFile]::CreateFromDirectory($vanilla_sample_app_folder, $zipFile)
-
-    Remove-Item -Path $vanilla_sample_app_folder -Recurse -Force
+    [System.IO.Compression.ZipFile]::CreateFromDirectory((Join-Path $DIST_DIR $VANILLA_SAMPLE_APP_FOLDER), $zipFile)
+    Remove-Item -Path (Join-Path $DIST_DIR $VANILLA_SAMPLE_APP_FOLDER) -Recurse -Force
+    Remove-Item -Path $tgz.FullName -Force
 
     Write-Host "✅ React Vanilla sample app packaged successfully as $zipFile"
 }
 
 function Package-React-SDK-Sample {
-    $react_sdk_sample_app_folder_t = Join-Path $DIST_DIR $REACT_SDK_SAMPLE_APP_FOLDER
-    New-Item -Path $react_sdk_sample_app_folder_t -ItemType Directory -Force | Out-Null
+    Push-Location $REACT_SDK_SAMPLE_APP_DIR
+    & pnpm pack --pack-destination (Resolve-Path $DIST_DIR).Path
+    Pop-Location
 
-    # Copy the built React app (dist folder)
-    if (Test-Path (Join-Path $REACT_SDK_SAMPLE_APP_DIR "dist")) {
-        Write-Host "Copying React SDK sample build output..."
-        Copy-Item -Path (Join-Path $REACT_SDK_SAMPLE_APP_DIR "dist") -Destination $react_sdk_sample_app_folder_t -Recurse -Force
-    }
-    else {
-        Write-Host "Warning: React SDK sample build output not found at $((Join-Path $REACT_SDK_SAMPLE_APP_DIR 'dist'))"
-        throw "React SDK sample build output not found"
+    $tgz = Get-ChildItem -Path $DIST_DIR -Filter "thunderid-react-sdk-sample-*.tgz" | Select-Object -First 1
+    if (-not $tgz) {
+        throw "pnpm pack did not produce a tgz for react-sdk-sample"
     }
 
-    # Copy README and other necessary files
-    if (Test-Path (Join-Path $REACT_SDK_SAMPLE_APP_DIR "README.md")) {
-        Copy-Item -Path (Join-Path $REACT_SDK_SAMPLE_APP_DIR "README.md") -Destination $react_sdk_sample_app_folder_t -Force
-    }
-
-    if (Test-Path (Join-Path $REACT_SDK_SAMPLE_APP_DIR ".env.example")) {
-        Copy-Item -Path (Join-Path $REACT_SDK_SAMPLE_APP_DIR ".env.example") -Destination $react_sdk_sample_app_folder_t -Force
-    }
-
-    # Copy the appropriate startup script based on the target OS
-    if ($SAMPLE_DIST_OS -eq "win") {
-        Write-Host "Including Windows start script (start.ps1)..."
-        Copy-Item -Path (Join-Path $REACT_SDK_SAMPLE_APP_DIR "start.ps1") -Destination $react_sdk_sample_app_folder_t -Force
-    }
-    else {
-        Write-Host "Including Unix start script (start.sh)..."
-        Copy-Item -Path (Join-Path $REACT_SDK_SAMPLE_APP_DIR "start.sh") -Destination $react_sdk_sample_app_folder_t -Force
-    }
+    tar xzf $tgz.FullName -C $DIST_DIR
+    Rename-Item -Path (Join-Path $DIST_DIR "package") -NewName $REACT_SDK_SAMPLE_APP_FOLDER
 
     Write-Host "Creating React SDK sample zip file..."
     $distAbs = (Resolve-Path -Path $DIST_DIR).Path
@@ -1068,45 +834,29 @@ function Package-React-SDK-Sample {
     }
 
     Add-Type -AssemblyName System.IO.Compression.FileSystem
-    [System.IO.Compression.ZipFile]::CreateFromDirectory($react_sdk_sample_app_folder_t, $zipFile)
-
-    Remove-Item -Path $react_sdk_sample_app_folder_t -Recurse -Force
+    [System.IO.Compression.ZipFile]::CreateFromDirectory((Join-Path $DIST_DIR $REACT_SDK_SAMPLE_APP_FOLDER), $zipFile)
+    Remove-Item -Path (Join-Path $DIST_DIR $REACT_SDK_SAMPLE_APP_FOLDER) -Recurse -Force
+    Remove-Item -Path $tgz.FullName -Force
 
     Write-Host "✅ React SDK sample app packaged successfully as $zipFile"
 }
 
 function Package-React-API-Based-Sample {
-    $react_api_sample_app_folder_t = Join-Path $DIST_DIR $REACT_API_SAMPLE_APP_FOLDER
-    New-Item -Path $react_api_sample_app_folder_t -ItemType Directory -Force | Out-Null
+    Push-Location $REACT_API_SAMPLE_APP_DIR
+    & pnpm pack --pack-destination (Resolve-Path $DIST_DIR).Path
+    Pop-Location
 
-    # Copy the built React app (dist folder)
-    if (Test-Path (Join-Path $REACT_API_SAMPLE_APP_DIR "dist")) {
-        Write-Host "Copying React API-based sample build output..."
-        Copy-Item -Path (Join-Path $REACT_API_SAMPLE_APP_DIR "dist") -Destination $react_api_sample_app_folder_t -Recurse -Force
-    }
-    else {
-        Write-Host "Warning: React API-based sample build output not found at $((Join-Path $REACT_API_SAMPLE_APP_DIR 'dist'))"
-        throw "React API-based sample build output not found"
+    $tgz = Get-ChildItem -Path $DIST_DIR -Filter "thunderid-react-api-based-sample-*.tgz" | Select-Object -First 1
+    if (-not $tgz) {
+        throw "pnpm pack did not produce a tgz for react-api-based-sample"
     }
 
-    # Copy README if it exists
-    if (Test-Path (Join-Path $REACT_API_SAMPLE_APP_DIR "README.md")) {
-        Copy-Item -Path (Join-Path $REACT_API_SAMPLE_APP_DIR "README.md") -Destination $react_api_sample_app_folder_t -Force
-    }
+    tar xzf $tgz.FullName -C $DIST_DIR
+    Rename-Item -Path (Join-Path $DIST_DIR "package") -NewName $REACT_API_SAMPLE_APP_FOLDER
 
-    # Ensure the certificates exist in the sample app dist directory
-    Write-Host "=== Ensuring certificates exist in the React API-based sample distribution ==="
-    Ensure-Certificates -cert_dir (Join-Path $react_api_sample_app_folder_t "dist")
-
-    # Copy the appropriate startup script based on the target OS
-    if ($SAMPLE_DIST_OS -eq "win") {
-        Write-Host "Including Windows start script (start.ps1)..."
-        Copy-Item -Path (Join-Path $REACT_API_SAMPLE_APP_DIR "start.ps1") -Destination $react_api_sample_app_folder_t -Force
-    }
-    else {
-        Write-Host "Including Unix start script (start.sh)..."
-        Copy-Item -Path (Join-Path $REACT_API_SAMPLE_APP_DIR "start.sh") -Destination $react_api_sample_app_folder_t -Force
-    }
+    # Certs are gitignored in this sample so pnpm pack excludes them; inject them
+    # into the package root where vite.config.ts expects them.
+    Ensure-Certificates -cert_dir (Join-Path $DIST_DIR $REACT_API_SAMPLE_APP_FOLDER) -cert_name_prefix "server"
 
     Write-Host "Creating React API-based sample zip file..."
     $distAbs = (Resolve-Path -Path $DIST_DIR).Path
@@ -1116,74 +866,34 @@ function Package-React-API-Based-Sample {
     }
 
     Add-Type -AssemblyName System.IO.Compression.FileSystem
-    [System.IO.Compression.ZipFile]::CreateFromDirectory($react_api_sample_app_folder_t, $zipFile)
-
-    Remove-Item -Path $react_api_sample_app_folder_t -Recurse -Force
+    [System.IO.Compression.ZipFile]::CreateFromDirectory((Join-Path $DIST_DIR $REACT_API_SAMPLE_APP_FOLDER), $zipFile)
+    Remove-Item -Path (Join-Path $DIST_DIR $REACT_API_SAMPLE_APP_FOLDER) -Recurse -Force
+    Remove-Item -Path $tgz.FullName -Force
 
     Write-Host "✅ React API-based sample app packaged successfully as $zipFile"
 }
 
 function Package-Wayfinder-Sample {
+    Push-Location $WAYFINDER_SAMPLE_APP_DIR
+    & pnpm pack --pack-destination (Resolve-Path $DIST_DIR).Path
+    Pop-Location
+
+    $tgz = Get-ChildItem -Path $DIST_DIR -Filter "thunderid-wayfinder-sample-*.tgz" | Select-Object -First 1
+    if (-not $tgz) {
+        throw "pnpm pack did not produce a tgz for wayfinder-sample"
+    }
+
+    tar xzf $tgz.FullName -C $DIST_DIR
+    Rename-Item -Path (Join-Path $DIST_DIR "package") -NewName $WAYFINDER_SAMPLE_APP_FOLDER
+
     $dist_folder = Join-Path $DIST_DIR $WAYFINDER_SAMPLE_APP_FOLDER
-    New-Item -Path $dist_folder -ItemType Directory -Force | Out-Null
 
-    # Frontend built ahead of time; api/mcp/ai-agent ship as source because
-    # pkg cannot bundle Node 22's node:sqlite binding and the chat agent
-    # needs runtime LLM keys from .env.
-    $frontendDist = Join-Path $WAYFINDER_SAMPLE_APP_DIR "frontend/dist"
-    if (-not (Test-Path $frontendDist)) {
-        throw "Wayfinder sample frontend build output not found at $frontendDist"
-    }
-    Write-Host "Copying Wayfinder sample frontend build output..."
-    $frontendDest = Join-Path $dist_folder "frontend"
-    New-Item -Path $frontendDest -ItemType Directory -Force | Out-Null
-    Copy-Item -Path $frontendDist -Destination $frontendDest -Recurse -Force
-    foreach ($item in @("package.json", "package-lock.json", "index.html", "vite.config.js", ".env.example", "README.md")) {
-        $src = Join-Path $WAYFINDER_SAMPLE_APP_DIR "frontend/$item"
-        if (Test-Path $src) { Copy-Item -Path $src -Destination $frontendDest -Force }
-    }
-    foreach ($subdir in @("src", "public")) {
-        $src = Join-Path $WAYFINDER_SAMPLE_APP_DIR "frontend/$subdir"
-        if (Test-Path $src) { Copy-Item -Path $src -Destination $frontendDest -Recurse -Force }
-    }
-
-    foreach ($svc in @("backend", "ai-agent")) {
-        $svcSrc = Join-Path $WAYFINDER_SAMPLE_APP_DIR $svc
-        $svcDest = Join-Path $dist_folder $svc
-        Write-Host "Copying Wayfinder sample $svc source..."
-        New-Item -Path $svcDest -ItemType Directory -Force | Out-Null
-        foreach ($item in @("package.json", "package-lock.json", "tsconfig.json", "README.md", ".env.example", "agent.ts")) {
-            $src = Join-Path $svcSrc $item
-            if (Test-Path $src) { Copy-Item -Path $src -Destination $svcDest -Force }
-        }
-        foreach ($subdir in @("src", "scripts")) {
-            $src = Join-Path $svcSrc $subdir
-            if (Test-Path $src) { Copy-Item -Path $src -Destination $svcDest -Recurse -Force }
+    foreach ($dir in @("frontend", "backend", "smtp-server", "ai-agent")) {
+        $envExample = Join-Path $dist_folder "$dir/.env.example"
+        if (Test-Path $envExample) {
+            Copy-Item -Path $envExample -Destination (Join-Path $dist_folder "$dir/.env") -Force
         }
     }
-
-    if (Test-Path (Join-Path $WAYFINDER_SAMPLE_APP_DIR "README.md")) {
-        Copy-Item -Path (Join-Path $WAYFINDER_SAMPLE_APP_DIR "README.md") -Destination $dist_folder -Force
-    }
-    if (Test-Path (Join-Path $WAYFINDER_SAMPLE_APP_DIR "package.json")) {
-        Copy-Item -Path (Join-Path $WAYFINDER_SAMPLE_APP_DIR "package.json") -Destination $dist_folder -Force
-    }
-
-    if ($SAMPLE_DIST_OS -eq "win") {
-        Write-Host "Including Windows start script (start.ps1)..."
-        Copy-Item -Path (Join-Path $WAYFINDER_SAMPLE_APP_DIR "start.ps1") -Destination $dist_folder -Force
-    }
-    else {
-        Write-Host "Including Unix start script (start.sh)..."
-        Copy-Item -Path (Join-Path $WAYFINDER_SAMPLE_APP_DIR "start.sh") -Destination $dist_folder -Force
-    }
-
-    $thunderConfig = Join-Path $WAYFINDER_SAMPLE_APP_DIR "thunderid-config"
-    if (-not (Test-Path $thunderConfig)) {
-        throw "thunderid-config directory not found at $thunderConfig"
-    }
-    Write-Host "Copying ThunderID config..."
-    Copy-Item -Path $thunderConfig -Destination $dist_folder -Recurse -Force
 
     Write-Host "Creating Wayfinder sample zip file..."
     $distAbs = (Resolve-Path -Path $DIST_DIR).Path
@@ -1194,8 +904,8 @@ function Package-Wayfinder-Sample {
 
     Add-Type -AssemblyName System.IO.Compression.FileSystem
     [System.IO.Compression.ZipFile]::CreateFromDirectory($dist_folder, $zipFile)
-
     Remove-Item -Path $dist_folder -Recurse -Force
+    Remove-Item -Path $tgz.FullName -Force
 
     Write-Host "✅ Wayfinder sample app packaged successfully as $zipFile"
 }
@@ -1285,12 +995,15 @@ function Test-Integration {
     Push-Location $SCRIPT_DIR
     try {
         # Set up coverage directory for integration tests
-        $coverage_dir = Join-Path (Get-Location) "$OUTPUT_DIR\.test\integration"
+        $coverage_dir = [System.IO.Path]::GetFullPath((Join-Path $SCRIPT_DIR "target\out\.test\integration"))
+        if (Test-Path $coverage_dir) {
+            Remove-Item -Path $coverage_dir -Recurse -Force -ErrorAction SilentlyContinue
+        }
         New-Item -Path $coverage_dir -ItemType Directory -Force | Out-Null
-        
+
         # Export coverage directory for the server binary to use
         $env:GOCOVERDIR = $coverage_dir
-        
+
         Write-Host "Coverage data will be collected in: $coverage_dir"
         if ($extra_args.Count -gt 0) {
             & go run -C ./tests/integration ./main.go @extra_args
@@ -1298,27 +1011,31 @@ function Test-Integration {
             & go run -C ./tests/integration ./main.go
         }
         $test_exit_code = $LASTEXITCODE
-        
+
         # Process coverage data if tests passed or failed
         if ((Test-Path $coverage_dir) -and ((Get-ChildItem $coverage_dir -ErrorAction SilentlyContinue).Count -gt 0)) {
             Write-Host "================================================================"
             Write-Host "Processing integration test coverage..."
-            
-            # Convert binary coverage data to text format
+
+            # Formulate robust absolute target paths to keep Windows volume prefixes intact
+            $output_file = [System.IO.Path]::GetFullPath((Join-Path $SCRIPT_DIR "target\coverage_integration.out"))
+            $output_html = [System.IO.Path]::GetFullPath((Join-Path $SCRIPT_DIR "target\coverage_integration.html"))
+
+            # Convert binary coverage data to text format cleanly
             Push-Location $BACKEND_BASE_DIR
             try {
-                & go tool covdata textfmt -i="$coverage_dir" -o="../$TARGET_DIR/coverage_integration.out"
-                Write-Host "Integration test coverage report generated in: $TARGET_DIR/coverage_integration.out"
-                
+                & go tool covdata textfmt -i="$coverage_dir" -o="$output_file"
+                Write-Host "Integration test coverage report generated in: $output_file"
+
                 # Generate HTML coverage report
-                & go tool cover -html="../$TARGET_DIR/coverage_integration.out" -o="../$TARGET_DIR/coverage_integration.html"
-                Write-Host "Integration test coverage HTML report generated in: $TARGET_DIR/coverage_integration.html"
-                
+                & go tool cover -html="$output_file" -o="$output_html"
+                Write-Host "Integration test coverage HTML report generated in: $output_html"
+
                 # Display coverage summary
                 Write-Host ""
                 Write-Host "================================================================"
                 Write-Host "Coverage Summary:"
-                & go tool cover -func="../$TARGET_DIR/coverage_integration.out" | Select-Object -Last 1
+                & go tool cover -func="$output_file" | Select-Object -Last 1
                 Write-Host "================================================================"
                 Write-Host ""
             }
@@ -1438,7 +1155,7 @@ function Export-CertificateAndKeyToPem {
         [System.Security.Cryptography.X509Certificates.X509Certificate2]$cert,
         [string]$certPath,
         [string]$keyPath,
-        [System.Security.Cryptography.RSA]$privateRSA = $null
+        [System.Security.Cryptography.AsymmetricAlgorithm]$privateKey = $null
     )
     # Export cert to PEM
     $rawCert = $cert.Export([System.Security.Cryptography.X509Certificates.X509ContentType]::Cert)
@@ -1447,50 +1164,53 @@ function Export-CertificateAndKeyToPem {
     $certPem = "-----BEGIN CERTIFICATE-----`n" + ($certLines -join "`n") + "`n-----END CERTIFICATE-----`n"
     Set-Content -Path $certPath -Value $certPem -Encoding ascii
 
-    # Obtain RSA private key. If a privateRSA instance was provided by the caller use it
+    # Obtain private key. If a privateKey instance was provided by the caller use it
     # (this avoids relying on PFX export/import semantics which can vary across runtimes).
-    $rsa = $null
+    $keyAlg = $null
     $reloadCert = $null
     try {
-        if ($null -ne $privateRSA) {
-            $rsa = $privateRSA
+        if ($null -ne $privateKey) {
+            $keyAlg = $privateKey
         }
         else {
             # Export as PFX and reload with Exportable flag so we can export the private key
             $pfxBytes = $cert.Export([System.Security.Cryptography.X509Certificates.X509ContentType]::Pfx, '')
             $reloadCert = [System.Security.Cryptography.X509Certificates.X509Certificate2]::new($pfxBytes, '', [System.Security.Cryptography.X509Certificates.X509KeyStorageFlags]::Exportable)
 
-            # Try the modern API first
-            try { $rsa = $reloadCert.GetRSAPrivateKey() } catch { $rsa = $null }
+            # Try modern APIs
+            try { $keyAlg = $reloadCert.GetRSAPrivateKey() } catch { $keyAlg = $null }
+            if (-not $keyAlg) {
+                try { $keyAlg = $reloadCert.GetECDsaPrivateKey() } catch { $keyAlg = $null }
+            }
 
-            # Fallback: some runtimes expose PrivateKey which can export parameters
-            if (-not $rsa -and $null -ne $reloadCert.PrivateKey) {
+            # Fallback for RSA if modern API fails
+            if (-not $keyAlg -and $null -ne $reloadCert.PrivateKey) {
                 try {
-                    $privateKey = $reloadCert.PrivateKey
+                    $pk = $reloadCert.PrivateKey
                     $rsaFallback = [System.Security.Cryptography.RSA]::Create()
-                    $rsaFallback.ImportParameters($privateKey.ExportParameters($true))
-                    $rsa = $rsaFallback
+                    $rsaFallback.ImportParameters($pk.ExportParameters($true))
+                    $keyAlg = $rsaFallback
                 }
                 catch {
                     if ($rsaFallback -is [System.IDisposable]) { $rsaFallback.Dispose() }
-                    $rsa = $null
+                    $keyAlg = $null
                 }
             }
         }
 
-        if (-not $rsa) { throw "Certificate does not contain an RSA private key" }
+        if (-not $keyAlg) { throw "Certificate does not contain an exportable private key" }
 
         # Export private key to PEM (PKCS#8)
-        $pkcs8 = $rsa.ExportPkcs8PrivateKey()
+        $pkcs8 = $keyAlg.ExportPkcs8PrivateKey()
         $keyBase64 = [System.Convert]::ToBase64String($pkcs8)
         $pkcs8Lines = $keyBase64 -split '(.{64})' | Where-Object { $_ -ne '' }
         $keyPem = "-----BEGIN PRIVATE KEY-----`n" + ($pkcs8Lines -join "`n") + "`n-----END PRIVATE KEY-----`n"
         Set-Content -Path $keyPath -Value $keyPem -Encoding ascii
     }
     finally {
-        # Only dispose RSA if we created it locally (i.e., privateRSA was not passed in)
-        if ($null -eq $privateRSA) {
-            if ($rsa -is [System.IDisposable]) { $rsa.Dispose() }
+        # Only dispose keyAlg if we created it locally (i.e., privateKey was not passed in)
+        if ($null -eq $privateKey) {
+            if ($keyAlg -is [System.IDisposable]) { $keyAlg.Dispose() }
             if ($reloadCert -is [System.IDisposable]) { $reloadCert.Dispose() }
         }
     }
@@ -1499,7 +1219,8 @@ function Export-CertificateAndKeyToPem {
 function Ensure-Certificates {
     param(
         [string]$cert_dir,
-        [string]$cert_name_prefix = "server"  # Default to "server" if not specified
+        [string]$cert_name_prefix = "server",
+        [string]$Algorithm = "RSA"
     )
     
     $cert_file_name = "${cert_name_prefix}.cert"
@@ -1512,15 +1233,23 @@ function Ensure-Certificates {
     if (-not (Test-Path $local_cert_file) -or -not (Test-Path $local_key_file)) {
         New-Item -Path $LOCAL_CERT_DIR -ItemType Directory -Force | Out-Null
         
-        Write-Host "Generating certificates ($cert_name_prefix) in $LOCAL_CERT_DIR..."
+        Write-Host "Generating certificates ($cert_name_prefix) in $LOCAL_CERT_DIR using $Algorithm..."
         
         try {
             $openssl = Get-Command openssl -ErrorAction SilentlyContinue
             if ($openssl) {
-                & openssl req -x509 -nodes -days 365 -newkey rsa:2048 `
-                    -keyout $local_key_file `
-                    -out $local_cert_file `
-                    -subj "/O=WSO2/OU=$PRODUCT_NAME/CN=localhost" 2>$null
+                if ($Algorithm -eq "ECDSA") {
+                    & openssl ecparam -name prime256v1 -genkey -noout -param_enc named_curve -out $local_key_file 2>$null
+                    if ($LASTEXITCODE -ne 0) { throw "Error generating EC key: OpenSSL failed with exit code $LASTEXITCODE" }
+                    & openssl req -new -x509 -nodes -key $local_key_file -out $local_cert_file -days 3650 -subj "/O=WSO2/OU=$PRODUCT_NAME/CN=localhost" -addext "subjectAltName=DNS:localhost,IP:127.0.0.1" 2>$null
+                }
+                else {
+                    & openssl req -x509 -nodes -days 365 -newkey rsa:2048 `
+                        -keyout $local_key_file `
+                        -out $local_cert_file `
+                        -subj "/O=WSO2/OU=$PRODUCT_NAME/CN=localhost" `
+                        -addext "subjectAltName=DNS:localhost,IP:127.0.0.1" 2>$null
+                }
                 if ($LASTEXITCODE -ne 0) {
                     throw "Error generating certificates: OpenSSL failed with exit code $LASTEXITCODE"
                 }
@@ -1530,10 +1259,17 @@ function Ensure-Certificates {
                 Write-Host "OpenSSL not found - generating certificates using .NET CertificateRequest (no UI)."
                 # Use .NET CertificateRequest to avoid CertEnroll / smartcard enrollment UI issues.
                 try {
-                    $rsa = [System.Security.Cryptography.RSA]::Create(2048)
-
+                    $keyAlg = $null
+                    $certReq = $null
                     $subjectName = New-Object System.Security.Cryptography.X509Certificates.X500DistinguishedName("CN=localhost, O=WSO2, OU=$PRODUCT_NAME")
-                    $certReq = New-Object System.Security.Cryptography.X509Certificates.CertificateRequest($subjectName, $rsa, [System.Security.Cryptography.HashAlgorithmName]::SHA256, [System.Security.Cryptography.RSASignaturePadding]::Pkcs1)
+
+                    if ($Algorithm -eq "ECDSA") {
+                        $keyAlg = [System.Security.Cryptography.ECDsa]::Create([System.Security.Cryptography.ECCurve+NamedCurves]::nistP256)
+                        $certReq = New-Object System.Security.Cryptography.X509Certificates.CertificateRequest($subjectName, $keyAlg, [System.Security.Cryptography.HashAlgorithmName]::SHA256)
+                    } else {
+                        $keyAlg = [System.Security.Cryptography.RSA]::Create(2048)
+                        $certReq = New-Object System.Security.Cryptography.X509Certificates.CertificateRequest($subjectName, $keyAlg, [System.Security.Cryptography.HashAlgorithmName]::SHA256, [System.Security.Cryptography.RSASignaturePadding]::Pkcs1)
+                    }
 
                     # Add standard server usages
                     $basicConstraints = New-Object System.Security.Cryptography.X509Certificates.X509BasicConstraintsExtension($false, $false, 0, $false)
@@ -1550,6 +1286,10 @@ function Ensure-Certificates {
                     $certReq.CertificateExtensions.Add($keyUsage)
                     $certReq.CertificateExtensions.Add($eku)
 
+                    $sanBuilder = New-Object System.Security.Cryptography.X509Certificates.SubjectAlternativeNameBuilder
+                    $sanBuilder.AddDnsName("localhost")
+                    $certReq.CertificateExtensions.Add($sanBuilder.Build())
+
                     $notBefore = (Get-Date).AddDays(-1)
                     $notAfter = (Get-Date).AddYears(1)
 
@@ -1557,13 +1297,21 @@ function Ensure-Certificates {
 
                     # Ensure the generated certificate has the private key associated. Use CopyWithPrivateKey
                     # so that when we export the PFX it includes the private key and can be reloaded as exportable.
-                    # Use the RSA extension helper to avoid overload resolution issues in PowerShell.
                     try {
-                        $certWithKey = [System.Security.Cryptography.X509Certificates.RSACertificateExtensions]::CopyWithPrivateKey($cert, $rsa)
+                        if ($Algorithm -eq "ECDSA") {
+                            $certWithKey = [System.Security.Cryptography.X509Certificates.ECDsaCertificateExtensions]::CopyWithPrivateKey($cert, $keyAlg)
+                        } else {
+                            $certWithKey = [System.Security.Cryptography.X509Certificates.RSACertificateExtensions]::CopyWithPrivateKey($cert, $keyAlg)
+                        }
                     }
                     catch {
                         try {
-                            $certWithKey = [System.Security.Cryptography.X509Certificates.RSACertificateExtensions]::CopyWithPrivateKey(([System.Security.Cryptography.X509Certificates.X509Certificate2]::new($cert.RawData)), $rsa)
+                            $cert2 = [System.Security.Cryptography.X509Certificates.X509Certificate2]::new($cert.RawData)
+                            if ($Algorithm -eq "ECDSA") {
+                                $certWithKey = [System.Security.Cryptography.X509Certificates.ECDsaCertificateExtensions]::CopyWithPrivateKey($cert2, $keyAlg)
+                            } else {
+                                $certWithKey = [System.Security.Cryptography.X509Certificates.RSACertificateExtensions]::CopyWithPrivateKey($cert2, $keyAlg)
+                            }
                         }
                         catch {
                             throw "Failed to associate private key with certificate: $_"
@@ -1574,14 +1322,14 @@ function Ensure-Certificates {
                     $pfxBytes = $certWithKey.Export([System.Security.Cryptography.X509Certificates.X509ContentType]::Pfx, '')
                     $exportableCert = [System.Security.Cryptography.X509Certificates.X509Certificate2]::new($pfxBytes, '', [System.Security.Cryptography.X509Certificates.X509KeyStorageFlags]::Exportable)
 
-                    # Pass the RSA instance used to sign the certificate to the exporter so it
+                    # Pass the algorithm instance used to sign the certificate to the exporter so it
                     # can directly export the private key (avoids re-import issues on some runtimes).
-                    Export-CertificateAndKeyToPem -cert $exportableCert -certPath $local_cert_file -keyPath $local_key_file -privateRSA $rsa
+                    Export-CertificateAndKeyToPem -cert $exportableCert -certPath $local_cert_file -keyPath $local_key_file -privateKey $keyAlg
 
                     if ($exportableCert -is [System.IDisposable]) { $exportableCert.Dispose() }
                     if ($certWithKey -is [System.IDisposable]) { $certWithKey.Dispose() }
                     if ($cert -is [System.IDisposable]) { $cert.Dispose() }
-                    if ($rsa -is [System.IDisposable]) { $rsa.Dispose() }
+                    if ($keyAlg -is [System.IDisposable]) { $keyAlg.Dispose() }
 
                     Write-Host "Certificates generated successfully in $LOCAL_CERT_DIR using .NET CertificateRequest." 
                 }
@@ -1618,12 +1366,10 @@ function Ensure-Certificates {
 
 function Ensure-Crypto-File {
     param(
-        [string]$conf_dir
+        [string]$key_dir
     )
 
-    # Resolve the .. path segment to get a clean key directory path
-    $KEY_DIR_Temp = Join-Path $conf_dir ".." "resources/security"
-    $KEY_DIR = (Resolve-Path -Path $KEY_DIR_Temp).Path
+    $KEY_DIR = $key_dir
     $KEY_FILE = Join-Path $KEY_DIR "crypto.key"
 
     Write-Host "================================================================"
@@ -1714,6 +1460,60 @@ function Ensure-Crypto-File {
     Write-Host "================================================================"
 }
 
+function Ensure-DirectAuthSecret-File {
+    param(
+        [string]$secret_dir
+    )
+
+    # Path referenced by server.security.direct_auth_secret (file://config/secrets/direct_auth_secret)
+    # in deployment.yaml. The server reads the secret from here at load time.
+    $SECRET_FILE = Join-Path $secret_dir "direct_auth_secret"
+
+    Write-Host "================================================================"
+    Write-Host "Ensuring Direct Auth Secret file exists..."
+
+    if (Test-Path $SECRET_FILE) {
+        Write-Host "Direct Auth Secret file already present in $SECRET_FILE. Skipping generation."
+    }
+    else {
+        Write-Host "Direct Auth Secret file not found. Generating new secret at $SECRET_FILE..."
+        $NEW_SECRET = $null
+
+        # Prefer OpenSSL; fall back to .NET cryptography (always available in PowerShell).
+        $openssl = Get-Command openssl -ErrorAction SilentlyContinue
+        if ($openssl) {
+            try {
+                $NEW_SECRET = (openssl rand -hex 32 | Out-String).Trim()
+                if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrEmpty($NEW_SECRET) -or $NEW_SECRET.Length -ne 64) {
+                    throw "OpenSSL rand command failed or returned empty/incorrect length."
+                }
+            }
+            catch {
+                Write-Host " - OpenSSL failed: $_. Falling back to .NET cryptography."
+                $NEW_SECRET = $null
+            }
+        }
+
+        if ([string]::IsNullOrEmpty($NEW_SECRET)) {
+            $bytes = New-Object byte[] 32
+            $rng = [System.Security.Cryptography.RandomNumberGenerator]::Create()
+            $rng.GetBytes($bytes)
+            $rng.Dispose()
+            $NEW_SECRET = ([System.BitConverter]::ToString($bytes) -replace '-', '').ToLower()
+        }
+
+        # Ensure the target directory exists.
+        New-Item -Path $secret_dir -ItemType Directory -Force | Out-Null
+
+        # Write the secret without a trailing newline so it is used verbatim.
+        Set-Content -Path $SECRET_FILE -Value $NEW_SECRET -NoNewline -Encoding Ascii
+
+        Write-Host "Successfully generated and added new Direct Auth Secret to $SECRET_FILE."
+    }
+
+    Write-Host "================================================================"
+}
+
 function Run {
     function Cleanup-Servers {
         Write-Host ""
@@ -1723,11 +1523,8 @@ function Run {
         }
         Get-Process -Name "*pnpm*" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
         Get-Process -Name "node" -ErrorAction SilentlyContinue | Where-Object { $_.ProcessName -like "*vite*" } | Stop-Process -Force -ErrorAction SilentlyContinue
-        if ($script:BACKEND_PID) { 
+        if ($script:BACKEND_PID) {
             Stop-Process -Id $script:BACKEND_PID -Force -ErrorAction SilentlyContinue
-        }
-        if ($script:CONSENT_PROCESS -and -not $script:CONSENT_PROCESS.HasExited) {
-            Stop-Process -Id $script:CONSENT_PROCESS.Id -Force -ErrorAction SilentlyContinue
         }
         Start-Sleep -Seconds 1
         Write-Host "✅ All servers stopped successfully."
@@ -1736,78 +1533,55 @@ function Run {
     Write-Host "Running frontend apps..."
     Run-Frontend
 
-    if ($script:CONSENT_ENABLED -and -not $skipConsent) {
-        Write-Host "Running consent server..."
-        Run-Consent
-    }
+    # Ensure runtime prerequisites (certificates, crypto material, databases) so the
+    # in-process bootstrap can create the default resources before the server starts.
+    Write-Host "=== Ensuring server certificates exist ==="
+    Ensure-Certificates -cert_dir (Join-Path $BACKEND_DIR $SECURITY_DIR) -cert_name_prefix "server"
+    Ensure-Certificates -cert_dir (Join-Path $BACKEND_DIR $SECURITY_DIR) -cert_name_prefix "signing"
+    Ensure-Certificates -cert_dir (Join-Path $BACKEND_DIR $SECURITY_DIR) -cert_name_prefix "ecdsa-signing" -Algorithm "ECDSA"
+    Ensure-Certificates -cert_dir $VANILLA_SAMPLE_APP_DIR -cert_name_prefix "server"
+    Ensure-Crypto-File -key_dir (Join-Path $BACKEND_DIR "config/certs")
+    Ensure-DirectAuthSecret-File -secret_dir (Join-Path $BACKEND_DIR "config/secrets")
+    Write-Host "Initializing databases..."
+    Initialize-Databases
 
-    # Save original skip security value and temporarily set to true
-    $script:ORIGINAL_SKIP_SECURITY = $env:SKIP_SECURITY
-    $env:SKIP_SECURITY = "true"
-    Run-Backend -ShowFinalOutput $false
-
-    # Run initial data setup
-    Write-Host "⚙️  Running initial data setup..."
+    # Create default resources via the in-process bootstrap one-shot (security stays
+    # enabled; the bootstrap runs through the service layer under a runtime context).
+    Write-Host "⚙️  Creating default resources..."
     Write-Host ""
-    
-    # Wait for server to be ready
-    $MAX_RETRIES = 30
-    $RETRY_INTERVAL = 2
-    $retries = 0
-    
-    # Configure TLS to use modern protocols (required for HTTPS requests on Windows)
+
+    # Dev-only: seed CORS allowed origins for the Gate and Console apps so they can call
+    # the backend without manual configuration. Regenerated on every run and picked up by
+    # the bootstrap one-shot; it is git-ignored and never packaged (see Build).
+    $devServerConfig = @"
+resource_type: server_config
+name: cors
+value:
+  allowedOrigins:
+    - "https://localhost:$GATE_APP_DEFAULT_PORT"
+    - "https://localhost:$CONSOLE_APP_DEFAULT_PORT"
+"@
+    Set-Content -Path (Join-Path $BACKEND_DIR "bootstrap/02-server-configurations.yaml") -Value $devServerConfig
+
+    # Local dev only: default to admin/admin if not supplied. This path never produces a
+    # shared or distributed artifact, so a fixed default here is acceptable.
+    $env:PUBLIC_URL = $PUBLIC_URL
+    $env:ADMIN_USERNAME = if ($env:ADMIN_USERNAME) { $env:ADMIN_USERNAME } else { "admin" }
+    $env:ADMIN_PASSWORD = if ($env:ADMIN_PASSWORD) { $env:ADMIN_PASSWORD } else { "admin" }
+    Push-Location $BACKEND_DIR
     try {
-        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 -bor [Net.SecurityProtocolType]::Tls13
-    } catch {
-        # Fallback to TLS 1.2 if TLS 1.3 is not available
-        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+        & go run . bootstrap --console-redirect-uris "https://localhost:${CONSOLE_APP_DEFAULT_PORT}/console"
+        $bootstrapExit = $LASTEXITCODE
     }
-    
-    Write-Host "[INFO] Waiting for $PRODUCT_NAME server to be ready..."
-    while ($retries -lt $MAX_RETRIES) {
-        try {
-            $response = Invoke-WebRequest -Uri "$BASE_URL/health/readiness" -UseBasicParsing -SkipCertificateCheck -ErrorAction Stop
-            if ($response.StatusCode -eq 200) {
-                Write-Host "✓ Server is ready!"
-                break
-            }
-        }
-        catch {
-            # Server not ready yet
-        }
-        
-        $retries++
-        if ($retries -ge $MAX_RETRIES) {
-            Write-Host "❌ Server did not become ready after $MAX_RETRIES attempts"
-            Write-Host "💡 Please ensure the $PRODUCT_NAME server is running at $BASE_URL"
-            exit 1
-        }
-        
-        Write-Host "[WAITING] Attempt $retries/$MAX_RETRIES - Server not ready yet, retrying in ${RETRY_INTERVAL}s..."
-        Start-Sleep -Seconds $RETRY_INTERVAL
+    finally {
+        Pop-Location
     }
-    
-    Write-Host ""
-    
-    # Run the bootstrap script directly with environment variable and arguments
-    $env:API_BASE = $BASE_URL
-    $bootstrapScript = Join-Path $BACKEND_BASE_DIR "cmd/server/bootstrap/01-default-resources.ps1"
-    & $bootstrapScript -ConsoleRedirectUris "https://localhost:${CONSOLE_APP_DEFAULT_PORT}/console"
-
-    if ($LASTEXITCODE -ne 0) {
+    if ($bootstrapExit -ne 0) {
         Write-Host "❌ Initial data setup failed"
         Write-Host "💡 Check the logs above for more details"
         exit 1
     }
 
-    Write-Host "🔒 Restoring security setting and restarting backend..."
-    # Restore original skip security value
-    if (![string]::IsNullOrEmpty($script:ORIGINAL_SKIP_SECURITY)) {
-        $env:SKIP_SECURITY = $script:ORIGINAL_SKIP_SECURITY
-    }
-    else {
-        Remove-Item Env:\SKIP_SECURITY -ErrorAction SilentlyContinue
-    }
     # Start backend with initial output but without final output/wait
     Start-Backend -ShowFinalOutput $false
 
@@ -1846,38 +1620,35 @@ function Run-Backend {
     Write-Host "=== Ensuring server certificates exist ==="
     Ensure-Certificates -cert_dir (Join-Path $BACKEND_DIR $SECURITY_DIR) -cert_name_prefix "server"
     Ensure-Certificates -cert_dir (Join-Path $BACKEND_DIR $SECURITY_DIR) -cert_name_prefix "signing"
+    Ensure-Certificates -cert_dir (Join-Path $BACKEND_DIR $SECURITY_DIR) -cert_name_prefix "ecdsa-signing" -Algorithm "ECDSA"
 
     Write-Host "=== Ensuring React Vanilla sample app certificates exist ==="
     Ensure-Certificates -cert_dir $VANILLA_SAMPLE_APP_DIR -cert_name_prefix "server"
 
     Write-Host "=== Ensuring crypto file exists for run ==="
-    Ensure-Crypto-File -conf_dir (Join-Path $BACKEND_DIR "repository/conf")
+    Ensure-Crypto-File -key_dir (Join-Path $BACKEND_DIR "config/certs")
+    Ensure-DirectAuthSecret-File -secret_dir (Join-Path $BACKEND_DIR "config/secrets")
 
     Write-Host "Initializing databases..."
     Initialize-Databases
 
-    if ($script:CONSENT_ENABLED -and -not $skipConsent -and -not $script:CONSENT_PROCESS) {
-        Write-Host "Running consent server..."
-        Run-Consent
-    }
-
     Start-Backend -ShowFinalOutput $ShowFinalOutput
+}
+
+ # Kill processes on known ports
+function Kill-Port {
+    param([int]$port)
+    
+    $processes = Get-NetTCPConnection -LocalPort $port -ErrorAction SilentlyContinue | Select-Object -ExpandProperty OwningProcess
+    foreach ($process in $processes) {
+        Stop-Process -Id $process -Force -ErrorAction SilentlyContinue
+    }
 }
 
 function Start-Backend {
     param(
         [bool]$ShowFinalOutput = $true
     )
-
-    # Kill processes on known ports
-    function Kill-Port {
-        param([int]$port)
-        
-        $processes = Get-NetTCPConnection -LocalPort $port -ErrorAction SilentlyContinue | Select-Object -ExpandProperty OwningProcess
-        foreach ($process in $processes) {
-            Stop-Process -Id $process -Force -ErrorAction SilentlyContinue
-        }
-    }
 
     Kill-Port $PORT
 
@@ -1906,11 +1677,8 @@ function Start-Backend {
         catch [System.Management.Automation.PipelineStoppedException] {
             Write-Host ""
             Write-Host "🛑 Shutting down servers..."
-            if ($script:BACKEND_PID) { 
+            if ($script:BACKEND_PID) {
                 Stop-Process -Id $script:BACKEND_PID -Force -ErrorAction SilentlyContinue
-            }
-            if ($script:CONSENT_PROCESS -and -not $script:CONSENT_PROCESS.HasExited) {
-                Stop-Process -Id $script:CONSENT_PROCESS.Id -Force -ErrorAction SilentlyContinue
             }
             Write-Host "✅ Servers stopped successfully."
             exit 0
@@ -1924,7 +1692,9 @@ function Run-Frontend {
     Write-Host "================================================================"
     Write-Host "Running frontend apps..."
     Ensure-Pnpm
-    
+
+    Sync-QuickstartBundles
+
     # Install dependencies
     try {
         Write-Host "Installing frontend dependencies..."
@@ -1934,7 +1704,9 @@ function Run-Frontend {
         & pnpm build:frontend
         
         Write-Host "Starting frontend applications in the background..."
-        # Start frontend processes in background
+        # In dev the apps are served on their own origins, so point them at the backend via
+        # THUNDERID_DEV_SERVER_URL (injected into __DEV_SERVER_URL__; applied only in dev builds).
+        $env:THUNDERID_DEV_SERVER_URL = $PUBLIC_URL
         $frontendProcess = Start-Process -FilePath "cmd.exe" -ArgumentList "/c", "pnpm", "-r", "--parallel", "--filter", "@thunderid/console", "--filter", "@thunderid/gate", "dev" -PassThru -NoNewWindow
         $script:FRONTEND_PID = $frontendProcess.Id
     }
@@ -1974,52 +1746,6 @@ function Run-Docs {
     Write-Host "================================================================"
 }
 
-function Run-Consent {
-    $consentDir = Join-Path $TARGET_DIR "consent"
-    $consentBinary = Join-Path $consentDir "consent-server.exe"
-    if ($GO_OS -ne "windows") {
-        $consentBinary = Join-Path $consentDir "consent-server"
-    }
-
-    if (-not (Test-Path $consentBinary)) {
-        Write-Host "=== Downloading consent server ==="
-        & .\scripts\package-consent-server.ps1 -GoOS $GO_OS -GoArch $GO_ARCH -DistOutputPath $TARGET_DIR
-        if ($LASTEXITCODE -ne 0) { throw "Failed to package consent server" }
-    }
-
-    if (-not (Test-Path $consentBinary)) {
-        Write-Host "Error: Consent server binary not found at $consentBinary"
-        exit 1
-    }
-
-    Write-Host "=== Starting consent server ==="
-    $consentPort = if ($env:CONSENT_SERVER_PORT) { $env:CONSENT_SERVER_PORT } else { "9090" }
-    $script:CONSENT_PROCESS = Start-Process -FilePath $consentBinary -WorkingDirectory $consentDir -PassThru -NoNewWindow
-    $consentTimeout = 30
-    $consentElapsed = 0
-    while ($consentElapsed -lt $consentTimeout) {
-        if ($script:CONSENT_PROCESS.HasExited) {
-            Write-Host "Error: Consent server process exited unexpectedly"
-            exit 1
-        }
-        try {
-            $resp = Invoke-WebRequest -Uri "http://localhost:${consentPort}/health/readiness" -UseBasicParsing -ErrorAction Stop
-            if ($resp.StatusCode -eq 200) {
-                Write-Host "Consent server is ready"
-                break
-            }
-        } catch { }
-        Start-Sleep -Seconds 1
-        $consentElapsed++
-    }
-    if ($consentElapsed -ge $consentTimeout) {
-        Write-Host "Error: Consent server failed to become ready within ${consentTimeout}s"
-        exit 1
-    }
-
-    Write-Host "Consent server started (PID: $($script:CONSENT_PROCESS.Id))"
-}
-
 # Main script logic
 switch ($Command) {
     'clean' {
@@ -2028,9 +1754,7 @@ switch ($Command) {
     'build' {
         Build-Backend
         Build-Frontend
-        Build-SDKs
         Package
-        Build-Sample-App
         Package-Sample-App
     }
     'build_backend' {
@@ -2043,17 +1767,14 @@ switch ($Command) {
     'build_docs' {
         Build-Docs
     }
-    'build_sdks' {
-        Build-SDKs
+    'build_tools' {
+        Build-Tools
     }
-    'test_sdks' {
-        Test-SDKs
+    'test_tools' {
+        Test-Tools
     }
-    'lint_sdks' {
-        Lint-SDKs
-    }
-    'build_samples' {
-        Build-Sample-App
+    'lint_tools' {
+        Lint-Tools
     }
     'package_samples' {
         Package-Sample-App
@@ -2084,7 +1805,7 @@ switch ($Command) {
         Test-Integration
     }
     default {
-        Write-Host "Usage: $($MyInvocation.MyCommand.Name) {clean|build|build_backend|build_frontend|build_docs|build_samples|package_samples|test_unit|test_integration|merge_coverage|run|run_backend|run_frontend|run_docs|test}"
+        Write-Host "Usage: $($MyInvocation.MyCommand.Name) {clean|build|build_backend|build_frontend|build_docs|build_tools|test_tools|lint_tools|package_samples|test_unit|test_integration|merge_coverage|run|run_backend|run_frontend|run_docs|test}"
         exit 1
     }
 }

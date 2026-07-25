@@ -17,16 +17,24 @@ database:
       password: postgres
       sslmode: disable
 
-  runtime:
+  runtime_transient:
     type: sqlite
     sqlite:
-      path: "/data/runtime.db"
+      path: "/data/runtime_transient.db"
       options: "cache=shared"
 
 oauth:
   jwt:
     issuer: thunderid
     validity_period: 3600
+  dcr:
+    enabled: true
+  logout:
+    enabled: true
+  token_revocation:
+    enabled: true
 
 flow:
   max_version_history: 3
+  # executors: []  # optional; omit or leave empty to register all built-in executors.
+  # When set, list executor names (e.g. CredentialsAuthExecutor) to register only that subset.

@@ -22,12 +22,11 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"testing"
-	"time"
 
 	"github.com/go-webauthn/webauthn/protocol"
 	"github.com/stretchr/testify/suite"
 
-	"github.com/thunder-id/thunderid/internal/entity"
+	"github.com/thunder-id/thunderid/pkg/thunderidengine/providers"
 )
 
 type UtilsTestSuite struct {
@@ -36,14 +35,6 @@ type UtilsTestSuite struct {
 
 func TestUtilsTestSuite(t *testing.T) {
 	suite.Run(t, new(UtilsTestSuite))
-}
-
-func (suite *UtilsTestSuite) TestGenerateDefaultCredentialName() {
-	name := generateDefaultCredentialName()
-
-	suite.NotEmpty(name)
-	suite.Contains(name, "Passkey")
-	suite.Contains(name, time.Now().Format("2006-01-02"))
 }
 
 func (suite *UtilsTestSuite) TestGetConfiguredOrigins() {
@@ -242,9 +233,9 @@ func (suite *UtilsTestSuite) TestDecodeBase64_InvalidInput() {
 
 func (suite *UtilsTestSuite) TestExtractCoreUser_WithFullAttributes() {
 	attrs := json.RawMessage(`{"given_name":"John","family_name":"Doe","username":"johndoe"}`)
-	testEntity := &entity.Entity{
+	testEntity := &providers.Entity{
 		ID:         testUserID,
-		Category:   entity.EntityCategoryUser,
+		Category:   providers.EntityCategoryUser,
 		Type:       "person",
 		OUID:       "org123",
 		Attributes: attrs,
@@ -258,9 +249,9 @@ func (suite *UtilsTestSuite) TestExtractCoreUser_WithFullAttributes() {
 
 func (suite *UtilsTestSuite) TestExtractCoreUser_WithEmailOnly() {
 	attrs := json.RawMessage(`{"email":"john@example.com"}`)
-	testEntity := &entity.Entity{
+	testEntity := &providers.Entity{
 		ID:         testUserID,
-		Category:   entity.EntityCategoryUser,
+		Category:   providers.EntityCategoryUser,
 		Attributes: attrs,
 	}
 
@@ -271,9 +262,9 @@ func (suite *UtilsTestSuite) TestExtractCoreUser_WithEmailOnly() {
 }
 
 func (suite *UtilsTestSuite) TestExtractCoreUser_EmptyAttributes() {
-	testEntity := &entity.Entity{
+	testEntity := &providers.Entity{
 		ID:       testUserID,
-		Category: entity.EntityCategoryUser,
+		Category: providers.EntityCategoryUser,
 	}
 
 	displayName, userName := extractWebAuthnIdentity(testEntity)

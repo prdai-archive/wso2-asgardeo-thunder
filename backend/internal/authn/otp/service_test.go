@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2025, WSO2 LLC. (https://www.wso2.com).
+ * Copyright (c) 2025-2026, WSO2 LLC. (https://www.wso2.com).
  *
  * WSO2 LLC. licenses this file to you under the Apache License,
  * Version 2.0 (the "License"); you may not use this file except
@@ -19,31 +19,31 @@
 package otp
 
 import (
-	"github.com/thunder-id/thunderid/internal/system/i18n/core"
-
 	"context"
 	"testing"
+
+	tidcommon "github.com/thunder-id/thunderid/pkg/thunderidengine/common"
 
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/suite"
 
-	"github.com/thunder-id/thunderid/internal/entityprovider"
+	authnprovidercm "github.com/thunder-id/thunderid/internal/authnprovider/common"
+	"github.com/thunder-id/thunderid/internal/notification"
 	notifcommon "github.com/thunder-id/thunderid/internal/notification/common"
-	"github.com/thunder-id/thunderid/internal/system/error/serviceerror"
-	"github.com/thunder-id/thunderid/tests/mocks/entityprovidermock"
 	"github.com/thunder-id/thunderid/tests/mocks/notification/notificationmock"
 )
 
 const (
-	testSenderID     = "sender123"
-	testSessionToken = "token123"
+	testSessionToken = "token123" // nolint:gosec // G101: test data, not a real secret
+	testOTPCode      = "123456"
+	testRecipient    = "+1234567890"
+	testUserID       = "user-abc-123"
 )
 
 type OTPAuthnServiceTestSuite struct {
 	suite.Suite
-	mockOTPService    *notificationmock.OTPServiceInterfaceMock
-	mockEntityService *entityprovidermock.EntityProviderInterfaceMock
-	service           OTPAuthnServiceInterface
+	mockNotifOTPSvc *notificationmock.OTPServiceInterfaceMock
+	service         OTPAuthnServiceInterface
 }
 
 func TestOTPAuthnServiceTestSuite(t *testing.T) {
@@ -51,151 +51,68 @@ func TestOTPAuthnServiceTestSuite(t *testing.T) {
 }
 
 func (suite *OTPAuthnServiceTestSuite) SetupTest() {
-	suite.mockOTPService = notificationmock.NewOTPServiceInterfaceMock(suite.T())
-	suite.mockEntityService = entityprovidermock.NewEntityProviderInterfaceMock(suite.T())
-	suite.service = newOTPAuthnService(suite.mockOTPService, suite.mockEntityService)
+	suite.mockNotifOTPSvc = notificationmock.NewOTPServiceInterfaceMock(suite.T())
+	suite.service = newOTPAuthnService(suite.mockNotifOTPSvc)
 }
 
-func (suite *OTPAuthnServiceTestSuite) TestSendOTPSuccess() {
-	channel := notifcommon.ChannelTypeSMS
-	recipient := "+1234567890"
+// --- GenerateOTP tests ---
 
-	result := &notifcommon.SendOTPResultDTO{
-		SessionToken: testSessionToken,
-	}
+func (suite *OTPAuthnServiceTestSuite) TestGenerateOTPEmptyRecipient() {
+	sessionToken, otpValue, _, err := suite.service.GenerateOTP(
+		context.Background(), "", authnprovidercm.UserAttributeUserID)
+	suite.Empty(sessionToken)
+	suite.Empty(otpValue)
+	suite.NotNil(err)
+	suite.Equal(ErrorInvalidRecipient.Code, err.Code)
+}
 
-	suite.mockOTPService.On("SendOTP", mock.Anything, mock.MatchedBy(func(dto notifcommon.SendOTPDTO) bool {
-		return dto.SenderID == testSenderID && dto.Channel == string(channel) && dto.Recipient == recipient
-	})).Return(result, nil)
+func (suite *OTPAuthnServiceTestSuite) TestGenerateOTPWhitespaceRecipient() {
+	sessionToken, otpValue, _, err := suite.service.GenerateOTP(
+		context.Background(), "   ", authnprovidercm.UserAttributeUserID)
+	suite.Empty(sessionToken)
+	suite.Empty(otpValue)
+	suite.NotNil(err)
+	suite.Equal(ErrorInvalidRecipient.Code, err.Code)
+}
 
-	token, err := suite.service.SendOTP(context.Background(), testSenderID, channel, recipient)
+func (suite *OTPAuthnServiceTestSuite) TestGenerateOTPDefaultsRecipientAttr() {
+	suite.mockNotifOTPSvc.On("GenerateOTP",
+		mock.Anything, testRecipient, authnprovidercm.UserAttributeUserID,
+	).Return(testSessionToken, testOTPCode, int64(300), (*tidcommon.ServiceError)(nil)).Once()
+
+	_, _, _, err := suite.service.GenerateOTP(context.Background(), testRecipient, "")
 	suite.Nil(err)
-	suite.Equal(testSessionToken, token)
 }
 
-func (suite *OTPAuthnServiceTestSuite) TestSendOTPInvalidInputs() {
-	tests := []struct {
-		name         string
-		senderID     string
-		channel      notifcommon.ChannelType
-		recipient    string
-		expectedCode string
-	}{
-		{
-			"EmptySenderID",
-			"",
-			notifcommon.ChannelTypeSMS,
-			"+1234567890",
-			ErrorInvalidSenderID.Code,
-		},
-		{
-			"EmptyRecipient",
-			testSenderID,
-			notifcommon.ChannelTypeSMS,
-			"",
-			ErrorInvalidRecipient.Code,
-		},
-		{
-			"UnsupportedChannel",
-			testSenderID,
-			notifcommon.ChannelType("email"),
-			"test@example.com",
-			ErrorUnsupportedChannel.Code,
-		},
-	}
+func (suite *OTPAuthnServiceTestSuite) TestGenerateOTPSuccess() {
+	suite.mockNotifOTPSvc.On("GenerateOTP",
+		mock.Anything, testRecipient, authnprovidercm.UserAttributeUserID,
+	).Return(testSessionToken, testOTPCode, int64(300), (*tidcommon.ServiceError)(nil)).Once()
 
-	for _, tc := range tests {
-		suite.Run(tc.name, func() {
-			token, err := suite.service.SendOTP(context.Background(), tc.senderID, tc.channel, tc.recipient)
-			suite.Empty(token)
-			suite.NotNil(err)
-			suite.Equal(tc.expectedCode, err.Code)
-		})
-	}
-}
+	sessionToken, otpValue, expirySeconds, err := suite.service.GenerateOTP(
+		context.Background(), testRecipient, authnprovidercm.UserAttributeUserID)
 
-func (suite *OTPAuthnServiceTestSuite) TestSendOTPWithServiceError() {
-	tests := []struct {
-		name               string
-		mockReturnErr      *serviceerror.ServiceError
-		expectedErrCode    string
-		expectedDescSubstr string
-	}{
-		{
-			name: "ServiceError",
-			mockReturnErr: &serviceerror.ServiceError{
-				Type: serviceerror.ServerErrorType,
-				Code: "INTERNAL_ERROR",
-				ErrorDescription: core.I18nMessage{
-					Key: "error.test.service_unavailable", DefaultValue: "Service unavailable",
-				},
-			},
-			expectedErrCode: serviceerror.InternalServerError.Code,
-		},
-		{
-			name: "ClientError",
-			mockReturnErr: &serviceerror.ServiceError{
-				Type: serviceerror.ClientErrorType,
-				Code: "INVALID_FORMAT",
-				ErrorDescription: core.I18nMessage{
-					Key: "error.test.invalid_phone_number_format", DefaultValue: "Invalid phone number format",
-				},
-			},
-			expectedErrCode:    ErrorClientErrorFromOTPService.Code,
-			expectedDescSubstr: "Invalid phone number format",
-		},
-	}
-
-	for _, tc := range tests {
-		suite.Run(tc.name, func() {
-			freshOTP := notificationmock.NewOTPServiceInterfaceMock(suite.T())
-			suite.service = newOTPAuthnService(freshOTP, suite.mockEntityService)
-			freshOTP.On("SendOTP", mock.Anything, mock.Anything).Return(nil, tc.mockReturnErr)
-
-			token, err := suite.service.SendOTP(context.Background(), testSenderID,
-				notifcommon.ChannelTypeSMS, "+1234567890")
-			suite.Empty(token)
-			suite.NotNil(err)
-			suite.Equal(tc.expectedErrCode, err.Code)
-
-			if tc.expectedDescSubstr != "" {
-				suite.Contains(err.ErrorDescription.DefaultValue, tc.expectedDescSubstr)
-			}
-		})
-	}
-}
-
-func (suite *OTPAuthnServiceTestSuite) TestAuthenticateSuccess() {
-	otp := "123456"
-	recipient := "+1234567890"
-	userID := "user123"
-	orgUnit := "test-ou"
-
-	verifyResult := &notifcommon.VerifyOTPResultDTO{
-		Status:    notifcommon.OTPVerifyStatusVerified,
-		Recipient: recipient,
-	}
-	user := &entityprovider.Entity{
-		ID:   userID,
-		Type: "person",
-		OUID: orgUnit,
-	}
-
-	suite.mockOTPService.On("VerifyOTP", mock.Anything, mock.MatchedBy(func(dto notifcommon.VerifyOTPDTO) bool {
-		return dto.SessionToken == testSessionToken && dto.OTPCode == otp
-	})).Return(verifyResult, nil)
-	suite.mockEntityService.On("IdentifyEntity", mock.MatchedBy(func(filters map[string]interface{}) bool {
-		return filters["mobileNumber"] == recipient
-	})).Return(&userID, nil)
-	suite.mockEntityService.On("GetEntity", userID).Return(user, nil)
-
-	result, err := suite.service.Authenticate(context.Background(), testSessionToken, otp)
 	suite.Nil(err)
-	suite.NotNil(result)
-	suite.NotNil(result.InternalEntity)
-	suite.Equal(userID, result.InternalEntity.ID)
-	suite.Equal(orgUnit, result.InternalEntity.OUID)
+	suite.Equal(testSessionToken, sessionToken)
+	suite.Equal(testOTPCode, otpValue)
+	suite.Equal(int64(300), expirySeconds)
 }
+
+func (suite *OTPAuthnServiceTestSuite) TestGenerateOTPDelegatesError() {
+	suite.mockNotifOTPSvc.On("GenerateOTP",
+		mock.Anything, testRecipient, authnprovidercm.UserAttributeUserID,
+	).Return("", "", int64(0), &tidcommon.InternalServerError).Once()
+
+	sessionToken, otpValue, _, err := suite.service.GenerateOTP(
+		context.Background(), testRecipient, authnprovidercm.UserAttributeUserID)
+
+	suite.Empty(sessionToken)
+	suite.Empty(otpValue)
+	suite.NotNil(err)
+	suite.Equal(tidcommon.InternalServerError.Code, err.Code)
+}
+
+// --- Authenticate tests ---
 
 func (suite *OTPAuthnServiceTestSuite) TestAuthenticateWithInvalidInputs() {
 	tests := []struct {
@@ -204,18 +121,8 @@ func (suite *OTPAuthnServiceTestSuite) TestAuthenticateWithInvalidInputs() {
 		otp          string
 		expectedCode string
 	}{
-		{
-			"EmptySessionToken",
-			"",
-			"123456",
-			ErrorInvalidSessionToken.Code,
-		},
-		{
-			"EmptyOTP",
-			testSessionToken,
-			"",
-			ErrorInvalidOTP.Code,
-		},
+		{"EmptySessionToken", "", testOTPCode, ErrorInvalidSessionToken.Code},
+		{"EmptyOTP", testSessionToken, "", ErrorInvalidOTP.Code},
 	}
 
 	for _, tc := range tests {
@@ -228,154 +135,104 @@ func (suite *OTPAuthnServiceTestSuite) TestAuthenticateWithInvalidInputs() {
 	}
 }
 
-func (suite *OTPAuthnServiceTestSuite) TestAuthenticateWithIncorrectOTP() {
-	verifyResult := &notifcommon.VerifyOTPResultDTO{
-		Status:    notifcommon.OTPVerifyStatusInvalid,
-		Recipient: "+1234567890",
-	}
+func (suite *OTPAuthnServiceTestSuite) TestAuthenticateSuccess() {
+	suite.mockNotifOTPSvc.On("VerifyOTP",
+		mock.Anything, notifcommon.VerifyOTPDTO{SessionToken: testSessionToken, OTPCode: testOTPCode},
+	).Return(&notifcommon.VerifyOTPResultDTO{
+		Status:        notifcommon.OTPVerifyStatusVerified,
+		Recipient:     testRecipient,
+		RecipientAttr: userAttributeMobileNumber,
+	}, (*tidcommon.ServiceError)(nil)).Once()
 
-	suite.mockOTPService.On("VerifyOTP", mock.Anything, mock.Anything).Return(verifyResult, nil)
+	result, err := suite.service.Authenticate(context.Background(), testSessionToken, testOTPCode)
 
-	result, err := suite.service.Authenticate(context.Background(), testSessionToken, "123456")
+	suite.Nil(err)
+	suite.NotNil(result)
+	suite.Equal(testRecipient, result.Token[userAttributeMobileNumber])
+	suite.Equal(testRecipient, result.AuthenticatedClaims[userAttributeMobileNumber])
+}
+
+func (suite *OTPAuthnServiceTestSuite) TestAuthenticateSuccessWithUserIDRecipientAttr() {
+	suite.mockNotifOTPSvc.On("VerifyOTP",
+		mock.Anything, notifcommon.VerifyOTPDTO{SessionToken: testSessionToken, OTPCode: testOTPCode},
+	).Return(&notifcommon.VerifyOTPResultDTO{
+		Status:        notifcommon.OTPVerifyStatusVerified,
+		Recipient:     testUserID,
+		RecipientAttr: authnprovidercm.UserAttributeUserID,
+	}, (*tidcommon.ServiceError)(nil)).Once()
+
+	result, err := suite.service.Authenticate(context.Background(), testSessionToken, testOTPCode)
+
+	suite.Nil(err)
+	suite.NotNil(result)
+	suite.Equal(testUserID, result.Token[authnprovidercm.UserAttributeUserID])
+}
+
+func (suite *OTPAuthnServiceTestSuite) TestAuthenticateIncorrectOTP() {
+	suite.mockNotifOTPSvc.On("VerifyOTP",
+		mock.Anything, notifcommon.VerifyOTPDTO{SessionToken: testSessionToken, OTPCode: testOTPCode},
+	).Return(&notifcommon.VerifyOTPResultDTO{
+		Status: notifcommon.OTPVerifyStatusInvalid,
+	}, (*tidcommon.ServiceError)(nil)).Once()
+
+	result, err := suite.service.Authenticate(context.Background(), testSessionToken, testOTPCode)
+
 	suite.Nil(result)
 	suite.NotNil(err)
 	suite.Equal(ErrorIncorrectOTP.Code, err.Code)
 }
 
-func (suite *OTPAuthnServiceTestSuite) TestAuthenticateWithOTPServiceError() {
-	tests := []struct {
-		name               string
-		mockReturnErr      *serviceerror.ServiceError
-		expectedErrCode    string
-		expectedDescSubstr string
-	}{
-		{
-			name: "ServiceError",
-			mockReturnErr: &serviceerror.ServiceError{
-				Type: serviceerror.ServerErrorType,
-				Code: "INTERNAL_ERROR",
-				ErrorDescription: core.I18nMessage{
-					Key: "error.test.service_unavailable", DefaultValue: "Service unavailable",
-				},
-			},
-			expectedErrCode: serviceerror.InternalServerError.Code,
-		},
-		{
-			name: "ClientError",
-			mockReturnErr: &serviceerror.ServiceError{
-				Type:             serviceerror.ClientErrorType,
-				Code:             "OTP_EXPIRED",
-				ErrorDescription: core.I18nMessage{Key: "error.test.otp_has_expired", DefaultValue: "OTP has expired"},
-			},
-			expectedErrCode:    ErrorClientErrorFromOTPService.Code,
-			expectedDescSubstr: "OTP has expired",
-		},
-	}
+func (suite *OTPAuthnServiceTestSuite) TestAuthenticateInvalidSessionToken() {
+	suite.mockNotifOTPSvc.On("VerifyOTP",
+		mock.Anything, notifcommon.VerifyOTPDTO{SessionToken: testSessionToken, OTPCode: testOTPCode},
+	).Return((*notifcommon.VerifyOTPResultDTO)(nil), &notification.ErrorInvalidSessionToken).Once()
 
-	for _, tc := range tests {
-		suite.Run(tc.name, func() {
-			freshOTP := notificationmock.NewOTPServiceInterfaceMock(suite.T())
-			suite.service = newOTPAuthnService(freshOTP, suite.mockEntityService)
-			freshOTP.On("VerifyOTP", mock.Anything, mock.Anything).Return(nil, tc.mockReturnErr)
+	result, err := suite.service.Authenticate(context.Background(), testSessionToken, testOTPCode)
 
-			result, err := suite.service.Authenticate(context.Background(), testSessionToken, "123456")
-			suite.Nil(result)
-			suite.NotNil(err)
-			suite.Equal(tc.expectedErrCode, err.Code)
-
-			if tc.expectedDescSubstr != "" {
-				suite.Contains(err.ErrorDescription.DefaultValue, tc.expectedDescSubstr)
-			}
-		})
-	}
-}
-
-func (suite *OTPAuthnServiceTestSuite) TestAuthenticateWithUserServiceError() {
-	verifyResult := &notifcommon.VerifyOTPResultDTO{
-		Status:    notifcommon.OTPVerifyStatusVerified,
-		Recipient: "+1234567890",
-	}
-	serverErr := &entityprovider.EntityProviderError{
-		Code:        entityprovider.ErrorCodeSystemError,
-		Description: "Database unavailable",
-	}
-
-	// Prepare a userID for cases that require a valid identify result
-	userID := "user123"
-
-	tests := []struct {
-		name         string
-		identifyRet  *string
-		identifyErr  *entityprovider.EntityProviderError
-		getUserRet   *entityprovider.Entity
-		getUserErr   *entityprovider.EntityProviderError
-		expectNoUser bool
-		expectedCode string
-	}{
-		{
-			name:         "NonExistentUser",
-			identifyRet:  nil,
-			identifyErr:  &entityprovider.EntityProviderError{Code: entityprovider.ErrorCodeEntityNotFound},
-			expectNoUser: true,
-		},
-		{
-			name:         "IdentifyServerError",
-			identifyRet:  nil,
-			identifyErr:  serverErr,
-			expectedCode: serviceerror.InternalServerError.Code,
-		},
-		{
-			name:         "GetUserServerError",
-			identifyRet:  &userID,
-			getUserErr:   serverErr,
-			expectedCode: serviceerror.InternalServerError.Code,
-		},
-		{
-			name:         "UserIDNil",
-			identifyRet:  nil,
-			identifyErr:  (*entityprovider.EntityProviderError)(nil),
-			expectNoUser: true,
-		},
-	}
-
-	for _, tc := range tests {
-		suite.Run(tc.name, func() {
-			freshOTP := notificationmock.NewOTPServiceInterfaceMock(suite.T())
-			freshUser := entityprovidermock.NewEntityProviderInterfaceMock(suite.T())
-			suite.service = newOTPAuthnService(freshOTP, freshUser)
-
-			freshOTP.On("VerifyOTP", mock.Anything, mock.Anything).Return(verifyResult, nil)
-			freshUser.On("IdentifyEntity", mock.Anything).Return(tc.identifyRet, tc.identifyErr)
-
-			// only set GetUser expectation when identify returns a user id
-			if tc.getUserRet != nil || tc.getUserErr != nil {
-				freshUser.On("GetEntity", *tc.identifyRet).Return(tc.getUserRet, tc.getUserErr)
-			}
-
-			result, err := suite.service.Authenticate(context.Background(), testSessionToken, "123456")
-			if tc.expectNoUser {
-				suite.NotNil(result)
-				suite.Nil(result.InternalEntity)
-				suite.Nil(err)
-				suite.Equal("+1234567890", result.VerifiedIdentifiers["mobileNumber"])
-			} else {
-				suite.Nil(result)
-				suite.NotNil(err)
-				suite.Equal(tc.expectedCode, err.Code)
-			}
-		})
-	}
-}
-
-func (suite *OTPAuthnServiceTestSuite) TestAuthenticateWithEmptyRecipient() {
-	verifyResult := &notifcommon.VerifyOTPResultDTO{
-		Status:    notifcommon.OTPVerifyStatusVerified,
-		Recipient: "",
-	}
-	suite.mockOTPService.On("VerifyOTP", mock.Anything, mock.Anything).Return(verifyResult, nil)
-
-	result, err := suite.service.Authenticate(context.Background(), testSessionToken, "123456")
 	suite.Nil(result)
 	suite.NotNil(err)
-	suite.Equal(serviceerror.InternalServerError.Code, err.Code)
+	suite.Equal(ErrorInvalidSessionToken.Code, err.Code)
+}
+
+func (suite *OTPAuthnServiceTestSuite) TestAuthenticateInternalError() {
+	suite.mockNotifOTPSvc.On("VerifyOTP",
+		mock.Anything, notifcommon.VerifyOTPDTO{SessionToken: testSessionToken, OTPCode: testOTPCode},
+	).Return((*notifcommon.VerifyOTPResultDTO)(nil), &tidcommon.InternalServerError).Once()
+
+	result, err := suite.service.Authenticate(context.Background(), testSessionToken, testOTPCode)
+
+	suite.Nil(result)
+	suite.NotNil(err)
+	suite.Equal(tidcommon.InternalServerError.Code, err.Code)
+}
+
+func (suite *OTPAuthnServiceTestSuite) TestAuthenticateEmptyRecipientInResult() {
+	suite.mockNotifOTPSvc.On("VerifyOTP",
+		mock.Anything, notifcommon.VerifyOTPDTO{SessionToken: testSessionToken, OTPCode: testOTPCode},
+	).Return(&notifcommon.VerifyOTPResultDTO{
+		Status:    notifcommon.OTPVerifyStatusVerified,
+		Recipient: "",
+	}, (*tidcommon.ServiceError)(nil)).Once()
+
+	result, err := suite.service.Authenticate(context.Background(), testSessionToken, testOTPCode)
+
+	suite.Nil(result)
+	suite.NotNil(err)
+	suite.Equal(tidcommon.InternalServerError.Code, err.Code)
+}
+
+func (suite *OTPAuthnServiceTestSuite) TestAuthenticateEmptyRecipientAttrDefaultsToMobileNumber() {
+	suite.mockNotifOTPSvc.On("VerifyOTP",
+		mock.Anything, notifcommon.VerifyOTPDTO{SessionToken: testSessionToken, OTPCode: testOTPCode},
+	).Return(&notifcommon.VerifyOTPResultDTO{
+		Status:        notifcommon.OTPVerifyStatusVerified,
+		Recipient:     testRecipient,
+		RecipientAttr: "",
+	}, (*tidcommon.ServiceError)(nil)).Once()
+
+	result, err := suite.service.Authenticate(context.Background(), testSessionToken, testOTPCode)
+
+	suite.Nil(err)
+	suite.NotNil(result)
+	suite.Equal(testRecipient, result.Token[userAttributeMobileNumber])
 }

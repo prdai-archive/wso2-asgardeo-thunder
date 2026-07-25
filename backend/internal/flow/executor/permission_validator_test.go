@@ -22,11 +22,12 @@ import (
 	"context"
 	"testing"
 
+	"github.com/thunder-id/thunderid/pkg/thunderidengine/providers"
+
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/suite"
 
-	"github.com/thunder-id/thunderid/internal/flow/common"
-	"github.com/thunder-id/thunderid/internal/flow/core"
 	"github.com/thunder-id/thunderid/internal/system/security"
 	"github.com/thunder-id/thunderid/tests/mocks/flow/coremock"
 )
@@ -45,9 +46,9 @@ func (suite *PermissionValidatorTestSuite) SetupTest() {
 
 	suite.mockFlowFactory.On("CreateExecutor",
 		ExecutorNamePermissionValidator,
-		common.ExecutorTypeUtility,
-		[]common.Input{},
-		[]common.Input{}).Return(mockBaseExecutor)
+		providers.ExecutorTypeUtility,
+		[]providers.Input{},
+		[]providers.Input{}, mock.Anything).Return(mockBaseExecutor)
 
 	suite.executor = newPermissionValidator(suite.mockFlowFactory)
 }
@@ -60,7 +61,7 @@ func (suite *PermissionValidatorTestSuite) TestExecute_DefaultScopeCheck_Success
 	)
 	httpCtx = security.WithSecurityContextTest(httpCtx, authCtx)
 
-	ctx := &core.NodeContext{
+	ctx := &providers.NodeContext{
 		ExecutionID: "test-flow",
 		Context:     httpCtx,
 	}
@@ -68,7 +69,7 @@ func (suite *PermissionValidatorTestSuite) TestExecute_DefaultScopeCheck_Success
 	resp, err := suite.executor.Execute(ctx)
 
 	assert.NoError(suite.T(), err)
-	assert.Equal(suite.T(), common.ExecComplete, resp.Status)
+	assert.Equal(suite.T(), providers.ExecComplete, resp.Status)
 }
 
 func (suite *PermissionValidatorTestSuite) TestExecute_DefaultScopeCheck_Failure() {
@@ -79,7 +80,7 @@ func (suite *PermissionValidatorTestSuite) TestExecute_DefaultScopeCheck_Failure
 	)
 	httpCtx = security.WithSecurityContextTest(httpCtx, authCtx)
 
-	ctx := &core.NodeContext{
+	ctx := &providers.NodeContext{
 		ExecutionID: "test-flow",
 		Context:     httpCtx,
 	}
@@ -87,8 +88,8 @@ func (suite *PermissionValidatorTestSuite) TestExecute_DefaultScopeCheck_Failure
 	resp, err := suite.executor.Execute(ctx)
 
 	assert.NoError(suite.T(), err)
-	assert.Equal(suite.T(), common.ExecFailure, resp.Status)
-	assert.Equal(suite.T(), "Insufficient permissions", resp.FailureReason)
+	assert.Equal(suite.T(), providers.ExecFailure, resp.Status)
+	assert.Equal(suite.T(), ErrInsufficientPermissions.Error.DefaultValue, resp.Error.Error.DefaultValue)
 }
 
 func (suite *PermissionValidatorTestSuite) TestExecute_CustomScopeCheck_Success() {
@@ -96,7 +97,7 @@ func (suite *PermissionValidatorTestSuite) TestExecute_CustomScopeCheck_Success(
 		name           string
 		nodeProps      map[string]interface{}
 		contextScopes  []string
-		expectedStatus common.ExecutorStatus
+		expectedStatus providers.ExecutorStatus
 	}
 
 	testCases := []testCase{
@@ -106,7 +107,7 @@ func (suite *PermissionValidatorTestSuite) TestExecute_CustomScopeCheck_Success(
 				propertyKeyRequiredScopes: []interface{}{"scope1"},
 			},
 			contextScopes:  []string{"scope1"},
-			expectedStatus: common.ExecComplete,
+			expectedStatus: providers.ExecComplete,
 		},
 		{
 			name: "Failure - Required scopes configured but missing",
@@ -114,13 +115,13 @@ func (suite *PermissionValidatorTestSuite) TestExecute_CustomScopeCheck_Success(
 				propertyKeyRequiredScopes: []interface{}{"scope1"},
 			},
 			contextScopes:  []string{"scope2"},
-			expectedStatus: common.ExecFailure,
+			expectedStatus: providers.ExecFailure,
 		},
 		{
 			name:           "Success - No required scopes configured (default system scope present)",
 			nodeProps:      nil,
 			contextScopes:  []string{"system"},
-			expectedStatus: common.ExecComplete,
+			expectedStatus: providers.ExecComplete,
 		},
 		{
 			name: "Success - Empty required scopes (default system scope present)",
@@ -128,7 +129,7 @@ func (suite *PermissionValidatorTestSuite) TestExecute_CustomScopeCheck_Success(
 				propertyKeyRequiredScopes: []interface{}{},
 			},
 			contextScopes:  []string{"system"},
-			expectedStatus: common.ExecComplete,
+			expectedStatus: providers.ExecComplete,
 		},
 		{
 			name: "Success - Multiple required scopes configured (OR logic) - scope1 present",
@@ -136,7 +137,7 @@ func (suite *PermissionValidatorTestSuite) TestExecute_CustomScopeCheck_Success(
 				propertyKeyRequiredScopes: []interface{}{"scope1", "scope2"},
 			},
 			contextScopes:  []string{"scope1"},
-			expectedStatus: common.ExecComplete,
+			expectedStatus: providers.ExecComplete,
 		},
 		{
 			name: "Success - Multiple required scopes configured (OR logic) - scope2 present",
@@ -144,7 +145,7 @@ func (suite *PermissionValidatorTestSuite) TestExecute_CustomScopeCheck_Success(
 				propertyKeyRequiredScopes: []interface{}{"scope1", "scope2"},
 			},
 			contextScopes:  []string{"scope2"},
-			expectedStatus: common.ExecComplete,
+			expectedStatus: providers.ExecComplete,
 		},
 		{
 			name: "Failure - Multiple required scopes configured - none present",
@@ -152,7 +153,7 @@ func (suite *PermissionValidatorTestSuite) TestExecute_CustomScopeCheck_Success(
 				propertyKeyRequiredScopes: []interface{}{"scope1", "scope2"},
 			},
 			contextScopes:  []string{"scope3"},
-			expectedStatus: common.ExecFailure,
+			expectedStatus: providers.ExecFailure,
 		},
 	}
 
@@ -165,7 +166,7 @@ func (suite *PermissionValidatorTestSuite) TestExecute_CustomScopeCheck_Success(
 			)
 			httpCtx = security.WithSecurityContextTest(httpCtx, authCtx)
 
-			ctx := &core.NodeContext{
+			ctx := &providers.NodeContext{
 				ExecutionID:    "test-flow",
 				Context:        httpCtx,
 				NodeProperties: tc.nodeProps,
@@ -187,7 +188,7 @@ func (suite *PermissionValidatorTestSuite) TestExecute_MultipleRequiredScopes_OR
 	)
 	httpCtx = security.WithSecurityContextTest(httpCtx, authCtx)
 
-	ctx := &core.NodeContext{
+	ctx := &providers.NodeContext{
 		ExecutionID: "test-flow",
 		Context:     httpCtx,
 		NodeProperties: map[string]interface{}{
@@ -198,7 +199,7 @@ func (suite *PermissionValidatorTestSuite) TestExecute_MultipleRequiredScopes_OR
 	resp, err := suite.executor.Execute(ctx)
 
 	assert.NoError(suite.T(), err)
-	assert.Equal(suite.T(), common.ExecComplete, resp.Status)
+	assert.Equal(suite.T(), providers.ExecComplete, resp.Status)
 }
 
 func (suite *PermissionValidatorTestSuite) TestExecute_AuthorizedPermissionsCheck_Success() {
@@ -209,7 +210,7 @@ func (suite *PermissionValidatorTestSuite) TestExecute_AuthorizedPermissionsChec
 	)
 	httpCtx = security.WithSecurityContextTest(httpCtx, authCtx)
 
-	ctx := &core.NodeContext{
+	ctx := &providers.NodeContext{
 		ExecutionID: "test-flow",
 		Context:     httpCtx,
 		NodeProperties: map[string]interface{}{
@@ -220,11 +221,83 @@ func (suite *PermissionValidatorTestSuite) TestExecute_AuthorizedPermissionsChec
 	resp, err := suite.executor.Execute(ctx)
 
 	assert.NoError(suite.T(), err)
-	assert.Equal(suite.T(), common.ExecComplete, resp.Status)
+	assert.Equal(suite.T(), providers.ExecComplete, resp.Status)
+}
+
+func (suite *PermissionValidatorTestSuite) TestExecute_HierarchicalScopeCheck_Success() {
+	type testCase struct {
+		name           string
+		requiredScopes []interface{}
+		contextScopes  []string
+	}
+
+	testCases := []testCase{
+		{
+			name:           "Root scope satisfies a narrower required scope",
+			requiredScopes: []interface{}{"system:user"},
+			contextScopes:  []string{"system"},
+		},
+		{
+			name:           "Exact scoped permission still satisfies its own requirement",
+			requiredScopes: []interface{}{"system:user"},
+			contextScopes:  []string{"system:user"},
+		},
+		{
+			name:           "Parent scope satisfies a deeply nested required scope",
+			requiredScopes: []interface{}{"system:user:view"},
+			contextScopes:  []string{"system"},
+		},
+	}
+
+	for _, tc := range testCases {
+		suite.T().Run(tc.name, func(t *testing.T) {
+			httpCtx := context.Background()
+			authCtx := security.NewSecurityContextForTest(
+				"user1", "ou1", "token",
+				tc.contextScopes, nil,
+			)
+			httpCtx = security.WithSecurityContextTest(httpCtx, authCtx)
+
+			ctx := &providers.NodeContext{
+				ExecutionID: "test-flow",
+				Context:     httpCtx,
+				NodeProperties: map[string]interface{}{
+					propertyKeyRequiredScopes: tc.requiredScopes,
+				},
+			}
+
+			resp, err := suite.executor.Execute(ctx)
+
+			assert.NoError(t, err)
+			assert.Equal(t, providers.ExecComplete, resp.Status)
+		})
+	}
+}
+
+func (suite *PermissionValidatorTestSuite) TestExecute_HierarchicalScopeCheck_Failure() {
+	httpCtx := context.Background()
+	authCtx := security.NewSecurityContextForTest(
+		"user1", "ou1", "token",
+		[]string{"system:user"}, nil,
+	)
+	httpCtx = security.WithSecurityContextTest(httpCtx, authCtx)
+
+	ctx := &providers.NodeContext{
+		ExecutionID: "test-flow",
+		Context:     httpCtx,
+		NodeProperties: map[string]interface{}{
+			propertyKeyRequiredScopes: []interface{}{"system"},
+		},
+	}
+
+	resp, err := suite.executor.Execute(ctx)
+
+	assert.NoError(suite.T(), err)
+	assert.Equal(suite.T(), providers.ExecFailure, resp.Status)
 }
 
 func (suite *PermissionValidatorTestSuite) TestExecute_NoHTTPContext() {
-	ctx := &core.NodeContext{
+	ctx := &providers.NodeContext{
 		ExecutionID: "test-flow",
 		Context:     nil,
 	}
@@ -232,8 +305,8 @@ func (suite *PermissionValidatorTestSuite) TestExecute_NoHTTPContext() {
 	resp, err := suite.executor.Execute(ctx)
 
 	assert.NoError(suite.T(), err)
-	assert.Equal(suite.T(), common.ExecFailure, resp.Status)
-	assert.Equal(suite.T(), "Insufficient permissions", resp.FailureReason)
+	assert.Equal(suite.T(), providers.ExecFailure, resp.Status)
+	assert.Equal(suite.T(), ErrInsufficientPermissions.Error.DefaultValue, resp.Error.Error.DefaultValue)
 }
 
 func (suite *PermissionValidatorTestSuite) TestExecute_EmptyScopes() {
@@ -244,7 +317,7 @@ func (suite *PermissionValidatorTestSuite) TestExecute_EmptyScopes() {
 	)
 	httpCtx = security.WithSecurityContextTest(httpCtx, authCtx)
 
-	ctx := &core.NodeContext{
+	ctx := &providers.NodeContext{
 		ExecutionID: "test-flow",
 		Context:     httpCtx,
 	}
@@ -252,8 +325,8 @@ func (suite *PermissionValidatorTestSuite) TestExecute_EmptyScopes() {
 	resp, err := suite.executor.Execute(ctx)
 
 	assert.NoError(suite.T(), err)
-	assert.Equal(suite.T(), common.ExecFailure, resp.Status)
-	assert.Equal(suite.T(), "Insufficient permissions", resp.FailureReason)
+	assert.Equal(suite.T(), providers.ExecFailure, resp.Status)
+	assert.Equal(suite.T(), ErrInsufficientPermissions.Error.DefaultValue, resp.Error.Error.DefaultValue)
 }
 
 func (suite *PermissionValidatorTestSuite) TestExecute_NoScopesInContext() {
@@ -264,7 +337,7 @@ func (suite *PermissionValidatorTestSuite) TestExecute_NoScopesInContext() {
 	)
 	httpCtx = security.WithSecurityContextTest(httpCtx, authCtx)
 
-	ctx := &core.NodeContext{
+	ctx := &providers.NodeContext{
 		ExecutionID: "test-flow",
 		Context:     httpCtx,
 	}
@@ -272,8 +345,8 @@ func (suite *PermissionValidatorTestSuite) TestExecute_NoScopesInContext() {
 	resp, err := suite.executor.Execute(ctx)
 
 	assert.NoError(suite.T(), err)
-	assert.Equal(suite.T(), common.ExecFailure, resp.Status)
-	assert.Equal(suite.T(), "Insufficient permissions", resp.FailureReason)
+	assert.Equal(suite.T(), providers.ExecFailure, resp.Status)
+	assert.Equal(suite.T(), ErrInsufficientPermissions.Error.DefaultValue, resp.Error.Error.DefaultValue)
 }
 
 func (suite *PermissionValidatorTestSuite) TestExecute_ScopesWithUnexpectedType() {
@@ -284,7 +357,7 @@ func (suite *PermissionValidatorTestSuite) TestExecute_ScopesWithUnexpectedType(
 	)
 	httpCtx = security.WithSecurityContextTest(httpCtx, authCtx)
 
-	ctx := &core.NodeContext{
+	ctx := &providers.NodeContext{
 		ExecutionID: "test-flow",
 		Context:     httpCtx,
 	}
@@ -292,8 +365,8 @@ func (suite *PermissionValidatorTestSuite) TestExecute_ScopesWithUnexpectedType(
 	resp, err := suite.executor.Execute(ctx)
 
 	assert.NoError(suite.T(), err)
-	assert.Equal(suite.T(), common.ExecFailure, resp.Status)
-	assert.Equal(suite.T(), "Insufficient permissions", resp.FailureReason)
+	assert.Equal(suite.T(), providers.ExecFailure, resp.Status)
+	assert.Equal(suite.T(), ErrInsufficientPermissions.Error.DefaultValue, resp.Error.Error.DefaultValue)
 }
 
 func TestPermissionValidatorSuite(t *testing.T) {

@@ -21,24 +21,30 @@ package jwks
 
 import (
 	"context"
+	"crypto"
 	"crypto/ecdsa"
 	"crypto/ed25519"
 	"crypto/rsa"
 	"encoding/base64"
 	"strings"
 
+	tidcommon "github.com/thunder-id/thunderid/pkg/thunderidengine/common"
+
 	// Use crypto/sha1 only for JWKS x5t as required by spec for thumbprint.
 	"crypto/sha1" //nolint:gosec
 
+	"github.com/cloudflare/circl/sign/mldsa/mldsa44"
+	"github.com/cloudflare/circl/sign/mldsa/mldsa65"
+	"github.com/cloudflare/circl/sign/mldsa/mldsa87"
+
 	"github.com/thunder-id/thunderid/internal/system/cryptolib"
-	"github.com/thunder-id/thunderid/internal/system/error/serviceerror"
 	kmprovider "github.com/thunder-id/thunderid/internal/system/kmprovider/common"
 	"github.com/thunder-id/thunderid/internal/system/log"
 )
 
 // JWKSServiceInterface defines the interface for JWKS service.
 type JWKSServiceInterface interface {
-	GetJWKS(ctx context.Context) (*JWKSResponse, *serviceerror.ServiceError)
+	GetJWKS(ctx context.Context) (*JWKSResponse, *tidcommon.ServiceError)
 }
 
 // jwksService implements the JWKSServiceInterface.
@@ -56,15 +62,15 @@ func newJWKSService(cryptoProvider kmprovider.RuntimeCryptoProvider) JWKSService
 }
 
 // GetJWKS retrieves the JSON Web Key Set (JWKS) from the runtime crypto provider.
-func (s *jwksService) GetJWKS(ctx context.Context) (*JWKSResponse, *serviceerror.ServiceError) {
+func (s *jwksService) GetJWKS(ctx context.Context) (*JWKSResponse, *tidcommon.ServiceError) {
 	publicKeys, err := s.cryptoProvider.GetPublicKeys(ctx, kmprovider.PublicKeyFilter{})
 	if err != nil {
-		s.logger.Error("Failed to retrieve public keys", log.Error(err))
-		return nil, &serviceerror.InternalServerError
+		s.logger.Error(ctx, "Failed to retrieve public keys", log.Error(err))
+		return nil, &tidcommon.InternalServerError
 	}
 
 	if len(publicKeys) == 0 {
-		return nil, &serviceerror.InternalServerError
+		return nil, &tidcommon.InternalServerError
 	}
 
 	var jwksKeys []JWKS
@@ -88,14 +94,22 @@ func (s *jwksService) GetJWKS(ctx context.Context) (*JWKSResponse, *serviceerror
 			jwksKeys = append(jwksKeys, getECDSAPublicKeyJWKS(pub, kid, x5c, x5t, x5tS256))
 		case ed25519.PublicKey:
 			jwksKeys = append(jwksKeys, getEdDSAPublicKeyJWKS(pub, kid, x5c, x5t, x5tS256))
+		case *mldsa44.PublicKey, *mldsa65.PublicKey, *mldsa87.PublicKey:
+			// ML-DSA (RFC 9964 AKP).
+			mldsaJWK, ok := getMLDSAPublicKeyJWKS(pub, kid, x5c, x5t, x5tS256)
+			if !ok {
+				s.logger.Debug(ctx, "Unsupported public key type for JWKS", log.String("keyID", keyInfo.KeyID))
+				continue
+			}
+			jwksKeys = append(jwksKeys, mldsaJWK)
 		default:
-			s.logger.Debug("Unsupported public key type for JWKS", log.String("keyID", keyInfo.KeyID))
+			s.logger.Debug(ctx, "Unsupported public key type for JWKS", log.String("keyID", keyInfo.KeyID))
 			continue
 		}
 	}
 
 	if len(jwksKeys) == 0 {
-		return nil, &serviceerror.InternalServerError
+		return nil, &tidcommon.InternalServerError
 	}
 
 	return &JWKSResponse{
@@ -174,6 +188,30 @@ func getEdDSAPublicKeyJWKS(pub ed25519.PublicKey, kid string, x5c []string, x5t,
 		X5t:     x5t,
 		X5tS256: x5tS256,
 	}
+}
+
+// getMLDSAPublicKeyJWKS converts an ML-DSA public key to an AKP JWK (RFC 9964).
+// It reports false when pub is not an ML-DSA public key.
+func getMLDSAPublicKeyJWKS(pub crypto.PublicKey, kid string, x5c []string, x5t, x5tS256 string) (JWKS, bool) {
+	alg, ok := cryptolib.MLDSAAlgForPublicKey(pub)
+	if !ok {
+		return JWKS{}, false
+	}
+	pubBytes, ok := cryptolib.MLDSAPublicKeyBytes(pub)
+	if !ok {
+		return JWKS{}, false
+	}
+
+	return JWKS{
+		Kid:     kid,
+		Kty:     "AKP",
+		Use:     "sig",
+		Alg:     string(alg),
+		Pub:     encodeBase64URL(pubBytes),
+		X5c:     x5c,
+		X5t:     x5t,
+		X5tS256: x5tS256,
+	}, true
 }
 
 func encodeBase64URL(b []byte) string {

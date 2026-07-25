@@ -27,141 +27,163 @@ import (
 	"strings"
 	"time"
 
+	tidcommon "github.com/thunder-id/thunderid/pkg/thunderidengine/common"
+	"github.com/thunder-id/thunderid/pkg/thunderidengine/providers"
+
 	consentauthn "github.com/thunder-id/thunderid/internal/authn/consent"
-	authnprovidercm "github.com/thunder-id/thunderid/internal/authnprovider/common"
-	authnprovidermgr "github.com/thunder-id/thunderid/internal/authnprovider/manager"
-	"github.com/thunder-id/thunderid/internal/consent"
 	"github.com/thunder-id/thunderid/internal/flow/common"
 	"github.com/thunder-id/thunderid/internal/flow/core"
 	oauth2const "github.com/thunder-id/thunderid/internal/oauth/oauth2/constants"
-	"github.com/thunder-id/thunderid/internal/system/error/serviceerror"
 	"github.com/thunder-id/thunderid/internal/system/log"
-)
-
-const (
-	// failureReasonConsentDenied is returned when the user explicitly denies consent.
-	failureReasonConsentDenied = "User denied consent"
 )
 
 // consentExecutor handles consent collection during identity journeys.
 // It checks whether the authenticated user has the required consents for the application,
 // prompts if not, and records the user's decisions after they are collected by the prompt node.
 type consentExecutor struct {
-	core.ExecutorInterface
-	consentEnforcer consentauthn.ConsentEnforcerServiceInterface
-	authnProvider   authnprovidermgr.AuthnProviderManagerInterface
+	providers.Executor
+	consentEnforcer providers.ConsentProvider
+	authnProvider   providers.AuthnProviderManager
 	logger          *log.Logger
 }
 
-var _ core.ExecutorInterface = (*consentExecutor)(nil)
+var _ providers.Executor = (*consentExecutor)(nil)
 
 // newConsentExecutor creates a new instance of consentExecutor.
 func newConsentExecutor(
 	flowFactory core.FlowFactoryInterface,
-	consentEnforcer consentauthn.ConsentEnforcerServiceInterface,
-	authnProvider authnprovidermgr.AuthnProviderManagerInterface,
+	consentEnforcer providers.ConsentProvider,
+	authnProvider providers.AuthnProviderManager,
 ) *consentExecutor {
 	logger := log.GetLogger().With(
 		log.String(log.LoggerKeyComponentName, "ConsentExecutor"),
 		log.String(log.LoggerKeyExecutorName, ExecutorNameConsent),
 	)
-	defaultInputs := []common.Input{
+	defaultInputs := []providers.Input{
 		{
 			Identifier: userInputConsentDecisions,
-			Type:       common.InputTypeConsent,
+			Type:       providers.InputTypeConsent,
 			Required:   true,
 		},
 	}
-	prerequisites := []common.Input{
+	prerequisites := []providers.Input{
 		{
 			Identifier: userAttributeUserID,
-			Type:       common.InputTypeText,
+			Type:       providers.InputTypeText,
 			Required:   true,
 		},
 	}
 
-	base := flowFactory.CreateExecutor(ExecutorNameConsent, common.ExecutorTypeUtility,
-		defaultInputs, prerequisites)
+	base := flowFactory.CreateExecutor(ExecutorNameConsent, providers.ExecutorTypeUtility,
+		defaultInputs, prerequisites, &providers.ExecutorMeta{
+			SupportedProperties: []providers.ExecutorSupportedProperties{
+				{Property: "timeout"},
+			},
+		})
 
 	return &consentExecutor{
-		ExecutorInterface: base,
-		consentEnforcer:   consentEnforcer,
-		authnProvider:     authnProvider,
-		logger:            logger,
+		Executor:        base,
+		consentEnforcer: consentEnforcer,
+		authnProvider:   authnProvider,
+		logger:          logger,
 	}
 }
 
 // Execute runs the consent enforcement logic.
-func (e *consentExecutor) Execute(ctx *core.NodeContext) (*common.ExecutorResponse, error) {
+func (e *consentExecutor) Execute(ctx *providers.NodeContext) (*providers.ExecutorResponse, error) {
 	logger := e.logger.With(log.String(log.LoggerKeyExecutionID, ctx.ExecutionID))
-	logger.Debug("Executing consent executor")
+	logger.Debug(ctx.Context, "Executing consent executor")
 
-	execResp := &common.ExecutorResponse{
+	execResp := &providers.ExecutorResponse{
 		AdditionalData: make(map[string]string),
 		RuntimeData:    make(map[string]string),
 		ForwardedData:  make(map[string]interface{}),
+		AuthUser:       ctx.AuthUser,
 	}
 
-	if !e.ValidatePrerequisites(ctx, execResp) {
-		logger.Debug("Prerequisites validation failed for consent executor")
-		execResp.Status = common.ExecFailure
-		execResp.FailureReason = "Prerequisites validation failed for consent executor"
+	if !e.ValidatePrerequisites(ctx, execResp, e.authnProvider) {
+		logger.Debug(ctx.Context, "Prerequisites validation failed for consent executor")
+		execResp.Status = providers.ExecFailure
+		execResp.Error = &ErrConsentPrereqFailed
 		return execResp, nil
+	}
+
+	if !execResp.AuthUser.IsAuthenticated() {
+		execResp.Status = providers.ExecFailure
+		execResp.Error = &ErrUserNotAuthenticated
+		return execResp, nil
+	}
+
+	authUser, entityRef, svcErr := e.authnProvider.GetEntityReference(ctx.Context, execResp.AuthUser)
+	execResp.AuthUser = authUser
+	if svcErr != nil {
+		return execResp, errors.New("Failed to get entity reference from AuthUser")
+	}
+
+	availableAttrs, svcErr := e.authnProvider.GetUserAvailableAttributes(ctx.Context, execResp.AuthUser)
+	execResp.AuthUser = authUser
+	if svcErr != nil {
+		e.logger.Debug(ctx.Context, "Failed to get available attributes from AuthUser",
+			log.Any("error", svcErr))
 	}
 
 	// TODO: Replace with application's actual OU when OU support is added
 	ouID := "default"
 	appID := ctx.EntityID
-	userID := ctx.AuthenticatedUser.UserID
+	entityID := entityRef.EntityID
 
 	if !e.HasRequiredInputs(ctx, execResp) {
-		logger.Debug("Required consent decisions not provided; checking if consent is needed")
-		return e.checkConsent(ctx, execResp, ouID, appID, userID)
+		logger.Debug(ctx.Context, "Required consent decisions not provided; checking if consent is needed")
+		return e.checkConsent(ctx, execResp, ouID, appID, availableAttrs, entityRef)
 	}
 
-	logger.Debug("Consent decisions provided; processing consent decisions")
-	return e.handleConsentDecisions(ctx, execResp, ouID, appID, userID)
+	logger.Debug(ctx.Context, "Consent decisions provided; processing consent decisions")
+	return e.handleConsentDecisions(ctx, execResp, ouID, appID, entityID)
 }
 
 // checkConsent resolves whether consent is needed and either completes or forwards to a prompt.
-func (e *consentExecutor) checkConsent(ctx *core.NodeContext, execResp *common.ExecutorResponse,
-	ouID, appID, userID string) (*common.ExecutorResponse, error) {
+func (e *consentExecutor) checkConsent(ctx *providers.NodeContext, execResp *providers.ExecutorResponse,
+	ouID, appID string,
+	availableAttrResp *providers.AttributesResponse,
+	entityRef *providers.EntityReference,
+) (*providers.ExecutorResponse, error) {
 	logger := e.logger.With(log.String(log.LoggerKeyExecutionID, ctx.ExecutionID))
-	logger.Debug("Checking if user consent is required")
+	logger.Debug(ctx.Context, "Checking if user consent is required")
 
 	essentialAttributes, optionalAttributes := e.getRequiredAttributes(ctx)
 	authorizedPermissions := strings.Fields(ctx.RuntimeData["authorized_permissions"])
-	availableAttributes := e.buildAugmentedAvailableAttributes(ctx)
+	availableAttributes := e.buildAugmentedAvailableAttributes(availableAttrResp, entityRef)
 	appName := ctx.Application.Name
+	forceReprompt := ctx.RuntimeData[common.RuntimeKeyForceConsentReprompt] == "true"
 
 	// Resolve consent to determine if any required consents are missing and need to be prompted
 	promptData, svcErr := e.consentEnforcer.ResolveConsent(
-		ctx.Context, ouID, appID, appName, userID,
+		ctx.Context, ouID, appID, appName, entityRef.EntityID,
 		essentialAttributes, optionalAttributes, authorizedPermissions,
-		availableAttributes)
+		availableAttributes, forceReprompt, core.BuildProviderMetadata(ctx).RuntimeMetadata)
 	if svcErr != nil {
-		if svcErr.Type == serviceerror.ClientErrorType {
-			logger.Debug("Client error while resolving user consent", log.Any("error", svcErr))
-			execResp.Status = common.ExecFailure
-			execResp.FailureReason = "Failed to resolve consent: " + svcErr.ErrorDescription.DefaultValue
+		if svcErr.Type == tidcommon.ClientErrorType {
+			logger.Debug(ctx.Context, "Client error while resolving user consent", log.Any("error", svcErr))
+			execResp.Status = providers.ExecFailure
+			execResp.Error = &ErrConsentResolutionFailed
 			return execResp, nil
 		}
 
-		logger.Error("Failed to resolve consent", log.Any("error", svcErr))
+		logger.Error(ctx.Context, "Failed to resolve consent", log.Any("error", svcErr))
 		return nil, errors.New("failed to resolve consent")
 	}
 
 	// All consents are active — nothing to prompt
 	if promptData == nil {
-		logger.Debug("All required consents are active; completing consent executor")
-		execResp.Status = common.ExecComplete
+		logger.Debug(ctx.Context, "All required consents are active; completing consent executor")
+		execResp.Status = providers.ExecComplete
 		return execResp, nil
 	}
 
 	// Consent is needed — forward prompt data to the prompt node via ForwardedData
 	promptJSON, err := json.Marshal(promptData.Purposes)
 	if err != nil {
-		logger.Error("Failed to marshal consent prompt data", log.Error(err))
+		logger.Error(ctx.Context, "Failed to marshal consent prompt data", log.Error(err))
 		return nil, errors.New("failed to prepare consent prompt data")
 	}
 
@@ -178,29 +200,30 @@ func (e *consentExecutor) checkConsent(ctx *core.NodeContext, execResp *common.E
 		if timeoutSec, err := strconv.ParseInt(timeoutStr, 10, 64); err == nil && timeoutSec > 0 {
 			expiresAt := time.Now().Add(time.Duration(timeoutSec) * time.Second).UnixMilli()
 			expiresAtStr := strconv.FormatInt(expiresAt, 10)
-			logger.Debug("Consent timeout configured", log.String("expiresAt", expiresAtStr))
+			logger.Debug(ctx.Context, "Consent timeout configured", log.String("expiresAt", expiresAtStr))
 
 			execResp.AdditionalData[common.DataStepTimeout] = expiresAtStr
 			execResp.RuntimeData[common.RuntimeKeyStepTimeout] = expiresAtStr
 		}
 	}
 
-	logger.Debug("Prompting for user consent", log.Int("purposeCount", len(promptData.Purposes)))
-	execResp.Status = common.ExecUserInputRequired
+	logger.Debug(ctx.Context, "Prompting for user consent",
+		log.Int("purposeCount", len(promptData.Purposes)))
+	execResp.Status = providers.ExecUserInputRequired
 	return execResp, nil
 }
 
 // handleConsentDecisions processes the user's consent decisions.
-func (e *consentExecutor) handleConsentDecisions(ctx *core.NodeContext, execResp *common.ExecutorResponse,
-	ouID, appID, userID string) (*common.ExecutorResponse, error) {
+func (e *consentExecutor) handleConsentDecisions(ctx *providers.NodeContext, execResp *providers.ExecutorResponse,
+	ouID, appID, userID string) (*providers.ExecutorResponse, error) {
 	logger := e.logger.With(log.String(log.LoggerKeyExecutionID, ctx.ExecutionID))
-	logger.Debug("Processing consent decisions from user")
+	logger.Debug(ctx.Context, "Processing consent decisions from user")
 
 	decisionsJSON, ok := ctx.UserInputs[userInputConsentDecisions]
 	if !ok || decisionsJSON == "" {
-		logger.Debug("Consent decisions input is missing or empty")
-		execResp.Status = common.ExecFailure
-		execResp.FailureReason = "Consent decisions input is missing or empty"
+		logger.Debug(ctx.Context, "Consent decisions input is missing or empty")
+		execResp.Status = providers.ExecFailure
+		execResp.Error = &ErrConsentDecisionsMissing
 		return execResp, nil
 	}
 
@@ -209,11 +232,11 @@ func (e *consentExecutor) handleConsentDecisions(ctx *core.NodeContext, execResp
 	// must be unescaped before parsing
 	decisionsJSON = html.UnescapeString(decisionsJSON)
 
-	var decisions consentauthn.ConsentDecisions
+	var decisions providers.ConsentDecisions
 	if err := json.Unmarshal([]byte(decisionsJSON), &decisions); err != nil {
-		logger.Error("Failed to parse consent decisions", log.Error(err))
-		execResp.Status = common.ExecFailure
-		execResp.FailureReason = "Failed to parse consent decisions"
+		logger.Error(ctx.Context, "Failed to parse consent decisions", log.Error(err))
+		execResp.Status = providers.ExecFailure
+		execResp.Error = &ErrConsentDecisionsParseFail
 		return execResp, nil
 	}
 
@@ -221,9 +244,9 @@ func (e *consentExecutor) handleConsentDecisions(ctx *core.NodeContext, execResp
 	if expiresAtStr, ok := ctx.RuntimeData[common.RuntimeKeyStepTimeout]; ok && expiresAtStr != "" {
 		if expiresAt, err := strconv.ParseInt(expiresAtStr, 10, 64); err == nil {
 			if time.Now().UnixMilli() > expiresAt {
-				logger.Debug("Consent prompt has timed out", log.Any("expiresAt", expiresAt))
-				execResp.Status = common.ExecFailure
-				execResp.FailureReason = "Consent prompt has timed out"
+				logger.Debug(ctx.Context, "Consent prompt has timed out", log.Any("expiresAt", expiresAt))
+				execResp.Status = providers.ExecFailure
+				execResp.Error = &ErrConsentPromptTimedOut
 				return execResp, nil
 			}
 		}
@@ -241,25 +264,25 @@ func (e *consentExecutor) handleConsentDecisions(ctx *core.NodeContext, execResp
 	// Always record consent decisions (including denials) for audit/compliance purposes.
 	// The session token is used to verify completeness and enforce essential attribute rules
 	consentRecord, svcErr := e.consentEnforcer.RecordConsent(ctx.Context, ouID, appID, userID,
-		&decisions, sessionToken, validityPeriod)
+		&decisions, sessionToken, validityPeriod, core.BuildProviderMetadata(ctx).RuntimeMetadata)
 	if svcErr != nil {
 		// Essential consent denied: the consent record was persisted but the user denied
 		// a required attribute, so the flow cannot proceed
 		if svcErr.Code == consentauthn.ErrorEssentialConsentDenied.Code {
-			logger.Debug("User denied essential consent attributes")
-			execResp.Status = common.ExecFailure
-			execResp.FailureReason = failureReasonConsentDenied
+			logger.Debug(ctx.Context, "User denied essential consent attributes")
+			execResp.Status = providers.ExecFailure
+			execResp.Error = &ErrConsentDenied
 			return execResp, nil
 		}
 
-		if svcErr.Type == serviceerror.ClientErrorType {
-			logger.Debug("Client error while recording user consent", log.Any("error", svcErr))
-			execResp.Status = common.ExecFailure
-			execResp.FailureReason = "Failed to record consent: " + svcErr.ErrorDescription.DefaultValue
+		if svcErr.Type == tidcommon.ClientErrorType {
+			logger.Debug(ctx.Context, "Client error while recording user consent", log.Any("error", svcErr))
+			execResp.Status = providers.ExecFailure
+			execResp.Error = &ErrConsentRecordFailed
 			return execResp, nil
 		}
 
-		logger.Error("Failed to record consent", log.Any("error", svcErr))
+		logger.Error(ctx.Context, "Failed to record consent", log.Any("error", svcErr))
 		return nil, errors.New("failed to record consent")
 	}
 
@@ -270,19 +293,19 @@ func (e *consentExecutor) handleConsentDecisions(ctx *core.NodeContext, execResp
 	// downstream executors can easily restrict to only consented values without needing to
 	// understand the full consent data structure. Both keys are always set (even if empty) so
 	// auth assert knows that the consent step ran and can apply the appropriate precedence chain.
-	consentedAttrs := collectConsentedAttributes(consentRecord)
+	consentedAttrs := collectApprovedElementsByPurposeName(consentRecord, buildAttributePurposeName(appID))
 	execResp.RuntimeData[common.RuntimeKeyConsentedAttributes] = strings.Join(consentedAttrs, " ")
-	consentedPerms := collectConsentedPermissions(consentRecord)
+	consentedPerms := collectApprovedElementsByPurposeName(consentRecord, buildPermissionsPurposeName(appID))
 	execResp.RuntimeData[common.RuntimeKeyConsentedPermissions] = strings.Join(consentedPerms, " ")
 
-	logger.Debug("Consent recorded successfully", log.String("consentID", consentRecord.ID))
-	execResp.Status = common.ExecComplete
+	logger.Debug(ctx.Context, "Consent recorded successfully", log.String("consentID", consentRecord.ID))
+	execResp.Status = providers.ExecComplete
 	return execResp, nil
 }
 
 // getRequiredAttributes retrieves the essential and optional attributes required for consent from the
 // runtime data or application assertion.
-func (e *consentExecutor) getRequiredAttributes(ctx *core.NodeContext) (
+func (e *consentExecutor) getRequiredAttributes(ctx *providers.NodeContext) (
 	essentialAttributes, optionalAttributes []string) {
 	essentialAttributes = []string{}
 	optionalAttributes = []string{}
@@ -312,39 +335,22 @@ func (e *consentExecutor) getRequiredAttributes(ctx *core.NodeContext) (
 // construction in the authenticated user context but are never included in AttributesResponse
 // by authentication providers.
 //
-// It uses AuthenticatedUser.AvailableAttributes (legacy) as the base and merges in any
-// attributes from AuthUser via the AuthnProviderManager (new pattern used by BasicAuth).
-// This temporary dual-source merge will be simplified once AuthenticatedUser is removed.
-// When both sources are empty, nil is returned so that the downstream consent enforcer
+// When the source is empty, nil is returned so that the downstream consent enforcer
 // skips profile-presence filtering entirely.
-func (e *consentExecutor) buildAugmentedAvailableAttributes(ctx *core.NodeContext) *authnprovidercm.AttributesResponse {
-	augmented := make(map[string]*authnprovidercm.AttributeResponse)
-	baseVerifications := make(map[string]*authnprovidercm.VerificationResponse)
+func (e *consentExecutor) buildAugmentedAvailableAttributes(
+	availableAttrResp *providers.AttributesResponse, entityRef *providers.EntityReference,
+) *providers.AttributesResponse {
+	augmented := make(map[string]*providers.AttributeResponse)
+	baseVerifications := make(map[string]*providers.VerificationResponse)
 	hasSource := false
 
-	if base := ctx.AuthenticatedUser.AvailableAttributes; base != nil {
+	if base := availableAttrResp; base != nil {
 		hasSource = true
 		for k, v := range base.Attributes {
 			augmented[k] = v
 		}
 		for k, v := range base.Verifications {
 			baseVerifications[k] = v
-		}
-	}
-
-	if ctx.AuthUser.IsAuthenticated() {
-		attrs, svcErr := e.authnProvider.GetUserAvailableAttributes(ctx.Context, ctx.AuthUser)
-		if svcErr != nil {
-			e.logger.Debug("Failed to get available attributes from AuthUser; using AuthenticatedUser only",
-				log.Any("error", svcErr))
-		} else if attrs != nil {
-			hasSource = true
-			for k, v := range attrs.Attributes {
-				augmented[k] = v
-			}
-			for k, v := range attrs.Verifications {
-				baseVerifications[k] = v
-			}
 		}
 	}
 
@@ -355,49 +361,45 @@ func (e *consentExecutor) buildAugmentedAvailableAttributes(ctx *core.NodeContex
 	// Inject special attribute keys.
 	// Value is set to empty since the consent enforcer only checks for presence of the key, and the actual values
 	// can be obtained from the authenticated user context if needed
-	if ctx.AuthenticatedUser.UserType != "" {
-		augmented[oauth2const.ClaimUserType] = &authnprovidercm.AttributeResponse{}
+	if entityRef.EntityType != "" {
+		augmented[oauth2const.ClaimUserType] = &providers.AttributeResponse{}
 	}
-	if ctx.AuthenticatedUser.OUID != "" {
-		augmented[oauth2const.ClaimOUID] = &authnprovidercm.AttributeResponse{}
-		augmented[oauth2const.ClaimOUName] = &authnprovidercm.AttributeResponse{}
-		augmented[oauth2const.ClaimOUHandle] = &authnprovidercm.AttributeResponse{}
+	if entityRef.OUID != "" {
+		augmented[oauth2const.ClaimOUID] = &providers.AttributeResponse{}
+		augmented[oauth2const.ClaimOUName] = &providers.AttributeResponse{}
+		augmented[oauth2const.ClaimOUHandle] = &providers.AttributeResponse{}
 	}
-	if ctx.AuthenticatedUser.UserID != "" {
-		augmented[oauth2const.UserAttributeGroups] = &authnprovidercm.AttributeResponse{}
+	if entityRef.EntityID != "" {
+		augmented[oauth2const.UserAttributeGroups] = &providers.AttributeResponse{}
 	}
 
-	return &authnprovidercm.AttributesResponse{
+	return &providers.AttributesResponse{
 		Attributes:    augmented,
 		Verifications: baseVerifications,
 	}
 }
 
-// collectConsentedAttributes extracts all approved attribute names from a consent record.
-func collectConsentedAttributes(c *consent.Consent) []string {
-	return collectApprovedByPurposeNamespace(c, consent.NamespaceAttribute)
-}
-
-// collectConsentedPermissions extracts all approved permission names from a consent record.
-func collectConsentedPermissions(c *consent.Consent) []string {
-	return collectApprovedByPurposeNamespace(c, consent.NamespacePermission)
-}
-
-// collectApprovedByPurposeNamespace returns the deduped approved element names across all
-// consent purposes in the given namespace. The upstream consent service does not round-trip the
-// purpose namespace on reads, so it is derived from the purpose name via
-// consent.NamespaceFromPurposeName.
-func collectApprovedByPurposeNamespace(c *consent.Consent, ns consent.Namespace) []string {
-	var out []string
+// collectApprovedElementsByPurposeName returns a list of element names that are approved by the user for a
+// given purpose name in the consent record.
+func collectApprovedElementsByPurposeName(c *providers.Consent, purposeName string) []string {
 	for _, p := range c.Purposes {
-		if consent.NamespaceFromPurposeName(p.Name) != ns {
-			continue
-		}
-		for _, e := range p.Elements {
-			if e.IsUserApproved && !slices.Contains(out, e.Name) {
-				out = append(out, e.Name)
+		if p.Name == purposeName {
+			var out []string
+			for _, e := range p.Elements {
+				if e.IsUserApproved && !slices.Contains(out, e.Name) {
+					out = append(out, e.Name)
+				}
 			}
+			return out
 		}
 	}
-	return out
+	return []string{}
+}
+
+func buildAttributePurposeName(appID string) string {
+	return "attributes:" + appID
+}
+
+func buildPermissionsPurposeName(appID string) string {
+	return "permissions:" + appID
 }

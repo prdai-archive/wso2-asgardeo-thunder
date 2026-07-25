@@ -19,20 +19,20 @@
 package application
 
 import (
-	"github.com/stretchr/testify/mock"
-
 	"context"
 	"testing"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/suite"
 
 	"github.com/thunder-id/thunderid/internal/application/model"
-	inboundmodel "github.com/thunder-id/thunderid/internal/inboundclient/model"
-	"github.com/thunder-id/thunderid/internal/system/error/serviceerror"
-	i18ncore "github.com/thunder-id/thunderid/internal/system/i18n/core"
+	"github.com/thunder-id/thunderid/internal/system/config"
 	"github.com/thunder-id/thunderid/internal/system/mcp/tool"
+	tidcommon "github.com/thunder-id/thunderid/pkg/thunderidengine/common"
+	engineconfig "github.com/thunder-id/thunderid/pkg/thunderidengine/config"
+	"github.com/thunder-id/thunderid/pkg/thunderidengine/providers"
 )
 
 type ApplicationToolsTestSuite struct {
@@ -41,6 +41,31 @@ type ApplicationToolsTestSuite struct {
 
 func TestApplicationToolsTestSuite(t *testing.T) {
 	suite.Run(t, new(ApplicationToolsTestSuite))
+}
+
+func (suite *ApplicationToolsTestSuite) SetupTest() {
+	config.ResetServerRuntime()
+	cfg := &config.Config{
+		Server: engineconfig.ServerConfig{
+			Identifier: "test-dep",
+			Hostname:   "thunderid.io",
+			Port:       443,
+			PublicURL:  "https://thunderid.io",
+		},
+		Database: config.DatabaseConfig{
+			RuntimeTransient: config.DataSource{Type: "sqlite"},
+		},
+		JWT: engineconfig.JWTConfig{
+			Issuer:         "https://thunderid.io",
+			ValidityPeriod: 3600,
+		},
+	}
+	err := config.InitializeServerRuntime("/tmp/test-application-tools", cfg)
+	suite.Require().NoError(err)
+}
+
+func (suite *ApplicationToolsTestSuite) TearDownTest() {
+	config.ResetServerRuntime()
 }
 
 func (suite *ApplicationToolsTestSuite) TestNewApplicationTools() {
@@ -89,8 +114,8 @@ func (suite *ApplicationToolsTestSuite) TestListApplications_Error() {
 	mockService := NewApplicationServiceInterfaceMock(suite.T())
 	tools := &applicationTools{appService: mockService}
 
-	mockService.On("GetApplicationList", mock.Anything).Return(nil, &serviceerror.ServiceError{
-		ErrorDescription: i18ncore.I18nMessage{DefaultValue: "database error"},
+	mockService.On("GetApplicationList", mock.Anything).Return(nil, &tidcommon.ServiceError{
+		ErrorDescription: tidcommon.I18nMessage{DefaultValue: "database error"},
 	})
 
 	ctx := context.Background()
@@ -110,7 +135,7 @@ func (suite *ApplicationToolsTestSuite) TestGetApplicationByID_Success() {
 	mockService := NewApplicationServiceInterfaceMock(suite.T())
 	tools := &applicationTools{appService: mockService}
 
-	expectedApp := &model.Application{
+	expectedApp := &providers.Application{
 		ID:          "app123",
 		Name:        "Test App",
 		Description: "Test Description",
@@ -135,8 +160,8 @@ func (suite *ApplicationToolsTestSuite) TestGetApplicationByID_Error() {
 	mockService := NewApplicationServiceInterfaceMock(suite.T())
 	tools := &applicationTools{appService: mockService}
 
-	mockService.On("GetApplication", mock.Anything, "app123").Return(nil, &serviceerror.ServiceError{
-		ErrorDescription: i18ncore.I18nMessage{DefaultValue: "application not found"},
+	mockService.On("GetApplication", mock.Anything, "app123").Return(nil, &tidcommon.ServiceError{
+		ErrorDescription: tidcommon.I18nMessage{DefaultValue: "application not found"},
 	})
 
 	ctx := context.Background()
@@ -157,12 +182,12 @@ func (suite *ApplicationToolsTestSuite) TestGetApplicationByClientID_Success() {
 	mockService := NewApplicationServiceInterfaceMock(suite.T())
 	tools := &applicationTools{appService: mockService}
 
-	oauthApp := &inboundmodel.OAuthClient{
+	oauthApp := &providers.OAuthClient{
 		ID:       "app123",
 		ClientID: "client123",
 	}
 
-	expectedApp := &model.Application{
+	expectedApp := &providers.Application{
 		ID:   "app123",
 		Name: "Test App",
 	}
@@ -187,8 +212,8 @@ func (suite *ApplicationToolsTestSuite) TestGetApplicationByClientID_OAuthError(
 	mockService := NewApplicationServiceInterfaceMock(suite.T())
 	tools := &applicationTools{appService: mockService}
 
-	mockService.On("GetOAuthApplication", mock.Anything, "client123").Return(nil, &serviceerror.ServiceError{
-		ErrorDescription: i18ncore.I18nMessage{DefaultValue: "OAuth application not found"},
+	mockService.On("GetOAuthApplication", mock.Anything, "client123").Return(nil, &tidcommon.ServiceError{
+		ErrorDescription: tidcommon.I18nMessage{DefaultValue: "OAuth application not found"},
 	})
 
 	ctx := context.Background()
@@ -209,14 +234,14 @@ func (suite *ApplicationToolsTestSuite) TestGetApplicationByClientID_AppError() 
 	mockService := NewApplicationServiceInterfaceMock(suite.T())
 	tools := &applicationTools{appService: mockService}
 
-	oauthApp := &inboundmodel.OAuthClient{
+	oauthApp := &providers.OAuthClient{
 		ID:       "app123",
 		ClientID: "client123",
 	}
 
 	mockService.On("GetOAuthApplication", mock.Anything, "client123").Return(oauthApp, nil)
-	mockService.On("GetApplication", mock.Anything, "app123").Return(nil, &serviceerror.ServiceError{
-		ErrorDescription: i18ncore.I18nMessage{DefaultValue: "application not found"},
+	mockService.On("GetApplication", mock.Anything, "app123").Return(nil, &tidcommon.ServiceError{
+		ErrorDescription: tidcommon.I18nMessage{DefaultValue: "application not found"},
 	})
 
 	ctx := context.Background()
@@ -270,8 +295,8 @@ func (suite *ApplicationToolsTestSuite) TestCreateApplication_Error() {
 		Name: "New App",
 	}
 
-	mockService.On("CreateApplication", mock.Anything, &inputApp).Return(nil, &serviceerror.ServiceError{
-		ErrorDescription: i18ncore.I18nMessage{DefaultValue: "validation error"},
+	mockService.On("CreateApplication", mock.Anything, &inputApp).Return(nil, &tidcommon.ServiceError{
+		ErrorDescription: tidcommon.I18nMessage{DefaultValue: "validation error"},
 	})
 
 	ctx := context.Background()
@@ -326,8 +351,8 @@ func (suite *ApplicationToolsTestSuite) TestUpdateApplication_Error() {
 		Name: "Updated App",
 	}
 
-	mockService.On("UpdateApplication", mock.Anything, "app123", &inputApp).Return(nil, &serviceerror.ServiceError{
-		ErrorDescription: i18ncore.I18nMessage{DefaultValue: "application not found"},
+	mockService.On("UpdateApplication", mock.Anything, "app123", &inputApp).Return(nil, &tidcommon.ServiceError{
+		ErrorDescription: tidcommon.I18nMessage{DefaultValue: "application not found"},
 	})
 
 	ctx := context.Background()

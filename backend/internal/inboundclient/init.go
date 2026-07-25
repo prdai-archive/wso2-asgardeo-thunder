@@ -20,7 +20,6 @@ package inboundclient
 
 import (
 	"github.com/thunder-id/thunderid/internal/cert"
-	"github.com/thunder-id/thunderid/internal/consent"
 	layoutmgt "github.com/thunder-id/thunderid/internal/design/layout/mgt"
 	thememgt "github.com/thunder-id/thunderid/internal/design/theme/mgt"
 	"github.com/thunder-id/thunderid/internal/entityprovider"
@@ -30,6 +29,7 @@ import (
 	"github.com/thunder-id/thunderid/internal/system/cache"
 	dre "github.com/thunder-id/thunderid/internal/system/declarative_resource/entity"
 	"github.com/thunder-id/thunderid/internal/system/transaction"
+	"github.com/thunder-id/thunderid/pkg/thunderidengine/providers"
 )
 
 // Initialize initializes the inbound client service.
@@ -41,14 +41,13 @@ func Initialize(
 	layoutMgt layoutmgt.LayoutMgtServiceInterface,
 	flowMgt flowmgt.FlowMgtServiceInterface,
 	entityType entitytype.EntityTypeServiceInterface,
-	consentService consent.ConsentServiceInterface,
 ) (InboundClientServiceInterface, error) {
 	store, transactioner, err := initializeStore(cacheManager)
 	if err != nil {
 		return nil, err
 	}
 	return newInboundClientService(store, transactioner, certService, entityProvider,
-		themeMgt, layoutMgt, flowMgt, entityType, consentService), nil
+		themeMgt, layoutMgt, flowMgt, entityType), nil
 }
 
 // initializeStore always creates a composite store (DB + in-memory file store).
@@ -60,7 +59,7 @@ func initializeStore(cacheManager cache.CacheManagerInterface) (
 		return nil, nil, err
 	}
 	inboundClientCache := cache.GetCache[*inboundmodel.InboundClient](cacheManager, inboundClientCacheName)
-	oauthProfileCache := cache.GetCache[*inboundmodel.OAuthProfile](cacheManager, oauthProfileCacheName)
+	oauthProfileCache := cache.GetCache[*providers.OAuthProfile](cacheManager, oauthProfileCacheName)
 	cached := newCachedBackStore(dbStore, inboundClientCache, oauthProfileCache)
 	return newCompositeStore(fileStore, cached), transactioner, nil
 }

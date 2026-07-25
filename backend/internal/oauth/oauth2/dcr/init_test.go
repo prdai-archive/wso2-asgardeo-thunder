@@ -29,6 +29,7 @@ import (
 	"github.com/thunder-id/thunderid/internal/system/config"
 	"github.com/thunder-id/thunderid/tests/mocks/applicationmock"
 	"github.com/thunder-id/thunderid/tests/mocks/oumock"
+	"github.com/thunder-id/thunderid/tests/testhelpers"
 )
 
 type InitTestSuite struct {
@@ -47,9 +48,9 @@ func (suite *InitTestSuite) SetupTest() {
 	suite.mockOUService = oumock.NewOrganizationUnitServiceInterfaceMock(suite.T())
 	testConfig := &config.Config{
 		Database: config.DatabaseConfig{
-			Config:  config.DataSource{Type: "sqlite", SQLite: config.SQLiteDataSource{Path: "test.db"}},
-			Runtime: config.DataSource{Type: "sqlite", SQLite: config.SQLiteDataSource{Path: "test.db"}},
-			User:    config.DataSource{Type: "sqlite", SQLite: config.SQLiteDataSource{Path: "test.db"}},
+			Config:           config.DataSource{Type: "sqlite", SQLite: config.SQLiteDataSource{Path: "test.db"}},
+			RuntimeTransient: config.DataSource{Type: "sqlite", SQLite: config.SQLiteDataSource{Path: "test.db"}},
+			Entity:           config.DataSource{Type: "sqlite", SQLite: config.SQLiteDataSource{Path: "test.db"}},
 		},
 	}
 	_ = config.InitializeServerRuntime("", testConfig)
@@ -62,7 +63,7 @@ func (suite *InitTestSuite) TearDownTest() {
 func (suite *InitTestSuite) TestInitialize() {
 	mux := http.NewServeMux()
 
-	err := Initialize(mux, suite.mockAppService, suite.mockOUService, nil)
+	err := Initialize(mux, suite.mockAppService, suite.mockOUService, nil, testhelpers.OAuthConfig())
 
 	assert.NoError(suite.T(), err)
 }
@@ -70,7 +71,7 @@ func (suite *InitTestSuite) TestInitialize() {
 func (suite *InitTestSuite) TestInitialize_RegistersRoutes() {
 	mux := http.NewServeMux()
 
-	err := Initialize(mux, suite.mockAppService, suite.mockOUService, nil)
+	err := Initialize(mux, suite.mockAppService, suite.mockOUService, nil, testhelpers.OAuthConfig())
 	assert.NoError(suite.T(), err)
 
 	// Verify that the routes are registered by attempting to get a handler for them.
@@ -86,16 +87,16 @@ func (suite *InitTestSuite) TestInitialize_ReturnsError_WhenRuntimeTransactioner
 	config.ResetServerRuntime()
 	testConfig := &config.Config{
 		Database: config.DatabaseConfig{
-			Config:  config.DataSource{Type: "sqlite", SQLite: config.SQLiteDataSource{Path: "test.db"}},
-			Runtime: config.DataSource{},
-			User:    config.DataSource{Type: "sqlite", SQLite: config.SQLiteDataSource{Path: "test.db"}},
+			Config:           config.DataSource{Type: "sqlite", SQLite: config.SQLiteDataSource{Path: "test.db"}},
+			RuntimeTransient: config.DataSource{},
+			Entity:           config.DataSource{Type: "sqlite", SQLite: config.SQLiteDataSource{Path: "test.db"}},
 		},
 	}
 	_ = config.InitializeServerRuntime("", testConfig)
 
 	mux := http.NewServeMux()
-	err := Initialize(mux, suite.mockAppService, suite.mockOUService, nil)
+	err := Initialize(mux, suite.mockAppService, suite.mockOUService, nil, testhelpers.OAuthConfig())
 
 	assert.Error(suite.T(), err)
-	assert.Contains(suite.T(), err.Error(), "failed to get runtime DB transactioner for DCR")
+	assert.Contains(suite.T(), err.Error(), "failed to get runtime transient DB transactioner for DCR")
 }

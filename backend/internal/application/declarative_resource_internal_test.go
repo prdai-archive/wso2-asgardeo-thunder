@@ -28,8 +28,7 @@ import (
 	"github.com/stretchr/testify/suite"
 
 	"github.com/thunder-id/thunderid/internal/application/model"
-	inboundmodel "github.com/thunder-id/thunderid/internal/inboundclient/model"
-	oauth2const "github.com/thunder-id/thunderid/internal/oauth/oauth2/constants"
+	"github.com/thunder-id/thunderid/pkg/thunderidengine/providers"
 )
 
 // ValidateApplicationWrapperTestSuite tests the validateApplicationWrapper function.
@@ -48,22 +47,22 @@ func (s *ParseToApplicationDTOTestSuite) TestParseToApplicationDTO_AllFieldsPars
 id: test-app-001
 name: Test Application
 description: A test application
-auth_flow_id: flow-123
-registration_flow_id: flow-reg-456
-is_registration_flow_enabled: true
-theme_id: theme-blue
-layout_id: layout-standard
+authFlowId: flow-123
+registrationFlowId: flow-reg-456
+isRegistrationFlowEnabled: true
+themeId: theme-blue
+layoutId: layout-standard
 template: web
 url: https://example.com
-logo_url: https://example.com/logo.png
-tos_uri: https://example.com/tos
-policy_uri: https://example.com/policy
+logoUrl: https://example.com/logo.png
+tosUri: https://example.com/tos
+policyUri: https://example.com/policy
 contacts:
   - admin@example.com
   - support@example.com
 assertion:
-  validity_period: 3600
-  user_attributes:
+  validityPeriod: 3600
+  userAttributes:
     - email
     - username
 certificate:
@@ -72,7 +71,7 @@ certificate:
     -----BEGIN CERTIFICATE-----
     MIIDazCCAlOgAwIBAgI...
     -----END CERTIFICATE-----
-allowed_user_types:
+allowedUserTypes:
   - internal
   - external
 `
@@ -129,8 +128,8 @@ func (s *ParseToApplicationDTOTestSuite) TestParseToApplicationDTO_ThemeAndLayou
 	yamlData := `
 id: themed-app
 name: Themed Application
-theme_id: modern-theme
-layout_id: two-column
+themeId: modern-theme
+layoutId: two-column
 `
 
 	appDTO, err := parseToApplicationDTO([]byte(yamlData))
@@ -146,8 +145,8 @@ func (s *ParseToApplicationDTOTestSuite) TestParseToApplicationDTO_URIFieldsPars
 	yamlData := `
 id: legal-app
 name: Legal Application
-tos_uri: https://example.com/terms-of-service
-policy_uri: https://example.com/privacy-policy
+tosUri: https://example.com/terms-of-service
+policyUri: https://example.com/privacy-policy
 `
 
 	appDTO, err := parseToApplicationDTO([]byte(yamlData))
@@ -197,23 +196,23 @@ func (s *ParseToApplicationDTOTestSuite) TestParseToApplicationDTO_WithOAuthConf
 	yamlData := `
 id: oauth-app
 name: OAuth Application
-auth_flow_id: flow-123
+authFlowId: flow-123
 url: https://example.com
-inbound_auth_config:
+inboundAuthConfig:
   - type: oauth2
     config:
-      client_id: client-123
-      client_secret: secret-456
-      redirect_uris:
+      clientId: client-123
+      clientSecret: secret-456
+      redirectUris:
         - https://example.com/callback
-      grant_types:
+      grantTypes:
         - authorization_code
         - refresh_token
-      response_types:
+      responseTypes:
         - code
-      token_endpoint_auth_method: client_secret_basic
-      pkce_required: true
-      public_client: false
+      tokenEndpointAuthMethod: client_secret_basic
+      pkceRequired: true
+      publicClient: false
       scopes:
         - openid
         - email
@@ -228,15 +227,15 @@ inbound_auth_config:
 
 	// Verify OAuth configuration was parsed correctly
 	assert.Len(s.T(), appDTO.InboundAuthConfig, 1)
-	assert.Equal(s.T(), inboundmodel.OAuthInboundAuthType, appDTO.InboundAuthConfig[0].Type)
+	assert.Equal(s.T(), providers.OAuthInboundAuthType, appDTO.InboundAuthConfig[0].Type)
 
 	oauthConfig := appDTO.InboundAuthConfig[0].OAuthConfig
 	assert.NotNil(s.T(), oauthConfig)
 	assert.Equal(s.T(), "client-123", oauthConfig.ClientID)
 	assert.Equal(s.T(), "secret-456", oauthConfig.ClientSecret)
 	assert.Contains(s.T(), oauthConfig.RedirectURIs, "https://example.com/callback")
-	assert.Contains(s.T(), oauthConfig.GrantTypes, oauth2const.GrantType("authorization_code"))
-	assert.Contains(s.T(), oauthConfig.GrantTypes, oauth2const.GrantType("refresh_token"))
+	assert.Contains(s.T(), oauthConfig.GrantTypes, providers.GrantType("authorization_code"))
+	assert.Contains(s.T(), oauthConfig.GrantTypes, providers.GrantType("refresh_token"))
 	assert.True(s.T(), oauthConfig.PKCERequired)
 	assert.False(s.T(), oauthConfig.PublicClient)
 	assert.Contains(s.T(), oauthConfig.Scopes, "openid")
@@ -248,10 +247,10 @@ func (s *ParseToApplicationDTOTestSuite) TestParseToApplicationDTO_TemplateAndOt
 id: template-app
 name: Template Application
 template: single-page-app
-theme_id: corporate-theme
-layout_id: horizontal
-tos_uri: https://example.com/tos
-policy_uri: https://example.com/policy
+themeId: corporate-theme
+layoutId: horizontal
+tosUri: https://example.com/tos
+policyUri: https://example.com/policy
 contacts:
   - admin@example.com
 `
@@ -288,12 +287,12 @@ func (s *ParseToApplicationDTOTestSuite) TestParseToApplicationDTO_PreservesOrde
 	yamlData := `
 id: type-test-app
 name: Type Test App
-is_registration_flow_enabled: false
-theme_id: ""
-layout_id: default
+isRegistrationFlowEnabled: false
+themeId: ""
+layoutId: default
 contacts:
   - test@example.com
-allowed_user_types:
+allowedUserTypes:
   - internal
   - external
   - guest
@@ -332,20 +331,20 @@ func (s *ParseToApplicationDTOTestSuite) TestMakeAppEntityParser_PublicClientWit
 	yamlData := []byte(`
 id: public-oauth-app
 name: Public OAuth Application
-inbound_auth_config:
+inboundAuthConfig:
   - type: oauth2
     config:
-      client_id: public-client-id-123
-      pkce_required: true
-      public_client: true
+      clientId: public-client-id-123
+      pkceRequired: true
+      publicClient: true
 `)
 
 	mockAppService := NewApplicationServiceInterfaceMock(s.T())
 	mockAppService.EXPECT().ValidateApplication(mock.Anything, mock.Anything).Return(
 		&model.ApplicationProcessedDTO{ID: "public-oauth-app", Name: "Public OAuth Application"},
-		&inboundmodel.InboundAuthConfigWithSecret{
-			Type: inboundmodel.OAuthInboundAuthType,
-			OAuthConfig: &inboundmodel.OAuthConfigWithSecret{
+		&providers.InboundAuthConfigWithSecret{
+			Type: providers.OAuthInboundAuthType,
+			OAuthConfig: &providers.OAuthConfigWithSecret{
 				ClientID: "public-client-id-123",
 			},
 		},
@@ -370,19 +369,19 @@ func (s *ParseToApplicationDTOTestSuite) TestMakeAppEntityParser_ConfidentialCli
 	yamlData := []byte(`
 id: confidential-oauth-app
 name: Confidential OAuth Application
-inbound_auth_config:
+inboundAuthConfig:
   - type: oauth2
     config:
-      client_id: confidential-client-id-123
-      client_secret: confidential-secret-456
+      clientId: confidential-client-id-123
+      clientSecret: confidential-secret-456
 `)
 
 	mockAppService := NewApplicationServiceInterfaceMock(s.T())
 	mockAppService.EXPECT().ValidateApplication(mock.Anything, mock.Anything).Return(
 		&model.ApplicationProcessedDTO{ID: "confidential-oauth-app", Name: "Confidential OAuth Application"},
-		&inboundmodel.InboundAuthConfigWithSecret{
-			Type: inboundmodel.OAuthInboundAuthType,
-			OAuthConfig: &inboundmodel.OAuthConfigWithSecret{
+		&providers.InboundAuthConfigWithSecret{
+			Type: providers.OAuthInboundAuthType,
+			OAuthConfig: &providers.OAuthConfigWithSecret{
 				ClientID:     "confidential-client-id-123",
 				ClientSecret: "confidential-secret-456",
 			},
@@ -412,10 +411,10 @@ func (s *ParseToApplicationDTOTestSuite) TestMakeAppEntityParser_UsesValidatedGe
 	yamlData := []byte(`
 id: generated-credentials-app
 name: Generated Credentials App
-inbound_auth_config:
+inboundAuthConfig:
   - type: oauth2
     config:
-      grant_types:
+      grantTypes:
         - client_credentials
 `)
 
@@ -427,9 +426,9 @@ inbound_auth_config:
 		},
 	).Return(
 		&model.ApplicationProcessedDTO{ID: "generated-credentials-app", Name: "Generated Credentials App"},
-		&inboundmodel.InboundAuthConfigWithSecret{
-			Type: inboundmodel.OAuthInboundAuthType,
-			OAuthConfig: &inboundmodel.OAuthConfigWithSecret{
+		&providers.InboundAuthConfigWithSecret{
+			Type: providers.OAuthInboundAuthType,
+			OAuthConfig: &providers.OAuthConfigWithSecret{
 				ClientID:     "generated-client-id",
 				ClientSecret: "generated-client-secret",
 			},
@@ -459,27 +458,27 @@ func (s *ParseToApplicationDTOTestSuite) TestMakeAppEntityParser_SelectsOAuthCon
 	yamlData := []byte(`
 id: mixed-inbound-app
 name: Mixed Inbound App
-inbound_auth_config:
+inboundAuthConfig:
   - type: saml
     config: {}
   - type: oauth2
     config:
-      client_id: oauth-client-id
-      client_secret: oauth-client-secret
+      clientId: oauth-client-id
+      clientSecret: oauth-client-secret
 `)
 
 	mockAppService := NewApplicationServiceInterfaceMock(s.T())
 	mockAppService.EXPECT().ValidateApplication(mock.Anything, mock.Anything).Run(
 		func(_ context.Context, app *model.ApplicationDTO) {
 			assert.Len(s.T(), app.InboundAuthConfig, 1)
-			assert.Equal(s.T(), inboundmodel.OAuthInboundAuthType, app.InboundAuthConfig[0].Type)
+			assert.Equal(s.T(), providers.OAuthInboundAuthType, app.InboundAuthConfig[0].Type)
 			assert.Equal(s.T(), "oauth-client-id", app.InboundAuthConfig[0].OAuthConfig.ClientID)
 		},
 	).Return(
 		&model.ApplicationProcessedDTO{ID: "mixed-inbound-app", Name: "Mixed Inbound App"},
-		&inboundmodel.InboundAuthConfigWithSecret{
-			Type: inboundmodel.OAuthInboundAuthType,
-			OAuthConfig: &inboundmodel.OAuthConfigWithSecret{
+		&providers.InboundAuthConfigWithSecret{
+			Type: providers.OAuthInboundAuthType,
+			OAuthConfig: &providers.OAuthConfigWithSecret{
 				ClientID:     "oauth-client-id",
 				ClientSecret: "oauth-client-secret",
 			},
@@ -506,7 +505,7 @@ inbound_auth_config:
 }
 
 func (s *ParseToApplicationDTOTestSuite) TestParseToApplicationDTO_OUHandlePassedThrough() {
-	yamlData := []byte("id: app-1\nname: My App\nou_handle: default\n")
+	yamlData := []byte("id: app-1\nname: My App\nouHandle: default\n")
 
 	appDTO, err := parseToApplicationDTO(yamlData)
 

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2025, WSO2 LLC. (https://www.wso2.com).
+ * Copyright (c) 2025-2026, WSO2 LLC. (https://www.wso2.com).
  *
  * WSO2 LLC. licenses this file to you under the Apache License,
  * Version 2.0 (the "License"); you may not use this file except
@@ -20,32 +20,6 @@
 package common
 
 import "time"
-
-// FlowType defines the type of flow execution.
-type FlowType string
-
-const (
-	// FlowTypeAuthentication represents a flow execution for user authentication.
-	FlowTypeAuthentication FlowType = "AUTHENTICATION"
-	// FlowTypeRegistration represents a flow execution for user registration.
-	FlowTypeRegistration FlowType = "REGISTRATION"
-	// FlowTypeUserOnboarding represents an admin-initiated user onboarding flow.
-	FlowTypeUserOnboarding FlowType = "USER_ONBOARDING"
-	// FlowTypeRecovery represents a flow execution for account recovery (e.g., password reset).
-	FlowTypeRecovery FlowType = "RECOVERY"
-)
-
-// FlowStatus defines the status of a flow execution.
-type FlowStatus string
-
-const (
-	// FlowStatusComplete indicates that the flow execution is complete.
-	FlowStatusComplete FlowStatus = "COMPLETE"
-	// FlowStatusIncomplete indicates that the flow execution is incomplete.
-	FlowStatusIncomplete FlowStatus = "INCOMPLETE"
-	// FlowStatusError indicates that there was an error during the flow execution.
-	FlowStatusError FlowStatus = "ERROR"
-)
 
 // FlowStepType defines the type of a step in the flow execution.
 type FlowStepType string
@@ -69,6 +43,8 @@ const (
 	NodeTypeTaskExecution NodeType = "TASK_EXECUTION"
 	// NodeTypePrompt represents a prompt node
 	NodeTypePrompt NodeType = "PROMPT"
+	// NodeTypeCall represents a CALL node that invokes another flow
+	NodeTypeCall NodeType = "CALL"
 )
 
 // NodeStatus defines the status of a node in the flow execution.
@@ -84,6 +60,8 @@ const (
 	// NodeStatusForward indicates that the engine should forward execution to NextNodeID.
 	// Used for scenarios like onFailure handlers where context should be preserved.
 	NodeStatusForward NodeStatus = "FORWARD"
+	// NodeStatusCall signals the engine to push a frame and transfer execution to the referenced flow.
+	NodeStatusCall NodeStatus = "CALL_FLOW"
 )
 
 // NodeResponseType defines the type of response from a node in the flow execution.
@@ -96,34 +74,6 @@ const (
 	NodeResponseTypeRedirection NodeResponseType = "REDIRECTION"
 	// NodeResponseTypeRetry indicates that the node response is a retry type, indicating a retry action.
 	NodeResponseTypeRetry NodeResponseType = "RETRY"
-)
-
-// ExecutorStatus defines the status of an executor in the flow execution.
-type ExecutorStatus string
-
-const (
-	// ExecComplete indicates that the executor has completed its execution successfully.
-	ExecComplete ExecutorStatus = "COMPLETE"
-	// ExecUserInputRequired indicates that the executor requires user input to proceed.
-	ExecUserInputRequired ExecutorStatus = "USER_INPUT_REQUIRED"
-	// ExecExternalRedirection indicates that the executor is redirecting to an external URL.
-	ExecExternalRedirection ExecutorStatus = "EXTERNAL_REDIRECTION"
-	// ExecFailure indicates that the executor has failed during its execution.
-	ExecFailure ExecutorStatus = "FAILURE"
-	// ExecRetry indicates that the executor is retrying its execution.
-	ExecRetry ExecutorStatus = "RETRY"
-)
-
-// ExecutorType defines the type of an executor in the flow execution.
-type ExecutorType string
-
-const (
-	// ExecutorTypeAuthentication represents an executor that performs authentication.
-	ExecutorTypeAuthentication ExecutorType = "AUTHENTICATION"
-	// ExecutorTypeRegistration represents an executor that handles user registration/provisioning.
-	ExecutorTypeRegistration ExecutorType = "REGISTRATION"
-	// ExecutorTypeUtility represents a utility executor for common operations.
-	ExecutorTypeUtility ExecutorType = "UTILITY"
 )
 
 const (
@@ -143,18 +93,16 @@ const (
 	DataRootOUID = "rootOuId"
 	// DataPromptMessage is the key used to pass a message to be displayed in the prompt node.
 	DataPromptMessage = "message"
+	// DataOpenID4VPClientID is the verifier client_id for the wallet QR / deep link.
+	DataOpenID4VPClientID = "openid4vpClientId"
+	// DataOpenID4VPRequestURI is the signed request URI the wallet fetches.
+	DataOpenID4VPRequestURI = "openid4vpRequestUri"
+	// DataOpenID4VPWalletURI is the openid4vp:// authorization URI for the wallet.
+	DataOpenID4VPWalletURI = "openid4vpWalletUri"
 )
 
 // DefaultHTTPTimeout defines the default timeout duration for HTTP requests.
 const DefaultHTTPTimeout = 5 * time.Second
-
-// NodeVariant identifies a PROMPT node sub-type that activates a variant-specific code path.
-type NodeVariant string
-
-const (
-	// NodeVariantLoginOptions identifies a PROMPT node that presents login method choices to the user.
-	NodeVariantLoginOptions NodeVariant = "LOGIN_OPTIONS"
-)
 
 const (
 	// NodePropertyAllowAuthenticationWithoutLocalUser indicates whether authentication is allowed without a local user
@@ -170,8 +118,15 @@ const (
 	NodePropertyOUResolveFrom = "resolveFrom"
 	// NodePropertyAuthMethodMapping maps authentication classes to action refs on login_options PROMPT nodes.
 	NodePropertyAuthMethodMapping = "authMethodMapping"
+	// NodePropertySkipInterceptors indicates whether to skip interceptor execution for the current node.
+	NodePropertySkipInterceptors = "skipInterceptors"
+	// NodePropertyCheckpointRef is set on an SSO-Check node to name the Session (join) node id whose
+	// checkpoint it guards. The checkpoint id is that join node's id, so the skip and join of one
+	// checkpoint pair by it. Absent/empty means the node is not part of a checkpoint pair.
+	NodePropertyCheckpointRef = "checkpointRef"
 )
 
+// RuntimeData keys.
 const (
 	// RuntimeKeyUserAutoProvisioned indicates whether the user was auto-provisioned
 	RuntimeKeyUserAutoProvisioned = "userAutoProvisioned"
@@ -179,12 +134,15 @@ const (
 	RuntimeKeyUserEligibleForProvisioning = "userEligibleForProvisioning"
 	// RuntimeKeyUserAmbiguous indicates the user exists in multiple OUs and requires disambiguation
 	RuntimeKeyUserAmbiguous = "userAmbiguous"
-	// RuntimeKeySkipProvisioning indicates whether to skip provisioning
-	RuntimeKeySkipProvisioning = "skipProvisioning"
 	// RuntimeKeyClientID holds the OAuth client ID for the current flow execution, if applicable.
 	RuntimeKeyClientID = "clientId"
 	// RuntimeKeyRequestedPermissions holds the space-separated permission scopes requested by the OAuth client.
 	RuntimeKeyRequestedPermissions = "requested_permissions"
+	// RuntimeKeyResourceServerIdentifier holds the identifier of the single resource server the request is
+	// bound to. When set, the authorization executor resolves it and scopes its permission evaluation to
+	// that resource server. Using the identifier (not the internal ID) keeps the executor contract the
+	// same for OAuth requests and direct flow executions.
+	RuntimeKeyResourceServerIdentifier = "resource_server_identifier"
 	// RuntimeKeyConsentedPermissions holds the space-separated permission scopes the user has consented to
 	// release to the client, as produced by the ConsentExecutor.
 	RuntimeKeyConsentedPermissions = "consented_permissions"
@@ -202,6 +160,9 @@ const (
 	RuntimeKeyConsentedAttributes = "consented_attributes"
 	// RuntimeKeyConsentSessionToken holds the signed JWT session token for consent validation.
 	RuntimeKeyConsentSessionToken = "consent_session_token"
+	// RuntimeKeyForceConsentReprompt indicates that consent must be re-prompted for all required
+	// claims, set when the authorization request includes prompt=consent.
+	RuntimeKeyForceConsentReprompt = "force_consent_reprompt"
 	// RuntimeKeyStoredInviteToken holds the generated invite token stored during the invite send phase.
 	RuntimeKeyStoredInviteToken = "storedInviteToken"
 	// RuntimeKeyUserAttributesCacheTTLSeconds indicates the TTL of the user attributes cache.
@@ -221,51 +182,84 @@ const (
 	// RuntimeKeyPresentedOptionalInputs holds a space-separated list of optional input identifiers
 	// that have already been prompted to the user, even if the user left them empty.
 	RuntimeKeyPresentedOptionalInputs = "presentedOptionalInputs"
-	// RuntimeKeySMSOTPMobileNumber holds the resolved mobile number for SMS OTP verification.
-	// TODO: Revisit when the generic OTP executor is implemented.
-	RuntimeKeySMSOTPMobileNumber = "smsOTPMobileNumber"
-	// RuntimeKeySMSOTPPhoneAttr holds the schema attribute name used to look up the mobile number.
-	// TODO: Revisit when the generic OTP executor is implemented.
-	RuntimeKeySMSOTPPhoneAttr = "smsOTPPhoneAttr"
+	// RuntimeKeyOTPSessionToken holds the OTP session JWT produced by OTPExecutor in generate mode
+	// and consumed by OTPExecutor in verify mode.
+	RuntimeKeyOTPSessionToken = "otpSessionToken"
+	// RuntimeKeyOTPAttemptCount holds the number of OTP generation attempts for the current flow execution.
+	RuntimeKeyOTPAttemptCount = "attemptCount"
 	// RuntimeKeyMagicLinkUsedJti is the JWT ID claim value of a magic link token that has already been used.
 	RuntimeKeyMagicLinkUsedJti = "magicLinkUsedJti"
 	// RuntimeKeyOAuthState holds the generated OAuth state parameter for CSRF validation.
 	RuntimeKeyOAuthState = "oauthState"
+	// RuntimeKeyOIDCNonce holds the server-generated nonce for OIDC ID token replay protection.
+	RuntimeKeyOIDCNonce = "oidcNonce"
+	// RuntimeKeyOpenID4VPState holds the OpenID4VP request state across poll steps.
+	RuntimeKeyOpenID4VPState = "openid4vpVerificationState"
 	// RuntimeKeyRequestedAuthClasses holds the space-separated ACR values from acr_values.
 	RuntimeKeyRequestedAuthClasses = "requested_auth_classes"
+	// RuntimeKeyMaxAge holds the OIDC max_age request parameter (maximum allowed elapsed seconds
+	// since the subject last authenticated).
+	RuntimeKeyMaxAge = "max_age"
 	// RuntimeKeySelectedAuthClass holds the ACR value of the chosen authentication method.
 	RuntimeKeySelectedAuthClass = "selected_auth_class"
 	// RuntimeKeyAllowedLoginOptions holds the space-separated action refs allowed on a LOGIN_OPTIONS node.
 	RuntimeKeyAllowedLoginOptions = "allowed_login_options"
+	// RuntimeKeyAllowRegistrationWithExistingUser indicates whether registration is allowed with an existing user
+	RuntimeKeyAllowRegistrationWithExistingUser = "allowRegistrationWithExistingUser"
+	// RuntimeKeyBindingMessage holds the human-readable binding message displayed to the user
+	// on both the consumption device and the authentication device to correlate the CIBA request.
+	RuntimeKeyBindingMessage = "bindingMessage"
+	// RuntimeKeyEntityState holds the entity existence state, set by the IdentifyingExecutor in
+	// check_state mode or by the federated auth executors from their account-linking result.
+	RuntimeKeyEntityState = "entityState"
+	// RuntimeKeyAuthorizationRequestID holds the auth request identifier bound to the current flow
+	// execution (the OAuth authorize authId or the CIBA auth_req_id), if applicable.
+	RuntimeKeyAuthorizationRequestID = "authorizationRequestId"
+	// RuntimeKeySSOSessionPresent is the prefix of the per-checkpoint flag recording whether the
+	// SSO-Check node found a live session that already has this checkpoint's snapshot ("true") or not.
+	// It is scoped per checkpoint via SSOCheckpointKey; the paired Session node reads it to choose
+	// load vs save. "true" commits the join to loading (fail closed if the snapshot is gone).
+	RuntimeKeySSOSessionPresent = "ssoSessionPresent"
+	// RuntimeKeySSOSessionSaved is the prefix of the per-checkpoint guard holding the handle under
+	// which a checkpoint's context was saved, making the save idempotent if the join re-executes. It
+	// is scoped per checkpoint via SSOCheckpointKey.
+	RuntimeKeySSOSessionSaved = "ssoSessionSaved"
+	// RuntimeKeyAuthTime holds the Unix timestamp (seconds) at which the subject authenticated
+	// for the current session, carried across the SSO path for downstream assurance checks.
+	RuntimeKeyAuthTime = "ssoAuthTime"
+	// RuntimeKeySSOSessionHandle is the SSO session handle key. It is used both as the RuntimeData key
+	// that carries the run's session handle across nodes (resolved on reuse, minted on a fresh login)
+	// and as the ExecutorResponse EngineData key the Session node uses to hand a freshly minted handle
+	// to the transport layer for the per-flow cookie. Using the generic EngineData channel keeps SSO
+	// concepts out of the reusable engine contract.
+	RuntimeKeySSOSessionHandle = "ssoSessionHandle"
+	// RuntimeKeySSOSessionCleared is the ExecutorResponse EngineData signal the session sign-out node
+	// raises once it has terminated the session, telling the transport layer to clear the per-flow
+	// cookie. Like RuntimeKeySSOSessionHandle it rides the engine-only EngineData channel, keeping SSO
+	// concepts off the reusable engine contract.
+	RuntimeKeySSOSessionCleared = "ssoSessionCleared"
+	// RuntimeKeyTokenFamilyID carries the token family id (tfid) minted once per login flow execution
+	// by the Session node. It is stamped onto the auth assertion, and from there onto the grant's
+	// access and refresh tokens, so revocation can target a whole family. It is deliberately excluded
+	// from the SSO checkpoint snapshot so each flow execution mints a fresh tfid rather than reusing a
+	// prior one on SSO reuse.
+	RuntimeKeyTokenFamilyID = "tokenFamilyId"
+	// RuntimeKeyLogoutPromptRequired is set by the OAuth RP-initiated logout layer when a logout was
+	// requested without a valid id_token_hint. A sign-out flow's session sign-out node reads it to
+	// decide whether the End-User must confirm the logout before the session is terminated.
+	RuntimeKeyLogoutPromptRequired = "logoutPromptRequired"
+	// RuntimeKeyLogoutPromptShown is the session sign-out node's own guard, set when it routes to the
+	// confirmation prompt so that on re-run (after the user confirms) it terminates instead of
+	// prompting again.
+	RuntimeKeyLogoutPromptShown = "logoutPromptShown"
 )
 
-// TODO: Define a go type for InputType when formalizing input types
-
-// InputType constants define known input types used in flow definitions.
-const (
-	// InputTypeText represents a text input type.
-	InputTypeText = "TEXT_INPUT"
-	// InputTypeEmail represents an email input type.
-	InputTypeEmail = "EMAIL_INPUT"
-	// InputTypePassword represents a password credential input type.
-	InputTypePassword = "PASSWORD_INPUT"
-	// InputTypeOTP represents a one-time password input type.
-	InputTypeOTP = "OTP_INPUT"
-	// InputTypePhone represents a phone number input type.
-	InputTypePhone = "PHONE_INPUT"
-	// InputTypeConsent represents a consent decisions input type.
-	InputTypeConsent = "CONSENT_INPUT"
-	// InputTypeHidden represents a hidden input type.
-	InputTypeHidden = "HIDDEN"
-	// InputTypeSelect represents a select (dropdown) input type.
-	InputTypeSelect = "SELECT"
-
-	// TODO: Add support for other sensitive input types:
-	// - Passkey credential fields (credentialId, clientDataJSON, authenticatorData, signature, userHandle)
-	// - OAuth/OIDC authorization codes
-	// - OIDC nonce
-	// - Invite tokens
-)
+// SSOCheckpointKey scopes a per-checkpoint SSO control key (RuntimeKeySSOSessionPresent,
+// RuntimeKeySSOSessionSaved) to a checkpoint id, so multiple skip/join checkpoints in one flow keep
+// independent control state within the shared RuntimeData map.
+func SSOCheckpointKey(base, checkpointID string) string {
+	return base + ":" + checkpointID
+}
 
 // MetaComponentType constants define known component types used in flow meta definitions.
 const (
@@ -281,14 +275,8 @@ const (
 // Attribute name constants for well-known user attributes used across flow executors.
 const (
 	// AttributeMobileNumber is the default attribute name for a user's mobile phone number.
-	AttributeMobileNumber = "mobileNumber"
+	AttributeMobileNumber = "mobile_number"
 )
-
-// sensitiveInputTypes contains the list of input types that are considered sensitive.
-var sensitiveInputTypes = []string{
-	InputTypePassword,
-	InputTypeOTP,
-}
 
 const (
 	// AttributeEmail is the default attribute name for a user's email.
@@ -315,25 +303,35 @@ const (
 	ForwardedDataKeyActionType = "actionType"
 	// ForwardedDataKeyTemplateData holds template parameters for notification executors
 	ForwardedDataKeyTemplateData = "templateData"
+	// ForwardedDataKeyOTPCode is the key for the plaintext OTP value inside the
+	// ForwardedData[ForwardedDataKeyTemplateData] map forwarded by OTPExecutor to sender executors.
+	ForwardedDataKeyOTPCode = "otpCode"
+	// ForwardedDataKeyExpiryMinutes is the key for the OTP expiry duration (in minutes) inside the
+	// ForwardedData[ForwardedDataKeyTemplateData] map forwarded by OTPExecutor to sender executors.
+	ForwardedDataKeyExpiryMinutes = "expiryMinutes"
 )
 
-// ValidationType identifies the constraint type of a ValidationRule.
-type ValidationType string
+// InterceptorStatus represents the outcome of an interceptor execution.
+type InterceptorStatus string
 
-// Validation rule types.
+// Interceptor status constants.
 const (
-	// ValidationTypeRegex matches the submitted value against a regex pattern.
-	ValidationTypeRegex ValidationType = "regex"
-	// ValidationTypeMinLength enforces a minimum string length on the submitted value.
-	ValidationTypeMinLength ValidationType = "minLength"
-	// ValidationTypeMaxLength enforces a maximum string length on the submitted value.
-	ValidationTypeMaxLength ValidationType = "maxLength"
+	InterceptorStatusComplete   InterceptorStatus = "COMPLETE"
+	InterceptorStatusIncomplete InterceptorStatus = "INCOMPLETE"
+	InterceptorStatusFailure    InterceptorStatus = "FAILURE"
 )
 
-// Default i18n fallback message keys returned in fieldErrors when a validation
-// rule does not specify a message.
+// Interceptor shared data keys for incoming request data populated before interceptor execution.
 const (
-	DefaultValidationMessageRegex     = "validation.pattern.invalid"
-	DefaultValidationMessageMinLength = "validation.minLength.invalid"
-	DefaultValidationMessageMaxLength = "validation.maxLength.invalid"
+	// InterceptorDataKeyChallengeTokenIn is the shared data key for the incoming challenge token.
+	InterceptorDataKeyChallengeTokenIn = "challengeTokenIn"
 )
+
+// ValidNodeTypes is the set of valid node type strings.
+var ValidNodeTypes = map[string]bool{
+	string(NodeTypeStart):         true,
+	string(NodeTypeEnd):           true,
+	string(NodeTypeTaskExecution): true,
+	string(NodeTypePrompt):        true,
+	string(NodeTypeCall):          true,
+}

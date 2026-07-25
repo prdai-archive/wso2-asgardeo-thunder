@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2025, WSO2 LLC. (https://www.wso2.com).
+ * Copyright (c) 2025-2026, WSO2 LLC. (https://www.wso2.com).
  *
  * WSO2 LLC. licenses this file to you under the Apache License,
  * Version 2.0 (the "License"); you may not use this file except
@@ -25,9 +25,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/suite"
 	"github.com/thunder-id/thunderid/tests/integration/flow/common"
 	"github.com/thunder-id/thunderid/tests/integration/testutils"
-	"github.com/stretchr/testify/suite"
 )
 
 var (
@@ -362,26 +362,6 @@ func (ts *GithubRegistrationFlowTestSuite) SetupSuite() {
 				Value:    "user:email,read:user",
 				IsSecret: false,
 			},
-			{
-				Name:     "authorization_endpoint",
-				Value:    ts.mockGithubServer.GetURL() + "/login/oauth/authorize",
-				IsSecret: false,
-			},
-			{
-				Name:     "token_endpoint",
-				Value:    ts.mockGithubServer.GetURL() + "/login/oauth/access_token",
-				IsSecret: false,
-			},
-			{
-				Name:     "userinfo_endpoint",
-				Value:    ts.mockGithubServer.GetURL() + "/user",
-				IsSecret: false,
-			},
-			{
-				Name:     "user_email_endpoint",
-				Value:    ts.mockGithubServer.GetURL() + "/user/emails",
-				IsSecret: false,
-			},
 		},
 	}
 
@@ -400,6 +380,12 @@ func (ts *GithubRegistrationFlowTestSuite) SetupSuite() {
 	ts.Require().NoError(err, "Failed to create GitHub registration flow")
 	ts.config.CreatedFlowIDs = append(ts.config.CreatedFlowIDs, flowID)
 	githubRegTestApp.RegistrationFlowID = flowID
+
+	// Create isolated auth flow to avoid cross-type reference validation with default auth flow.
+	isolatedAuthID, err := testutils.CreateIsolatedAuthFlow("github-registration-isolated-auth")
+	ts.Require().NoError(err, "Failed to create isolated auth flow")
+	ts.config.CreatedFlowIDs = append(ts.config.CreatedFlowIDs, isolatedAuthID)
+	githubRegTestApp.AuthFlowID = isolatedAuthID
 
 	// Create test application
 	githubRegTestApp.OUID = githubRegTestOUID
@@ -684,5 +670,5 @@ func (ts *GithubRegistrationFlowTestSuite) TestGithubRegistrationFlowDuplicateUs
 	// Step 3: Verify registration failure due to duplicate user
 	ts.Require().Equal("ERROR", completeFlowStep2.FlowStatus, "Expected flow status to be ERROR for duplicate user")
 	ts.Require().Empty(completeFlowStep2.Assertion, "No JWT assertion should be returned for failed registration")
-	ts.Require().NotEmpty(completeFlowStep2.FailureReason, "Failure reason should be provided for duplicate user")
+	ts.Require().NotNil(completeFlowStep2.Error, "Error should be provided for duplicate user")
 }

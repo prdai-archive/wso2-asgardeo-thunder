@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2025, WSO2 LLC. (https://www.wso2.com).
+ * Copyright (c) 2025-2026, WSO2 LLC. (https://www.wso2.com).
  *
  * WSO2 LLC. licenses this file to you under the Apache License,
  * Version 2.0 (the "License"); you may not use this file except
@@ -22,10 +22,14 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/thunder-id/thunderid/pkg/thunderidengine/providers"
+
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/thunder-id/thunderid/internal/flow/core"
 	"github.com/thunder-id/thunderid/internal/flow/executor"
+	"github.com/thunder-id/thunderid/internal/flow/graphbuilder"
+	"github.com/thunder-id/thunderid/internal/flow/interceptor"
 
 	"github.com/thunder-id/thunderid/internal/system/cache"
 	"github.com/thunder-id/thunderid/internal/system/config"
@@ -42,16 +46,20 @@ func Initialize(
 	cacheManager cache.CacheManagerInterface,
 	flowFactory core.FlowFactoryInterface,
 	executorRegistry executor.ExecutorRegistryInterface,
-	graphCache core.GraphCacheInterface,
+	interceptorRegistry interceptor.InterceptorRegistryInterface,
+	graphBuilder graphbuilder.GraphBuilderInterface,
 ) (FlowMgtServiceInterface, declarativeresource.ResourceExporter, error) {
-	store, compositeStore, transactioner, err := initializeStore(cacheManager)
+	flowValidator := newFlowValidator(executorRegistry, interceptorRegistry, graphBuilder)
+	store, compositeStore, transactioner, err := initializeStore(cacheManager, flowValidator)
 	if err != nil {
 		return nil, nil, err
 	}
 
 	inferenceService := newFlowInferenceService()
-	graphBuilder := newGraphBuilder(flowFactory, executorRegistry, graphCache)
-	service := newFlowMgtService(store, inferenceService, graphBuilder, executorRegistry, compositeStore, transactioner)
+	service := newFlowMgtService(
+		store, inferenceService, graphBuilder, executorRegistry,
+		interceptorRegistry, flowValidator, compositeStore, transactioner,
+	)
 
 	handler := newFlowMgtHandler(service)
 	registerRoutes(mux, handler)
@@ -85,14 +93,15 @@ func Initialize(
 //   - Reads check both stores (merged results)
 //   - Writes only go to database store
 //   - Declarative flows cannot be updated or deleted
-func initializeStore(cacheManager cache.CacheManagerInterface) (
-	flowStoreInterface, *compositeFlowStore, transaction.Transactioner, error) {
+func initializeStore(
+	cacheManager cache.CacheManagerInterface,
+	flowValidator FlowValidatorInterface) (flowStoreInterface, *compositeFlowStore, transaction.Transactioner, error) {
 	var compositeStore *compositeFlowStore
 
 	storeMode := getFlowStoreMode()
 
-	flowByIDCache := cache.GetCache[*CompleteFlowDefinition](cacheManager, "FlowByIDCache")
-	flowByHandleCache := cache.GetCache[*CompleteFlowDefinition](cacheManager, "FlowByHandleCache")
+	flowByIDCache := cache.GetCache[*providers.CompleteFlowDefinition](cacheManager, "FlowByIDCache")
+	flowByHandleCache := cache.GetCache[*providers.CompleteFlowDefinition](cacheManager, "FlowByHandleCache")
 
 	switch storeMode {
 	case serverconst.StoreModeComposite:
@@ -102,14 +111,14 @@ func initializeStore(cacheManager cache.CacheManagerInterface) (
 			return nil, nil, nil, err
 		}
 		compositeStore = newCompositeFlowStore(fileStore, dbStore)
-		if err := loadDeclarativeResources(fileStore); err != nil {
+		if err := loadDeclarativeResources(fileStore, flowValidator); err != nil {
 			return nil, nil, nil, err
 		}
 		return compositeStore, compositeStore, transactioner, nil
 
 	case serverconst.StoreModeDeclarative:
 		fileStore, transactioner := newFileBasedStore()
-		if err := loadDeclarativeResources(fileStore); err != nil {
+		if err := loadDeclarativeResources(fileStore, flowValidator); err != nil {
 			return nil, nil, nil, err
 		}
 		return fileStore, nil, transactioner, nil
@@ -187,6 +196,12 @@ func registerRoutes(mux *http.ServeMux, handler *flowMgtHandler) {
 	}
 	mux.HandleFunc(middleware.WithCORS("GET /flows/{flowId}/versions", handler.listFlowVersions, opts3))
 	mux.HandleFunc(middleware.WithCORS("OPTIONS /flows/{flowId}/versions",
+		func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusNoContent)
+		}, opts3),
+	)
+	mux.HandleFunc(middleware.WithCORS("GET /flows/{flowId}/usages", handler.getFlowUsages, opts3))
+	mux.HandleFunc(middleware.WithCORS("OPTIONS /flows/{flowId}/usages",
 		func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusNoContent)
 		}, opts3),

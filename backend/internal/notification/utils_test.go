@@ -22,6 +22,8 @@ import (
 	"errors"
 	"testing"
 
+	engineconfig "github.com/thunder-id/thunderid/pkg/thunderidengine/config"
+
 	"github.com/stretchr/testify/suite"
 
 	"github.com/thunder-id/thunderid/internal/notification/common"
@@ -40,7 +42,7 @@ func TestUtilsTestSuite(t *testing.T) {
 func (suite *UtilsTestSuite) SetupSuite() {
 	testConfig := &config.Config{
 		Crypto: config.CryptoConfig{
-			Encryption: config.EncryptionConfig{
+			Encryption: engineconfig.EncryptionConfig{
 				Key: "0579f866ac7c9273580d0ff163fa01a7b2401a7ff3ddc3e3b14ae3136fa6025e",
 			},
 		},
@@ -425,4 +427,47 @@ func (suite *UtilsTestSuite) TestValidateTwilioProperties_RegexError() {
 	err := validateTwilioProperties(properties)
 	suite.NotNil(err)
 	suite.Contains(err.Error(), "failed to validate Twilio account SID")
+}
+
+func (suite *UtilsTestSuite) TestValidateMessageNotificationSender_InvalidSupportedChannel() {
+	sender := common.NotificationSenderDTO{
+		Name:     "Test Sender Invalid Channel",
+		Type:     common.NotificationSenderTypeMessage,
+		Provider: common.MessageProviderTypeTwilio,
+		Properties: []cmodels.Property{
+			createTestProperty("account_sid", "AC00112233445566778899aabbccddeeff", true),
+			createTestProperty("auth_token", "test-token", true),
+			createTestProperty("sender_id", "+15551234567", false),
+			createTestProperty(common.SenderPropertySupportedChannels, "email", false),
+		},
+	}
+
+	err := validateMessageNotificationSender(sender)
+
+	suite.NotNil(err)
+	suite.Equal(ErrorInvalidRequestFormat.Code, err.Code)
+	suite.Contains(err.ErrorDescription.DefaultValue, "invalid supported channel: email")
+}
+
+func (suite *UtilsTestSuite) TestValidateMessageNotificationSender_SupportedChannelReadError() {
+	properties, err := cmodels.DeserializePropertiesFromJSONObject(
+		`{"supported_channels": {"value": "invalid-secret", "isSecret": true}}`)
+	suite.NoError(err)
+
+	properties = append(properties, createTestProperty("account_sid", "AC00112233445566778899aabbccddeeff", true))
+	properties = append(properties, createTestProperty("auth_token", "test-token", true))
+	properties = append(properties, createTestProperty("sender_id", "+15551234567", false))
+
+	sender := common.NotificationSenderDTO{
+		Name:       "Test Sender Read Error",
+		Type:       common.NotificationSenderTypeMessage,
+		Provider:   common.MessageProviderTypeTwilio,
+		Properties: properties,
+	}
+
+	errSvc := validateMessageNotificationSender(sender)
+
+	suite.NotNil(errSvc)
+	suite.Equal(ErrorInvalidRequestFormat.Code, errSvc.Code)
+	suite.Contains(errSvc.ErrorDescription.DefaultValue, "failed to read supported channels property")
 }

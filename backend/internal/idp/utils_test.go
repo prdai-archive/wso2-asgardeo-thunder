@@ -19,12 +19,18 @@
 package idp
 
 import (
+	"context"
 	"testing"
+
+	engineconfig "github.com/thunder-id/thunderid/pkg/thunderidengine/config"
+	"github.com/thunder-id/thunderid/pkg/thunderidengine/providers"
+
+	tidcommon "github.com/thunder-id/thunderid/pkg/thunderidengine/common"
 
 	"github.com/stretchr/testify/suite"
 
 	"github.com/thunder-id/thunderid/internal/system/cmodels"
-	"github.com/thunder-id/thunderid/internal/system/error/serviceerror"
+	"github.com/thunder-id/thunderid/internal/system/config"
 	"github.com/thunder-id/thunderid/internal/system/log"
 )
 
@@ -51,7 +57,7 @@ func (s *IDPUtilsTestSuite) TestValidateIDPProperties_OAuth_AllRequired() {
 
 	properties := []cmodels.Property{*prop1, *prop2, *prop3, *prop4, *prop5, *prop6}
 
-	result, err := validateIDPProperties(IDPTypeOAuth, properties, s.logger)
+	result, err := validateIDPProperties(context.Background(), providers.IDPTypeOAuth, properties, s.logger)
 
 	s.Nil(err)
 	s.NotNil(result)
@@ -69,7 +75,7 @@ func (s *IDPUtilsTestSuite) TestValidateIDPProperties_OAuth_WithOptional() {
 
 	properties := []cmodels.Property{*prop1, *prop2, *prop3, *prop4, *prop5, *prop6, *prop7}
 
-	result, err := validateIDPProperties(IDPTypeOAuth, properties, s.logger)
+	result, err := validateIDPProperties(context.Background(), providers.IDPTypeOAuth, properties, s.logger)
 
 	s.Nil(err)
 	s.NotNil(result)
@@ -82,7 +88,7 @@ func (s *IDPUtilsTestSuite) TestValidateIDPProperties_OAuth_MissingRequired() {
 
 	properties := []cmodels.Property{*prop1, *prop2}
 
-	result, err := validateIDPProperties(IDPTypeOAuth, properties, s.logger)
+	result, err := validateIDPProperties(context.Background(), providers.IDPTypeOAuth, properties, s.logger)
 
 	s.NotNil(err)
 	s.Nil(result)
@@ -100,7 +106,7 @@ func (s *IDPUtilsTestSuite) TestValidateIDPProperties_OIDC_AllRequired() {
 
 	properties := []cmodels.Property{*prop1, *prop2, *prop3, *prop4, *prop5}
 
-	result, err := validateIDPProperties(IDPTypeOIDC, properties, s.logger)
+	result, err := validateIDPProperties(context.Background(), providers.IDPTypeOIDC, properties, s.logger)
 
 	s.Nil(err)
 	s.NotNil(result)
@@ -127,7 +133,7 @@ func (s *IDPUtilsTestSuite) TestValidateIDPProperties_OIDC_WithExistingScopes() 
 
 	properties := []cmodels.Property{*prop1, *prop2, *prop3, *prop4, *prop5, *prop6}
 
-	result, err := validateIDPProperties(IDPTypeOIDC, properties, s.logger)
+	result, err := validateIDPProperties(context.Background(), providers.IDPTypeOIDC, properties, s.logger)
 
 	s.Nil(err)
 	s.NotNil(result)
@@ -152,7 +158,7 @@ func (s *IDPUtilsTestSuite) TestValidateIDPProperties_OIDC_ScopesAlreadyHasOpenI
 
 	properties := []cmodels.Property{*prop1, *prop2, *prop3, *prop4, *prop5, *prop6}
 
-	result, err := validateIDPProperties(IDPTypeOIDC, properties, s.logger)
+	result, err := validateIDPProperties(context.Background(), providers.IDPTypeOIDC, properties, s.logger)
 
 	s.Nil(err)
 	s.NotNil(result)
@@ -172,7 +178,7 @@ func (s *IDPUtilsTestSuite) TestValidateIDPProperties_Google_WithDefaults() {
 
 	properties := []cmodels.Property{*prop1, *prop2, *prop3}
 
-	result, err := validateIDPProperties(IDPTypeGoogle, properties, s.logger)
+	result, err := validateIDPProperties(context.Background(), providers.IDPTypeGoogle, properties, s.logger)
 
 	s.Nil(err)
 	s.NotNil(result)
@@ -199,7 +205,7 @@ func (s *IDPUtilsTestSuite) TestValidateIDPProperties_Google_WithCustomEndpoints
 
 	properties := []cmodels.Property{*prop1, *prop2, *prop3, *prop4}
 
-	result, err := validateIDPProperties(IDPTypeGoogle, properties, s.logger)
+	result, err := validateIDPProperties(context.Background(), providers.IDPTypeGoogle, properties, s.logger)
 
 	s.Nil(err)
 	s.NotNil(result)
@@ -221,7 +227,7 @@ func (s *IDPUtilsTestSuite) TestValidateIDPProperties_GitHub_WithDefaults() {
 
 	properties := []cmodels.Property{*prop1, *prop2, *prop3}
 
-	result, err := validateIDPProperties(IDPTypeGitHub, properties, s.logger)
+	result, err := validateIDPProperties(context.Background(), providers.IDPTypeGitHub, properties, s.logger)
 
 	s.Nil(err)
 	s.NotNil(result)
@@ -246,7 +252,7 @@ func (s *IDPUtilsTestSuite) TestValidateIDPProperties_GitHub_WithCustomEndpoints
 
 	properties := []cmodels.Property{*prop1, *prop2, *prop3, *prop4}
 
-	result, err := validateIDPProperties(IDPTypeGitHub, properties, s.logger)
+	result, err := validateIDPProperties(context.Background(), providers.IDPTypeGitHub, properties, s.logger)
 
 	s.Nil(err)
 	s.NotNil(result)
@@ -266,7 +272,7 @@ func (s *IDPUtilsTestSuite) TestValidateIDPProperties_EmptyPropertyName() {
 
 	properties := []cmodels.Property{*prop1}
 
-	result, err := validateIDPProperties(IDPTypeOAuth, properties, s.logger)
+	result, err := validateIDPProperties(context.Background(), providers.IDPTypeOAuth, properties, s.logger)
 
 	s.NotNil(err)
 	s.Nil(result)
@@ -279,7 +285,7 @@ func (s *IDPUtilsTestSuite) TestValidateIDPProperties_EmptyPropertyValue() {
 
 	properties := []cmodels.Property{*prop1}
 
-	result, err := validateIDPProperties(IDPTypeOAuth, properties, s.logger)
+	result, err := validateIDPProperties(context.Background(), providers.IDPTypeOAuth, properties, s.logger)
 
 	s.NotNil(err)
 	s.Nil(result)
@@ -293,12 +299,12 @@ func (s *IDPUtilsTestSuite) TestValidateIDPProperties_UnsupportedProperty() {
 
 	properties := []cmodels.Property{*prop1, *prop2}
 
-	result, err := validateIDPProperties(IDPTypeOAuth, properties, s.logger)
+	result, err := validateIDPProperties(context.Background(), providers.IDPTypeOAuth, properties, s.logger)
 
 	s.NotNil(err)
 	s.Nil(result)
 	s.Equal(ErrorUnsupportedIDPProperty.Code, err.Code)
-	s.Contains(err.ErrorDescription.DefaultValue, "unsupported_prop")
+	s.Contains(err.ErrorDescription.String(), "unsupported_prop")
 	s.Contains(err.ErrorDescription.DefaultValue, "not supported")
 }
 
@@ -307,11 +313,11 @@ func (s *IDPUtilsTestSuite) TestValidateIDPProperties_InvalidIDPType() {
 
 	properties := []cmodels.Property{*prop1}
 
-	result, err := validateIDPProperties(IDPType("INVALID"), properties, s.logger)
+	result, err := validateIDPProperties(context.Background(), providers.IDPType("INVALID"), properties, s.logger)
 
 	s.NotNil(err)
 	s.Nil(result)
-	s.Equal(serviceerror.InternalServerError.Code, err.Code)
+	s.Equal(tidcommon.InternalServerError.Code, err.Code)
 }
 
 func (s *IDPUtilsTestSuite) TestPropertyMapToSlice() {
@@ -339,7 +345,7 @@ func (s *IDPUtilsTestSuite) TestPropertyMapToSlice() {
 func (s *IDPUtilsTestSuite) TestEnsureOpenIDScope_NoExistingScopes() {
 	propertyMap := make(map[string]cmodels.Property)
 
-	err := ensureOpenIDScope(propertyMap, s.logger)
+	err := ensureOpenIDScope(context.Background(), propertyMap, s.logger)
 
 	s.Nil(err)
 	s.Contains(propertyMap, PropScopes)
@@ -355,7 +361,7 @@ func (s *IDPUtilsTestSuite) TestEnsureOpenIDScope_WithExistingScopes() {
 		PropScopes: *prop,
 	}
 
-	err := ensureOpenIDScope(propertyMap, s.logger)
+	err := ensureOpenIDScope(context.Background(), propertyMap, s.logger)
 
 	s.Nil(err)
 
@@ -372,7 +378,7 @@ func (s *IDPUtilsTestSuite) TestEnsureOpenIDScope_AlreadyHasOpenID() {
 		PropScopes: *prop,
 	}
 
-	err := ensureOpenIDScope(propertyMap, s.logger)
+	err := ensureOpenIDScope(context.Background(), propertyMap, s.logger)
 
 	s.Nil(err)
 
@@ -388,7 +394,7 @@ func (s *IDPUtilsTestSuite) TestEnsureOpenIDScope_EmptyScopesValue() {
 		PropScopes: *prop,
 	}
 
-	err := ensureOpenIDScope(propertyMap, s.logger)
+	err := ensureOpenIDScope(context.Background(), propertyMap, s.logger)
 
 	s.Nil(err)
 
@@ -405,56 +411,56 @@ func (s *IDPUtilsTestSuite) TestValidateIDP_ValidOAuth() {
 	prop5, _ := cmodels.NewProperty(PropTokenEndpoint, "http://idp/token", false)
 	prop6, _ := cmodels.NewProperty(PropUserInfoEndpoint, "http://idp/userinfo", false)
 
-	idp := &IDPDTO{
+	idp := &providers.IDPDTO{
 		Name:       "Test OAuth IDP",
-		Type:       IDPTypeOAuth,
+		Type:       providers.IDPTypeOAuth,
 		Properties: []cmodels.Property{*prop1, *prop2, *prop3, *prop4, *prop5, *prop6},
 	}
 
-	err := validateIDP(idp, s.logger)
+	err := validateIDP(context.Background(), idp, s.logger)
 
 	s.Nil(err)
 	s.NotNil(idp.Properties)
 }
 
 func (s *IDPUtilsTestSuite) TestValidateIDP_NilIDP() {
-	err := validateIDP(nil, s.logger)
+	err := validateIDP(context.Background(), nil, s.logger)
 
 	s.NotNil(err)
 	s.Equal(ErrorIDPNil.Code, err.Code)
 }
 
 func (s *IDPUtilsTestSuite) TestValidateIDP_EmptyName() {
-	idp := &IDPDTO{
+	idp := &providers.IDPDTO{
 		Name: "",
-		Type: IDPTypeOAuth,
+		Type: providers.IDPTypeOAuth,
 	}
 
-	err := validateIDP(idp, s.logger)
+	err := validateIDP(context.Background(), idp, s.logger)
 
 	s.NotNil(err)
 	s.Equal(ErrorInvalidIDPName.Code, err.Code)
 }
 
 func (s *IDPUtilsTestSuite) TestValidateIDP_EmptyType() {
-	idp := &IDPDTO{
+	idp := &providers.IDPDTO{
 		Name: "Test IDP",
 		Type: "",
 	}
 
-	err := validateIDP(idp, s.logger)
+	err := validateIDP(context.Background(), idp, s.logger)
 
 	s.NotNil(err)
 	s.Equal(ErrorInvalidIDPType.Code, err.Code)
 }
 
 func (s *IDPUtilsTestSuite) TestValidateIDP_InvalidType() {
-	idp := &IDPDTO{
+	idp := &providers.IDPDTO{
 		Name: "Test IDP",
 		Type: "INVALID",
 	}
 
-	err := validateIDP(idp, s.logger)
+	err := validateIDP(context.Background(), idp, s.logger)
 
 	s.NotNil(err)
 	s.Equal(ErrorInvalidIDPType.Code, err.Code)
@@ -468,25 +474,25 @@ func (s *IDPUtilsTestSuite) TestValidateIDP_WithWhitespaceName() {
 	prop5, _ := cmodels.NewProperty(PropTokenEndpoint, "http://idp/token", false)
 	prop6, _ := cmodels.NewProperty(PropUserInfoEndpoint, "http://idp/userinfo", false)
 
-	idp := &IDPDTO{
+	idp := &providers.IDPDTO{
 		Name:       "   ",
-		Type:       IDPTypeOAuth,
+		Type:       providers.IDPTypeOAuth,
 		Properties: []cmodels.Property{*prop1, *prop2, *prop3, *prop4, *prop5, *prop6},
 	}
 
-	err := validateIDP(idp, s.logger)
+	err := validateIDP(context.Background(), idp, s.logger)
 
 	s.NotNil(err)
 	s.Equal(ErrorInvalidIDPName.Code, err.Code)
 }
 
 func (s *IDPUtilsTestSuite) TestValidateIDP_WithWhitespaceType() {
-	idp := &IDPDTO{
+	idp := &providers.IDPDTO{
 		Name: "Test IDP",
 		Type: "   ",
 	}
 
-	err := validateIDP(idp, s.logger)
+	err := validateIDP(context.Background(), idp, s.logger)
 
 	s.NotNil(err)
 	s.Equal(ErrorInvalidIDPType.Code, err.Code)
@@ -497,7 +503,7 @@ func (s *IDPUtilsTestSuite) TestValidateIDPProperties_WithWhitespacePropertyName
 
 	properties := []cmodels.Property{*prop1}
 
-	result, err := validateIDPProperties(IDPTypeOAuth, properties, s.logger)
+	result, err := validateIDPProperties(context.Background(), providers.IDPTypeOAuth, properties, s.logger)
 
 	s.NotNil(err)
 	s.Nil(result)
@@ -510,7 +516,7 @@ func (s *IDPUtilsTestSuite) TestValidateIDPProperties_WithWhitespacePropertyValu
 
 	properties := []cmodels.Property{*prop1}
 
-	result, err := validateIDPProperties(IDPTypeOAuth, properties, s.logger)
+	result, err := validateIDPProperties(context.Background(), providers.IDPTypeOAuth, properties, s.logger)
 
 	s.NotNil(err)
 	s.Nil(result)
@@ -521,7 +527,7 @@ func (s *IDPUtilsTestSuite) TestValidateIDPProperties_WithWhitespacePropertyValu
 func (s *IDPUtilsTestSuite) TestCreateAndAppendProperty_Success() {
 	propertyMap := make(map[string]cmodels.Property)
 
-	err := createAndAppendProperty(propertyMap, "test_prop", "test_value", false, s.logger)
+	err := createAndAppendProperty(context.Background(), propertyMap, "test_prop", "test_value", false, s.logger)
 
 	s.Nil(err)
 	s.Contains(propertyMap, "test_prop")
@@ -538,7 +544,7 @@ func (s *IDPUtilsTestSuite) TestCreateAndAppendProperty_OverwriteExisting() {
 		"test_prop": *prop1,
 	}
 
-	err := createAndAppendProperty(propertyMap, "test_prop", "new_value", false, s.logger)
+	err := createAndAppendProperty(context.Background(), propertyMap, "test_prop", "new_value", false, s.logger)
 
 	s.Nil(err)
 	s.Contains(propertyMap, "test_prop")
@@ -554,7 +560,7 @@ func (s *IDPUtilsTestSuite) TestEnsureOpenIDScope_WithWhitespaceScopes() {
 		PropScopes: *prop,
 	}
 
-	err := ensureOpenIDScope(propertyMap, s.logger)
+	err := ensureOpenIDScope(context.Background(), propertyMap, s.logger)
 
 	s.Nil(err)
 
@@ -569,7 +575,7 @@ func (s *IDPUtilsTestSuite) TestEnsureOpenIDScope_CommaSeparatedScopes() {
 		PropScopes: *prop,
 	}
 
-	err := ensureOpenIDScope(propertyMap, s.logger)
+	err := ensureOpenIDScope(context.Background(), propertyMap, s.logger)
 
 	s.Nil(err)
 
@@ -590,7 +596,7 @@ func (s *IDPUtilsTestSuite) TestEnsureOpenIDScope_WithEmptyStringInScopes() {
 		PropScopes: *prop,
 	}
 
-	err := ensureOpenIDScope(propertyMap, s.logger)
+	err := ensureOpenIDScope(context.Background(), propertyMap, s.logger)
 	s.Nil(err)
 
 	scopesProp := propertyMap[PropScopes]
@@ -612,7 +618,22 @@ func (s *IDPUtilsTestSuite) TestValidateIDPProperties_TokenExchangeOnly_OIDC_Suc
 
 	properties := []cmodels.Property{*prop1, *prop2, *prop3}
 
-	result, err := validateIDPProperties(IDPTypeOIDC, properties, s.logger)
+	result, err := validateIDPProperties(context.Background(), providers.IDPTypeOIDC, properties, s.logger)
+
+	s.Nil(err)
+	s.NotNil(result)
+}
+
+func (s *IDPUtilsTestSuite) TestValidateIDPProperties_TokenExchangeAudience_OIDC_Succeeds() {
+	propIssuer, _ := cmodels.NewProperty(PropIssuer, "https://accounts.google.com", false)
+	propJWKS, _ := cmodels.NewProperty(PropJwksEndpoint, "https://www.googleapis.com/oauth2/v3/certs", false)
+	propTokenExchange, _ := cmodels.NewProperty(PropTokenExchangeEnabled, "true", false)
+	propAudience, _ := cmodels.NewProperty(
+		PropTrustedTokenAudience, "407408718192.apps.googleusercontent.com", false)
+
+	properties := []cmodels.Property{*propIssuer, *propJWKS, *propTokenExchange, *propAudience}
+
+	result, err := validateIDPProperties(context.Background(), providers.IDPTypeOIDC, properties, s.logger)
 
 	s.Nil(err)
 	s.NotNil(result)
@@ -626,13 +647,13 @@ func (s *IDPUtilsTestSuite) TestValidateIDPProperties_TokenExchangeEnabled_Missi
 
 	properties := []cmodels.Property{*prop1, *prop2, *prop3}
 
-	result, err := validateIDPProperties(IDPTypeOIDC, properties, s.logger)
+	result, err := validateIDPProperties(context.Background(), providers.IDPTypeOIDC, properties, s.logger)
 
 	s.NotNil(err)
 	s.Nil(result)
 	s.Equal(ErrorInvalidIDPProperty.Code, err.Code)
 	s.Contains(err.ErrorDescription.DefaultValue, "required property")
-	s.Contains(err.ErrorDescription.DefaultValue, PropIssuer)
+	s.Contains(err.ErrorDescription.String(), PropIssuer)
 }
 
 func (s *IDPUtilsTestSuite) TestValidateIDPProperties_TokenExchangeEnabled_MissingJWKS_Fails() {
@@ -643,13 +664,13 @@ func (s *IDPUtilsTestSuite) TestValidateIDPProperties_TokenExchangeEnabled_Missi
 
 	properties := []cmodels.Property{*prop1, *prop2, *prop3}
 
-	result, err := validateIDPProperties(IDPTypeOIDC, properties, s.logger)
+	result, err := validateIDPProperties(context.Background(), providers.IDPTypeOIDC, properties, s.logger)
 
 	s.NotNil(err)
 	s.Nil(result)
 	s.Equal(ErrorInvalidIDPProperty.Code, err.Code)
 	s.Contains(err.ErrorDescription.DefaultValue, "required property")
-	s.Contains(err.ErrorDescription.DefaultValue, PropJwksEndpoint)
+	s.Contains(err.ErrorDescription.String(), PropJwksEndpoint)
 }
 
 func (s *IDPUtilsTestSuite) TestValidateIDPProperties_OIDCWithoutTokenExchange_StillRequiresRedirectProps() {
@@ -660,7 +681,7 @@ func (s *IDPUtilsTestSuite) TestValidateIDPProperties_OIDCWithoutTokenExchange_S
 
 	properties := []cmodels.Property{*prop1, *prop2, *prop3}
 
-	result, err := validateIDPProperties(IDPTypeOIDC, properties, s.logger)
+	result, err := validateIDPProperties(context.Background(), providers.IDPTypeOIDC, properties, s.logger)
 
 	s.NotNil(err)
 	s.Nil(result)
@@ -678,11 +699,549 @@ func (s *IDPUtilsTestSuite) TestValidateIDPProperties_OIDCWithoutTokenExchange_M
 
 	properties := []cmodels.Property{*prop1, *prop2, *prop3, *prop4}
 
-	result, err := validateIDPProperties(IDPTypeOIDC, properties, s.logger)
+	result, err := validateIDPProperties(context.Background(), providers.IDPTypeOIDC, properties, s.logger)
 
 	s.NotNil(err)
 	s.Nil(result)
 	s.Equal(ErrorInvalidIDPProperty.Code, err.Code)
 	s.Contains(err.ErrorDescription.DefaultValue, "required property")
-	s.Contains(err.ErrorDescription.DefaultValue, PropClientSecret)
+	s.Contains(err.ErrorDescription.String(), PropClientSecret)
+}
+
+func (s *IDPUtilsTestSuite) TestValidateIDPProperties_IDJagEnabledTrue_OIDC_Succeeds() {
+	// OIDC IDP with id_jag_enabled=true and no client credentials should succeed;
+	// issuer and jwks_endpoint alone are sufficient for trust-only connections.
+	prop1, _ := cmodels.NewProperty(PropIssuer, "https://api.asgardeo.io/t/myorg/oauth2/token", false)
+	prop2, _ := cmodels.NewProperty(PropJwksEndpoint, "https://api.asgardeo.io/t/myorg/oauth2/jwks", false)
+	prop3, _ := cmodels.NewProperty(PropIDJagEnabled, "true", false)
+	prop4, _ := cmodels.NewProperty(PropTokenExchangeEnabled, "false", false)
+
+	properties := []cmodels.Property{*prop1, *prop2, *prop3, *prop4}
+
+	result, err := validateIDPProperties(context.Background(), providers.IDPTypeOIDC, properties, s.logger)
+
+	s.Nil(err)
+	s.NotNil(result)
+}
+
+func (s *IDPUtilsTestSuite) TestValidateIDPProperties_IDJagEnabledFalse_OIDC_Succeeds() {
+	// OIDC IDP with id_jag_enabled=false (still present) should succeed without client credentials,
+	// since the mere presence of id_jag_enabled identifies a trust-only connection.
+	prop1, _ := cmodels.NewProperty(PropIssuer, "https://api.asgardeo.io/t/myorg/oauth2/token", false)
+	prop2, _ := cmodels.NewProperty(PropJwksEndpoint, "https://api.asgardeo.io/t/myorg/oauth2/jwks", false)
+	prop3, _ := cmodels.NewProperty(PropIDJagEnabled, "false", false)
+	prop4, _ := cmodels.NewProperty(PropTokenExchangeEnabled, "false", false)
+
+	properties := []cmodels.Property{*prop1, *prop2, *prop3, *prop4}
+
+	result, err := validateIDPProperties(context.Background(), providers.IDPTypeOIDC, properties, s.logger)
+
+	s.Nil(err)
+	s.NotNil(result)
+}
+
+func (s *IDPUtilsTestSuite) TestValidateIDPProperties_IDJagEnabled_MissingIssuer_Fails() {
+	// OIDC IDP with id_jag_enabled present but missing issuer should fail.
+	prop1, _ := cmodels.NewProperty(PropJwksEndpoint, "https://api.asgardeo.io/t/myorg/oauth2/jwks", false)
+	prop2, _ := cmodels.NewProperty(PropIDJagEnabled, "true", false)
+
+	properties := []cmodels.Property{*prop1, *prop2}
+
+	result, err := validateIDPProperties(context.Background(), providers.IDPTypeOIDC, properties, s.logger)
+
+	s.NotNil(err)
+	s.Nil(result)
+	s.Equal(ErrorInvalidIDPProperty.Code, err.Code)
+	s.Contains(err.ErrorDescription.DefaultValue, "required property")
+	s.Contains(err.ErrorDescription.String(), PropIssuer)
+}
+
+func (s *IDPUtilsTestSuite) TestValidateIDPProperties_IDJagEnabled_MissingJWKS_Fails() {
+	// OIDC IDP with id_jag_enabled present but missing jwks_endpoint should fail.
+	prop1, _ := cmodels.NewProperty(PropIssuer, "https://api.asgardeo.io/t/myorg/oauth2/token", false)
+	prop2, _ := cmodels.NewProperty(PropIDJagEnabled, "true", false)
+
+	properties := []cmodels.Property{*prop1, *prop2}
+
+	result, err := validateIDPProperties(context.Background(), providers.IDPTypeOIDC, properties, s.logger)
+
+	s.NotNil(err)
+	s.Nil(result)
+	s.Equal(ErrorInvalidIDPProperty.Code, err.Code)
+	s.Contains(err.ErrorDescription.DefaultValue, "required property")
+	s.Contains(err.ErrorDescription.String(), PropJwksEndpoint)
+}
+
+func (s *IDPUtilsTestSuite) TestValidateIDPProperties_IDJagEnabled_NonBooleanValue_Fails() {
+	// OIDC IDP with id_jag_enabled set to a non-boolean value should fail validation.
+	prop1, _ := cmodels.NewProperty(PropIssuer, "https://api.asgardeo.io/t/myorg/oauth2/token", false)
+	prop2, _ := cmodels.NewProperty(PropJwksEndpoint, "https://api.asgardeo.io/t/myorg/oauth2/jwks", false)
+	prop3, _ := cmodels.NewProperty(PropIDJagEnabled, "x", false)
+
+	properties := []cmodels.Property{*prop1, *prop2, *prop3}
+
+	result, err := validateIDPProperties(context.Background(), providers.IDPTypeOIDC, properties, s.logger)
+
+	s.NotNil(err)
+	s.Nil(result)
+	s.Equal(ErrorInvalidIDPProperty.Code, err.Code)
+	s.Contains(err.ErrorDescription.String(), PropIDJagEnabled)
+}
+
+func (s *IDPUtilsTestSuite) TestValidateIDPProperties_TokenExchangeEnabled_NonBooleanValue_Fails() {
+	// OIDC IDP with token_exchange_enabled set to a non-boolean value should fail validation.
+	prop1, _ := cmodels.NewProperty(PropIssuer, "https://api.asgardeo.io/t/myorg/oauth2/token", false)
+	prop2, _ := cmodels.NewProperty(PropJwksEndpoint, "https://api.asgardeo.io/t/myorg/oauth2/jwks", false)
+	prop3, _ := cmodels.NewProperty(PropTokenExchangeEnabled, "yes", false)
+
+	properties := []cmodels.Property{*prop1, *prop2, *prop3}
+
+	result, err := validateIDPProperties(context.Background(), providers.IDPTypeOIDC, properties, s.logger)
+
+	s.NotNil(err)
+	s.Nil(result)
+	s.Equal(ErrorInvalidIDPProperty.Code, err.Code)
+	s.Contains(err.ErrorDescription.String(), PropTokenExchangeEnabled)
+}
+
+func (s *IDPUtilsTestSuite) TestValidateIDPProperties_PlainOIDCWithoutIDJagOrTokenExchange_StillFails() {
+	// Plain OIDC IDP without id_jag_enabled or token_exchange_enabled and without client
+	// credentials must still fail (regression guard for the full required set).
+	prop1, _ := cmodels.NewProperty(PropIssuer, "https://api.asgardeo.io/t/myorg/oauth2/token", false)
+	prop2, _ := cmodels.NewProperty(PropJwksEndpoint, "https://api.asgardeo.io/t/myorg/oauth2/jwks", false)
+
+	properties := []cmodels.Property{*prop1, *prop2}
+
+	result, err := validateIDPProperties(context.Background(), providers.IDPTypeOIDC, properties, s.logger)
+
+	s.NotNil(err)
+	s.Nil(result)
+	s.Equal(ErrorInvalidIDPProperty.Code, err.Code)
+	s.Contains(err.ErrorDescription.DefaultValue, "required property")
+	s.Contains(err.ErrorDescription.String(), PropClientID)
+}
+
+func (s *IDPUtilsTestSuite) TestValidateIDP_PropertyValidationFailure() {
+	prop, _ := cmodels.NewProperty("", "value", false)
+	idp := &providers.IDPDTO{
+		Name:       "Test IDP",
+		Type:       providers.IDPTypeOAuth,
+		Properties: []cmodels.Property{*prop},
+	}
+
+	err := validateIDP(context.Background(), idp, s.logger)
+
+	s.NotNil(err)
+	s.Equal(ErrorInvalidIDPProperty.Code, err.Code)
+}
+
+func (s *IDPUtilsTestSuite) TestValidateIDPProperties_SecretPropertyValueUnreadable() {
+	// Initialize the server runtime with the test crypto key; the secret
+	// property below holds a value that is not valid ciphertext, so reading
+	// it fails on decryption.
+	config.ResetServerRuntime()
+	_ = config.InitializeServerRuntime("/tmp/test", &config.Config{
+		Crypto: config.CryptoConfig{
+			Encryption: engineconfig.EncryptionConfig{
+				Key: testCryptoKey,
+			},
+		},
+	})
+	defer config.ResetServerRuntime()
+
+	properties, dErr := cmodels.DeserializePropertiesFromJSONObject(
+		`{"client_secret":{"value":"not-valid-ciphertext","isSecret":true}}`)
+	s.NoError(dErr)
+
+	result, err := validateIDPProperties(context.Background(), providers.IDPTypeOAuth, properties, s.logger)
+
+	s.Nil(result)
+	s.NotNil(err)
+	s.Equal(ErrorInvalidIDPProperty.Code, err.Code)
+}
+
+func (s *IDPUtilsTestSuite) TestResolveEndpointDefaults_EmptyBase_ReturnsInputUnchanged() {
+	defaults := map[string]string{PropAuthorizationEndpoint: googleAuthorizationEndpoint}
+
+	result := resolveEndpointDefaults(defaults, "")
+
+	s.Equal(defaults[PropAuthorizationEndpoint], result[PropAuthorizationEndpoint])
+}
+
+func (s *IDPUtilsTestSuite) TestResolveEndpointDefaults_RewritesSchemeAndHostOnly() {
+	defaults := map[string]string{
+		PropAuthorizationEndpoint: googleAuthorizationEndpoint,
+		PropTokenEndpoint:         googleTokenEndpoint,
+	}
+
+	result := resolveEndpointDefaults(defaults, "http://localhost:8093")
+
+	s.Equal("http://localhost:8093/o/oauth2/v2/auth", result[PropAuthorizationEndpoint])
+	s.Equal("http://localhost:8093/token", result[PropTokenEndpoint])
+	// Original map must not be mutated.
+	s.Equal(googleAuthorizationEndpoint, defaults[PropAuthorizationEndpoint])
+}
+
+func (s *IDPUtilsTestSuite) TestResolveEndpointDefaults_InvalidBase_ReturnsInputUnchanged() {
+	defaults := map[string]string{PropAuthorizationEndpoint: googleAuthorizationEndpoint}
+
+	result := resolveEndpointDefaults(defaults, "://not-a-valid-url")
+
+	s.Equal(defaults[PropAuthorizationEndpoint], result[PropAuthorizationEndpoint])
+}
+
+func (s *IDPUtilsTestSuite) TestResolveEndpointDefaults_HostlessBase_ReturnsInputUnchanged() {
+	defaults := map[string]string{PropAuthorizationEndpoint: googleAuthorizationEndpoint}
+
+	result := resolveEndpointDefaults(defaults, "/mock")
+
+	s.Equal(defaults[PropAuthorizationEndpoint], result[PropAuthorizationEndpoint])
+}
+
+func (s *IDPUtilsTestSuite) TestResolveEndpointDefaults_NonHTTPBase_ReturnsInputUnchanged() {
+	defaults := map[string]string{PropAuthorizationEndpoint: googleAuthorizationEndpoint}
+
+	result := resolveEndpointDefaults(defaults, "localhost:8093")
+
+	s.Equal(defaults[PropAuthorizationEndpoint], result[PropAuthorizationEndpoint])
+}
+
+func (s *IDPUtilsTestSuite) TestResolveEndpointDefaults_InvalidValue_KeepsOriginal() {
+	defaults := map[string]string{PropAuthorizationEndpoint: "http://exa\nmple.com"}
+
+	result := resolveEndpointDefaults(defaults, "http://localhost:8093")
+
+	s.Equal(defaults[PropAuthorizationEndpoint], result[PropAuthorizationEndpoint])
+}
+
+func (s *IDPUtilsTestSuite) TestEndpointBaseURLOverride_GitHub_ReturnsConfiguredValue() {
+	config.ResetServerRuntime()
+	_ = config.InitializeServerRuntime("/tmp/test", &config.Config{
+		IdentityProvider: config.IdentityProviderConfig{
+			GitHubBaseURL: "http://localhost:8092",
+		},
+	})
+	defer config.ResetServerRuntime()
+
+	result := endpointBaseURLOverride(providers.IDPTypeGitHub)
+
+	s.Equal("http://localhost:8092", result)
+}
+
+func (s *IDPUtilsTestSuite) TestEndpointBaseURLOverride_NilRuntime_ReturnsEmpty() {
+	config.ResetServerRuntime()
+
+	result := endpointBaseURLOverride(providers.IDPTypeGoogle)
+
+	s.Empty(result)
+}
+
+func (s *IDPUtilsTestSuite) TestEndpointBaseURLOverride_NonGoogleGitHubType_ReturnsEmpty() {
+	config.ResetServerRuntime()
+	_ = config.InitializeServerRuntime("/tmp/test", &config.Config{
+		IdentityProvider: config.IdentityProviderConfig{
+			GoogleBaseURL: "http://localhost:8093",
+			GitHubBaseURL: "http://localhost:8092",
+		},
+	})
+	defer config.ResetServerRuntime()
+
+	result := endpointBaseURLOverride(providers.IDPTypeOAuth)
+
+	s.Empty(result)
+}
+
+func (s *IDPUtilsTestSuite) TestValidateIDPProperties_AppliesEndpointOverride_WhenConfigured() {
+	config.ResetServerRuntime()
+	_ = config.InitializeServerRuntime("/tmp/test", &config.Config{
+		Crypto: config.CryptoConfig{
+			Encryption: engineconfig.EncryptionConfig{Key: testCryptoKey},
+		},
+		IdentityProvider: config.IdentityProviderConfig{
+			GoogleBaseURL: "http://localhost:8093",
+		},
+	})
+	defer config.ResetServerRuntime()
+
+	prop1, _ := cmodels.NewProperty(PropClientID, "client-id", false)
+	prop2, _ := cmodels.NewProperty(PropClientSecret, "client-secret", true)
+	prop3, _ := cmodels.NewProperty(PropRedirectURI, "https://app/callback", false)
+	properties := []cmodels.Property{*prop1, *prop2, *prop3}
+
+	result, err := validateIDPProperties(context.Background(), providers.IDPTypeGoogle, properties, s.logger)
+
+	s.Nil(err)
+	s.Equal("http://localhost:8093/o/oauth2/v2/auth", GetPropertyValue(result, PropAuthorizationEndpoint))
+	s.Equal("http://localhost:8093/token", GetPropertyValue(result, PropTokenEndpoint))
+}
+
+func (s *IDPUtilsTestSuite) TestValidateIDPProperties_NoEndpointOverride_UsesRealEndpoints() {
+	config.ResetServerRuntime()
+	_ = config.InitializeServerRuntime("/tmp/test", &config.Config{
+		Crypto: config.CryptoConfig{
+			Encryption: engineconfig.EncryptionConfig{Key: testCryptoKey},
+		},
+	})
+	defer config.ResetServerRuntime()
+
+	prop1, _ := cmodels.NewProperty(PropClientID, "client-id", false)
+	prop2, _ := cmodels.NewProperty(PropClientSecret, "client-secret", true)
+	prop3, _ := cmodels.NewProperty(PropRedirectURI, "https://app/callback", false)
+	properties := []cmodels.Property{*prop1, *prop2, *prop3}
+
+	result, err := validateIDPProperties(context.Background(), providers.IDPTypeGoogle, properties, s.logger)
+
+	s.Nil(err)
+	s.Equal(googleAuthorizationEndpoint, GetPropertyValue(result, PropAuthorizationEndpoint))
+	s.Equal(googleTokenEndpoint, GetPropertyValue(result, PropTokenEndpoint))
+}
+
+func (s *IDPUtilsTestSuite) TestApplyAttributeMappings_NilMappings_NoOp() {
+	attrs := map[string]interface{}{"email": "user@example.com"}
+	result := ApplyAttributeMappings(attrs, nil)
+	s.Equal(attrs, result)
+}
+
+func (s *IDPUtilsTestSuite) TestApplyAttributeMappings_EmptyMappings_NoOp() {
+	attrs := map[string]interface{}{"email": "user@example.com"}
+	result := ApplyAttributeMappings(attrs, []providers.AttributeMapping{})
+	s.Equal(attrs, result)
+}
+
+func (s *IDPUtilsTestSuite) TestApplyAttributeMappings_RenamesMappedClaim() {
+	attrs := map[string]interface{}{
+		"http://schemas.example.com/emailaddress": "user@example.com",
+	}
+	result := ApplyAttributeMappings(attrs, []providers.AttributeMapping{
+		{ExternalAttribute: "http://schemas.example.com/emailaddress", LocalAttribute: "email"},
+	})
+	s.Equal("user@example.com", result["email"])
+	_, present := result["http://schemas.example.com/emailaddress"]
+	s.False(present)
+}
+
+func (s *IDPUtilsTestSuite) TestApplyAttributeMappings_OneSourceToMultipleTargets() {
+	attrs := map[string]interface{}{"email": "user@example.com"}
+	result := ApplyAttributeMappings(attrs, []providers.AttributeMapping{
+		{ExternalAttribute: "email", LocalAttribute: "email"},
+		{ExternalAttribute: "email", LocalAttribute: "contactEmail"},
+	})
+	s.Equal("user@example.com", result["email"])
+	s.Equal("user@example.com", result["contactEmail"])
+}
+
+func (s *IDPUtilsTestSuite) TestApplyAttributeMappings_UnmappedPassesThrough() {
+	attrs := map[string]interface{}{
+		"given_name": "Jane",
+		"department": "engineering",
+	}
+	result := ApplyAttributeMappings(
+		attrs, []providers.AttributeMapping{{ExternalAttribute: "given_name", LocalAttribute: "firstName"}})
+	s.Equal("Jane", result["firstName"])
+	s.Equal("engineering", result["department"])
+	_, present := result["given_name"]
+	s.False(present)
+}
+
+func (s *IDPUtilsTestSuite) TestApplyAttributeMappings_MappedValueOverridesCollision() {
+	attrs := map[string]interface{}{
+		"given_name": "Jane",
+		"firstName":  "stale",
+	}
+	result := ApplyAttributeMappings(
+		attrs, []providers.AttributeMapping{{ExternalAttribute: "given_name", LocalAttribute: "firstName"}})
+	s.Equal("Jane", result["firstName"])
+}
+
+func (s *IDPUtilsTestSuite) TestApplyAttributeMappings_MissingExternalClaimIgnored() {
+	attrs := map[string]interface{}{"email": "user@example.com"}
+	result := ApplyAttributeMappings(
+		attrs, []providers.AttributeMapping{{ExternalAttribute: "given_name", LocalAttribute: "firstName"}})
+	s.Equal("user@example.com", result["email"])
+	_, present := result["firstName"]
+	s.False(present)
+}
+
+func (s *IDPUtilsTestSuite) TestApplyAttributeMappings_NestedSourcePath() {
+	attrs := map[string]interface{}{
+		"address": map[string]interface{}{
+			"email": "user@example.com",
+		},
+		"keep": "value",
+	}
+	result := ApplyAttributeMappings(
+		attrs, []providers.AttributeMapping{{ExternalAttribute: "address.email", LocalAttribute: "email"}})
+	s.Equal("user@example.com", result["email"])
+	// The containing nested object is read non-destructively and passes through.
+	s.Equal(attrs["address"], result["address"])
+	s.Equal("value", result["keep"])
+}
+
+func (s *IDPUtilsTestSuite) TestApplyAttributeMappings_DottedKeyMatchedLiterallyBeforePath() {
+	// A URI-style claim name containing dots must be matched literally, not split into a path.
+	attrs := map[string]interface{}{
+		"http://schemas.example.com/emailaddress": "user@example.com",
+	}
+	result := ApplyAttributeMappings(attrs, []providers.AttributeMapping{
+		{ExternalAttribute: "http://schemas.example.com/emailaddress", LocalAttribute: "email"},
+	})
+	s.Equal("user@example.com", result["email"])
+}
+
+func (s *IDPUtilsTestSuite) TestApplyAttributeMappings_SubPreservedWhenMappedToMultipleTargets() {
+	attrs := map[string]interface{}{"sub": "user-123"}
+	result := ApplyAttributeMappings(attrs, []providers.AttributeMapping{
+		{ExternalAttribute: "sub", LocalAttribute: "username"},
+		{ExternalAttribute: "sub", LocalAttribute: "email"},
+	})
+	s.Equal("user-123", result["sub"])
+	s.Equal("user-123", result["username"])
+	s.Equal("user-123", result["email"])
+}
+
+func (s *IDPUtilsTestSuite) TestApplyAttributeMappings_SubPreservedAlongsideOtherRenamedSources() {
+	attrs := map[string]interface{}{
+		"sub":        "user-123",
+		"given_name": "Jane",
+	}
+	result := ApplyAttributeMappings(attrs, []providers.AttributeMapping{
+		{ExternalAttribute: "sub", LocalAttribute: "picture"},
+		{ExternalAttribute: "given_name", LocalAttribute: "firstName"},
+	})
+	s.Equal("user-123", result["sub"])
+	s.Equal("user-123", result["picture"])
+	s.Equal("Jane", result["firstName"])
+	// Non-sub sources are still consumed by the mapping.
+	_, present := result["given_name"]
+	s.False(present)
+}
+
+func (s *IDPUtilsTestSuite) TestGetAttributeMappings_NilIDP() {
+	s.Nil(GetAttributeMappings(nil, nil))
+}
+
+func (s *IDPUtilsTestSuite) TestGetAttributeMappings_NilAttributeConfiguration() {
+	s.Nil(GetAttributeMappings(&providers.IDPDTO{}, nil))
+}
+
+func (s *IDPUtilsTestSuite) TestGetAttributeMappings_ReturnsMappings() {
+	mappings := []providers.AttributeMapping{{ExternalAttribute: "given_name", LocalAttribute: "firstName"}}
+	idpDTO := &providers.IDPDTO{AttributeConfiguration: &providers.AttributeConfiguration{
+		UserTypeResolution:        &providers.UserTypeResolution{Default: "person"},
+		UserTypeAttributeMappings: []providers.UserTypeAttributeMapping{{UserType: "person", Attributes: mappings}},
+	}}
+	s.Equal(mappings, GetAttributeMappings(idpDTO, nil))
+}
+
+func (s *IDPUtilsTestSuite) TestGetAttributeMappings_ResolvedByClaim() {
+	personMappings := []providers.AttributeMapping{{ExternalAttribute: "given_name", LocalAttribute: "firstName"}}
+	employeeMappings := []providers.AttributeMapping{{ExternalAttribute: "emp_id", LocalAttribute: "employeeNumber"}}
+	idpDTO := &providers.IDPDTO{AttributeConfiguration: &providers.AttributeConfiguration{
+		UserTypeResolution: &providers.UserTypeResolution{
+			Default:           "person",
+			ExternalAttribute: "user_type",
+			ValueMapping:      map[string]string{"staff": "employee"},
+		},
+		UserTypeAttributeMappings: []providers.UserTypeAttributeMapping{
+			{UserType: "person", Attributes: personMappings},
+			{UserType: "employee", Attributes: employeeMappings},
+		},
+	}}
+	s.Equal(employeeMappings, GetAttributeMappings(idpDTO, map[string]interface{}{"user_type": "staff"}))
+}
+
+func (s *IDPUtilsTestSuite) TestGetMappedUserType_NilIDP() {
+	s.Equal("", GetMappedUserType(nil, nil))
+}
+
+func (s *IDPUtilsTestSuite) TestGetMappedUserType_NilAttributeConfiguration() {
+	s.Equal("", GetMappedUserType(&providers.IDPDTO{}, nil))
+}
+
+func (s *IDPUtilsTestSuite) TestGetMappedUserType_ReturnsEntityType() {
+	s.Equal("person", GetMappedUserType(&providers.IDPDTO{AttributeConfiguration: &providers.AttributeConfiguration{
+		UserTypeResolution: &providers.UserTypeResolution{Default: "person"},
+	}}, nil))
+}
+
+func (s *IDPUtilsTestSuite) TestGetMappedUserType_DynamicResolution() {
+	idpDTO := &providers.IDPDTO{AttributeConfiguration: &providers.AttributeConfiguration{
+		UserTypeResolution: &providers.UserTypeResolution{
+			Default:           "person",
+			ExternalAttribute: "user_type",
+			ValueMapping:      map[string]string{"staff": "employee", "client": "customer"},
+		},
+	}}
+
+	// Mapped value resolves to its user type.
+	s.Equal("employee", GetMappedUserType(idpDTO, map[string]interface{}{"user_type": "staff"}))
+	// Unmapped value falls back to the default.
+	s.Equal("person", GetMappedUserType(idpDTO, map[string]interface{}{"user_type": "guest"}))
+	// Missing attribute falls back to the default.
+	s.Equal("person", GetMappedUserType(idpDTO, map[string]interface{}{"other": "x"}))
+	// Nil claims fall back to the default.
+	s.Equal("person", GetMappedUserType(idpDTO, nil))
+}
+
+func (s *IDPUtilsTestSuite) TestGetMappedUserType_DirectValueResolution() {
+	idpDTO := &providers.IDPDTO{AttributeConfiguration: &providers.AttributeConfiguration{
+		UserTypeResolution: &providers.UserTypeResolution{
+			Default:           "person",
+			ExternalAttribute: "user_type",
+		},
+	}}
+
+	// With no value mapping, the external claim value is used directly as the user type.
+	s.Equal("employee", GetMappedUserType(idpDTO, map[string]interface{}{"user_type": "employee"}))
+	// Missing attribute falls back to the default.
+	s.Equal("person", GetMappedUserType(idpDTO, map[string]interface{}{"other": "x"}))
+	// Empty claim value falls back to the default.
+	s.Equal("person", GetMappedUserType(idpDTO, map[string]interface{}{"user_type": "  "}))
+	// Nil claims fall back to the default.
+	s.Equal("person", GetMappedUserType(idpDTO, nil))
+}
+
+func (s *IDPUtilsTestSuite) TestGetMappedUserType_DynamicResolutionNestedClaim() {
+	idpDTO := &providers.IDPDTO{AttributeConfiguration: &providers.AttributeConfiguration{
+		UserTypeResolution: &providers.UserTypeResolution{
+			Default:           "person",
+			ExternalAttribute: "profile.role",
+			ValueMapping:      map[string]string{"admin": "employee"},
+		},
+	}}
+	claims := map[string]interface{}{"profile": map[string]interface{}{"role": "admin"}}
+	s.Equal("employee", GetMappedUserType(idpDTO, claims))
+}
+
+func (s *IDPUtilsTestSuite) TestIDJagEnabledFromProperties_True() {
+	prop, err := cmodels.NewProperty(PropIDJagEnabled, "true", false)
+	s.NoError(err)
+
+	got := idJagEnabledFromProperties([]cmodels.Property{*prop})
+	s.Require().NotNil(got)
+	s.True(*got)
+}
+
+func (s *IDPUtilsTestSuite) TestIDJagEnabledFromProperties_False() {
+	prop, err := cmodels.NewProperty(PropIDJagEnabled, "false", false)
+	s.NoError(err)
+
+	got := idJagEnabledFromProperties([]cmodels.Property{*prop})
+	s.Require().NotNil(got)
+	s.False(*got)
+}
+
+func (s *IDPUtilsTestSuite) TestIDJagEnabledFromProperties_Absent() {
+	prop, err := cmodels.NewProperty("client_id", "abc", false)
+	s.NoError(err)
+
+	s.Nil(idJagEnabledFromProperties([]cmodels.Property{*prop}))
+	s.Nil(idJagEnabledFromProperties(nil))
+}
+
+func (s *IDPUtilsTestSuite) TestIDJagEnabledFromProperties_InvalidValue() {
+	prop, err := cmodels.NewProperty(PropIDJagEnabled, "not-a-bool", false)
+	s.NoError(err)
+
+	s.Nil(idJagEnabledFromProperties([]cmodels.Property{*prop}))
 }

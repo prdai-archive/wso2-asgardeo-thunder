@@ -65,7 +65,7 @@ const blankTemplate: FlowTemplate = {
 const passwordTemplate: FlowTemplate = {
   resourceType: 'TEMPLATE',
   category: 'PASSWORD',
-  type: 'BASIC_AUTH',
+  type: 'CREDENTIALS_AUTH',
   flowType: 'AUTHENTICATION',
   display: {
     label: 'Username & Password',
@@ -174,33 +174,6 @@ describe('SelectFlowTemplate', () => {
 
       expect(screen.getByText('Username & Password')).toBeInTheDocument();
       expect(screen.getByText('Google')).toBeInTheDocument();
-    });
-  });
-
-  describe('Search', () => {
-    it('should render the search input', () => {
-      render(<SelectFlowTemplate {...defaultProps} />);
-
-      expect(screen.getByPlaceholderText('Search templates...')).toBeInTheDocument();
-    });
-
-    it('should filter templates by search query', () => {
-      render(<SelectFlowTemplate {...defaultProps} />);
-
-      const searchInput = screen.getByPlaceholderText('Search templates...');
-      fireEvent.change(searchInput, {target: {value: 'Google'}});
-
-      expect(screen.getByText('Google')).toBeInTheDocument();
-      expect(screen.queryByText('Username & Password')).not.toBeInTheDocument();
-    });
-
-    it('should show no results message when search matches nothing', () => {
-      render(<SelectFlowTemplate {...defaultProps} />);
-
-      const searchInput = screen.getByPlaceholderText('Search templates...');
-      fireEvent.change(searchInput, {target: {value: 'nonexistent'}});
-
-      expect(screen.getByText('No templates match your search.')).toBeInTheDocument();
     });
   });
 

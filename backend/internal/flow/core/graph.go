@@ -22,13 +22,13 @@ import (
 	"encoding/json"
 	"errors"
 
-	"github.com/thunder-id/thunderid/internal/flow/common"
+	"github.com/thunder-id/thunderid/pkg/thunderidengine/providers"
 )
 
 // GraphInterface defines the graph structure
 type GraphInterface interface {
 	GetID() string
-	GetType() common.FlowType
+	GetType() providers.FlowType
 	AddNode(node NodeInterface) error
 	GetNode(nodeID string) (NodeInterface, bool)
 	AddEdge(fromNodeID, toNodeID string) error
@@ -46,16 +46,22 @@ type GraphInterface interface {
 	SetSegments(segments []Segment)
 	GetSegmentByID(segmentID string) *Segment
 	GetSegmentByStartNode(nodeID string) *Segment
+	GetInterceptors(mode providers.InterceptorMode) []InterceptorUnitInterface
+	SetInterceptors(resolved map[providers.InterceptorMode][]InterceptorUnitInterface)
+	GetVersion() int
+	SetVersion(version int)
 }
 
 // graph implements the GraphInterface for the flow execution
 type graph struct {
-	id          string
-	_type       common.FlowType
-	nodes       map[string]NodeInterface
-	edges       map[string][]string
-	startNodeID string
-	segments    []Segment
+	id           string
+	_type        providers.FlowType
+	nodes        map[string]NodeInterface
+	edges        map[string][]string
+	startNodeID  string
+	segments     []Segment
+	interceptors map[providers.InterceptorMode][]InterceptorUnitInterface
+	version      int
 }
 
 // GetID returns the unique ID of the graph
@@ -64,7 +70,7 @@ func (g *graph) GetID() string {
 }
 
 // GetType returns the type of the graph
-func (g *graph) GetType() common.FlowType {
+func (g *graph) GetType() providers.FlowType {
 	return g._type
 }
 
@@ -231,6 +237,29 @@ func (g *graph) GetSegmentByStartNode(nodeID string) *Segment {
 	return nil
 }
 
+// GetInterceptors returns the pre-resolved interceptor units for the given mode.
+func (g *graph) GetInterceptors(mode providers.InterceptorMode) []InterceptorUnitInterface {
+	if g.interceptors == nil {
+		return nil
+	}
+	return g.interceptors[mode]
+}
+
+// SetInterceptors stores pre-resolved interceptor units grouped by mode.
+func (g *graph) SetInterceptors(resolved map[providers.InterceptorMode][]InterceptorUnitInterface) {
+	g.interceptors = resolved
+}
+
+// GetVersion returns the flow definition version this graph was built from.
+func (g *graph) GetVersion() int {
+	return g.version
+}
+
+// SetVersion sets the flow definition version this graph was built from.
+func (g *graph) SetVersion(version int) {
+	g.version = version
+}
+
 // ToJSON converts the graph to a JSON string representation
 func (g *graph) ToJSON() (string, error) {
 	type JSONInputs struct {
@@ -238,6 +267,7 @@ func (g *graph) ToJSON() (string, error) {
 		Identifier string   `json:"identifier"`
 		Type       string   `json:"type"`
 		Required   bool     `json:"required"`
+		OneTimeUse bool     `json:"oneTimeUse,omitempty"`
 		Options    []string `json:"options,omitempty"`
 	}
 
@@ -299,6 +329,7 @@ func (g *graph) ToJSON() (string, error) {
 						Identifier: input.Identifier,
 						Type:       input.Type,
 						Required:   input.Required,
+						OneTimeUse: input.OneTimeUse,
 						Options:    input.Options,
 					}
 				}

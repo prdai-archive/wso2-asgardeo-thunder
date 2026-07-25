@@ -1,3 +1,21 @@
+/*
+ * Copyright (c) 2026, WSO2 LLC. (https://www.wso2.com).
+ *
+ * WSO2 LLC. licenses this file to you under the Apache License,
+ * Version 2.0 (the "License"); you may not use this file except
+ * in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ */
+
 import { createPublicKey, createVerify } from "node:crypto";
 
 const textDecoder = new TextDecoder();
@@ -69,6 +87,8 @@ function verifySignature(token, jwk) {
   return verifier.verify(key, token.signature);
 }
 
+const CLOCK_SKEW_TOLERANCE_SECS = 30;
+
 function validateClaims(payload) {
   const now = Math.floor(Date.now() / 1000);
   const issuer = getIssuer();
@@ -78,11 +98,11 @@ function validateClaims(payload) {
     throw new Error("Invalid token issuer");
   }
 
-  if (payload.exp && payload.exp < now) {
+  if (payload.exp && payload.exp < now - CLOCK_SKEW_TOLERANCE_SECS) {
     throw new Error("Token has expired");
   }
 
-  if (payload.nbf && payload.nbf > now) {
+  if (payload.nbf && payload.nbf > now + CLOCK_SKEW_TOLERANCE_SECS) {
     throw new Error("Token is not active yet");
   }
 
@@ -93,6 +113,43 @@ function validateClaims(payload) {
       throw new Error("Invalid token audience");
     }
   }
+}
+
+export async function validateIdToken(token) {
+  const parsedToken = parseJwt(token);
+
+  if (parsedToken.header.alg !== "RS256") {
+    throw new Error("Unsupported token algorithm");
+  }
+
+  const jwks = await getJwks();
+  const jwk = jwks.keys?.find((key) => key.kid === parsedToken.header.kid);
+
+  if (!jwk) {
+    throw new Error("Signing key not found");
+  }
+
+  if (!verifySignature(parsedToken, jwk)) {
+    throw new Error("Invalid token signature");
+  }
+
+  const now = Math.floor(Date.now() / 1000);
+  const issuer = getIssuer();
+  const payload = parsedToken.payload;
+
+  if (payload.iss !== issuer) {
+    throw new Error("Invalid token issuer");
+  }
+
+  if (payload.exp && payload.exp < now - CLOCK_SKEW_TOLERANCE_SECS) {
+    throw new Error("Token has expired");
+  }
+
+  if (payload.nbf && payload.nbf > now + CLOCK_SKEW_TOLERANCE_SECS) {
+    throw new Error("Token is not active yet");
+  }
+
+  return payload;
 }
 
 export async function getAuthenticatedUser(request) {
@@ -126,15 +183,18 @@ export async function getAuthenticatedUser(request) {
     ? parsedToken.payload.scope.split(" ").filter(Boolean)
     : [];
 
-  return {
+  const user = {
     id: parsedToken.payload.sub,
     username: parsedToken.payload.username || parsedToken.payload.preferred_username,
     email: parsedToken.payload.email,
     givenName: parsedToken.payload.given_name,
     familyName: parsedToken.payload.family_name,
     scopes,
+    actor: parsedToken.payload.act?.sub || null,
     rawClaims: parsedToken.payload
   };
+
+  return user;
 }
 
 export async function resolveUser(request) {
@@ -145,7 +205,12 @@ export async function resolveUser(request) {
       email: "local.traveler@example.com",
       givenName: "Local",
       familyName: "Traveler",
-      scopes: ["booking:read", "booking:create", "booking:cancel", "booking:recommend"]
+      scopes: [
+        "booking:read",
+        "booking:create",
+        "booking:cancel",
+        "booking:recommend"
+      ]
     };
   }
 

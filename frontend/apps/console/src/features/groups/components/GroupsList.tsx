@@ -19,11 +19,12 @@
 import {useDataGridLocaleText} from '@thunderid/hooks';
 import {useLogger} from '@thunderid/logger/react';
 import {IconButton, Typography, Tooltip, DataGrid, ListingTable, Box} from '@wso2/oxygen-ui';
-import {Pencil, Trash2} from '@wso2/oxygen-ui-icons-react';
+import {Eye, Pencil, Trash2} from '@wso2/oxygen-ui-icons-react';
 import {useMemo, useCallback, useState, type JSX} from 'react';
 import {useTranslation} from 'react-i18next';
 import {useNavigate} from 'react-router';
 import GroupDeleteDialog from './GroupDeleteDialog';
+import RouteConfig from '../../../configs/RouteConfig';
 import useGetGroups from '../api/useGetGroups';
 import type {GroupBasic} from '../models/group';
 
@@ -52,7 +53,7 @@ export default function GroupsList(): JSX.Element {
   const handleViewClick = useCallback(
     (groupId: string): void => {
       (async (): Promise<void> => {
-        await navigate(`/groups/${groupId}`);
+        await navigate(RouteConfig.groups.detail(groupId));
       })().catch((_error: unknown) => {
         logger.error('Failed to navigate to group details', {error: _error, groupId});
       });
@@ -77,6 +78,9 @@ export default function GroupsList(): JSX.Element {
         headerName: t('groups:listing.columns.name', 'Name'),
         flex: 1,
         minWidth: 200,
+        renderCell: (params: DataGrid.GridRenderCellParams<GroupBasic>): JSX.Element => (
+          <Typography variant="body2">{params.row.name}</Typography>
+        ),
       },
       {
         field: 'description',
@@ -107,29 +111,39 @@ export default function GroupsList(): JSX.Element {
         hideable: false,
         renderCell: (params: DataGrid.GridRenderCellParams<GroupBasic>): JSX.Element => (
           <ListingTable.RowActions>
-            <Tooltip title={t('common:actions.edit')}>
-              <IconButton
-                size="small"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  handleViewClick(params.row.id);
-                }}
-              >
-                <Pencil size={16} />
-              </IconButton>
-            </Tooltip>
-            <Tooltip title={t('common:actions.delete')}>
-              <IconButton
-                size="small"
-                color="error"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  handleDeleteClick(params.row.id);
-                }}
-              >
-                <Trash2 size={16} />
-              </IconButton>
-            </Tooltip>
+            {params.row.isReadOnly ? (
+              <Tooltip title={t('common:status.readOnly', 'Read Only')}>
+                <IconButton size="small" disableRipple sx={{cursor: 'default'}}>
+                  <Eye size={16} />
+                </IconButton>
+              </Tooltip>
+            ) : (
+              <>
+                <Tooltip title={t('common:actions.edit')}>
+                  <IconButton
+                    size="small"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleViewClick(params.row.id);
+                    }}
+                  >
+                    <Pencil size={16} />
+                  </IconButton>
+                </Tooltip>
+                <Tooltip title={t('common:actions.delete')}>
+                  <IconButton
+                    size="small"
+                    color="error"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleDeleteClick(params.row.id);
+                    }}
+                  >
+                    <Trash2 size={16} />
+                  </IconButton>
+                </Tooltip>
+              </>
+            )}
           </ListingTable.RowActions>
         ),
       },
@@ -161,7 +175,7 @@ export default function GroupsList(): JSX.Element {
             onRowClick={(params) => {
               const groupId = (params.row as GroupBasic).id;
               (async (): Promise<void> => {
-                await navigate(`/groups/${groupId}`);
+                await navigate(RouteConfig.groups.detail(groupId));
               })().catch((_error: unknown) => {
                 logger.error('Failed to navigate to group', {error: _error, groupId});
               });

@@ -22,81 +22,110 @@ package authz
 import (
 	"context"
 
+	tidcommon "github.com/thunder-id/thunderid/pkg/thunderidengine/common"
+	"github.com/thunder-id/thunderid/pkg/thunderidengine/providers"
+
 	"github.com/thunder-id/thunderid/internal/authz/engine"
-	"github.com/thunder-id/thunderid/internal/system/error/serviceerror"
 	"github.com/thunder-id/thunderid/internal/system/log"
 )
 
 const loggerComponentName = "AuthorizationService"
 
-// AuthorizationServiceInterface defines the interface for authorization operations.
-// This is the public interface exposed to external consumers.
-type AuthorizationServiceInterface interface {
-	// GetAuthorizedPermissions returns the subset of requested permissions
-	// that the entity (directly or through groups) is authorized for.
-	GetAuthorizedPermissions(
-		ctx context.Context,
-		request GetAuthorizedPermissionsRequest,
-	) (*GetAuthorizedPermissionsResponse, *serviceerror.ServiceError)
-}
-
-// authorizationService is the default implementation of AuthorizationServiceInterface.
+// authorizationService is the default implementation of providers.AuthorizationProvider.
 type authorizationService struct {
 	engine engine.AuthorizationEngine
 }
 
 // newAuthorizationService creates a new instance of authorizationService.
-func newAuthorizationService(engine engine.AuthorizationEngine) AuthorizationServiceInterface {
+func newAuthorizationService(engine engine.AuthorizationEngine) providers.AuthorizationProvider {
 	return &authorizationService{
 		engine: engine,
 	}
 }
 
-// GetAuthorizedPermissions returns the subset of requested permissions that the entity is authorized for.
-func (s *authorizationService) GetAuthorizedPermissions(
+// EvaluateAccess evaluates a single fine-grained access request.
+func (s *authorizationService) EvaluateAccess(
 	ctx context.Context,
-	request GetAuthorizedPermissionsRequest,
-) (*GetAuthorizedPermissionsResponse, *serviceerror.ServiceError) {
-	logger := log.GetLogger().With(log.String(log.LoggerKeyComponentName, loggerComponentName))
-	logger.Debug("Evaluating authorization request",
-		log.MaskedString(log.LoggerKeyUserID, request.EntityID),
-		log.Int("groupCount", len(request.GroupIDs)),
-		log.Int("requestedPermissionCount", len(request.RequestedPermissions)))
-
-	// Handle nil group IDs
-	if request.GroupIDs == nil {
-		request.GroupIDs = []string{}
+	request providers.AccessEvaluationRequest,
+) (*providers.AccessEvaluationResponse, *tidcommon.ServiceError) {
+	response, svcErr := s.EvaluateAccessBatch(ctx, providers.AccessEvaluationsRequest{
+		Evaluations: []providers.AccessEvaluationRequest{request},
+	})
+	if svcErr != nil {
+		return nil, svcErr
 	}
+	if len(response.Evaluations) == 0 {
+		return &providers.AccessEvaluationResponse{}, nil
+	}
+	return &response.Evaluations[0], nil
+}
 
-	// Return empty list if no permissions requested (optimization)
-	if len(request.RequestedPermissions) == 0 {
-		return &GetAuthorizedPermissionsResponse{
-			AuthorizedPermissions: []string{},
+// EvaluateAccessBatch evaluates multiple fine-grained access requests.
+func (s *authorizationService) EvaluateAccessBatch(
+	ctx context.Context,
+	request providers.AccessEvaluationsRequest,
+) (*providers.AccessEvaluationsResponse, *tidcommon.ServiceError) {
+	logger := log.GetLogger().With(log.String(log.LoggerKeyComponentName, loggerComponentName))
+	logger.Debug(ctx, "Evaluating authorization request",
+		log.Int("evaluationCount", len(request.Evaluations)))
+
+	if len(request.Evaluations) == 0 {
+		return &providers.AccessEvaluationsResponse{
+			Evaluations: []providers.AccessEvaluationResponse{},
 		}, nil
 	}
 
 	// Delegate to engine (engine/underlying service handles validation)
-	authorizedPerms, err := s.engine.GetAuthorizedPermissions(
-		ctx,
-		request.EntityID,
-		request.GroupIDs,
-		request.RequestedPermissions,
-	)
+	evaluationResp, err := s.engine.EvaluateAccessBatch(ctx, toEngineAccessEvaluationsRequest(request))
 	if err != nil {
-		logger.Error("Authorization evaluation failed",
-			log.MaskedString(log.LoggerKeyUserID, request.EntityID),
-			log.Int("groupCount", len(request.GroupIDs)),
+		logger.Error(ctx, "Authorization evaluation failed",
+			log.Int("evaluationCount", len(request.Evaluations)),
 			log.Error(err))
-		return nil, &serviceerror.InternalServerError
+		return nil, &tidcommon.InternalServerError
 	}
 
-	logger.Debug("Authorization evaluation completed",
-		log.MaskedString(log.LoggerKeyUserID, request.EntityID),
-		log.Int("groupCount", len(request.GroupIDs)),
-		log.Int("requestedCount", len(request.RequestedPermissions)),
-		log.Int("authorizedCount", len(authorizedPerms)))
+	logger.Debug(ctx, "Authorization evaluation completed",
+		log.Int("evaluationCount", len(request.Evaluations)))
 
-	return &GetAuthorizedPermissionsResponse{
-		AuthorizedPermissions: authorizedPerms,
-	}, nil
+	return fromEngineAccessEvaluationsResponse(evaluationResp), nil
+}
+
+func toEngineAccessEvaluationsRequest(request providers.AccessEvaluationsRequest) engine.AccessEvaluationsRequest {
+	evaluations := make([]engine.AccessEvaluationRequest, 0, len(request.Evaluations))
+	for _, evaluation := range request.Evaluations {
+		evaluations = append(evaluations, engine.AccessEvaluationRequest{
+			Subject: engine.Subject{
+				Type:       evaluation.Subject.Type,
+				ID:         evaluation.Subject.ID,
+				GroupIDs:   evaluation.Subject.GroupIDs,
+				Properties: evaluation.Subject.Properties,
+			},
+			ResourceServer: engine.ResourceServer{
+				ID:         evaluation.ResourceServer.ID,
+				Properties: evaluation.ResourceServer.Properties,
+			},
+			Permission: engine.Permission{
+				Name:       evaluation.Permission.Name,
+				Properties: evaluation.Permission.Properties,
+			},
+			Context: evaluation.Context,
+		})
+	}
+	return engine.AccessEvaluationsRequest{Evaluations: evaluations}
+}
+
+func fromEngineAccessEvaluationsResponse(
+	response *engine.AccessEvaluationsResponse) *providers.AccessEvaluationsResponse {
+	if response == nil {
+		return &providers.AccessEvaluationsResponse{Evaluations: []providers.AccessEvaluationResponse{}}
+	}
+
+	evaluations := make([]providers.AccessEvaluationResponse, 0, len(response.Evaluations))
+	for _, evaluation := range response.Evaluations {
+		evaluations = append(evaluations, providers.AccessEvaluationResponse{
+			Decision: evaluation.Decision,
+			Context:  evaluation.Context,
+		})
+	}
+	return &providers.AccessEvaluationsResponse{Evaluations: evaluations}
 }

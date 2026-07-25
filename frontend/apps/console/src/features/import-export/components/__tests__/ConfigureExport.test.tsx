@@ -52,6 +52,7 @@ vi.mock('@thunderid/contexts', async () => {
       isHttpOnly: () => false,
       getClientId: () => 'CONSOLE',
       getScopes: () => ['openid', 'profile'],
+      getResourceIdentifier: () => undefined,
       getClientUrl: () => 'http://localhost:8090/console',
       getClientUuid: () => undefined,
       getTrustedIssuerUrl: () => 'http://localhost:8090',
@@ -76,6 +77,7 @@ vi.mock('@wso2/oxygen-ui-icons-react', async (importOriginal) => {
     Layout: () => <span data-testid="icon-layout" />,
     Palette: () => <span data-testid="icon-palette" />,
     Server: () => <span data-testid="icon-server" />,
+    Settings: () => <span data-testid="icon-settings" />,
     Terminal: () => <span data-testid="icon-terminal" />,
     UserRoundCog: () => <span data-testid="icon-user-round-cog" />,
     Users: () => <span data-testid="icon-users" />,
@@ -100,6 +102,10 @@ vi.mock('./ResourceSummaryTable', () => ({
   default: ({items}: {items: unknown[]}) => (
     <div data-testid="resource-summary-table">Resource Table: {items.length} items</div>
   ),
+}));
+
+vi.mock('@monaco-editor/react', () => ({
+  default: () => null,
 }));
 
 vi.mock('./FileContentViewer', () => ({
@@ -186,6 +192,11 @@ name: Valid Flow
       expect(screen.getByTestId('icon-terminal')).toBeInTheDocument();
     });
 
+    it('adds a server configurations row when server configs are present', () => {
+      render(<ConfigureExport resourceCounts={{server_config: 2}} />);
+      expect(screen.getByTestId('icon-settings')).toBeInTheDocument();
+    });
+
     it('shows loading state when exporting', () => {
       render(<ConfigureExport isExporting={true} />);
       // Component should render even during export
@@ -230,13 +241,27 @@ name: Valid Flow
     it('parses agent resources and renders agents section', () => {
       const agentYaml = `
 ---
-# resource_type: agent
+resource_type: agent
 id: agent-1
 name: Test Agent
 description: A test agent
 `;
       render(<ConfigureExport resources={agentYaml} />);
       expect(screen.getByTestId('icon-bot')).toBeInTheDocument();
+    });
+
+    it('parses connection resources and renders a connections section', () => {
+      const connectionDoc = (idx: number) => `
+---
+resource_type: connection
+name: Connection ${idx}
+type: google
+`;
+      // More than 5 so the "show more" toggle renders too.
+      const connectionsYaml = Array.from({length: 6}, (_, idx) => connectionDoc(idx)).join('\n');
+
+      render(<ConfigureExport resources={connectionsYaml} />);
+      expect(screen.getAllByTestId('icon-layers').length).toBeGreaterThan(0);
     });
 
     it('logs error when resources string is completely invalid', () => {
@@ -261,11 +286,13 @@ description: A test agent
           server: {hostname: '', port: 0, http_only: false},
         },
         getServerUrl: () => 'http://localhost:8090',
+        getGateCallbackUrl: () => 'http://localhost:8090/gate/callback',
         getServerHostname: () => 'localhost',
         getServerPort: () => 8090,
         isHttpOnly: () => false,
         getClientId: () => 'CONSOLE',
         getScopes: () => ['openid', 'profile'],
+        getResourceIdentifier: () => undefined,
         getClientUrl: () => 'http://localhost:8090/console',
         getClientUuid: () => undefined,
         getTrustedIssuerUrl: () => 'http://localhost:8090',

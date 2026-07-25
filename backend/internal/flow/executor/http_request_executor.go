@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2025, WSO2 LLC. (https://www.wso2.com).
+ * Copyright (c) 2025-2026, WSO2 LLC. (https://www.wso2.com).
  *
  * WSO2 LLC. licenses this file to you under the Apache License,
  * Version 2.0 (the "License"); you may not use this file except
@@ -20,6 +20,7 @@ package executor
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -31,9 +32,13 @@ import (
 	"strings"
 	"time"
 
-	"github.com/thunder-id/thunderid/internal/flow/common"
+	tidcommon "github.com/thunder-id/thunderid/pkg/thunderidengine/common"
+	"github.com/thunder-id/thunderid/pkg/thunderidengine/providers"
+
 	"github.com/thunder-id/thunderid/internal/flow/core"
 	"github.com/thunder-id/thunderid/internal/ou"
+	serverconst "github.com/thunder-id/thunderid/internal/system/constants"
+	sysContext "github.com/thunder-id/thunderid/internal/system/context"
 	httpservice "github.com/thunder-id/thunderid/internal/system/http"
 	"github.com/thunder-id/thunderid/internal/system/log"
 )
@@ -76,72 +81,87 @@ type errorHandlingConfig struct {
 
 // httpRequestExecutor implements the ExecutorInterface for making HTTP requests to external endpoints.
 type httpRequestExecutor struct {
-	core.ExecutorInterface
-	ouService ou.OrganizationUnitServiceInterface
-	logger    *log.Logger
+	providers.Executor
+	ouService     ou.OrganizationUnitServiceInterface
+	authnProvider providers.AuthnProviderManager
+	logger        *log.Logger
 }
 
-var _ core.ExecutorInterface = (*httpRequestExecutor)(nil)
+var _ providers.Executor = (*httpRequestExecutor)(nil)
 
 // newHTTPRequestExecutor creates a new instance of HTTPRequestExecutor.
 func newHTTPRequestExecutor(
 	flowFactory core.FlowFactoryInterface,
 	ouService ou.OrganizationUnitServiceInterface,
+	authnProvider providers.AuthnProviderManager,
 ) *httpRequestExecutor {
 	logger := log.GetLogger().With(log.String(log.LoggerKeyComponentName, httpRequestLoggerComponentName),
 		log.String(log.LoggerKeyExecutorName, ExecutorNameHTTPRequest))
 
-	base := flowFactory.CreateExecutor(ExecutorNameHTTPRequest, common.ExecutorTypeUtility,
-		[]common.Input{}, []common.Input{})
+	base := flowFactory.CreateExecutor(ExecutorNameHTTPRequest, providers.ExecutorTypeUtility,
+		[]providers.Input{}, []providers.Input{}, &providers.ExecutorMeta{
+			SupportedProperties: []providers.ExecutorSupportedProperties{
+				{Property: "url", IsRequired: true},
+				{Property: "method"},
+				{Property: "headers"},
+				{Property: "body"},
+				{Property: "timeout"},
+				{Property: "responseMapping"},
+				{Property: "errorHandling"},
+			},
+		})
 
 	return &httpRequestExecutor{
-		ExecutorInterface: base,
-		ouService:         ouService,
-		logger:            logger,
+		Executor:      base,
+		ouService:     ouService,
+		authnProvider: authnProvider,
+		logger:        logger,
 	}
 }
 
 // Execute executes the HTTP request logic.
-func (h *httpRequestExecutor) Execute(ctx *core.NodeContext) (*common.ExecutorResponse, error) {
+func (h *httpRequestExecutor) Execute(ctx *providers.NodeContext) (*providers.ExecutorResponse, error) {
 	logger := h.logger.With(log.String(log.LoggerKeyExecutionID, ctx.ExecutionID))
-	logger.Debug("Executing HTTP request executor")
+	logger.Debug(ctx.Context, "Executing HTTP request executor")
 
-	execResp := &common.ExecutorResponse{
+	execResp := &providers.ExecutorResponse{
 		AdditionalData: make(map[string]string),
 		RuntimeData:    make(map[string]string),
+		AuthUser:       ctx.AuthUser,
 	}
 
-	config, err := h.parseAndValidateConfig(ctx.NodeProperties)
+	config, err := h.parseAndValidateConfig(ctx.Context, ctx.NodeProperties)
 	if err != nil {
-		logger.Error("Failed to parse/validate HTTP request configuration", log.Error(err))
-		execResp.Status = common.ExecFailure
-		execResp.FailureReason = "Configuration error: " + err.Error()
+		logger.Error(ctx.Context, "Failed to parse/validate HTTP request configuration", log.Error(err))
+		execResp.Status = providers.ExecFailure
+		execResp.Error = &ErrHTTPRequestConfigInvalid
 		return execResp, nil
 	}
 
-	h.enrichOURuntimeData(ctx, config)
-	h.resolvePlaceholders(ctx, config)
+	h.enrichOURuntimeData(ctx, config, execResp)
+	h.resolvePlaceholders(ctx, config, execResp)
 
 	response, err := h.executeRequestWithRetry(ctx, config)
 	if err != nil {
-		logger.Error("Failed to execute HTTP request", log.Error(err))
-		return h.handleRequestError(execResp, config, err.Error(), logger), nil
+		logger.Error(ctx.Context, "Failed to execute HTTP request", log.Error(err))
+		return h.handleRequestError(ctx.Context, execResp, config, err.Error(), logger), nil
 	}
 
 	if err := h.processResponse(ctx, config, response, execResp); err != nil {
-		logger.Error("Failed to process response", log.Error(err))
-		return h.handleRequestError(execResp, config, err.Error(), logger), nil
+		logger.Error(ctx.Context, "Failed to process response", log.Error(err))
+		return h.handleRequestError(ctx.Context, execResp, config, err.Error(), logger), nil
 	}
 
-	execResp.Status = common.ExecComplete
-	logger.Debug("HTTP request executor execution completed", log.String("status", string(execResp.Status)))
+	execResp.Status = providers.ExecComplete
+	logger.Debug(ctx.Context, "HTTP request executor execution completed",
+		log.String("status", string(execResp.Status)))
 
 	return execResp, nil
 }
 
 // parseAndValidateConfig parses the HTTP request configuration from node properties,
 // validates it, and applies defaults and limits.
-func (h *httpRequestExecutor) parseAndValidateConfig(properties map[string]interface{}) (
+func (h *httpRequestExecutor) parseAndValidateConfig(ctx context.Context, properties map[string]interface{}) (
 	*httpRequestConfig, error) {
 	if len(properties) == 0 {
 		return nil, errors.New("node properties are empty")
@@ -185,9 +205,9 @@ func (h *httpRequestExecutor) parseAndValidateConfig(properties map[string]inter
 	}
 
 	h.parseTimeout(config, propsMap)
-	h.parseHeaderAndBody(config, propsMap)
-	h.parseResponseMapping(config, propsMap)
-	h.parseErrorHandling(config, propsMap)
+	h.parseHeaderAndBody(ctx, config, propsMap)
+	h.parseResponseMapping(ctx, config, propsMap)
+	h.parseErrorHandling(ctx, config, propsMap)
 
 	return config, nil
 }
@@ -213,10 +233,11 @@ func (h *httpRequestExecutor) parseTimeout(config *httpRequestConfig, propsMap m
 }
 
 // parseHeaderAndBody parses headers and body from node properties.
-func (h *httpRequestExecutor) parseHeaderAndBody(config *httpRequestConfig, propsMap map[string]interface{}) {
+func (h *httpRequestExecutor) parseHeaderAndBody(
+	ctx context.Context, config *httpRequestConfig, propsMap map[string]interface{}) {
 	if headersStr, ok := propsMap["headers"].(string); ok {
 		if err := json.Unmarshal([]byte(headersStr), &config.Headers); err != nil {
-			h.logger.Warn("Failed to parse headers JSON string, ignoring headers", log.Error(err))
+			h.logger.Warn(ctx, "Failed to parse headers JSON string, ignoring headers", log.Error(err))
 		}
 	} else if headersMap, ok := propsMap["headers"].(map[string]interface{}); ok {
 		for k, v := range headersMap {
@@ -228,7 +249,7 @@ func (h *httpRequestExecutor) parseHeaderAndBody(config *httpRequestConfig, prop
 
 	if bodyStr, ok := propsMap["body"].(string); ok {
 		if err := json.Unmarshal([]byte(bodyStr), &config.Body); err != nil {
-			h.logger.Warn("Failed to parse body JSON string, ignoring body", log.Error(err))
+			h.logger.Warn(ctx, "Failed to parse body JSON string, ignoring body", log.Error(err))
 		}
 	} else if bodyMap, ok := propsMap["body"].(map[string]interface{}); ok {
 		config.Body = bodyMap
@@ -236,10 +257,11 @@ func (h *httpRequestExecutor) parseHeaderAndBody(config *httpRequestConfig, prop
 }
 
 // parseResponseMapping parses response mapping from node properties.
-func (h *httpRequestExecutor) parseResponseMapping(config *httpRequestConfig, propsMap map[string]interface{}) {
+func (h *httpRequestExecutor) parseResponseMapping(
+	ctx context.Context, config *httpRequestConfig, propsMap map[string]interface{}) {
 	if mappingStr, ok := propsMap["responseMapping"].(string); ok {
 		if err := json.Unmarshal([]byte(mappingStr), &config.ResponseMapping); err != nil {
-			h.logger.Warn("Failed to parse response mapping JSON string, ignoring response mapping",
+			h.logger.Warn(ctx, "Failed to parse response mapping JSON string, ignoring response mapping",
 				log.Error(err))
 		}
 	} else if mappingMap, ok := propsMap["responseMapping"].(map[string]interface{}); ok {
@@ -252,13 +274,15 @@ func (h *httpRequestExecutor) parseResponseMapping(config *httpRequestConfig, pr
 }
 
 // parseErrorHandling parses error handling configuration with limits.
-func (h *httpRequestExecutor) parseErrorHandling(config *httpRequestConfig, propsMap map[string]interface{}) {
+func (h *httpRequestExecutor) parseErrorHandling(
+	ctx context.Context, config *httpRequestConfig, propsMap map[string]interface{}) {
 	if errorHandlingStr, ok := propsMap["errorHandling"].(string); ok {
 		var eh errorHandlingConfig
 		if err := json.Unmarshal([]byte(errorHandlingStr), &eh); err == nil {
 			config.ErrorHandling = &eh
 		} else {
-			h.logger.Warn("Failed to parse error handling JSON string, ignoring error handling", log.Error(err))
+			h.logger.Warn(ctx, "Failed to parse error handling JSON string, ignoring error handling",
+				log.Error(err))
 		}
 	} else if ehMap, ok := propsMap["errorHandling"].(map[string]interface{}); ok {
 		eh := &errorHandlingConfig{}
@@ -285,15 +309,16 @@ func (h *httpRequestExecutor) parseErrorHandling(config *httpRequestConfig, prop
 }
 
 // enrichOURuntimeData fetches OU details and populates ouHandle and ouName into RuntimeData
-// so that placeholders like {{ context.ouHandle }} can be resolved for the current request.
+// so that placeholders like {{ctx(ouHandle)}} can be resolved for the current request.
 // It only performs the fetch when an OU placeholder is referenced in the config and the OU ID
 // is available in the context.
-func (h *httpRequestExecutor) enrichOURuntimeData(ctx *core.NodeContext, config *httpRequestConfig) {
+func (h *httpRequestExecutor) enrichOURuntimeData(ctx *providers.NodeContext, config *httpRequestConfig,
+	execResp *providers.ExecutorResponse) {
 	if h.ouService == nil {
 		return
 	}
 
-	ouPlaceholderPattern := regexp.MustCompile(`{{\s*context\.\s*(ouHandle|ouName|ouDescription)\s*}}`)
+	ouPlaceholderPattern := regexp.MustCompile(`{{\s*ctx\(\s*(ouHandle|ouName|ouDescription)\s*\)\s*}}`)
 
 	// Build a single searchable string from all resolvable config fields.
 	var sb strings.Builder
@@ -308,9 +333,16 @@ func (h *httpRequestExecutor) enrichOURuntimeData(ctx *core.NodeContext, config 
 		return
 	}
 
-	ouID := ctx.AuthenticatedUser.OUID
+	ouID := ctx.RuntimeData[ouIDKey]
 	if ouID == "" {
-		ouID = ctx.RuntimeData[ouIDKey]
+		authUser, entityRef, svcErr := h.authnProvider.GetEntityReference(ctx.Context, execResp.AuthUser)
+		execResp.AuthUser = authUser
+		if svcErr != nil {
+			h.logger.Warn(ctx.Context, "Failed to fetch entity reference for OU enrichment",
+				log.String("error", svcErr.ErrorDescription.DefaultValue))
+		} else if entityRef != nil {
+			ouID = entityRef.EntityID
+		}
 	}
 	if ouID == "" {
 		return
@@ -319,7 +351,7 @@ func (h *httpRequestExecutor) enrichOURuntimeData(ctx *core.NodeContext, config 
 	logger := h.logger.With(log.String(log.LoggerKeyExecutionID, ctx.ExecutionID))
 	organizationUnit, svcErr := h.ouService.GetOrganizationUnit(ctx.Context, ouID)
 	if svcErr != nil {
-		logger.Warn("Failed to fetch OU details for placeholder enrichment",
+		logger.Warn(ctx.Context, "Failed to fetch OU details for placeholder enrichment",
 			log.String(ouIDKey, ouID), log.String("error", svcErr.Error.DefaultValue))
 		return
 	}
@@ -330,42 +362,44 @@ func (h *httpRequestExecutor) enrichOURuntimeData(ctx *core.NodeContext, config 
 }
 
 // resolvePlaceholders resolves placeholders in the configuration using context data.
-func (h *httpRequestExecutor) resolvePlaceholders(ctx *core.NodeContext, config *httpRequestConfig) {
-	config.URL = core.ResolvePlaceholder(ctx, config.URL)
+func (h *httpRequestExecutor) resolvePlaceholders(
+	ctx *providers.NodeContext, config *httpRequestConfig, execResp *providers.ExecutorResponse) {
+	config.URL = core.ResolvePlaceholder(ctx, config.URL, execResp, h.authnProvider, h.logger)
 
 	// Resolve headers
 	for key, value := range config.Headers {
-		config.Headers[key] = core.ResolvePlaceholder(ctx, value)
+		config.Headers[key] = core.ResolvePlaceholder(ctx, value, execResp, h.authnProvider, h.logger)
 	}
 
 	// Resolve body
-	config.Body = h.resolveMapPlaceholders(ctx, config.Body).(map[string]interface{})
+	config.Body = h.resolveMapPlaceholders(ctx, config.Body, execResp).(map[string]interface{})
 }
 
 // resolveMapPlaceholders recursively resolves placeholders in a map or slice.
-func (h *httpRequestExecutor) resolveMapPlaceholders(ctx *core.NodeContext, data interface{}) interface{} {
+func (h *httpRequestExecutor) resolveMapPlaceholders(
+	ctx *providers.NodeContext, data interface{}, execResp *providers.ExecutorResponse) interface{} {
 	switch v := data.(type) {
 	case map[string]interface{}:
 		result := make(map[string]interface{})
 		for key, value := range v {
-			result[key] = h.resolveMapPlaceholders(ctx, value)
+			result[key] = h.resolveMapPlaceholders(ctx, value, execResp)
 		}
 		return result
 	case []interface{}:
 		result := make([]interface{}, len(v))
 		for i, value := range v {
-			result[i] = h.resolveMapPlaceholders(ctx, value)
+			result[i] = h.resolveMapPlaceholders(ctx, value, execResp)
 		}
 		return result
 	case string:
-		return core.ResolvePlaceholder(ctx, v)
+		return core.ResolvePlaceholder(ctx, v, execResp, h.authnProvider, h.logger)
 	default:
 		return v
 	}
 }
 
 // executeRequestWithRetry executes the HTTP request with retry logic.
-func (h *httpRequestExecutor) executeRequestWithRetry(ctx *core.NodeContext,
+func (h *httpRequestExecutor) executeRequestWithRetry(ctx *providers.NodeContext,
 	config *httpRequestConfig) (*http.Response, error) {
 	logger := h.logger.With(log.String(log.LoggerKeyExecutionID, ctx.ExecutionID))
 
@@ -384,7 +418,8 @@ func (h *httpRequestExecutor) executeRequestWithRetry(ctx *core.NodeContext,
 	attempts := retryCount + 1
 	for attempt := 0; attempt < attempts; attempt++ {
 		if attempt > 0 {
-			logger.Debug("Retrying HTTP request", log.Int("attempt", attempt), log.Int("maxRetries", retryCount))
+			logger.Debug(ctx.Context, "Retrying HTTP request",
+				log.Int("attempt", attempt), log.Int("maxRetries", retryCount))
 			time.Sleep(time.Duration(retryDelay) * time.Millisecond)
 		}
 
@@ -400,7 +435,7 @@ func (h *httpRequestExecutor) executeRequestWithRetry(ctx *core.NodeContext,
 }
 
 // executeRequest executes a single HTTP request.
-func (h *httpRequestExecutor) executeRequest(ctx *core.NodeContext, config *httpRequestConfig,
+func (h *httpRequestExecutor) executeRequest(ctx *providers.NodeContext, config *httpRequestConfig,
 	httpClient httpservice.HTTPClientInterface) (*http.Response, error) {
 	logger := h.logger.With(log.String(log.LoggerKeyExecutionID, ctx.ExecutionID))
 
@@ -425,12 +460,17 @@ func (h *httpRequestExecutor) executeRequest(ctx *core.NodeContext, config *http
 		req.Header.Set(key, value)
 	}
 
+	// Propagate the correlation ID unless the flow explicitly configured one.
+	if req.Header.Get(serverconst.CorrelationIDHeaderName) == "" {
+		req.Header.Set(serverconst.CorrelationIDHeaderName, sysContext.GetTraceID(ctx.Context))
+	}
+
 	// Set default Content-Type for requests with body
 	if bodyReader != nil && req.Header.Get("Content-Type") == "" {
 		req.Header.Set("Content-Type", "application/json")
 	}
 
-	logger.Debug("Sending HTTP request", log.String("method", config.Method),
+	logger.Debug(ctx.Context, "Sending HTTP request", log.String("method", config.Method),
 		log.MaskedString("url", config.URL))
 
 	response, err := httpClient.Do(req)
@@ -442,12 +482,12 @@ func (h *httpRequestExecutor) executeRequest(ctx *core.NodeContext, config *http
 }
 
 // processResponse processes the HTTP response and extracts data based on response mapping.
-func (h *httpRequestExecutor) processResponse(ctx *core.NodeContext, config *httpRequestConfig,
-	response *http.Response, execResp *common.ExecutorResponse) error {
+func (h *httpRequestExecutor) processResponse(ctx *providers.NodeContext, config *httpRequestConfig,
+	response *http.Response, execResp *providers.ExecutorResponse) error {
 	logger := h.logger.With(log.String(log.LoggerKeyExecutionID, ctx.ExecutionID))
 	defer func() {
 		if err := response.Body.Close(); err != nil {
-			logger.Error("Failed to close response body", log.Error(err))
+			logger.Error(ctx.Context, "Failed to close response body", log.Error(err))
 		}
 	}()
 
@@ -456,7 +496,7 @@ func (h *httpRequestExecutor) processResponse(ctx *core.NodeContext, config *htt
 		return fmt.Errorf("failed to read response body: %w", err)
 	}
 
-	logger.Debug("Received HTTP response", log.Int("statusCode", response.StatusCode),
+	logger.Debug(ctx.Context, "Received HTTP response", log.Int("statusCode", response.StatusCode),
 		log.String("status", response.Status))
 
 	// Check for error status codes
@@ -521,20 +561,25 @@ func (h *httpRequestExecutor) extractValueFromPath(data map[string]interface{}, 
 
 // handleRequestError handles HTTP request errors and sets the appropriate response status based on the
 // failOnError configuration.
-func (h *httpRequestExecutor) handleRequestError(execResp *common.ExecutorResponse, config *httpRequestConfig,
-	errorMessage string, logger *log.Logger) *common.ExecutorResponse {
+func (h *httpRequestExecutor) handleRequestError(
+	ctx context.Context, execResp *providers.ExecutorResponse, config *httpRequestConfig,
+	errorMessage string, logger *log.Logger) *providers.ExecutorResponse {
 	failOnError := false
 	if config != nil && config.ErrorHandling != nil {
 		failOnError = config.ErrorHandling.FailOnError
 	}
 
 	if failOnError {
-		logger.Debug("Failing execution due to HTTP request error")
-		execResp.Status = common.ExecFailure
-		execResp.FailureReason = errorMessage
+		logger.Debug(ctx, "Failing execution due to HTTP request error", log.String("error", errorMessage))
+		execResp.Status = providers.ExecFailure
+		execResp.Error = tidcommon.CustomServiceError(ErrHTTPRequestFailed, tidcommon.I18nMessage{
+			Key:          ErrHTTPRequestFailed.ErrorDescription.Key,
+			DefaultValue: errorMessage,
+		})
 	} else {
-		logger.Debug("Continuing execution despite HTTP request error", log.String("error", errorMessage))
-		execResp.Status = common.ExecComplete
+		logger.Debug(ctx, "Continuing execution despite HTTP request error",
+			log.String("error", errorMessage))
+		execResp.Status = providers.ExecComplete
 	}
 
 	return execResp

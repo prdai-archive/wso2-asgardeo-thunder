@@ -24,8 +24,9 @@ import (
 	"fmt"
 	"strings"
 
+	tidcommon "github.com/thunder-id/thunderid/pkg/thunderidengine/common"
+
 	declarativeresource "github.com/thunder-id/thunderid/internal/system/declarative_resource"
-	"github.com/thunder-id/thunderid/internal/system/error/serviceerror"
 	"github.com/thunder-id/thunderid/internal/system/log"
 
 	"gopkg.in/yaml.v3"
@@ -58,13 +59,13 @@ func (e *layoutExporter) GetParameterizerType() string {
 
 // GetAllResourceIDs retrieves all layout IDs from the database store.
 // In composite mode, this excludes declarative (YAML-based) layouts.
-func (e *layoutExporter) GetAllResourceIDs(ctx context.Context) ([]string, *serviceerror.ServiceError) {
+func (e *layoutExporter) GetAllResourceIDs(ctx context.Context) ([]string, *tidcommon.ServiceError) {
 	const pageSize = 100
 	var allIDs []string
 	offset := 0
 
 	for {
-		layoutList, err := e.service.GetLayoutList(pageSize, offset)
+		layoutList, err := e.service.GetLayoutList(ctx, pageSize, offset)
 		if err != nil {
 			return nil, err
 		}
@@ -88,9 +89,9 @@ func (e *layoutExporter) GetAllResourceIDs(ctx context.Context) ([]string, *serv
 
 // GetResourceByID retrieves a layout by its ID.
 func (e *layoutExporter) GetResourceByID(ctx context.Context, id string) (
-	interface{}, string, *serviceerror.ServiceError,
+	interface{}, string, *tidcommon.ServiceError,
 ) {
-	layout, err := e.service.GetLayout(id)
+	layout, err := e.service.GetLayout(ctx, id)
 	if err != nil {
 		return nil, "", err
 	}
@@ -98,7 +99,7 @@ func (e *layoutExporter) GetResourceByID(ctx context.Context, id string) (
 }
 
 // ValidateResource validates a layout resource.
-func (e *layoutExporter) ValidateResource(
+func (e *layoutExporter) ValidateResource(ctx context.Context,
 	resource interface{}, id string, logger *log.Logger,
 ) (string, *declarativeresource.ExportError) {
 	layout, ok := resource.(*Layout)
@@ -106,7 +107,7 @@ func (e *layoutExporter) ValidateResource(
 		return "", declarativeresource.CreateTypeError(resourceTypeLayout, id)
 	}
 
-	err := declarativeresource.ValidateResourceName(
+	err := declarativeresource.ValidateResourceName(ctx,
 		layout.DisplayName, resourceTypeLayout, id, "LAYOUT_VALIDATION_ERROR", logger,
 	)
 	if err != nil {
@@ -114,7 +115,7 @@ func (e *layoutExporter) ValidateResource(
 	}
 
 	if len(layout.Layout) == 0 {
-		logger.Warn("Layout has no layout configuration",
+		logger.Warn(ctx, "Layout has no layout configuration",
 			log.String("layoutID", id), log.String("displayName", layout.DisplayName))
 	}
 

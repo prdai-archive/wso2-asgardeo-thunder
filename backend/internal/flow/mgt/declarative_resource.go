@@ -22,9 +22,11 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/thunder-id/thunderid/internal/flow/common"
+	"github.com/thunder-id/thunderid/pkg/thunderidengine/providers"
+
+	tidcommon "github.com/thunder-id/thunderid/pkg/thunderidengine/common"
+
 	declarativeresource "github.com/thunder-id/thunderid/internal/system/declarative_resource"
-	"github.com/thunder-id/thunderid/internal/system/error/serviceerror"
 	"github.com/thunder-id/thunderid/internal/system/log"
 
 	"gopkg.in/yaml.v3"
@@ -61,10 +63,10 @@ func (e *flowGraphExporter) GetParameterizerType() string {
 }
 
 // GetAllResourceIDs retrieves all flow graph IDs.
-func (e *flowGraphExporter) GetAllResourceIDs(ctx context.Context) ([]string, *serviceerror.ServiceError) {
-	flows, err := e.service.ListFlows(ctx, 10000, 0, common.FlowType(""))
+func (e *flowGraphExporter) GetAllResourceIDs(ctx context.Context) ([]string, *tidcommon.ServiceError) {
+	flows, err := e.service.ListFlows(ctx, 10000, 0, providers.FlowType(""))
 	if err != nil {
-		return nil, &serviceerror.InternalServerError
+		return nil, &tidcommon.InternalServerError
 	}
 	ids := make([]string, 0, len(flows.Flows))
 	for _, flow := range flows.Flows {
@@ -75,7 +77,7 @@ func (e *flowGraphExporter) GetAllResourceIDs(ctx context.Context) ([]string, *s
 
 // GetResourceByID retrieves a flow graph by its ID.
 func (e *flowGraphExporter) GetResourceByID(ctx context.Context, id string) (
-	interface{}, string, *serviceerror.ServiceError,
+	interface{}, string, *tidcommon.ServiceError,
 ) {
 	flow, err := e.service.GetFlow(ctx, id)
 	if err != nil {
@@ -85,15 +87,15 @@ func (e *flowGraphExporter) GetResourceByID(ctx context.Context, id string) (
 }
 
 // ValidateResource validates a flow graph resource.
-func (e *flowGraphExporter) ValidateResource(
+func (e *flowGraphExporter) ValidateResource(ctx context.Context,
 	resource interface{}, id string, logger *log.Logger,
 ) (string, *declarativeresource.ExportError) {
-	flow, ok := resource.(*CompleteFlowDefinition)
+	flow, ok := resource.(*providers.CompleteFlowDefinition)
 	if !ok {
 		return "", declarativeresource.CreateTypeError(resourceTypeFlow, id)
 	}
 
-	if err := declarativeresource.ValidateResourceName(
+	if err := declarativeresource.ValidateResourceName(ctx,
 		flow.Name, resourceTypeFlow, id, "FLOW_VALIDATION_ERROR", logger); err != nil {
 		return "", err
 	}
@@ -108,7 +110,7 @@ func (e *flowGraphExporter) GetResourceRules() *declarativeresource.ResourceRule
 }
 
 // loadDeclarativeResources loads immutable flow graph resources from files.
-func loadDeclarativeResources(flowStore flowStoreInterface) error {
+func loadDeclarativeResources(flowStore flowStoreInterface, flowValidator FlowValidatorInterface) error {
 	// Type assert to access Storer interface for resource loading
 	fileBasedStore, ok := flowStore.(*fileBasedStore)
 	if !ok {
@@ -119,9 +121,9 @@ func loadDeclarativeResources(flowStore flowStoreInterface) error {
 		ResourceType:  "Flow",
 		DirectoryName: "flows",
 		Parser:        parseToCompleteFlowDefinition,
-		Validator:     validateFlowGraphWrapper,
+		Validator:     validateFlowGraphWrapper(flowValidator),
 		IDExtractor: func(data interface{}) string {
-			flow, ok := data.(*CompleteFlowDefinition)
+			flow, ok := data.(*providers.CompleteFlowDefinition)
 			if !ok || flow == nil {
 				return ""
 			}
@@ -137,9 +139,9 @@ func loadDeclarativeResources(flowStore flowStoreInterface) error {
 	return nil
 }
 
-// parseToCompleteFlowDefinition parses YAML bytes to CompleteFlowDefinition.
+// parseToCompleteFlowDefinition parses YAML bytes to providers.CompleteFlowDefinition.
 func parseToCompleteFlowDefinition(data []byte) (interface{}, error) {
-	var flowDef CompleteFlowDefinition
+	var flowDef providers.CompleteFlowDefinition
 	err := yaml.Unmarshal(data, &flowDef)
 	if err != nil {
 		return nil, fmt.Errorf("failed to unmarshal flow definition: %w", err)
@@ -147,26 +149,28 @@ func parseToCompleteFlowDefinition(data []byte) (interface{}, error) {
 	return &flowDef, nil
 }
 
-// validateFlowGraphWrapper wraps flow validation to match ResourceConfig.Validator signature.
-func validateFlowGraphWrapper(dto interface{}) error {
-	flowDef, ok := dto.(*CompleteFlowDefinition)
-	if !ok {
-		return fmt.Errorf("invalid type: expected *CompleteFlowDefinition")
-	}
+// validateFlowGraphWrapper returns a validator closure that uses the flowValidator
+// to validate flow definitions, matching the ResourceConfig.Validator signature.
+func validateFlowGraphWrapper(v FlowValidatorInterface) func(interface{}) error {
+	return func(dto interface{}) error {
+		flowDef, ok := dto.(*providers.CompleteFlowDefinition)
+		if !ok {
+			return fmt.Errorf("invalid type: expected *providers.CompleteFlowDefinition")
+		}
 
-	// Convert to FlowDefinition for validation
-	flowDefForValidation := &FlowDefinition{
-		Handle:   flowDef.Handle,
-		Name:     flowDef.Name,
-		FlowType: flowDef.FlowType,
-		Nodes:    flowDef.Nodes,
-	}
+		flowDefForValidation := &FlowDefinition{
+			Handle:       flowDef.Handle,
+			Name:         flowDef.Name,
+			FlowType:     flowDef.FlowType,
+			Nodes:        flowDef.Nodes,
+			Interceptors: flowDef.Interceptors,
+		}
 
-	// Use the service-level validation function
-	svcErr := validateFlowDefinition(flowDefForValidation)
-	if svcErr != nil {
-		return fmt.Errorf("validation failed: %s - %s", svcErr.Code, svcErr.Error)
-	}
+		svcErr := v.ValidateFlowDefinition(context.Background(), flowDefForValidation)
+		if svcErr != nil {
+			return fmt.Errorf("validation failed: %s - %s", svcErr.Code, svcErr.Error)
+		}
 
-	return nil
+		return nil
+	}
 }

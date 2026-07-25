@@ -26,8 +26,8 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/thunder-id/thunderid/tests/integration/testutils"
 	"github.com/stretchr/testify/suite"
+	"github.com/thunder-id/thunderid/tests/integration/testutils"
 )
 
 const (
@@ -37,6 +37,7 @@ const (
 	refreshTokenTestRedirectURI  = "https://localhost:3000"
 	refreshTokenTestUsername     = "refresh_token_test_user"
 	refreshTokenTestPassword     = "testpass123"
+	refreshTokenTestResource     = "https://refresh-token.example.com"
 )
 
 var (
@@ -100,16 +101,16 @@ var (
 						},
 						"action": map[string]interface{}{
 							"ref":      "action_001",
-							"nextNode": "basic_auth",
+							"nextNode": "credentials_auth",
 						},
 					},
 				},
 			},
 			{
-				"id":   "basic_auth",
+				"id":   "credentials_auth",
 				"type": "TASK_EXECUTION",
 				"executor": map[string]interface{}{
-					"name": "BasicAuthExecutor",
+					"name": "CredentialsAuthExecutor",
 					"inputs": []map[string]interface{}{
 						{
 							"ref":        "input_001",
@@ -155,12 +156,13 @@ var (
 // specifically verifying ID token behavior.
 type RefreshTokenTestSuite struct {
 	suite.Suite
-	applicationID string
-	entityTypeID  string
-	authFlowID    string
-	ouID          string
-	userID        string
-	client        *http.Client
+	applicationID    string
+	entityTypeID     string
+	authFlowID       string
+	ouID             string
+	userID           string
+	resourceServerID string
+	client           *http.Client
 }
 
 func TestRefreshTokenTestSuite(t *testing.T) {
@@ -185,6 +187,15 @@ func (ts *RefreshTokenTestSuite) SetupSuite() {
 	flowID, err := testutils.CreateFlow(refreshTokenTestAuthFlow)
 	ts.Require().NoError(err, "Failed to create test authentication flow")
 	ts.authFlowID = flowID
+
+	resourceServerID, err := testutils.CreateResourceServerWithActions(testutils.ResourceServer{
+		Name:        "Refresh Token Resource Server",
+		Description: "Resource server for refresh token integration tests",
+		Identifier:  refreshTokenTestResource,
+		OUID:        ts.ouID,
+	}, []testutils.Action{})
+	ts.Require().NoError(err, "Failed to create refresh token resource server")
+	ts.resourceServerID = resourceServerID
 
 	// Create application with authorization_code and refresh_token grants.
 	ts.applicationID = ts.createTestApplication()
@@ -274,6 +285,12 @@ func (ts *RefreshTokenTestSuite) TearDownSuite() {
 		}
 	}
 
+	if ts.resourceServerID != "" {
+		if err := testutils.DeleteResourceServer(ts.resourceServerID); err != nil {
+			ts.T().Logf("Failed to delete resource server: %v", err)
+		}
+	}
+
 	if ts.entityTypeID != "" {
 		if err := testutils.DeleteUserType(ts.entityTypeID); err != nil {
 			ts.T().Logf("Failed to delete test user type: %v", err)
@@ -293,9 +310,9 @@ func (ts *RefreshTokenTestSuite) obtainTokensViaAuthCodeFlow(
 	scope string) *testutils.TokenResponse {
 
 	// Step 1: Initiate authorization flow.
-	resp, err := testutils.InitiateAuthorizationFlow(
+	resp, err := testutils.InitiateAuthorizationFlowWithResource(
 		refreshTokenTestClientID, refreshTokenTestRedirectURI,
-		"code", scope, "test-state")
+		"code", scope, "test-state", refreshTokenTestResource)
 	ts.Require().NoError(err, "Failed to initiate authorization flow")
 	defer resp.Body.Close()
 	ts.Require().Equal(http.StatusFound, resp.StatusCode,
@@ -330,9 +347,9 @@ func (ts *RefreshTokenTestSuite) obtainTokensViaAuthCodeFlow(
 	ts.Require().NoError(err, "Failed to extract authorization code")
 
 	// Step 4: Exchange code for tokens using Basic Auth.
-	tokenResult, err := testutils.RequestToken(
+	tokenResult, err := testutils.RequestTokenWithResource(
 		refreshTokenTestClientID, refreshTokenTestClientSecret,
-		code, refreshTokenTestRedirectURI, "authorization_code")
+		code, refreshTokenTestRedirectURI, "authorization_code", refreshTokenTestResource)
 	ts.Require().NoError(err, "Failed to request token")
 	ts.Require().Equal(http.StatusOK, tokenResult.StatusCode,
 		"Token request should succeed. Response: %s",

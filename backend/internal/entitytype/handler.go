@@ -19,13 +19,15 @@
 package entitytype
 
 import (
+	"context"
+	"errors"
 	"net/http"
 	"strconv"
 
+	tidcommon "github.com/thunder-id/thunderid/pkg/thunderidengine/common"
+
 	serverconst "github.com/thunder-id/thunderid/internal/system/constants"
 	"github.com/thunder-id/thunderid/internal/system/error/apierror"
-	"github.com/thunder-id/thunderid/internal/system/error/serviceerror"
-	"github.com/thunder-id/thunderid/internal/system/i18n/core"
 	"github.com/thunder-id/thunderid/internal/system/log"
 	sysutils "github.com/thunder-id/thunderid/internal/system/utils"
 )
@@ -56,7 +58,7 @@ func (h *entityTypeHandler) HandleEntityTypeListRequest(w http.ResponseWriter, r
 
 	limit, offset, svcErr := parsePaginationParams(r.URL.Query())
 	if svcErr != nil {
-		handleError(w, svcErr)
+		handleError(ctx, w, svcErr)
 		return
 	}
 
@@ -69,13 +71,13 @@ func (h *entityTypeHandler) HandleEntityTypeListRequest(w http.ResponseWriter, r
 	entityTypeListResponse, svcErr := h.entityTypeService.GetEntityTypeList(
 		ctx, h.category, limit, offset, includeDisplay)
 	if svcErr != nil {
-		handleError(w, svcErr)
+		handleError(ctx, w, svcErr)
 		return
 	}
 
-	sysutils.WriteSuccessResponse(w, http.StatusOK, entityTypeListResponse)
+	sysutils.WriteSuccessResponse(ctx, w, http.StatusOK, entityTypeListResponse)
 
-	logger.Debug("Successfully listed entity types with pagination",
+	logger.Debug(ctx, "Successfully listed entity types with pagination",
 		log.String("category", string(h.category)),
 		log.Int("limit", limit), log.Int("offset", offset),
 		log.Int("totalResults", entityTypeListResponse.TotalResults),
@@ -89,15 +91,20 @@ func (h *entityTypeHandler) HandleEntityTypePostRequest(w http.ResponseWriter, r
 
 	createRequest, err := sysutils.DecodeJSONBody[CreateEntityTypeRequest](r)
 	if err != nil {
+		var valErr *sysutils.ValidationError
+		if errors.As(err, &valErr) {
+			sysutils.WriteStructuredErrorResponse(w, http.StatusBadRequest, "Validation Failed", valErr.Errors)
+			return
+		}
 		errResp := apierror.ErrorResponse{
 			Code:    ErrorInvalidRequestFormat.Code,
 			Message: ErrorInvalidRequestFormat.Error,
-			Description: core.I18nMessage{
+			Description: tidcommon.I18nMessage{
 				Key:          "error.entitytypeservice.create_schema_request_parse_failed_description",
 				DefaultValue: "Failed to parse request body"},
 		}
 
-		sysutils.WriteErrorResponse(w, http.StatusBadRequest, errResp)
+		sysutils.WriteErrorResponse(ctx, w, http.StatusBadRequest, errResp)
 		return
 	}
 
@@ -112,13 +119,13 @@ func (h *entityTypeHandler) HandleEntityTypePostRequest(w http.ResponseWriter, r
 			Schema:                sanitizedRequest.Schema,
 		})
 	if svcErr != nil {
-		handleError(w, svcErr)
+		handleError(ctx, w, svcErr)
 		return
 	}
 
-	sysutils.WriteSuccessResponse(w, http.StatusCreated, createdEntityType)
+	sysutils.WriteSuccessResponse(ctx, w, http.StatusCreated, createdEntityType)
 
-	logger.Debug("Successfully created entity type",
+	logger.Debug(ctx, "Successfully created entity type",
 		log.String("category", string(h.category)),
 		log.String("entityTypeID", createdEntityType.ID), log.String("name", createdEntityType.Name))
 }
@@ -137,13 +144,13 @@ func (h *entityTypeHandler) HandleEntityTypeGetRequest(w http.ResponseWriter, r 
 
 	entityType, svcErr := h.entityTypeService.GetEntityType(ctx, h.category, schemaID, includeDisplay)
 	if svcErr != nil {
-		handleError(w, svcErr)
+		handleError(ctx, w, svcErr)
 		return
 	}
 
-	sysutils.WriteSuccessResponse(w, http.StatusOK, entityType)
+	sysutils.WriteSuccessResponse(ctx, w, http.StatusOK, entityType)
 
-	logger.Debug("Successfully retrieved entity type",
+	logger.Debug(ctx, "Successfully retrieved entity type",
 		log.String("category", string(h.category)), log.String("entityTypeID", schemaID))
 }
 
@@ -165,13 +172,13 @@ func (h *entityTypeHandler) HandleEntityTypePutRequest(w http.ResponseWriter, r 
 	updatedEntityType, svcErr := h.entityTypeService.UpdateEntityType(
 		ctx, h.category, schemaID, sanitizedRequest)
 	if svcErr != nil {
-		handleError(w, svcErr)
+		handleError(ctx, w, svcErr)
 		return
 	}
 
-	sysutils.WriteSuccessResponse(w, http.StatusOK, updatedEntityType)
+	sysutils.WriteSuccessResponse(ctx, w, http.StatusOK, updatedEntityType)
 
-	logger.Debug("Successfully updated entity type",
+	logger.Debug(ctx, "Successfully updated entity type",
 		log.String("category", string(h.category)),
 		log.String("entityTypeID", schemaID), log.String("name", updatedEntityType.Name))
 }
@@ -188,17 +195,17 @@ func (h *entityTypeHandler) HandleEntityTypeDeleteRequest(w http.ResponseWriter,
 
 	svcErr := h.entityTypeService.DeleteEntityType(ctx, h.category, schemaID)
 	if svcErr != nil {
-		handleError(w, svcErr)
+		handleError(ctx, w, svcErr)
 		return
 	}
 
-	sysutils.WriteSuccessResponse(w, http.StatusNoContent, nil)
-	logger.Debug("Successfully deleted entity type",
+	sysutils.WriteSuccessResponse(ctx, w, http.StatusNoContent, nil)
+	logger.Debug(ctx, "Successfully deleted entity type",
 		log.String("category", string(h.category)), log.String("entityTypeID", schemaID))
 }
 
 // parsePaginationParams parses limit and offset from query parameters.
-func parsePaginationParams(query map[string][]string) (int, int, *serviceerror.ServiceError) {
+func parsePaginationParams(query map[string][]string) (int, int, *tidcommon.ServiceError) {
 	var limit, offset int
 	var err error
 
@@ -222,9 +229,9 @@ func parsePaginationParams(query map[string][]string) (int, int, *serviceerror.S
 }
 
 // handleError handles service errors and converts them to appropriate HTTP responses.
-func handleError(w http.ResponseWriter, svcErr *serviceerror.ServiceError) {
+func handleError(ctx context.Context, w http.ResponseWriter, svcErr *tidcommon.ServiceError) {
 	var statusCode int
-	if svcErr.Type == serviceerror.ClientErrorType {
+	if svcErr.Type == tidcommon.ClientErrorType {
 		statusCode = http.StatusBadRequest
 		if svcErr.Code == ErrorEntityTypeNotFound.Code {
 			statusCode = http.StatusNotFound
@@ -234,7 +241,7 @@ func handleError(w http.ResponseWriter, svcErr *serviceerror.ServiceError) {
 			statusCode = http.StatusForbidden
 		} else if svcErr.Code == ErrorResultLimitExceededInCompositeMode.Code {
 			statusCode = http.StatusBadRequest
-		} else if svcErr.Code == serviceerror.ErrorUnauthorized.Code {
+		} else if svcErr.Code == tidcommon.ErrorUnauthorized.Code {
 			statusCode = http.StatusForbidden
 		}
 	} else {
@@ -247,7 +254,7 @@ func handleError(w http.ResponseWriter, svcErr *serviceerror.ServiceError) {
 		Description: svcErr.ErrorDescription,
 	}
 
-	sysutils.WriteErrorResponse(w, statusCode, errResp)
+	sysutils.WriteErrorResponse(ctx, w, statusCode, errResp)
 }
 
 // extractAndValidateSchemaID extracts and validates the schema ID from the URL path.
@@ -259,7 +266,7 @@ func extractAndValidateSchemaID(w http.ResponseWriter, r *http.Request) (string,
 			Message:     ErrorInvalidEntityTypeRequest.Error,
 			Description: ErrorInvalidEntityTypeRequest.ErrorDescription,
 		}
-		sysutils.WriteErrorResponse(w, http.StatusBadRequest, errResp)
+		sysutils.WriteErrorResponse(r.Context(), w, http.StatusBadRequest, errResp)
 		return "", true
 	}
 
@@ -271,18 +278,23 @@ func validateUpdateEntityTypeRequest(
 ) (UpdateEntityTypeRequest, bool) {
 	updateRequest, err := sysutils.DecodeJSONBody[UpdateEntityTypeRequest](r)
 	if err != nil {
+		var valErr *sysutils.ValidationError
+		if errors.As(err, &valErr) {
+			sysutils.WriteStructuredErrorResponse(w, http.StatusBadRequest, "Validation Failed", valErr.Errors)
+			return UpdateEntityTypeRequest{}, true
+		}
 		errResp := apierror.ErrorResponse{
 			Code:    ErrorInvalidRequestFormat.Code,
 			Message: ErrorInvalidRequestFormat.Error,
-			Description: core.I18nMessage{
+			Description: tidcommon.I18nMessage{
 				Key:          "error.entitytypeservice.update_schema_request_parse_failed_description",
 				DefaultValue: "Failed to parse request body"},
 		}
-		sysutils.WriteErrorResponse(w, http.StatusBadRequest, errResp)
+		sysutils.WriteErrorResponse(r.Context(), w, http.StatusBadRequest, errResp)
 		return UpdateEntityTypeRequest{}, true
 	}
 
-	sanitizedRequest := h.sanitizeUpdateEntityTypeRequest(*updateRequest)
+	sanitizedRequest := h.sanitizeUpdateEntityTypeRequest(r.Context(), *updateRequest)
 	return sanitizedRequest, false
 }
 
@@ -303,7 +315,7 @@ func (h *entityTypeHandler) sanitizeCreateEntityTypeRequest(
 }
 
 // sanitizeUpdateEntityTypeRequest sanitizes the update entity type request input.
-func (h *entityTypeHandler) sanitizeUpdateEntityTypeRequest(
+func (h *entityTypeHandler) sanitizeUpdateEntityTypeRequest(ctx context.Context,
 	request UpdateEntityTypeRequest,
 ) UpdateEntityTypeRequest {
 	logger := log.GetLogger().With(log.String(log.LoggerKeyComponentName, entityTypeHandlerLoggerComponentName))
@@ -313,7 +325,7 @@ func (h *entityTypeHandler) sanitizeUpdateEntityTypeRequest(
 	sanitizedOUID := sysutils.SanitizeString(request.OUID)
 
 	if originalName != sanitizedName {
-		logger.Debug("Sanitized entity type name in update request",
+		logger.Debug(ctx, "Sanitized entity type name in update request",
 			log.MaskedString("original", originalName),
 			log.MaskedString("sanitized", sanitizedName))
 	}

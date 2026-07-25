@@ -25,12 +25,46 @@ import (
 	"github.com/stretchr/testify/suite"
 
 	authncm "github.com/thunder-id/thunderid/internal/authn/common"
-	authnprovidermgr "github.com/thunder-id/thunderid/internal/authnprovider/manager"
-	"github.com/thunder-id/thunderid/internal/entityprovider"
 	"github.com/thunder-id/thunderid/internal/flow/common"
-	"github.com/thunder-id/thunderid/internal/flow/core"
+	tidcommon "github.com/thunder-id/thunderid/pkg/thunderidengine/common"
+	"github.com/thunder-id/thunderid/pkg/thunderidengine/providers"
+	"github.com/thunder-id/thunderid/tests/mocks/authnprovider/managermock"
 	"github.com/thunder-id/thunderid/tests/mocks/flow/coremock"
+	"github.com/thunder-id/thunderid/tests/mocks/idp/idpmock"
 )
+
+// expectEntityReferenceResolved stubs GetEntityReference to resolve authUser to an existing local
+// user, modeling account linking that matched an existing local account.
+func expectEntityReferenceResolved(m *managermock.AuthnProviderManagerMock, authUser providers.AuthUser) {
+	m.On("GetEntityReference", mock.Anything, mock.Anything).
+		Return(authUser, &providers.EntityReference{EntityID: "local-user-123"}, (*tidcommon.ServiceError)(nil))
+}
+
+// expectEntityReferenceNotFound stubs GetEntityReference to report no matching local user,
+// modeling account linking that did not resolve to an existing local account.
+func expectEntityReferenceNotFound(m *managermock.AuthnProviderManagerMock, authUser providers.AuthUser) {
+	m.On("GetEntityReference", mock.Anything, mock.Anything).
+		Return(authUser, (*providers.EntityReference)(nil),
+			&tidcommon.ServiceError{Type: tidcommon.ClientErrorType, Code: "USER_NOT_FOUND"})
+}
+
+// setupSocialAuthExecutorMock creates the shared mocks for social auth executor constructor tests
+// (GitHub, Google) and wires the CreateExecutor expectation for the given executor name.
+func setupSocialAuthExecutorMock(t *testing.T, executorName string) (
+	*coremock.FlowFactoryInterfaceMock,
+	*idpmock.IDPServiceInterfaceMock,
+	*managermock.AuthnProviderManagerMock,
+) {
+	t.Helper()
+	mockFlowFactory := coremock.NewFlowFactoryInterfaceMock(t)
+	mockIDPService := idpmock.NewIDPServiceInterfaceMock(t)
+	mockAuthnProvider := managermock.NewAuthnProviderManagerMock(t)
+	baseExec := coremock.NewExecutorInterfaceMock(t)
+	mockFlowFactory.On("CreateExecutor", executorName,
+		providers.ExecutorTypeAuthentication, defaultCodeOnlyInputs, []providers.Input{}, mock.Anything).
+		Return(baseExec).Once()
+	return mockFlowFactory, mockIDPService, mockAuthnProvider
+}
 
 type UtilsTestSuite struct {
 	suite.Suite
@@ -46,12 +80,13 @@ func (s *UtilsTestSuite) TestGetAuthnServiceName() {
 		executorName string
 		expectedName string
 	}{
-		{"BasicAuth executor", ExecutorNameBasicAuth, authncm.AuthenticatorCredentials},
-		{"SMS Auth executor", ExecutorNameSMSAuth, authncm.AuthenticatorSMSOTP},
+		{"CredentialsAuth executor", ExecutorNameCredentialsAuth, authncm.AuthenticatorCredentials},
+		{"OTP executor", ExecutorNameOTPExecutor, authncm.AuthenticatorOTP},
 		{"OAuth executor", ExecutorNameOAuth, authncm.AuthenticatorOAuth},
 		{"OIDC Auth executor", ExecutorNameOIDCAuth, authncm.AuthenticatorOIDC},
 		{"GitHub Auth executor", ExecutorNameGitHubAuth, authncm.AuthenticatorGithub},
 		{"Google Auth executor", ExecutorNameGoogleAuth, authncm.AuthenticatorGoogle},
+		{"MagicLink executor", ExecutorNameMagicLink, authncm.AuthenticatorMagicLink},
 		{"Unknown executor returns empty string", "UnknownExecutor", ""},
 		{"Provisioning executor returns empty string", ExecutorNameProvisioning, ""},
 		{"AuthAssert executor returns empty string", ExecutorNameAuthAssert, ""},
@@ -65,24 +100,28 @@ func (s *UtilsTestSuite) TestGetAuthnServiceName() {
 	}
 }
 
+// defaultCodeOnlyInputs is the standard default input set for OAuth/OIDC executors that only require an
+// authorization code.
+var defaultCodeOnlyInputs = []providers.Input{
+	{Identifier: "code", Type: "string", Required: true},
+}
+
 // createMockAuthExecutor creates a mock executor for OAuth/OIDC authentication.
-func createMockAuthExecutor(t *testing.T, executorName string) core.ExecutorInterface {
+func createMockAuthExecutor(t *testing.T, executorName string) providers.Executor {
 	mockExec := coremock.NewExecutorInterfaceMock(t)
 	mockExec.On("GetName").Return(executorName).Maybe()
-	mockExec.On("GetType").Return(common.ExecutorTypeAuthentication).Maybe()
-	mockExec.On("GetDefaultInputs").Return([]common.Input{
-		{Identifier: "code", Type: "string", Required: true},
-	}).Maybe()
-	mockExec.On("GetPrerequisites").Return([]common.Input{}).Maybe()
+	mockExec.On("GetType").Return(providers.ExecutorTypeAuthentication).Maybe()
+	mockExec.On("GetDefaultInputs").Return(defaultCodeOnlyInputs).Maybe()
+	mockExec.On("GetPrerequisites").Return([]providers.Input{}).Maybe()
 	mockExec.On("HasRequiredInputs", mock.Anything, mock.Anything).Return(
-		func(ctx *core.NodeContext, execResp *common.ExecutorResponse) bool {
+		func(ctx *providers.NodeContext, execResp *providers.ExecutorResponse) bool {
 			if code, ok := ctx.UserInputs["code"]; ok && code != "" {
 				return true
 			}
 			if len(ctx.NodeInputs) == 0 {
 				return true
 			}
-			execResp.Inputs = []common.Input{{Identifier: "code", Type: "string", Required: true}}
+			execResp.Inputs = []providers.Input{{Identifier: "code", Type: "string", Required: true}}
 			return false
 		}).Maybe()
 	return mockExec
@@ -91,14 +130,14 @@ func createMockAuthExecutor(t *testing.T, executorName string) core.ExecutorInte
 func (s *UtilsTestSuite) TestGetUserAttribute() {
 	tests := []struct {
 		name         string
-		user         *entityprovider.Entity
+		user         *providers.Entity
 		attributeKey string
 		expectedVal  string
 		expectError  bool
 	}{
 		{
 			name: "Success case",
-			user: &entityprovider.Entity{
+			user: &providers.Entity{
 				Attributes: []byte(`{"email":"user@example.com"}`),
 			},
 			attributeKey: "email",
@@ -113,7 +152,7 @@ func (s *UtilsTestSuite) TestGetUserAttribute() {
 		},
 		{
 			name: "Empty attributes",
-			user: &entityprovider.Entity{
+			user: &providers.Entity{
 				Attributes: []byte(``),
 			},
 			attributeKey: "email",
@@ -121,7 +160,7 @@ func (s *UtilsTestSuite) TestGetUserAttribute() {
 		},
 		{
 			name: "Invalid JSON attributes",
-			user: &entityprovider.Entity{
+			user: &providers.Entity{
 				Attributes: []byte(`invalid-json`),
 			},
 			attributeKey: "email",
@@ -129,7 +168,7 @@ func (s *UtilsTestSuite) TestGetUserAttribute() {
 		},
 		{
 			name: "Attribute not found",
-			user: &entityprovider.Entity{
+			user: &providers.Entity{
 				Attributes: []byte(`{"other":"data"}`),
 			},
 			attributeKey: "email",
@@ -137,7 +176,7 @@ func (s *UtilsTestSuite) TestGetUserAttribute() {
 		},
 		{
 			name: "Non-string attribute value",
-			user: &entityprovider.Entity{
+			user: &providers.Entity{
 				Attributes: []byte(`{"email":123}`),
 			},
 			attributeKey: "email",
@@ -197,9 +236,54 @@ func (s *UtilsTestSuite) TestIsAuthenticationWithoutLocalUserAllowed() {
 
 	for _, tt := range tests {
 		s.Run(tt.name, func() {
-			ctx := &core.NodeContext{NodeProperties: tt.properties}
+			ctx := &providers.NodeContext{NodeProperties: tt.properties}
 			result := isAuthenticationWithoutLocalUserAllowed(ctx)
 			s.Equal(tt.expected, result)
+		})
+	}
+}
+
+func (s *UtilsTestSuite) TestFindInputByType() {
+	tests := []struct {
+		name        string
+		inputs      []providers.Input
+		inputType   string
+		expected    providers.Input
+		expectFound bool
+	}{
+		{
+			name:        "Empty inputs",
+			inputs:      []providers.Input{},
+			inputType:   providers.InputTypeEmail,
+			expected:    providers.Input{},
+			expectFound: false,
+		},
+		{
+			name: "Type found",
+			inputs: []providers.Input{
+				{Identifier: "mobile", Type: "phone"},
+				{Identifier: "workEmail", Type: providers.InputTypeEmail},
+			},
+			inputType:   providers.InputTypeEmail,
+			expected:    providers.Input{Identifier: "workEmail", Type: providers.InputTypeEmail},
+			expectFound: true,
+		},
+		{
+			name: "Type not found",
+			inputs: []providers.Input{
+				{Identifier: "mobile", Type: "phone"},
+			},
+			inputType:   providers.InputTypeEmail,
+			expected:    providers.Input{},
+			expectFound: false,
+		},
+	}
+
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			res, found := findInputByType(tt.inputs, tt.inputType)
+			s.Equal(tt.expectFound, found)
+			s.Equal(tt.expected, res)
 		})
 	}
 }
@@ -242,8 +326,57 @@ func (s *UtilsTestSuite) TestIsRegistrationWithExistingUserAllowed() {
 
 	for _, tt := range tests {
 		s.Run(tt.name, func() {
-			ctx := &core.NodeContext{NodeProperties: tt.properties}
+			ctx := &providers.NodeContext{NodeProperties: tt.properties}
 			result := isRegistrationWithExistingUserAllowed(ctx)
+			s.Equal(tt.expected, result)
+		})
+	}
+}
+
+func (s *UtilsTestSuite) TestResolveInputIdentifierByType() {
+	tests := []struct {
+		name      string
+		ctx       *providers.NodeContext
+		inputType string
+		fallback  string
+		expected  string
+	}{
+		{
+			name: "Type found in NodeInputs",
+			ctx: &providers.NodeContext{
+				NodeInputs: []providers.Input{
+					{Identifier: "customEmailIdentifier", Type: providers.InputTypeEmail},
+				},
+			},
+			inputType: providers.InputTypeEmail,
+			fallback:  "defaultEmail",
+			expected:  "customEmailIdentifier",
+		},
+		{
+			name: "Type not found, returns fallback",
+			ctx: &providers.NodeContext{
+				NodeInputs: []providers.Input{
+					{Identifier: "phone", Type: "mobile"},
+				},
+			},
+			inputType: providers.InputTypeEmail,
+			fallback:  "defaultEmail",
+			expected:  "defaultEmail",
+		},
+		{
+			name: "Empty NodeInputs, returns fallback",
+			ctx: &providers.NodeContext{
+				NodeInputs: []providers.Input{},
+			},
+			inputType: providers.InputTypeEmail,
+			fallback:  "defaultEmail",
+			expected:  "defaultEmail",
+		},
+	}
+
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			result := resolveInputIdentifierByType(tt.ctx, tt.inputType, tt.fallback)
 			s.Equal(tt.expected, result)
 		})
 	}
@@ -287,7 +420,7 @@ func (s *UtilsTestSuite) TestIsCrossOUProvisioningAllowed() {
 
 	for _, tt := range tests {
 		s.Run(tt.name, func() {
-			ctx := &core.NodeContext{NodeProperties: tt.properties}
+			ctx := &providers.NodeContext{NodeProperties: tt.properties}
 			result := isCrossOUProvisioningAllowed(ctx)
 			s.Equal(tt.expected, result)
 		})
@@ -296,214 +429,180 @@ func (s *UtilsTestSuite) TestIsCrossOUProvisioningAllowed() {
 
 func (s *UtilsTestSuite) TestValidateFederatedIdentifierConsistency() {
 	tests := []struct {
-		name          string
-		basicResult   *authnprovidermgr.AuthnBasicResult
-		ctx           *core.NodeContext
-		expectedValid bool
-		expectError   bool
+		name                 string
+		federatedIdentifiers map[string]interface{}
+		existingIdentifiers  map[string]interface{}
+		ctx                  *providers.NodeContext
+		expectedValid        bool
 	}{
 		{
-			name:          "Nil basicResult returns true",
-			basicResult:   nil,
-			ctx:           &core.NodeContext{},
-			expectedValid: true,
-			expectError:   false,
+			name:                 "Nil federated identifiers returns true",
+			federatedIdentifiers: nil,
+			existingIdentifiers:  nil,
+			ctx:                  &providers.NodeContext{},
+			expectedValid:        true,
 		},
 		{
-			name: "No federated identifiers returns true",
-			basicResult: &authnprovidermgr.AuthnBasicResult{
-				ExternalSub:    "",
-				ExternalClaims: map[string]interface{}{},
-			},
-			ctx:           &core.NodeContext{},
-			expectedValid: true,
-			expectError:   false,
+			name:                 "Empty federated identifiers returns true",
+			federatedIdentifiers: map[string]interface{}{},
+			existingIdentifiers:  map[string]interface{}{},
+			ctx:                  &providers.NodeContext{},
+			expectedValid:        true,
 		},
 		{
 			name: "Email matches UserInputs returns true",
-			basicResult: &authnprovidermgr.AuthnBasicResult{
-				ExternalSub: "sub123",
-				ExternalClaims: map[string]interface{}{
-					"email": "user@example.com",
-				},
+			federatedIdentifiers: map[string]interface{}{
+				"email": "user@example.com",
+				"sub":   "sub123",
 			},
-			ctx: &core.NodeContext{
+			existingIdentifiers: map[string]interface{}{},
+			ctx: &providers.NodeContext{
 				UserInputs: map[string]string{
 					"email": "user@example.com",
 				},
 			},
 			expectedValid: true,
-			expectError:   false,
 		},
 		{
 			name: "Email mismatch with UserInputs returns false",
-			basicResult: &authnprovidermgr.AuthnBasicResult{
-				ExternalSub: "sub123",
-				ExternalClaims: map[string]interface{}{
-					"email": "user1@example.com",
-				},
+			federatedIdentifiers: map[string]interface{}{
+				"email": "user1@example.com",
+				"sub":   "sub123",
 			},
-			ctx: &core.NodeContext{
+			existingIdentifiers: map[string]interface{}{},
+			ctx: &providers.NodeContext{
 				UserInputs: map[string]string{
 					"email": "user2@example.com",
 				},
 			},
 			expectedValid: false,
-			expectError:   false,
 		},
 		{
 			name: "Email matches RuntimeData returns true",
-			basicResult: &authnprovidermgr.AuthnBasicResult{
-				ExternalSub: "sub123",
-				ExternalClaims: map[string]interface{}{
-					"email": "user@example.com",
-				},
+			federatedIdentifiers: map[string]interface{}{
+				"email": "user@example.com",
+				"sub":   "sub123",
 			},
-			ctx: &core.NodeContext{
+			existingIdentifiers: map[string]interface{}{},
+			ctx: &providers.NodeContext{
 				RuntimeData: map[string]string{
 					"email": "user@example.com",
 				},
 			},
 			expectedValid: true,
-			expectError:   false,
 		},
 		{
 			name: "Email mismatch with RuntimeData returns false",
-			basicResult: &authnprovidermgr.AuthnBasicResult{
-				ExternalSub: "sub123",
-				ExternalClaims: map[string]interface{}{
-					"email": "user1@example.com",
-				},
+			federatedIdentifiers: map[string]interface{}{
+				"email": "user1@example.com",
+				"sub":   "sub123",
 			},
-			ctx: &core.NodeContext{
+			existingIdentifiers: map[string]interface{}{},
+			ctx: &providers.NodeContext{
 				RuntimeData: map[string]string{
 					"email": "user2@example.com",
 				},
 			},
 			expectedValid: false,
-			expectError:   false,
 		},
 		{
-			name: "Email matches AuthenticatedUser.Attributes returns true",
-			basicResult: &authnprovidermgr.AuthnBasicResult{
-				ExternalSub: "sub123",
-				ExternalClaims: map[string]interface{}{
-					"email": "user@example.com",
-				},
+			name: "Email matches existing identifiers returns true",
+			federatedIdentifiers: map[string]interface{}{
+				"email": "user@example.com",
+				"sub":   "sub123",
 			},
-			ctx: &core.NodeContext{
-				AuthenticatedUser: authncm.AuthenticatedUser{
-					Attributes: map[string]interface{}{
-						"email": "user@example.com",
-					},
-				},
+			existingIdentifiers: map[string]interface{}{
+				"email": "user@example.com",
 			},
+			ctx:           &providers.NodeContext{},
 			expectedValid: true,
-			expectError:   false,
 		},
 		{
-			name: "Email mismatch with AuthenticatedUser.Attributes returns false",
-			basicResult: &authnprovidermgr.AuthnBasicResult{
-				ExternalSub: "sub123",
-				ExternalClaims: map[string]interface{}{
-					"email": "user1@example.com",
-				},
+			name: "Email mismatch with existing identifiers returns false",
+			federatedIdentifiers: map[string]interface{}{
+				"email": "user1@example.com",
+				"sub":   "sub123",
 			},
-			ctx: &core.NodeContext{
-				AuthenticatedUser: authncm.AuthenticatedUser{
-					Attributes: map[string]interface{}{
-						"email": "user2@example.com",
-					},
-				},
+			existingIdentifiers: map[string]interface{}{
+				"email": "user2@example.com",
 			},
+			ctx:           &providers.NodeContext{},
 			expectedValid: false,
-			expectError:   false,
 		},
 		{
 			name: "Sub matches RuntimeData returns true",
-			basicResult: &authnprovidermgr.AuthnBasicResult{
-				ExternalSub: "sub123",
-				ExternalClaims: map[string]interface{}{
-					"email": "user@example.com",
-				},
+			federatedIdentifiers: map[string]interface{}{
+				"email": "user@example.com",
+				"sub":   "sub123",
 			},
-			ctx: &core.NodeContext{
+			existingIdentifiers: map[string]interface{}{},
+			ctx: &providers.NodeContext{
 				RuntimeData: map[string]string{
 					"sub": "sub123",
 				},
 			},
 			expectedValid: true,
-			expectError:   false,
 		},
 		{
 			name: "Sub mismatch with RuntimeData returns false",
-			basicResult: &authnprovidermgr.AuthnBasicResult{
-				ExternalSub: "sub123",
-				ExternalClaims: map[string]interface{}{
-					"email": "user@example.com",
-				},
+			federatedIdentifiers: map[string]interface{}{
+				"email": "user@example.com",
+				"sub":   "sub123",
 			},
-			ctx: &core.NodeContext{
+			existingIdentifiers: map[string]interface{}{},
+			ctx: &providers.NodeContext{
 				RuntimeData: map[string]string{
 					"sub": "sub456",
 				},
 			},
 			expectedValid: false,
-			expectError:   false,
 		},
 		{
 			name: "Empty UserInputs email is skipped",
-			basicResult: &authnprovidermgr.AuthnBasicResult{
-				ExternalSub: "sub123",
-				ExternalClaims: map[string]interface{}{
-					"email": "user@example.com",
-				},
+			federatedIdentifiers: map[string]interface{}{
+				"email": "user@example.com",
+				"sub":   "sub123",
 			},
-			ctx: &core.NodeContext{
+			existingIdentifiers: map[string]interface{}{},
+			ctx: &providers.NodeContext{
 				UserInputs: map[string]string{
 					"email": "",
 				},
 			},
 			expectedValid: true,
-			expectError:   false,
 		},
 		{
 			name: "Empty RuntimeData email is skipped",
-			basicResult: &authnprovidermgr.AuthnBasicResult{
-				ExternalSub: "sub123",
-				ExternalClaims: map[string]interface{}{
-					"email": "user@example.com",
-				},
+			federatedIdentifiers: map[string]interface{}{
+				"email": "user@example.com",
+				"sub":   "sub123",
 			},
-			ctx: &core.NodeContext{
+			existingIdentifiers: map[string]interface{}{},
+			ctx: &providers.NodeContext{
 				RuntimeData: map[string]string{
 					"email": "",
 				},
 			},
 			expectedValid: true,
-			expectError:   false,
 		},
 		{
 			name: "Missing email from UserInputs and RuntimeData is allowed",
-			basicResult: &authnprovidermgr.AuthnBasicResult{
-				ExternalSub: "sub123",
-				ExternalClaims: map[string]interface{}{
-					"email": "user@example.com",
-				},
+			federatedIdentifiers: map[string]interface{}{
+				"email": "user@example.com",
+				"sub":   "sub123",
 			},
-			ctx:           &core.NodeContext{},
-			expectedValid: true,
-			expectError:   false,
+			existingIdentifiers: map[string]interface{}{},
+			ctx:                 &providers.NodeContext{},
+			expectedValid:       true,
 		},
 		{
 			name: "Multiple attributes with one mismatch returns false",
-			basicResult: &authnprovidermgr.AuthnBasicResult{
-				ExternalSub: "sub123",
-				ExternalClaims: map[string]interface{}{
-					"email": "user1@example.com",
-				},
+			federatedIdentifiers: map[string]interface{}{
+				"email": "user1@example.com",
+				"sub":   "sub123",
 			},
-			ctx: &core.NodeContext{
+			existingIdentifiers: map[string]interface{}{},
+			ctx: &providers.NodeContext{
 				UserInputs: map[string]string{
 					"email": "user1@example.com",
 					"sub":   "sub456",
@@ -513,111 +612,13 @@ func (s *UtilsTestSuite) TestValidateFederatedIdentifierConsistency() {
 				},
 			},
 			expectedValid: false,
-			expectError:   false,
 		},
 	}
 
 	for _, tt := range tests {
 		s.Run(tt.name, func() {
-			valid := validateFederatedIdentifierConsistency(tt.ctx, tt.basicResult)
+			valid := validateFederatedIdentifierConsistency(tt.ctx, tt.federatedIdentifiers, tt.existingIdentifiers)
 			s.Equal(tt.expectedValid, valid)
-		})
-	}
-}
-
-func (s *UtilsTestSuite) TestGetAuthenticatedIdentifierValue() {
-	tests := []struct {
-		name          string
-		ctx           *core.NodeContext
-		key           string
-		expectedValue string
-	}{
-		{
-			name: "Nil Attributes map returns empty string",
-			ctx: &core.NodeContext{
-				AuthenticatedUser: authncm.AuthenticatedUser{
-					Attributes: nil,
-				},
-			},
-			key:           "email",
-			expectedValue: "",
-		},
-		{
-			name: "Empty Attributes map returns empty string",
-			ctx: &core.NodeContext{
-				AuthenticatedUser: authncm.AuthenticatedUser{
-					Attributes: map[string]interface{}{},
-				},
-			},
-			key:           "email",
-			expectedValue: "",
-		},
-		{
-			name: "Key not found returns empty string",
-			ctx: &core.NodeContext{
-				AuthenticatedUser: authncm.AuthenticatedUser{
-					Attributes: map[string]interface{}{
-						"other": "value",
-					},
-				},
-			},
-			key:           "email",
-			expectedValue: "",
-		},
-		{
-			name: "String value is returned",
-			ctx: &core.NodeContext{
-				AuthenticatedUser: authncm.AuthenticatedUser{
-					Attributes: map[string]interface{}{
-						"email": "user@example.com",
-					},
-				},
-			},
-			key:           "email",
-			expectedValue: "user@example.com",
-		},
-		{
-			name: "Sub string value is returned",
-			ctx: &core.NodeContext{
-				AuthenticatedUser: authncm.AuthenticatedUser{
-					Attributes: map[string]interface{}{
-						"sub": "sub123",
-					},
-				},
-			},
-			key:           "sub",
-			expectedValue: "sub123",
-		},
-		{
-			name: "Non-string value is converted to string",
-			ctx: &core.NodeContext{
-				AuthenticatedUser: authncm.AuthenticatedUser{
-					Attributes: map[string]interface{}{
-						"id": 123,
-					},
-				},
-			},
-			key:           "id",
-			expectedValue: "123",
-		},
-		{
-			name: "Boolean value is converted to string",
-			ctx: &core.NodeContext{
-				AuthenticatedUser: authncm.AuthenticatedUser{
-					Attributes: map[string]interface{}{
-						"active": true,
-					},
-				},
-			},
-			key:           "active",
-			expectedValue: "true",
-		},
-	}
-
-	for _, tt := range tests {
-		s.Run(tt.name, func() {
-			value := getAuthenticatedIdentifierValue(tt.ctx, tt.key)
-			s.Equal(tt.expectedValue, value)
 		})
 	}
 }

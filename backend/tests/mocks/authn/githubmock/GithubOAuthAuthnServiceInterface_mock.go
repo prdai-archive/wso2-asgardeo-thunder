@@ -10,8 +10,7 @@ import (
 	mock "github.com/stretchr/testify/mock"
 	"github.com/thunder-id/thunderid/internal/authn/common"
 	"github.com/thunder-id/thunderid/internal/authn/oauth"
-	"github.com/thunder-id/thunderid/internal/entityprovider"
-	"github.com/thunder-id/thunderid/internal/system/error/serviceerror"
+	common0 "github.com/thunder-id/thunderid/pkg/thunderidengine/common"
 )
 
 // NewGithubOAuthAuthnServiceInterfaceMock creates a new instance of GithubOAuthAuthnServiceInterfaceMock. It also registers a testing interface on the mock and a cleanup function to assert the mocks expectations.
@@ -42,30 +41,30 @@ func (_m *GithubOAuthAuthnServiceInterfaceMock) EXPECT() *GithubOAuthAuthnServic
 }
 
 // Authenticate provides a mock function for the type GithubOAuthAuthnServiceInterfaceMock
-func (_mock *GithubOAuthAuthnServiceInterfaceMock) Authenticate(ctx context.Context, idpID string, code string) (*common.FederatedAuthResult, *serviceerror.ServiceError) {
-	ret := _mock.Called(ctx, idpID, code)
+func (_mock *GithubOAuthAuthnServiceInterfaceMock) Authenticate(ctx context.Context, idpID string, authzData common.AuthorizationData) (*common.AuthnResult, *common0.ServiceError) {
+	ret := _mock.Called(ctx, idpID, authzData)
 
 	if len(ret) == 0 {
 		panic("no return value specified for Authenticate")
 	}
 
-	var r0 *common.FederatedAuthResult
-	var r1 *serviceerror.ServiceError
-	if returnFunc, ok := ret.Get(0).(func(context.Context, string, string) (*common.FederatedAuthResult, *serviceerror.ServiceError)); ok {
-		return returnFunc(ctx, idpID, code)
+	var r0 *common.AuthnResult
+	var r1 *common0.ServiceError
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string, common.AuthorizationData) (*common.AuthnResult, *common0.ServiceError)); ok {
+		return returnFunc(ctx, idpID, authzData)
 	}
-	if returnFunc, ok := ret.Get(0).(func(context.Context, string, string) *common.FederatedAuthResult); ok {
-		r0 = returnFunc(ctx, idpID, code)
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string, common.AuthorizationData) *common.AuthnResult); ok {
+		r0 = returnFunc(ctx, idpID, authzData)
 	} else {
 		if ret.Get(0) != nil {
-			r0 = ret.Get(0).(*common.FederatedAuthResult)
+			r0 = ret.Get(0).(*common.AuthnResult)
 		}
 	}
-	if returnFunc, ok := ret.Get(1).(func(context.Context, string, string) *serviceerror.ServiceError); ok {
-		r1 = returnFunc(ctx, idpID, code)
+	if returnFunc, ok := ret.Get(1).(func(context.Context, string, common.AuthorizationData) *common0.ServiceError); ok {
+		r1 = returnFunc(ctx, idpID, authzData)
 	} else {
 		if ret.Get(1) != nil {
-			r1 = ret.Get(1).(*serviceerror.ServiceError)
+			r1 = ret.Get(1).(*common0.ServiceError)
 		}
 	}
 	return r0, r1
@@ -79,12 +78,12 @@ type GithubOAuthAuthnServiceInterfaceMock_Authenticate_Call struct {
 // Authenticate is a helper method to define mock.On call
 //   - ctx context.Context
 //   - idpID string
-//   - code string
-func (_e *GithubOAuthAuthnServiceInterfaceMock_Expecter) Authenticate(ctx interface{}, idpID interface{}, code interface{}) *GithubOAuthAuthnServiceInterfaceMock_Authenticate_Call {
-	return &GithubOAuthAuthnServiceInterfaceMock_Authenticate_Call{Call: _e.mock.On("Authenticate", ctx, idpID, code)}
+//   - authzData common.AuthorizationData
+func (_e *GithubOAuthAuthnServiceInterfaceMock_Expecter) Authenticate(ctx interface{}, idpID interface{}, authzData interface{}) *GithubOAuthAuthnServiceInterfaceMock_Authenticate_Call {
+	return &GithubOAuthAuthnServiceInterfaceMock_Authenticate_Call{Call: _e.mock.On("Authenticate", ctx, idpID, authzData)}
 }
 
-func (_c *GithubOAuthAuthnServiceInterfaceMock_Authenticate_Call) Run(run func(ctx context.Context, idpID string, code string)) *GithubOAuthAuthnServiceInterfaceMock_Authenticate_Call {
+func (_c *GithubOAuthAuthnServiceInterfaceMock_Authenticate_Call) Run(run func(ctx context.Context, idpID string, authzData common.AuthorizationData)) *GithubOAuthAuthnServiceInterfaceMock_Authenticate_Call {
 	_c.Call.Run(func(args mock.Arguments) {
 		var arg0 context.Context
 		if args[0] != nil {
@@ -94,9 +93,9 @@ func (_c *GithubOAuthAuthnServiceInterfaceMock_Authenticate_Call) Run(run func(c
 		if args[1] != nil {
 			arg1 = args[1].(string)
 		}
-		var arg2 string
+		var arg2 common.AuthorizationData
 		if args[2] != nil {
-			arg2 = args[2].(string)
+			arg2 = args[2].(common.AuthorizationData)
 		}
 		run(
 			arg0,
@@ -107,18 +106,18 @@ func (_c *GithubOAuthAuthnServiceInterfaceMock_Authenticate_Call) Run(run func(c
 	return _c
 }
 
-func (_c *GithubOAuthAuthnServiceInterfaceMock_Authenticate_Call) Return(federatedAuthResult *common.FederatedAuthResult, serviceError *serviceerror.ServiceError) *GithubOAuthAuthnServiceInterfaceMock_Authenticate_Call {
-	_c.Call.Return(federatedAuthResult, serviceError)
+func (_c *GithubOAuthAuthnServiceInterfaceMock_Authenticate_Call) Return(authnResult *common.AuthnResult, serviceError *common0.ServiceError) *GithubOAuthAuthnServiceInterfaceMock_Authenticate_Call {
+	_c.Call.Return(authnResult, serviceError)
 	return _c
 }
 
-func (_c *GithubOAuthAuthnServiceInterfaceMock_Authenticate_Call) RunAndReturn(run func(ctx context.Context, idpID string, code string) (*common.FederatedAuthResult, *serviceerror.ServiceError)) *GithubOAuthAuthnServiceInterfaceMock_Authenticate_Call {
+func (_c *GithubOAuthAuthnServiceInterfaceMock_Authenticate_Call) RunAndReturn(run func(ctx context.Context, idpID string, authzData common.AuthorizationData) (*common.AuthnResult, *common0.ServiceError)) *GithubOAuthAuthnServiceInterfaceMock_Authenticate_Call {
 	_c.Call.Return(run)
 	return _c
 }
 
 // BuildAuthorizeURL provides a mock function for the type GithubOAuthAuthnServiceInterfaceMock
-func (_mock *GithubOAuthAuthnServiceInterfaceMock) BuildAuthorizeURL(ctx context.Context, idpID string) (string, *serviceerror.ServiceError) {
+func (_mock *GithubOAuthAuthnServiceInterfaceMock) BuildAuthorizeURL(ctx context.Context, idpID string) (string, map[string]string, *common0.ServiceError) {
 	ret := _mock.Called(ctx, idpID)
 
 	if len(ret) == 0 {
@@ -126,8 +125,9 @@ func (_mock *GithubOAuthAuthnServiceInterfaceMock) BuildAuthorizeURL(ctx context
 	}
 
 	var r0 string
-	var r1 *serviceerror.ServiceError
-	if returnFunc, ok := ret.Get(0).(func(context.Context, string) (string, *serviceerror.ServiceError)); ok {
+	var r1 map[string]string
+	var r2 *common0.ServiceError
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string) (string, map[string]string, *common0.ServiceError)); ok {
 		return returnFunc(ctx, idpID)
 	}
 	if returnFunc, ok := ret.Get(0).(func(context.Context, string) string); ok {
@@ -135,14 +135,21 @@ func (_mock *GithubOAuthAuthnServiceInterfaceMock) BuildAuthorizeURL(ctx context
 	} else {
 		r0 = ret.Get(0).(string)
 	}
-	if returnFunc, ok := ret.Get(1).(func(context.Context, string) *serviceerror.ServiceError); ok {
+	if returnFunc, ok := ret.Get(1).(func(context.Context, string) map[string]string); ok {
 		r1 = returnFunc(ctx, idpID)
 	} else {
 		if ret.Get(1) != nil {
-			r1 = ret.Get(1).(*serviceerror.ServiceError)
+			r1 = ret.Get(1).(map[string]string)
 		}
 	}
-	return r0, r1
+	if returnFunc, ok := ret.Get(2).(func(context.Context, string) *common0.ServiceError); ok {
+		r2 = returnFunc(ctx, idpID)
+	} else {
+		if ret.Get(2) != nil {
+			r2 = ret.Get(2).(*common0.ServiceError)
+		}
+	}
+	return r0, r1, r2
 }
 
 // GithubOAuthAuthnServiceInterfaceMock_BuildAuthorizeURL_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'BuildAuthorizeURL'
@@ -175,18 +182,100 @@ func (_c *GithubOAuthAuthnServiceInterfaceMock_BuildAuthorizeURL_Call) Run(run f
 	return _c
 }
 
-func (_c *GithubOAuthAuthnServiceInterfaceMock_BuildAuthorizeURL_Call) Return(s string, serviceError *serviceerror.ServiceError) *GithubOAuthAuthnServiceInterfaceMock_BuildAuthorizeURL_Call {
-	_c.Call.Return(s, serviceError)
+func (_c *GithubOAuthAuthnServiceInterfaceMock_BuildAuthorizeURL_Call) Return(s string, stringToString map[string]string, serviceError *common0.ServiceError) *GithubOAuthAuthnServiceInterfaceMock_BuildAuthorizeURL_Call {
+	_c.Call.Return(s, stringToString, serviceError)
 	return _c
 }
 
-func (_c *GithubOAuthAuthnServiceInterfaceMock_BuildAuthorizeURL_Call) RunAndReturn(run func(ctx context.Context, idpID string) (string, *serviceerror.ServiceError)) *GithubOAuthAuthnServiceInterfaceMock_BuildAuthorizeURL_Call {
+func (_c *GithubOAuthAuthnServiceInterfaceMock_BuildAuthorizeURL_Call) RunAndReturn(run func(ctx context.Context, idpID string) (string, map[string]string, *common0.ServiceError)) *GithubOAuthAuthnServiceInterfaceMock_BuildAuthorizeURL_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// BuildFederatedAuthResult provides a mock function for the type GithubOAuthAuthnServiceInterfaceMock
+func (_mock *GithubOAuthAuthnServiceInterfaceMock) BuildFederatedAuthResult(ctx context.Context, idpID string, sub string, claims map[string]interface{}) (*common.AuthnResult, *common0.ServiceError) {
+	ret := _mock.Called(ctx, idpID, sub, claims)
+
+	if len(ret) == 0 {
+		panic("no return value specified for BuildFederatedAuthResult")
+	}
+
+	var r0 *common.AuthnResult
+	var r1 *common0.ServiceError
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string, string, map[string]interface{}) (*common.AuthnResult, *common0.ServiceError)); ok {
+		return returnFunc(ctx, idpID, sub, claims)
+	}
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string, string, map[string]interface{}) *common.AuthnResult); ok {
+		r0 = returnFunc(ctx, idpID, sub, claims)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(*common.AuthnResult)
+		}
+	}
+	if returnFunc, ok := ret.Get(1).(func(context.Context, string, string, map[string]interface{}) *common0.ServiceError); ok {
+		r1 = returnFunc(ctx, idpID, sub, claims)
+	} else {
+		if ret.Get(1) != nil {
+			r1 = ret.Get(1).(*common0.ServiceError)
+		}
+	}
+	return r0, r1
+}
+
+// GithubOAuthAuthnServiceInterfaceMock_BuildFederatedAuthResult_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'BuildFederatedAuthResult'
+type GithubOAuthAuthnServiceInterfaceMock_BuildFederatedAuthResult_Call struct {
+	*mock.Call
+}
+
+// BuildFederatedAuthResult is a helper method to define mock.On call
+//   - ctx context.Context
+//   - idpID string
+//   - sub string
+//   - claims map[string]interface{}
+func (_e *GithubOAuthAuthnServiceInterfaceMock_Expecter) BuildFederatedAuthResult(ctx interface{}, idpID interface{}, sub interface{}, claims interface{}) *GithubOAuthAuthnServiceInterfaceMock_BuildFederatedAuthResult_Call {
+	return &GithubOAuthAuthnServiceInterfaceMock_BuildFederatedAuthResult_Call{Call: _e.mock.On("BuildFederatedAuthResult", ctx, idpID, sub, claims)}
+}
+
+func (_c *GithubOAuthAuthnServiceInterfaceMock_BuildFederatedAuthResult_Call) Run(run func(ctx context.Context, idpID string, sub string, claims map[string]interface{})) *GithubOAuthAuthnServiceInterfaceMock_BuildFederatedAuthResult_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		var arg0 context.Context
+		if args[0] != nil {
+			arg0 = args[0].(context.Context)
+		}
+		var arg1 string
+		if args[1] != nil {
+			arg1 = args[1].(string)
+		}
+		var arg2 string
+		if args[2] != nil {
+			arg2 = args[2].(string)
+		}
+		var arg3 map[string]interface{}
+		if args[3] != nil {
+			arg3 = args[3].(map[string]interface{})
+		}
+		run(
+			arg0,
+			arg1,
+			arg2,
+			arg3,
+		)
+	})
+	return _c
+}
+
+func (_c *GithubOAuthAuthnServiceInterfaceMock_BuildFederatedAuthResult_Call) Return(authnResult *common.AuthnResult, serviceError *common0.ServiceError) *GithubOAuthAuthnServiceInterfaceMock_BuildFederatedAuthResult_Call {
+	_c.Call.Return(authnResult, serviceError)
+	return _c
+}
+
+func (_c *GithubOAuthAuthnServiceInterfaceMock_BuildFederatedAuthResult_Call) RunAndReturn(run func(ctx context.Context, idpID string, sub string, claims map[string]interface{}) (*common.AuthnResult, *common0.ServiceError)) *GithubOAuthAuthnServiceInterfaceMock_BuildFederatedAuthResult_Call {
 	_c.Call.Return(run)
 	return _c
 }
 
 // ExchangeCodeForToken provides a mock function for the type GithubOAuthAuthnServiceInterfaceMock
-func (_mock *GithubOAuthAuthnServiceInterfaceMock) ExchangeCodeForToken(ctx context.Context, idpID string, code string, validateResponse bool) (*oauth.TokenResponse, *serviceerror.ServiceError) {
+func (_mock *GithubOAuthAuthnServiceInterfaceMock) ExchangeCodeForToken(ctx context.Context, idpID string, code string, validateResponse bool) (*oauth.TokenResponse, *common0.ServiceError) {
 	ret := _mock.Called(ctx, idpID, code, validateResponse)
 
 	if len(ret) == 0 {
@@ -194,8 +283,8 @@ func (_mock *GithubOAuthAuthnServiceInterfaceMock) ExchangeCodeForToken(ctx cont
 	}
 
 	var r0 *oauth.TokenResponse
-	var r1 *serviceerror.ServiceError
-	if returnFunc, ok := ret.Get(0).(func(context.Context, string, string, bool) (*oauth.TokenResponse, *serviceerror.ServiceError)); ok {
+	var r1 *common0.ServiceError
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string, string, bool) (*oauth.TokenResponse, *common0.ServiceError)); ok {
 		return returnFunc(ctx, idpID, code, validateResponse)
 	}
 	if returnFunc, ok := ret.Get(0).(func(context.Context, string, string, bool) *oauth.TokenResponse); ok {
@@ -205,11 +294,11 @@ func (_mock *GithubOAuthAuthnServiceInterfaceMock) ExchangeCodeForToken(ctx cont
 			r0 = ret.Get(0).(*oauth.TokenResponse)
 		}
 	}
-	if returnFunc, ok := ret.Get(1).(func(context.Context, string, string, bool) *serviceerror.ServiceError); ok {
+	if returnFunc, ok := ret.Get(1).(func(context.Context, string, string, bool) *common0.ServiceError); ok {
 		r1 = returnFunc(ctx, idpID, code, validateResponse)
 	} else {
 		if ret.Get(1) != nil {
-			r1 = ret.Get(1).(*serviceerror.ServiceError)
+			r1 = ret.Get(1).(*common0.ServiceError)
 		}
 	}
 	return r0, r1
@@ -257,18 +346,18 @@ func (_c *GithubOAuthAuthnServiceInterfaceMock_ExchangeCodeForToken_Call) Run(ru
 	return _c
 }
 
-func (_c *GithubOAuthAuthnServiceInterfaceMock_ExchangeCodeForToken_Call) Return(tokenResponse *oauth.TokenResponse, serviceError *serviceerror.ServiceError) *GithubOAuthAuthnServiceInterfaceMock_ExchangeCodeForToken_Call {
+func (_c *GithubOAuthAuthnServiceInterfaceMock_ExchangeCodeForToken_Call) Return(tokenResponse *oauth.TokenResponse, serviceError *common0.ServiceError) *GithubOAuthAuthnServiceInterfaceMock_ExchangeCodeForToken_Call {
 	_c.Call.Return(tokenResponse, serviceError)
 	return _c
 }
 
-func (_c *GithubOAuthAuthnServiceInterfaceMock_ExchangeCodeForToken_Call) RunAndReturn(run func(ctx context.Context, idpID string, code string, validateResponse bool) (*oauth.TokenResponse, *serviceerror.ServiceError)) *GithubOAuthAuthnServiceInterfaceMock_ExchangeCodeForToken_Call {
+func (_c *GithubOAuthAuthnServiceInterfaceMock_ExchangeCodeForToken_Call) RunAndReturn(run func(ctx context.Context, idpID string, code string, validateResponse bool) (*oauth.TokenResponse, *common0.ServiceError)) *GithubOAuthAuthnServiceInterfaceMock_ExchangeCodeForToken_Call {
 	_c.Call.Return(run)
 	return _c
 }
 
 // FetchUserInfo provides a mock function for the type GithubOAuthAuthnServiceInterfaceMock
-func (_mock *GithubOAuthAuthnServiceInterfaceMock) FetchUserInfo(ctx context.Context, idpID string, accessToken string) (map[string]interface{}, *serviceerror.ServiceError) {
+func (_mock *GithubOAuthAuthnServiceInterfaceMock) FetchUserInfo(ctx context.Context, idpID string, accessToken string) (map[string]interface{}, *common0.ServiceError) {
 	ret := _mock.Called(ctx, idpID, accessToken)
 
 	if len(ret) == 0 {
@@ -276,8 +365,8 @@ func (_mock *GithubOAuthAuthnServiceInterfaceMock) FetchUserInfo(ctx context.Con
 	}
 
 	var r0 map[string]interface{}
-	var r1 *serviceerror.ServiceError
-	if returnFunc, ok := ret.Get(0).(func(context.Context, string, string) (map[string]interface{}, *serviceerror.ServiceError)); ok {
+	var r1 *common0.ServiceError
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string, string) (map[string]interface{}, *common0.ServiceError)); ok {
 		return returnFunc(ctx, idpID, accessToken)
 	}
 	if returnFunc, ok := ret.Get(0).(func(context.Context, string, string) map[string]interface{}); ok {
@@ -287,11 +376,11 @@ func (_mock *GithubOAuthAuthnServiceInterfaceMock) FetchUserInfo(ctx context.Con
 			r0 = ret.Get(0).(map[string]interface{})
 		}
 	}
-	if returnFunc, ok := ret.Get(1).(func(context.Context, string, string) *serviceerror.ServiceError); ok {
+	if returnFunc, ok := ret.Get(1).(func(context.Context, string, string) *common0.ServiceError); ok {
 		r1 = returnFunc(ctx, idpID, accessToken)
 	} else {
 		if ret.Get(1) != nil {
-			r1 = ret.Get(1).(*serviceerror.ServiceError)
+			r1 = ret.Get(1).(*common0.ServiceError)
 		}
 	}
 	return r0, r1
@@ -333,82 +422,18 @@ func (_c *GithubOAuthAuthnServiceInterfaceMock_FetchUserInfo_Call) Run(run func(
 	return _c
 }
 
-func (_c *GithubOAuthAuthnServiceInterfaceMock_FetchUserInfo_Call) Return(stringToIfaceVal map[string]interface{}, serviceError *serviceerror.ServiceError) *GithubOAuthAuthnServiceInterfaceMock_FetchUserInfo_Call {
+func (_c *GithubOAuthAuthnServiceInterfaceMock_FetchUserInfo_Call) Return(stringToIfaceVal map[string]interface{}, serviceError *common0.ServiceError) *GithubOAuthAuthnServiceInterfaceMock_FetchUserInfo_Call {
 	_c.Call.Return(stringToIfaceVal, serviceError)
 	return _c
 }
 
-func (_c *GithubOAuthAuthnServiceInterfaceMock_FetchUserInfo_Call) RunAndReturn(run func(ctx context.Context, idpID string, accessToken string) (map[string]interface{}, *serviceerror.ServiceError)) *GithubOAuthAuthnServiceInterfaceMock_FetchUserInfo_Call {
-	_c.Call.Return(run)
-	return _c
-}
-
-// GetInternalUser provides a mock function for the type GithubOAuthAuthnServiceInterfaceMock
-func (_mock *GithubOAuthAuthnServiceInterfaceMock) GetInternalUser(sub string) (*entityprovider.Entity, *serviceerror.ServiceError) {
-	ret := _mock.Called(sub)
-
-	if len(ret) == 0 {
-		panic("no return value specified for GetInternalUser")
-	}
-
-	var r0 *entityprovider.Entity
-	var r1 *serviceerror.ServiceError
-	if returnFunc, ok := ret.Get(0).(func(string) (*entityprovider.Entity, *serviceerror.ServiceError)); ok {
-		return returnFunc(sub)
-	}
-	if returnFunc, ok := ret.Get(0).(func(string) *entityprovider.Entity); ok {
-		r0 = returnFunc(sub)
-	} else {
-		if ret.Get(0) != nil {
-			r0 = ret.Get(0).(*entityprovider.Entity)
-		}
-	}
-	if returnFunc, ok := ret.Get(1).(func(string) *serviceerror.ServiceError); ok {
-		r1 = returnFunc(sub)
-	} else {
-		if ret.Get(1) != nil {
-			r1 = ret.Get(1).(*serviceerror.ServiceError)
-		}
-	}
-	return r0, r1
-}
-
-// GithubOAuthAuthnServiceInterfaceMock_GetInternalUser_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'GetInternalUser'
-type GithubOAuthAuthnServiceInterfaceMock_GetInternalUser_Call struct {
-	*mock.Call
-}
-
-// GetInternalUser is a helper method to define mock.On call
-//   - sub string
-func (_e *GithubOAuthAuthnServiceInterfaceMock_Expecter) GetInternalUser(sub interface{}) *GithubOAuthAuthnServiceInterfaceMock_GetInternalUser_Call {
-	return &GithubOAuthAuthnServiceInterfaceMock_GetInternalUser_Call{Call: _e.mock.On("GetInternalUser", sub)}
-}
-
-func (_c *GithubOAuthAuthnServiceInterfaceMock_GetInternalUser_Call) Run(run func(sub string)) *GithubOAuthAuthnServiceInterfaceMock_GetInternalUser_Call {
-	_c.Call.Run(func(args mock.Arguments) {
-		var arg0 string
-		if args[0] != nil {
-			arg0 = args[0].(string)
-		}
-		run(
-			arg0,
-		)
-	})
-	return _c
-}
-
-func (_c *GithubOAuthAuthnServiceInterfaceMock_GetInternalUser_Call) Return(entity *entityprovider.Entity, serviceError *serviceerror.ServiceError) *GithubOAuthAuthnServiceInterfaceMock_GetInternalUser_Call {
-	_c.Call.Return(entity, serviceError)
-	return _c
-}
-
-func (_c *GithubOAuthAuthnServiceInterfaceMock_GetInternalUser_Call) RunAndReturn(run func(sub string) (*entityprovider.Entity, *serviceerror.ServiceError)) *GithubOAuthAuthnServiceInterfaceMock_GetInternalUser_Call {
+func (_c *GithubOAuthAuthnServiceInterfaceMock_FetchUserInfo_Call) RunAndReturn(run func(ctx context.Context, idpID string, accessToken string) (map[string]interface{}, *common0.ServiceError)) *GithubOAuthAuthnServiceInterfaceMock_FetchUserInfo_Call {
 	_c.Call.Return(run)
 	return _c
 }
 
 // GetOAuthClientConfig provides a mock function for the type GithubOAuthAuthnServiceInterfaceMock
-func (_mock *GithubOAuthAuthnServiceInterfaceMock) GetOAuthClientConfig(ctx context.Context, idpID string) (*oauth.OAuthClientConfig, *serviceerror.ServiceError) {
+func (_mock *GithubOAuthAuthnServiceInterfaceMock) GetOAuthClientConfig(ctx context.Context, idpID string) (*oauth.OAuthClientConfig, *common0.ServiceError) {
 	ret := _mock.Called(ctx, idpID)
 
 	if len(ret) == 0 {
@@ -416,8 +441,8 @@ func (_mock *GithubOAuthAuthnServiceInterfaceMock) GetOAuthClientConfig(ctx cont
 	}
 
 	var r0 *oauth.OAuthClientConfig
-	var r1 *serviceerror.ServiceError
-	if returnFunc, ok := ret.Get(0).(func(context.Context, string) (*oauth.OAuthClientConfig, *serviceerror.ServiceError)); ok {
+	var r1 *common0.ServiceError
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string) (*oauth.OAuthClientConfig, *common0.ServiceError)); ok {
 		return returnFunc(ctx, idpID)
 	}
 	if returnFunc, ok := ret.Get(0).(func(context.Context, string) *oauth.OAuthClientConfig); ok {
@@ -427,11 +452,11 @@ func (_mock *GithubOAuthAuthnServiceInterfaceMock) GetOAuthClientConfig(ctx cont
 			r0 = ret.Get(0).(*oauth.OAuthClientConfig)
 		}
 	}
-	if returnFunc, ok := ret.Get(1).(func(context.Context, string) *serviceerror.ServiceError); ok {
+	if returnFunc, ok := ret.Get(1).(func(context.Context, string) *common0.ServiceError); ok {
 		r1 = returnFunc(ctx, idpID)
 	} else {
 		if ret.Get(1) != nil {
-			r1 = ret.Get(1).(*serviceerror.ServiceError)
+			r1 = ret.Get(1).(*common0.ServiceError)
 		}
 	}
 	return r0, r1
@@ -467,12 +492,12 @@ func (_c *GithubOAuthAuthnServiceInterfaceMock_GetOAuthClientConfig_Call) Run(ru
 	return _c
 }
 
-func (_c *GithubOAuthAuthnServiceInterfaceMock_GetOAuthClientConfig_Call) Return(oAuthClientConfig *oauth.OAuthClientConfig, serviceError *serviceerror.ServiceError) *GithubOAuthAuthnServiceInterfaceMock_GetOAuthClientConfig_Call {
+func (_c *GithubOAuthAuthnServiceInterfaceMock_GetOAuthClientConfig_Call) Return(oAuthClientConfig *oauth.OAuthClientConfig, serviceError *common0.ServiceError) *GithubOAuthAuthnServiceInterfaceMock_GetOAuthClientConfig_Call {
 	_c.Call.Return(oAuthClientConfig, serviceError)
 	return _c
 }
 
-func (_c *GithubOAuthAuthnServiceInterfaceMock_GetOAuthClientConfig_Call) RunAndReturn(run func(ctx context.Context, idpID string) (*oauth.OAuthClientConfig, *serviceerror.ServiceError)) *GithubOAuthAuthnServiceInterfaceMock_GetOAuthClientConfig_Call {
+func (_c *GithubOAuthAuthnServiceInterfaceMock_GetOAuthClientConfig_Call) RunAndReturn(run func(ctx context.Context, idpID string) (*oauth.OAuthClientConfig, *common0.ServiceError)) *GithubOAuthAuthnServiceInterfaceMock_GetOAuthClientConfig_Call {
 	_c.Call.Return(run)
 	return _c
 }

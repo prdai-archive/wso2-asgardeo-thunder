@@ -21,6 +21,7 @@ export {default as Helmet} from './Helmet/Helmet';
 export type {HelmetProps} from './Helmet/Helmet';
 export {default as I18nTextInput} from './I18nTextInput/I18nTextInput';
 export type {I18nTextInputLabels, I18nTextInputProps} from './I18nTextInput/I18nTextInput';
+export {default as PageLoader} from './PageLoader/PageLoader';
 
 /* -------------------------- LAB -------------------------- */
 
@@ -32,9 +33,10 @@ export {default as EmojiPicker} from './lab/components/EmojiPicker/EmojiPicker';
 export {default as CopyableId} from './lab/components/CopyableId';
 export {default as Kbd} from './lab/components/Kbd';
 export {default as generateIconSuggestions} from './lab/components/EmojiPicker/utils/generateIconSuggestions';
+export {default as LogoPicker} from './lab/components/LogoPicker/LogoPicker';
+export type {LogoPickerProps} from './lab/components/LogoPicker/LogoPicker';
 export {default as PageLoadingAnimation} from './lab/components/PageLoadingAnimation';
 export {default as ResourceAvatar} from './lab/components/ResourceAvatar';
-export {default as ResourceLogoDialog} from './lab/components/ResourceLogoDialog';
 export {default as SettingsCard} from './lab/components/SettingsCard';
 export {default as UnsavedChangesBar} from './lab/components/UnsavedChangesBar';
 

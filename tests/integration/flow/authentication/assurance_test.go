@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2025, WSO2 LLC. (https://www.wso2.com).
+ * Copyright (c) 2025-2026, WSO2 LLC. (https://www.wso2.com).
  *
  * WSO2 LLC. licenses this file to you under the Apache License,
  * Version 2.0 (the "License"); you may not use this file except
@@ -23,9 +23,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/suite"
 	"github.com/thunder-id/thunderid/tests/integration/flow/common"
 	"github.com/thunder-id/thunderid/tests/integration/testutils"
-	"github.com/stretchr/testify/suite"
 )
 
 const (
@@ -35,7 +35,7 @@ const (
 // Authenticator names used in assurance
 const (
 	AuthenticatorCredentials = "CredentialsAuthenticator"
-	AuthenticatorSMSOTP      = "SMSOTPAuthenticator"
+	AuthenticatorOTP         = "OTPAuthenticator"
 )
 
 var (
@@ -58,27 +58,44 @@ var (
 						"inputs": []map[string]interface{}{
 							{
 								"ref":        "input_001",
-								"identifier": "mobileNumber",
-								"type":       "string",
+								"identifier": "mobile_number",
+								"type":       "PHONE_INPUT",
 								"required":   true,
 							},
 						},
 						"action": map[string]interface{}{
 							"ref":      "action_001",
-							"nextNode": "sms_otp_send",
+							"nextNode": "generate_otp",
 						},
 					},
 				},
 			},
 			{
-				"id":   "sms_otp_send",
+				"id":   "generate_otp",
+				"type": "TASK_EXECUTION",
+				"executor": map[string]interface{}{
+					"name": "OTPExecutor",
+					"mode": "generate",
+					"inputs": []map[string]interface{}{
+						{
+							"ref":        "input_001",
+							"identifier": "mobile_number",
+							"type":       "PHONE_INPUT",
+							"required":   true,
+						},
+					},
+				},
+				"onSuccess": "sms_send",
+			},
+			{
+				"id":   "sms_send",
 				"type": "TASK_EXECUTION",
 				"properties": map[string]interface{}{
-					"senderId": "placeholder-sender-id",
+					"senderId":    "placeholder-sender-id",
+					"smsTemplate": "OTP",
 				},
 				"executor": map[string]interface{}{
-					"name": "SMSOTPAuthExecutor",
-					"mode": "send",
+					"name": "SMSExecutor",
 				},
 				"onSuccess": "prompt_otp",
 			},
@@ -91,25 +108,22 @@ var (
 							{
 								"ref":        "input_002",
 								"identifier": "otp",
-								"type":       "string",
+								"type":       "OTP_INPUT",
 								"required":   true,
 							},
 						},
 						"action": map[string]interface{}{
 							"ref":      "action_002",
-							"nextNode": "sms_otp_verify",
+							"nextNode": "verify_otp",
 						},
 					},
 				},
 			},
 			{
-				"id":   "sms_otp_verify",
+				"id":   "verify_otp",
 				"type": "TASK_EXECUTION",
-				"properties": map[string]interface{}{
-					"senderId": "placeholder-sender-id",
-				},
 				"executor": map[string]interface{}{
-					"name": "SMSOTPAuthExecutor",
+					"name": "OTPExecutor",
 					"mode": "verify",
 				},
 				"onSuccess": "auth_assert",
@@ -149,40 +163,49 @@ var (
 							{
 								"ref":        "input_001",
 								"identifier": "username",
-								"type":       "string",
+								"type":       "TEXT_INPUT",
 								"required":   true,
 							},
 							{
 								"ref":        "input_002",
 								"identifier": "password",
-								"type":       "string",
+								"type":       "PASSWORD_INPUT",
 								"required":   true,
 							},
 						},
 						"action": map[string]interface{}{
 							"ref":      "action_001",
-							"nextNode": "basic_auth",
+							"nextNode": "credentials_auth",
 						},
 					},
 				},
 			},
 			{
-				"id":   "basic_auth",
+				"id":   "credentials_auth",
 				"type": "TASK_EXECUTION",
 				"executor": map[string]interface{}{
-					"name": "BasicAuthExecutor",
+					"name": "CredentialsAuthExecutor",
 				},
-				"onSuccess": "sms_otp_send",
+				"onSuccess": "generate_otp",
 			},
 			{
-				"id":   "sms_otp_send",
+				"id":   "generate_otp",
+				"type": "TASK_EXECUTION",
+				"executor": map[string]interface{}{
+					"name": "OTPExecutor",
+					"mode": "generate",
+				},
+				"onSuccess": "sms_send",
+			},
+			{
+				"id":   "sms_send",
 				"type": "TASK_EXECUTION",
 				"properties": map[string]interface{}{
-					"senderId": "placeholder-sender-id",
+					"senderId":    "placeholder-sender-id",
+					"smsTemplate": "OTP",
 				},
 				"executor": map[string]interface{}{
-					"name": "SMSOTPAuthExecutor",
-					"mode": "send",
+					"name": "SMSExecutor",
 				},
 				"onSuccess": "prompt_otp",
 			},
@@ -195,25 +218,22 @@ var (
 							{
 								"ref":        "input_003",
 								"identifier": "otp",
-								"type":       "string",
+								"type":       "OTP_INPUT",
 								"required":   true,
 							},
 						},
 						"action": map[string]interface{}{
 							"ref":      "action_002",
-							"nextNode": "sms_otp_verify",
+							"nextNode": "verify_otp",
 						},
 					},
 				},
 			},
 			{
-				"id":   "sms_otp_verify",
+				"id":   "verify_otp",
 				"type": "TASK_EXECUTION",
-				"properties": map[string]interface{}{
-					"senderId": "placeholder-sender-id",
-				},
 				"executor": map[string]interface{}{
-					"name": "SMSOTPAuthExecutor",
+					"name": "OTPExecutor",
 					"mode": "verify",
 				},
 				"onSuccess": "auth_assert",
@@ -234,10 +254,10 @@ var (
 	}
 
 	// Flow for Basic Auth only (AAL1)
-	assuranceBasicAuthFlow = testutils.Flow{
+	assuranceCredentialsAuthFlow = testutils.Flow{
 		Name:     "Basic Auth Only Flow for Assurance Test",
 		FlowType: "AUTHENTICATION",
-		Handle:   "assurance_test_basic_auth_flow",
+		Handle:   "assurance_test_credentials_auth_flow",
 		Nodes: []map[string]interface{}{
 			{
 				"id":        "start",
@@ -253,28 +273,28 @@ var (
 							{
 								"ref":        "input_001",
 								"identifier": "username",
-								"type":       "string",
+								"type":       "TEXT_INPUT",
 								"required":   true,
 							},
 							{
 								"ref":        "input_002",
 								"identifier": "password",
-								"type":       "string",
+								"type":       "PASSWORD_INPUT",
 								"required":   true,
 							},
 						},
 						"action": map[string]interface{}{
 							"ref":      "action_001",
-							"nextNode": "basic_auth",
+							"nextNode": "credentials_auth",
 						},
 					},
 				},
 			},
 			{
-				"id":   "basic_auth",
+				"id":   "credentials_auth",
 				"type": "TASK_EXECUTION",
 				"executor": map[string]interface{}{
-					"name": "BasicAuthExecutor",
+					"name": "CredentialsAuthExecutor",
 				},
 				"onSuccess": "auth_assert",
 			},
@@ -321,7 +341,7 @@ var (
 			"email": map[string]interface{}{
 				"type": "string",
 			},
-			"mobileNumber": map[string]interface{}{
+			"mobile_number": map[string]interface{}{
 				"type": "string",
 			},
 		},
@@ -333,19 +353,19 @@ var (
 			"username": "assurance_user",
 			"password": "testpassword123",
 			"email": "assurance@example.com",
-			"mobileNumber": "+1987654321"
+			"mobile_number": "+1987654321"
 		}`),
 	}
 )
 
 var (
-	assuranceTestAppID       string
-	assuranceEntityTypeID    string
-	assuranceTestSenderID    string
-	assuranceSMSOnlyFlowID   string
-	assuranceMFAFlowID       string
-	assuranceBasicAuthFlowID string
-	assuranceTestOU          = testutils.OrganizationUnit{
+	assuranceTestAppID             string
+	assuranceEntityTypeID          string
+	assuranceTestSenderID          string
+	assuranceSMSOnlyFlowID         string
+	assuranceMFAFlowID             string
+	assuranceCredentialsAuthFlowID string
+	assuranceTestOU                = testutils.OrganizationUnit{
 		Handle:      "assurance-test-ou",
 		Name:        "Assurance Test OU",
 		Description: "Organization unit for assurance testing",
@@ -415,13 +435,11 @@ func (ts *AssuranceTestSuite) SetupSuite() {
 
 	// Update flow definitions with sender ID
 	smsOnlyNodes := assuranceSMSOnlyFlow.Nodes.([]map[string]interface{})
-	smsOnlyNodes[2]["properties"].(map[string]interface{})["senderId"] = senderID
-	smsOnlyNodes[4]["properties"].(map[string]interface{})["senderId"] = senderID
+	smsOnlyNodes[3]["properties"].(map[string]interface{})["senderId"] = senderID
 	assuranceSMSOnlyFlow.Nodes = smsOnlyNodes
 
 	mfaNodes := assuranceMFAFlow.Nodes.([]map[string]interface{})
-	mfaNodes[3]["properties"].(map[string]interface{})["senderId"] = senderID
-	mfaNodes[5]["properties"].(map[string]interface{})["senderId"] = senderID
+	mfaNodes[4]["properties"].(map[string]interface{})["senderId"] = senderID
 	assuranceMFAFlow.Nodes = mfaNodes
 
 	// Create flows
@@ -435,10 +453,10 @@ func (ts *AssuranceTestSuite) SetupSuite() {
 	ts.config.CreatedFlowIDs = append(ts.config.CreatedFlowIDs, mfaFlowID)
 	assuranceMFAFlowID = mfaFlowID
 
-	basicAuthFlowID, err := testutils.CreateFlow(assuranceBasicAuthFlow)
+	credentialsAuthFlowID, err := testutils.CreateFlow(assuranceCredentialsAuthFlow)
 	ts.Require().NoError(err, "Failed to create basic auth flow")
-	ts.config.CreatedFlowIDs = append(ts.config.CreatedFlowIDs, basicAuthFlowID)
-	assuranceBasicAuthFlowID = basicAuthFlowID
+	ts.config.CreatedFlowIDs = append(ts.config.CreatedFlowIDs, credentialsAuthFlowID)
+	assuranceCredentialsAuthFlowID = credentialsAuthFlowID
 
 	// Create test application
 	assuranceTestApp.AuthFlowID = smsOnlyFlowID
@@ -498,7 +516,7 @@ func (ts *AssuranceTestSuite) TestAssurance_SMSOTPOnly() {
 	ts.Require().NoError(err)
 
 	inputs := map[string]string{
-		"mobileNumber": userAttrs["mobileNumber"].(string),
+		"mobile_number": userAttrs["mobile_number"].(string),
 	}
 
 	otpFlowStep, err := common.CompleteFlow(flowStep.ExecutionID, inputs, "action_001",
@@ -530,7 +548,7 @@ func (ts *AssuranceTestSuite) TestAssurance_SMSOTPOnly() {
 	err = testutils.ValidateAssurance(jwtClaims, testutils.AssuranceExpectation{
 		AAL:                    "AAL1",
 		IAL:                    "IAL1",
-		ExpectedAuthenticators: []string{AuthenticatorSMSOTP},
+		ExpectedAuthenticators: []string{AuthenticatorOTP},
 	})
 	ts.Require().NoError(err, "Assurance validation failed")
 }
@@ -586,14 +604,14 @@ func (ts *AssuranceTestSuite) TestAssurance_CredentialsPlusSMSOTP() {
 	err = testutils.ValidateAssurance(jwtClaims, testutils.AssuranceExpectation{
 		AAL:                    "AAL2",
 		IAL:                    "IAL1",
-		ExpectedAuthenticators: []string{AuthenticatorCredentials, AuthenticatorSMSOTP},
+		ExpectedAuthenticators: []string{AuthenticatorCredentials, AuthenticatorOTP},
 	})
 	ts.Require().NoError(err, "Assurance validation failed")
 }
 
-func (ts *AssuranceTestSuite) TestAssurance_BasicAuthOnly() {
+func (ts *AssuranceTestSuite) TestAssurance_CredentialsAuthOnly() {
 	// Update app to use basic auth flow
-	err := common.UpdateAppConfig(assuranceTestAppID, assuranceBasicAuthFlowID, "")
+	err := common.UpdateAppConfig(assuranceTestAppID, assuranceCredentialsAuthFlowID, "")
 	ts.Require().NoError(err)
 
 	// Step 1: Initiate flow

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2025, WSO2 LLC. (https://www.wso2.com).
+ * Copyright (c) 2025-2026, WSO2 LLC. (https://www.wso2.com).
  *
  * WSO2 LLC. licenses this file to you under the Apache License,
  * Version 2.0 (the "License"); you may not use this file except
@@ -20,6 +20,7 @@ package subscriber
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -31,10 +32,12 @@ import (
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/thunder-id/thunderid/internal/system/config"
+	sysContext "github.com/thunder-id/thunderid/internal/system/context"
 	"github.com/thunder-id/thunderid/internal/system/log"
 	"github.com/thunder-id/thunderid/internal/system/observability/event"
 	otelconfig "github.com/thunder-id/thunderid/internal/system/observability/opentelemetry"
 	"github.com/thunder-id/thunderid/internal/system/utils"
+	"github.com/thunder-id/thunderid/pkg/thunderidengine/providers"
 )
 
 const otelSubscriberComponentName = "OTelSubscriber"
@@ -78,7 +81,10 @@ func (o *OTelSubscriber) Initialize() error {
 
 	o.logger = log.GetLogger().With(log.String(log.LoggerKeyComponentName, otelSubscriberComponentName))
 
-	o.logger.Debug("Initializing OpenTelemetry subscriber",
+	// Subscriber initialization runs during application startup, outside any request.
+	ctx := context.Background()
+
+	o.logger.Debug(ctx, "Initializing OpenTelemetry subscriber",
 		log.String("exporterType", otelConfig.ExporterType),
 		log.String("endpoint", otelConfig.OTLPEndpoint))
 
@@ -95,7 +101,6 @@ func (o *OTelSubscriber) Initialize() error {
 	}
 
 	// Create OTel tracer provider using the Initialize pattern
-	ctx := context.Background()
 	tracerProvider, err := otelconfig.Initialize(ctx, otelProviderCfg)
 	if err != nil {
 		return fmt.Errorf("failed to initialize OpenTelemetry provider: %w", err)
@@ -108,11 +113,11 @@ func (o *OTelSubscriber) Initialize() error {
 	o.tracer = otel.Tracer("thunderid-observability")
 	o.id, err = utils.GenerateUUIDv7()
 	if err != nil {
-		o.logger.Error("Failed to generate UUID", log.Error(err))
+		o.logger.Error(ctx, "Failed to generate UUID", log.Error(err))
 		return fmt.Errorf("Failed to generate UUID: %w", err)
 	}
 
-	o.logger.Debug("OpenTelemetry subscriber initialized successfully",
+	o.logger.Debug(ctx, "OpenTelemetry subscriber initialized successfully",
 		log.String("exporterType", otelConfig.ExporterType),
 		log.String("serviceName", otelConfig.ServiceName))
 
@@ -141,7 +146,7 @@ func (o *OTelSubscriber) GetCategories() []event.EventCategory {
 //
 // Note: Currently each event creates an independent span. For proper distributed tracing
 // with span hierarchies, context propagation would need to be implemented separately.
-func (o *OTelSubscriber) OnEvent(evt *event.Event) error {
+func (o *OTelSubscriber) OnEvent(evt *providers.Event) error {
 	if evt == nil {
 		return fmt.Errorf("event is nil")
 	}
@@ -151,8 +156,13 @@ func (o *OTelSubscriber) OnEvent(evt *event.Event) error {
 
 // createSpan creates a span with span events for the event data.
 // Following OTel best practices: event data becomes a span event (timestamp is meaningful).
-func (o *OTelSubscriber) createSpan(evt *event.Event) error {
-	ctx := context.Background()
+func (o *OTelSubscriber) createSpan(evt *providers.Event) error {
+	// Subscribers run in detached goroutines after the request context may be
+	// cancelled, so derive a logging context from the event's trace ID.
+	ctx := sysContext.WithTraceID(context.Background(), evt.TraceID)
+
+	// Root context for the OTel span; the event's trace ID is injected below.
+	spanCtx := context.Background()
 
 	// Parse TraceID from event
 	// OTel expects 32-char hex string, but Event TraceID might be UUID (36 chars with hyphens)
@@ -160,7 +170,7 @@ func (o *OTelSubscriber) createSpan(evt *event.Event) error {
 	traceID, err := trace.TraceIDFromHex(cleanTraceID)
 	if err != nil {
 		// If invalid TraceID, log warning and let OTel generate a new one
-		o.logger.Warn("Invalid TraceID in event, generating new one",
+		o.logger.Warn(ctx, "Invalid TraceID in event, generating new one",
 			log.String("traceID", evt.TraceID),
 			log.Error(err))
 	} else {
@@ -187,7 +197,7 @@ func (o *OTelSubscriber) createSpan(evt *event.Event) error {
 		remoteSpanContext := trace.NewSpanContext(spanContextConfig)
 
 		// Inject into context
-		ctx = trace.ContextWithRemoteSpanContext(ctx, remoteSpanContext)
+		spanCtx = trace.ContextWithRemoteSpanContext(spanCtx, remoteSpanContext)
 	}
 
 	// Create span name from event type
@@ -208,7 +218,7 @@ func (o *OTelSubscriber) createSpan(evt *event.Event) error {
 	}
 
 	// Start span
-	_, span := o.tracer.Start(ctx, spanName,
+	_, span := o.tracer.Start(spanCtx, spanName,
 		trace.WithTimestamp(evt.Timestamp),
 		trace.WithSpanKind(spanKind),
 		trace.WithAttributes(spanAttrs...),
@@ -230,14 +240,8 @@ func (o *OTelSubscriber) createSpan(evt *event.Event) error {
 	)
 
 	// Set span status based on event status
-	if evt.Status == event.StatusFailure {
-		errorMsg := o.getStringData(evt, event.DataKey.Error)
-		if errorMsg == "" {
-			errorMsg = o.getStringData(evt, event.DataKey.FailureReason)
-		}
-		if errorMsg == "" {
-			errorMsg = "unknown error"
-		}
+	if evt.Status == providers.StatusFailure {
+		errorMsg := o.extractErrorMessage(evt)
 		span.SetStatus(codes.Error, errorMsg)
 		span.RecordError(fmt.Errorf("%s", errorMsg),
 			trace.WithTimestamp(evt.Timestamp))
@@ -250,7 +254,7 @@ func (o *OTelSubscriber) createSpan(evt *event.Event) error {
 	// it took for the event to be processed by this subscriber.
 	span.End()
 
-	o.logger.Debug("Created span with event",
+	o.logger.Debug(ctx, "Created span with event",
 		log.String("spanName", spanName),
 		log.String("eventType", evt.Type),
 		log.String("status", evt.Status))
@@ -282,8 +286,12 @@ func (o *OTelSubscriber) convertDataToAttributes(data map[string]interface{}) []
 		case bool:
 			attrs = append(attrs, attribute.Bool(key, v))
 		default:
-			// Convert other types to string representation
-			attrs = append(attrs, attribute.String(key, fmt.Sprintf("%v", v)))
+			// Serialize complex types (maps, slices) as JSON strings
+			if jsonBytes, err := json.Marshal(v); err == nil {
+				attrs = append(attrs, attribute.String(key, string(jsonBytes)))
+			} else {
+				attrs = append(attrs, attribute.String(key, fmt.Sprintf("%v", v)))
+			}
 		}
 	}
 
@@ -291,7 +299,7 @@ func (o *OTelSubscriber) convertDataToAttributes(data map[string]interface{}) []
 }
 
 // getStringData safely extracts string data from event.
-func (o *OTelSubscriber) getStringData(evt *event.Event, key string) string {
+func (o *OTelSubscriber) getStringData(evt *providers.Event, key string) string {
 	if val, ok := evt.Data[key]; ok {
 		if str, ok := val.(string); ok {
 			return str
@@ -300,22 +308,56 @@ func (o *OTelSubscriber) getStringData(evt *event.Event, key string) string {
 	return ""
 }
 
+// extractErrorMessage extracts a human-readable error message from an event.
+// It reads the structured error map from DataKey.Error and falls back to "unknown error".
+func (o *OTelSubscriber) extractErrorMessage(evt *providers.Event) string {
+	val, ok := evt.Data[event.DataKey.Error]
+	if !ok {
+		return "unknown error"
+	}
+
+	// Error stored as a plain string.
+	if errStr, ok := val.(string); ok && errStr != "" {
+		return errStr
+	}
+
+	if errMap, ok := val.(map[string]interface{}); ok {
+		if msg, ok := errMap["message"]; ok {
+			// Flow errors: message is a map with a defaultValue key.
+			if msgMap, ok := msg.(map[string]interface{}); ok {
+				if dv, ok := msgMap["defaultValue"].(string); ok && dv != "" {
+					return dv
+				}
+			}
+			// Token errors: message is a plain string.
+			if msgStr, ok := msg.(string); ok && msgStr != "" {
+				return msgStr
+			}
+		}
+	}
+
+	return "unknown error"
+}
+
 // Close shuts down the tracer provider.
 func (o *OTelSubscriber) Close() error {
-	o.logger.Info("Closing OTel subscriber", log.String("subscriberID", o.id))
+	// Subscriber shutdown runs during application teardown, outside any request.
+	ctx := context.Background()
+
+	o.logger.Info(ctx, "Closing OTel subscriber", log.String("subscriberID", o.id))
 
 	if o.tracerProvider != nil {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 
-		if err := o.tracerProvider.Shutdown(ctx); err != nil {
-			o.logger.Error("Failed to shutdown OpenTelemetry provider", log.Error(err))
+		if err := o.tracerProvider.Shutdown(shutdownCtx); err != nil {
+			o.logger.Error(ctx, "Failed to shutdown OpenTelemetry provider", log.Error(err))
 			return err
 		}
-		o.logger.Debug("OpenTelemetry provider shutdown successfully")
+		o.logger.Debug(ctx, "OpenTelemetry provider shutdown successfully")
 		o.tracerProvider = nil
 	}
 
-	o.logger.Info("OTel subscriber closed successfully", log.String("subscriberID", o.id))
+	o.logger.Info(ctx, "OTel subscriber closed successfully", log.String("subscriberID", o.id))
 	return nil
 }

@@ -23,7 +23,7 @@ import {type CreateFlowRequest, type FlowNode, type FlowPrompt} from '../models/
  * Options for generating a flow graph
  */
 export interface FlowGeneratorOptions {
-  hasBasicAuth: boolean;
+  hasCredentialsAuth: boolean;
   hasPasskey: boolean;
   googleIdpId?: string;
   githubIdpId?: string;
@@ -40,11 +40,12 @@ export interface FlowGeneratorOptions {
  * @returns Complete flow creation request payload
  */
 export default function generateFlowGraph(options: FlowGeneratorOptions): CreateFlowRequest {
-  const {hasBasicAuth, hasPasskey, googleIdpId, githubIdpId, hasSmsOtp, relyingPartyId, relyingPartyName} = options;
+  const {hasCredentialsAuth, hasPasskey, googleIdpId, githubIdpId, hasSmsOtp, relyingPartyId, relyingPartyName} =
+    options;
 
   // 1. Generate Flow Handle and Name
   const parts: string[] = [];
-  if (hasBasicAuth) parts.push('basic');
+  if (hasCredentialsAuth) parts.push('basic');
   if (hasPasskey) parts.push('passkey');
   if (googleIdpId) parts.push('google');
   if (githubIdpId) parts.push('github');
@@ -53,7 +54,7 @@ export default function generateFlowGraph(options: FlowGeneratorOptions): Create
   // Sort parts to ensure deterministic handle generation
   // But keep "basic" first for readability if present
   const sortedParts = parts.filter((p) => p !== 'basic').sort();
-  if (hasBasicAuth) sortedParts.unshift('basic');
+  if (hasCredentialsAuth) sortedParts.unshift('basic');
 
   const handle = `generated-${sortedParts.join('-')}-flow`;
   const name = `Generated ${sortedParts.map((p) => p.charAt(0).toUpperCase() + p.slice(1)).join(' + ')} Flow`;
@@ -74,14 +75,20 @@ export default function generateFlowGraph(options: FlowGeneratorOptions): Create
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const metaComponents: any[] = [];
 
-  // Self Sign Up Link component — shared across auth blocks
+  // Self Sign Up Link component — shared across auth blocks. The anchor is sentinel-marked
+  // with `data-action-ref="action_signup"`, and the component carries a matching `action`
+  // wiring so the SDK's RICH_TEXT renderer dispatches the action instead of navigating.
   const selfSignUpLink = {
     category: 'DISPLAY',
     type: 'RICH_TEXT',
     id: 'self_sign_up_link',
+    action: {
+      ref: 'action_signup',
+      eventType: 'SUBMIT',
+    },
     label:
-      '<p class="rich-text-paragraph"><span class="rich-text-pre-wrap">Don\'t have an account? </span>' +
-      '<a href="{{meta(application.sign_up_url)}}" target="_blank" rel="noopener noreferrer" class="rich-text-link">' +
+      '<p data-component-ref="self-sign-up-link" class="rich-text-paragraph"><span class="rich-text-pre-wrap">Don\'t have an account? </span>' +
+      '<a href="#" data-action-ref="action_signup" class="rich-text-link">' +
       '<span class="rich-text-pre-wrap">Sign up</span></a></p>',
   };
 
@@ -106,7 +113,7 @@ export default function generateFlowGraph(options: FlowGeneratorOptions): Create
   });
 
   // Passkey Description (only if passkey is the only method)
-  if (hasPasskey && !hasBasicAuth && !googleIdpId && !githubIdpId && !hasSmsOtp) {
+  if (hasPasskey && !hasCredentialsAuth && !googleIdpId && !githubIdpId && !hasSmsOtp) {
     metaComponents.push({
       type: 'TEXT',
       id: 'text_passkey_desc',
@@ -115,8 +122,8 @@ export default function generateFlowGraph(options: FlowGeneratorOptions): Create
     });
   }
 
-  // Basic Auth Block
-  if (hasBasicAuth) {
+  // Credentials Auth Block
+  if (hasCredentialsAuth) {
     metaComponents.push({
       type: 'BLOCK',
       id: 'block_basic',
@@ -164,7 +171,7 @@ export default function generateFlowGraph(options: FlowGeneratorOptions): Create
       ],
       action: {
         ref: 'action_basic',
-        nextNode: 'basic_auth',
+        nextNode: 'credentials_auth',
       },
     });
   }
@@ -181,7 +188,7 @@ export default function generateFlowGraph(options: FlowGeneratorOptions): Create
           type: 'ACTION',
           id: 'action_passkey',
           label: passkeyButtonLabel,
-          variant: hasBasicAuth ? 'SECONDARY' : 'PRIMARY',
+          variant: hasCredentialsAuth ? 'SECONDARY' : 'PRIMARY',
           eventType: 'SUBMIT',
         },
       ],
@@ -244,7 +251,7 @@ export default function generateFlowGraph(options: FlowGeneratorOptions): Create
   }
 
   // Self Sign Up Link — always at the bottom, after all auth options
-  if (hasBasicAuth || hasPasskey) {
+  if (hasCredentialsAuth || hasPasskey) {
     metaComponents.push(selfSignUpLink);
   }
 
@@ -260,13 +267,13 @@ export default function generateFlowGraph(options: FlowGeneratorOptions): Create
 
   // 3. Executor Nodes
 
-  // Basic Auth Executor
-  if (hasBasicAuth) {
+  // Credentials Auth Executor
+  if (hasCredentialsAuth) {
     nodes.push({
-      id: 'basic_auth',
+      id: 'credentials_auth',
       type: FlowNodeType.TASK_EXECUTION,
       executor: {
-        name: 'BasicAuthExecutor',
+        name: 'CredentialsAuthExecutor',
       },
       onSuccess: 'auth_assert',
     });
@@ -355,7 +362,7 @@ export default function generateFlowGraph(options: FlowGeneratorOptions): Create
       id: 'provisioning',
       type: FlowNodeType.TASK_EXECUTION,
       condition: {
-        key: '{{ context.userEligibleForProvisioning }}',
+        key: '{{ctx(userEligibleForProvisioning)}}',
         value: 'true',
         onSkip: 'auth_assert',
       },

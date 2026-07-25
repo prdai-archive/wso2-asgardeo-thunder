@@ -20,16 +20,19 @@ package layoutmgt
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"testing"
 
+	tidcommon "github.com/thunder-id/thunderid/pkg/thunderidengine/common"
+
+	"github.com/thunder-id/thunderid/internal/system/resourcedependency"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/suite"
-
-	"github.com/thunder-id/thunderid/internal/system/error/serviceerror"
 )
 
 // Test Suite
@@ -43,37 +46,49 @@ func TestLayoutHandlerTestSuite(t *testing.T) {
 
 // mockLayoutService implements LayoutMgtServiceInterface for handler tests
 type mockLayoutService struct {
-	getLayoutListFunc func(limit, offset int) (*LayoutList, *serviceerror.ServiceError)
-	createLayoutFunc  func(layout CreateLayoutRequest) (*Layout, *serviceerror.ServiceError)
-	getLayoutFunc     func(id string) (*Layout, *serviceerror.ServiceError)
-	updateLayoutFunc  func(id string, layout UpdateLayoutRequest) (*Layout, *serviceerror.ServiceError)
-	deleteLayoutFunc  func(id string) *serviceerror.ServiceError
-	isLayoutExistFunc func(id string) (bool, *serviceerror.ServiceError)
+	getLayoutListFunc   func(limit, offset int) (*LayoutList, *tidcommon.ServiceError)
+	createLayoutFunc    func(layout CreateLayoutRequestWithID) (*Layout, *tidcommon.ServiceError)
+	getLayoutFunc       func(id string) (*Layout, *tidcommon.ServiceError)
+	updateLayoutFunc    func(id string, layout UpdateLayoutRequest) (*Layout, *tidcommon.ServiceError)
+	deleteLayoutFunc    func(id string) *tidcommon.ServiceError
+	isLayoutExistFunc   func(id string) (bool, *tidcommon.ServiceError)
+	getLayoutUsagesFunc func(id string, limit, offset int) (
+		*resourcedependency.DependenciesResponse, *tidcommon.ServiceError)
 }
 
-func (m *mockLayoutService) GetLayoutList(limit, offset int) (*LayoutList, *serviceerror.ServiceError) {
+func (m *mockLayoutService) GetLayoutList(
+	_ context.Context, limit, offset int) (*LayoutList, *tidcommon.ServiceError) {
 	return m.getLayoutListFunc(limit, offset)
 }
 
-func (m *mockLayoutService) CreateLayout(layout CreateLayoutRequest) (*Layout, *serviceerror.ServiceError) {
+func (m *mockLayoutService) CreateLayout(
+	_ context.Context, layout CreateLayoutRequestWithID) (*Layout, *tidcommon.ServiceError) {
 	return m.createLayoutFunc(layout)
 }
 
-func (m *mockLayoutService) GetLayout(id string) (*Layout, *serviceerror.ServiceError) {
+func (m *mockLayoutService) GetLayout(_ context.Context, id string) (*Layout, *tidcommon.ServiceError) {
 	return m.getLayoutFunc(id)
 }
 
-func (m *mockLayoutService) UpdateLayout(
-	id string, layout UpdateLayoutRequest) (*Layout, *serviceerror.ServiceError) {
+func (m *mockLayoutService) UpdateLayout(_ context.Context,
+	id string, layout UpdateLayoutRequest) (*Layout, *tidcommon.ServiceError) {
 	return m.updateLayoutFunc(id, layout)
 }
 
-func (m *mockLayoutService) DeleteLayout(id string) *serviceerror.ServiceError {
+func (m *mockLayoutService) DeleteLayout(_ context.Context, id string) *tidcommon.ServiceError {
 	return m.deleteLayoutFunc(id)
 }
 
-func (m *mockLayoutService) IsLayoutExist(id string) (bool, *serviceerror.ServiceError) {
+func (m *mockLayoutService) IsLayoutExist(_ context.Context, id string) (bool, *tidcommon.ServiceError) {
 	return m.isLayoutExistFunc(id)
+}
+
+func (m *mockLayoutService) SetDependencyRegistry(_ resourcedependency.Registry) {}
+
+func (m *mockLayoutService) GetLayoutUsages(
+	_ context.Context, id string, limit, offset int,
+) (*resourcedependency.DependenciesResponse, *tidcommon.ServiceError) {
+	return m.getLayoutUsagesFunc(id, limit, offset)
 }
 
 // Test HandleLayoutListRequest - Success
@@ -90,7 +105,7 @@ func (suite *LayoutHandlerTestSuite) TestHandleLayoutListRequest_Success() {
 	}
 
 	mockSvc := &mockLayoutService{
-		getLayoutListFunc: func(limit, offset int) (*LayoutList, *serviceerror.ServiceError) {
+		getLayoutListFunc: func(limit, offset int) (*LayoutList, *tidcommon.ServiceError) {
 			return layoutList, nil
 		},
 	}
@@ -135,8 +150,8 @@ func (suite *LayoutHandlerTestSuite) TestHandleLayoutListRequest_InvalidOffset()
 // Test HandleLayoutListRequest - Service error
 func (suite *LayoutHandlerTestSuite) TestHandleLayoutListRequest_ServiceError() {
 	mockSvc := &mockLayoutService{
-		getLayoutListFunc: func(limit, offset int) (*LayoutList, *serviceerror.ServiceError) {
-			return nil, &serviceerror.InternalServerError
+		getLayoutListFunc: func(limit, offset int) (*LayoutList, *tidcommon.ServiceError) {
+			return nil, &tidcommon.InternalServerError
 		},
 	}
 
@@ -160,7 +175,7 @@ func (suite *LayoutHandlerTestSuite) TestHandleLayoutPostRequest_Success() {
 	}
 
 	mockSvc := &mockLayoutService{
-		createLayoutFunc: func(layout CreateLayoutRequest) (*Layout, *serviceerror.ServiceError) {
+		createLayoutFunc: func(layout CreateLayoutRequestWithID) (*Layout, *tidcommon.ServiceError) {
 			return createdLayout, nil
 		},
 	}
@@ -201,8 +216,8 @@ func (suite *LayoutHandlerTestSuite) TestHandleLayoutPostRequest_InvalidJSON() {
 // Test HandleLayoutPostRequest - Service error
 func (suite *LayoutHandlerTestSuite) TestHandleLayoutPostRequest_ServiceError() {
 	mockSvc := &mockLayoutService{
-		createLayoutFunc: func(layout CreateLayoutRequest) (*Layout, *serviceerror.ServiceError) {
-			return nil, &serviceerror.InternalServerError
+		createLayoutFunc: func(layout CreateLayoutRequestWithID) (*Layout, *tidcommon.ServiceError) {
+			return nil, &tidcommon.InternalServerError
 		},
 	}
 
@@ -231,7 +246,7 @@ func (suite *LayoutHandlerTestSuite) TestHandleLayoutGetRequest_Success() {
 	}
 
 	mockSvc := &mockLayoutService{
-		getLayoutFunc: func(id string) (*Layout, *serviceerror.ServiceError) {
+		getLayoutFunc: func(id string) (*Layout, *tidcommon.ServiceError) {
 			return layout, nil
 		},
 	}
@@ -256,7 +271,7 @@ func (suite *LayoutHandlerTestSuite) TestHandleLayoutGetRequest_Success() {
 // Test HandleLayoutGetRequest - Not found
 func (suite *LayoutHandlerTestSuite) TestHandleLayoutGetRequest_NotFound() {
 	mockSvc := &mockLayoutService{
-		getLayoutFunc: func(id string) (*Layout, *serviceerror.ServiceError) {
+		getLayoutFunc: func(id string) (*Layout, *tidcommon.ServiceError) {
 			return nil, &ErrorLayoutNotFound
 		},
 	}
@@ -283,7 +298,7 @@ func (suite *LayoutHandlerTestSuite) TestHandleLayoutPutRequest_Success() {
 	}
 
 	mockSvc := &mockLayoutService{
-		updateLayoutFunc: func(id string, layout UpdateLayoutRequest) (*Layout, *serviceerror.ServiceError) {
+		updateLayoutFunc: func(id string, layout UpdateLayoutRequest) (*Layout, *tidcommon.ServiceError) {
 			return updatedLayout, nil
 		},
 	}
@@ -327,7 +342,7 @@ func (suite *LayoutHandlerTestSuite) TestHandleLayoutPutRequest_InvalidJSON() {
 // Test HandleLayoutDeleteRequest - Success
 func (suite *LayoutHandlerTestSuite) TestHandleLayoutDeleteRequest_Success() {
 	mockSvc := &mockLayoutService{
-		deleteLayoutFunc: func(id string) *serviceerror.ServiceError {
+		deleteLayoutFunc: func(id string) *tidcommon.ServiceError {
 			return nil
 		},
 	}
@@ -346,7 +361,7 @@ func (suite *LayoutHandlerTestSuite) TestHandleLayoutDeleteRequest_Success() {
 // Test HandleLayoutDeleteRequest - Not found (idempotent delete returns 204)
 func (suite *LayoutHandlerTestSuite) TestHandleLayoutDeleteRequest_NotFound() {
 	mockSvc := &mockLayoutService{
-		deleteLayoutFunc: func(id string) *serviceerror.ServiceError {
+		deleteLayoutFunc: func(id string) *tidcommon.ServiceError {
 			return nil
 		},
 	}
@@ -365,7 +380,7 @@ func (suite *LayoutHandlerTestSuite) TestHandleLayoutDeleteRequest_NotFound() {
 // Test HandleLayoutDeleteRequest - Conflict (layout in use)
 func (suite *LayoutHandlerTestSuite) TestHandleLayoutDeleteRequest_Conflict() {
 	mockSvc := &mockLayoutService{
-		deleteLayoutFunc: func(id string) *serviceerror.ServiceError {
+		deleteLayoutFunc: func(id string) *tidcommon.ServiceError {
 			return &ErrorLayoutAlreadyExists
 		},
 	}
@@ -445,7 +460,7 @@ func (suite *LayoutHandlerTestSuite) TestToHTTPLinks_Empty() {
 func (suite *LayoutHandlerTestSuite) TestHandleError_StatusCodeMapping() {
 	tests := []struct {
 		name           string
-		svcErr         *serviceerror.ServiceError
+		svcErr         *tidcommon.ServiceError
 		expectedStatus int
 	}{
 		{
@@ -470,13 +485,13 @@ func (suite *LayoutHandlerTestSuite) TestHandleError_StatusCodeMapping() {
 		},
 		{
 			name:           "InternalServerError",
-			svcErr:         &serviceerror.InternalServerError,
+			svcErr:         &tidcommon.InternalServerError,
 			expectedStatus: http.StatusInternalServerError,
 		},
 		{
 			name: "UnknownClientError",
-			svcErr: &serviceerror.ServiceError{
-				Type: serviceerror.ClientErrorType,
+			svcErr: &tidcommon.ServiceError{
+				Type: tidcommon.ClientErrorType,
 				Code: "UNKNOWN",
 			},
 			expectedStatus: http.StatusBadRequest,
@@ -486,7 +501,7 @@ func (suite *LayoutHandlerTestSuite) TestHandleError_StatusCodeMapping() {
 	for _, tc := range tests {
 		suite.Run(tc.name, func() {
 			w := httptest.NewRecorder()
-			handleError(w, tc.svcErr)
+			handleError(context.Background(), w, tc.svcErr)
 			assert.Equal(suite.T(), tc.expectedStatus, w.Code)
 		})
 	}

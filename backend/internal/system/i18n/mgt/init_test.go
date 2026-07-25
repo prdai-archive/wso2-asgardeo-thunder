@@ -62,7 +62,7 @@ func (suite *InitTestSuite) TestInitialize_MutableMode() {
 	mux := http.NewServeMux()
 
 	// Execute
-	service, exporter, err := Initialize(mux)
+	service, exporter, err := Initialize(mux, runtime.Config.Translation)
 
 	// Verify
 	assert.NoError(suite.T(), err)
@@ -82,7 +82,7 @@ func (suite *InitTestSuite) TestInitialize_DeclarativeMode() {
 	mux := http.NewServeMux()
 
 	// Execute
-	service, exporter, err := Initialize(mux)
+	service, exporter, err := Initialize(mux, runtime.Config.Translation)
 
 	// Verify
 	assert.NoError(suite.T(), err)
@@ -103,7 +103,7 @@ func (suite *InitTestSuite) TestInitialize_DeclarativeMode_LoadError() {
 	}()
 
 	// Create translations directory
-	translationsDir := filepath.Join(tempDir, "repository", "resources", "translations")
+	translationsDir := filepath.Join(tempDir, "config", "resources", "translations")
 	err = os.MkdirAll(translationsDir, 0750)
 	suite.NoError(err)
 
@@ -124,7 +124,7 @@ func (suite *InitTestSuite) TestInitialize_DeclarativeMode_LoadError() {
 	mux := http.NewServeMux()
 
 	// Execute
-	service, exporter, err := Initialize(mux)
+	service, exporter, err := Initialize(mux, config.GetServerRuntime().Config.Translation)
 
 	// Verify
 	assert.Error(suite.T(), err)

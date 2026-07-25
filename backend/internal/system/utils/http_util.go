@@ -20,25 +20,187 @@ package utils
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"html"
 	"net/http"
 	"net/url"
 	"path"
+	"reflect"
+	"strconv"
 	"strings"
 	"unicode"
 
+	tidcommon "github.com/thunder-id/thunderid/pkg/thunderidengine/common"
+
 	"github.com/thunder-id/thunderid/internal/system/constants"
 	"github.com/thunder-id/thunderid/internal/system/error/apierror"
-	"github.com/thunder-id/thunderid/internal/system/error/serviceerror"
 	"github.com/thunder-id/thunderid/internal/system/log"
 )
 
+type localFieldError interface {
+	Tag() string
+	Field() string
+	Param() string
+}
+
+// GetCustomErrorMessage translates a structural validation tag failure into a precise user message.
+func GetCustomErrorMessage(fe localFieldError) string {
+	switch fe.Tag() {
+	case "required":
+		return fmt.Sprintf("The field '%s' is missing but is strictly required.", fe.Field())
+	case "max":
+		return fmt.Sprintf("The field '%s' exceeds its maximum allowed size of %s characters.", fe.Field(), fe.Param())
+	case "min":
+		return fmt.Sprintf("The field '%s' must be at least %s characters long.", fe.Field(), fe.Param())
+	case "oneof":
+		return fmt.Sprintf("The value provided for '%s' is invalid. It must be one of: [%s].", fe.Field(), fe.Param())
+	case "json":
+		return fmt.Sprintf("The field '%s' contains malformed or unparseable JSON formatting.", fe.Field())
+	case "url":
+		return fmt.Sprintf("The field '%s' must be a valid, well-formed URL.", fe.Field())
+	default:
+		return fmt.Sprintf("The field '%s' failed validation validation check (%s).", fe.Field(), fe.Tag())
+	}
+}
+
+// WriteStructuredErrorResponse sends back a dictionary map of localized field errors to the client.
+func WriteStructuredErrorResponse(w http.ResponseWriter, statusCode int, message string, errors map[string]string) {
+	w.Header().Set(constants.ContentTypeHeaderName, constants.ContentTypeJSON)
+	w.WriteHeader(statusCode)
+
+	response := map[string]interface{}{
+		"code":        "INVALID_INPUT_METADATA",
+		"message":     message,
+		"description": "One or more inbound fields failed structural edge-boundary rules.",
+		"errors":      errors,
+	}
+
+	_ = json.NewEncoder(w).Encode(response)
+}
+
+// Validatable defines the interface for types that support self-validation rules.
+type Validatable interface {
+	Validate() map[string]string
+}
+
+// ValidationError is a lightweight wrapper for native field errors
+type ValidationError struct {
+	Errors map[string]string
+}
+
+func (e *ValidationError) Error() string { return "Validation Failed" }
+
+// DecodeJSONBody decodes JSON from the request body into any struct type T.
+func DecodeJSONBody[T any](r *http.Request) (*T, error) {
+	var data T
+	if err := json.NewDecoder(r.Body).Decode(&data); err != nil {
+		return nil, errors.New("failed to decode JSON: " + err.Error())
+	}
+	if fieldErrors := validateStructNatively(data); fieldErrors != nil {
+		return nil, &ValidationError{Errors: fieldErrors}
+	}
+	return &data, nil
+}
+
+func validateStructNatively(s interface{}) map[string]string {
+	fieldErrors := make(map[string]string)
+	val := reflect.ValueOf(s)
+
+	// Handle pointers automatically
+	if val.Kind() == reflect.Ptr {
+		val = val.Elem()
+	}
+	if val.Kind() != reflect.Struct {
+		return nil
+	}
+
+	typ := val.Type()
+
+	for i := 0; i < val.NumField(); i++ {
+		field := val.Field(i)
+		fieldType := typ.Field(i)
+
+		// Look for our company's approved native constraint tag
+		tagValue := fieldType.Tag.Get("native")
+		if tagValue == "" {
+			continue
+		}
+
+		jsonName := fieldType.Tag.Get("json")
+		if jsonName == "" || strings.Contains(jsonName, ",") {
+			jsonName = fieldType.Name
+		}
+		jsonName = strings.Split(jsonName, ",")[0]
+
+		// Parse individual rules split by commas (e.g., "required,min=3")
+		rules := strings.Split(tagValue, ",")
+		for _, rule := range rules {
+			rule = strings.TrimSpace(rule)
+
+			// Rule 1: Required
+			if rule == "required" {
+				if isZeroValue(field) {
+					fieldErrors[jsonName] = "The field '" + jsonName + "' is missing but is strictly required."
+					break
+				}
+			}
+
+			// Rule 2: Minimum Length Bounds
+			if strings.HasPrefix(rule, "min=") {
+				minStr := strings.TrimPrefix(rule, "min=")
+				minVal, _ := strconv.Atoi(minStr)
+				if field.Kind() == reflect.String && len(field.String()) < minVal {
+					fieldErrors[jsonName] = "The field '" + jsonName +
+						"' must be at least " + minStr + " characters long."
+					break
+				}
+			}
+
+			// Rule 3: Maximum Length Bounds
+			if strings.HasPrefix(rule, "max=") {
+				maxStr := strings.TrimPrefix(rule, "max=")
+				maxVal, _ := strconv.Atoi(maxStr)
+				if field.Kind() == reflect.String && len(field.String()) > maxVal {
+					fieldErrors[jsonName] = "The field '" + jsonName +
+						"' exceeds its maximum allowed size of " + maxStr + " characters."
+					break
+				}
+			}
+		}
+	}
+
+	if len(fieldErrors) > 0 {
+		return fieldErrors
+	}
+	return nil
+}
+
+func isZeroValue(v reflect.Value) bool {
+	switch v.Kind() {
+	case reflect.String:
+		return strings.TrimSpace(v.String()) == ""
+	case reflect.Slice, reflect.Array, reflect.Map:
+		return v.Len() == 0
+	default:
+		return v.IsZero()
+	}
+}
+
 // WriteJSONError writes a JSON error response with the given details.
-func WriteJSONError(w http.ResponseWriter, code, desc string, statusCode int, respHeaders []map[string]string) {
+func WriteJSONError(ctx context.Context, w http.ResponseWriter, code, desc string, statusCode int,
+	respHeaders []map[string]string) {
 	logger := log.GetLogger()
-	logger.Error("Error in HTTP response", log.String("error", code), log.String("description", desc))
+	// Log 5xx as errors (server faults) and 4xx as debug (client errors).
+	if statusCode >= http.StatusInternalServerError {
+		logger.Error(ctx, "Error in HTTP response",
+			log.String("error", code), log.String("description", desc))
+	} else {
+		logger.Debug(ctx, "Error in HTTP response",
+			log.String("error", code), log.String("description", desc))
+	}
 
 	// Set the response headers.
 	for _, header := range respHeaders {
@@ -54,7 +216,7 @@ func WriteJSONError(w http.ResponseWriter, code, desc string, statusCode int, re
 		"error_description": desc,
 	})
 	if err != nil {
-		logger.Error("Failed to write JSON error response", log.Error(err))
+		logger.Error(ctx, "Failed to write JSON error response", log.Error(err))
 		return
 	}
 }
@@ -242,7 +404,7 @@ func IsValidURI(uri string) bool {
 }
 
 // IsValidLogoURI checks if the provided URI is valid for use as a logo URL.
-// It enforces a scheme allowlist: http/https require a non-empty host, data/blob/emoji
+// It enforces a scheme allowlist: http/https require a non-empty host, data/blob/emoji/avatar
 // schemes are always accepted, and relative paths (no scheme, non-empty path) are accepted.
 // All other schemes (e.g. javascript, file) are rejected.
 func IsValidLogoURI(uri string) bool {
@@ -256,7 +418,7 @@ func IsValidLogoURI(uri string) bool {
 	switch parsed.Scheme {
 	case "http", "https":
 		return parsed.Host != ""
-	case "data", "blob", "emoji":
+	case "data", "blob", "emoji", "avatar":
 		return true
 	case "":
 		// Accept relative paths (no scheme, but path must start with /)
@@ -288,15 +450,6 @@ func GetURIWithQueryParams(uri string, queryParams map[string]string) (string, e
 
 	// Return the constructed URI.
 	return parsedURL.String(), nil
-}
-
-// DecodeJSONBody decodes JSON from the request body into any struct type T.
-func DecodeJSONBody[T any](r *http.Request) (*T, error) {
-	var data T
-	if err := json.NewDecoder(r.Body).Decode(&data); err != nil {
-		return nil, errors.New("failed to decode JSON: " + err.Error())
-	}
-	return &data, nil
 }
 
 // DecodeJSONResponse decodes JSON from the response body into any struct type T.
@@ -349,6 +502,69 @@ func SanitizeStringMap(inputs map[string]string) map[string]string {
 	return sanitized
 }
 
+// sanitizeRaw trims whitespace and removes control characters but does NOT HTML-escape.
+// Use this for values that must remain structurally intact (e.g. JSON, URIs, JWTs)
+// and are not rendered in an HTML context.
+func sanitizeRaw(input string) string {
+	if input == "" {
+		return input
+	}
+
+	trimmed := strings.TrimSpace(input)
+	return strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) {
+			return -1
+		}
+		return r
+	}, trimmed)
+}
+
+// SanitizeRawMultiValueStringMap sanitizes a map[string][]string by trimming whitespace and
+// removing control characters from values but does NOT HTML-escape and does NOT modify keys.
+// Keys are preserved verbatim to prevent normalization collisions (e.g. " X " and "X" trimming
+// to the same key). Use this for structured HTTP values such as JSON, URIs, and JWTs.
+func SanitizeRawMultiValueStringMap(inputs map[string][]string) map[string][]string {
+	if len(inputs) == 0 {
+		return inputs
+	}
+
+	sanitized := make(map[string][]string, len(inputs))
+	for key, values := range inputs {
+		sanitizedValues := make([]string, len(values))
+		for i, v := range values {
+			sanitizedValues[i] = sanitizeRaw(v)
+		}
+		sanitized[key] = sanitizedValues
+	}
+
+	return sanitized
+}
+
+// sensitiveHeaders is the deny-list of header names (lowercase) that must not be forwarded
+// beyond the HTTP boundary into provider metadata or initiator requests.
+var sensitiveHeaders = map[string]bool{
+	strings.ToLower(constants.AuthorizationHeaderName):      true,
+	strings.ToLower(constants.CookieHeaderName):             true,
+	strings.ToLower(constants.SetCookieHeaderName):          true,
+	strings.ToLower(constants.ProxyAuthorizationHeaderName): true,
+}
+
+// FilterSensitiveHeaders returns a copy of the header map with credential-bearing headers removed.
+func FilterSensitiveHeaders(h map[string][]string) map[string][]string {
+	if len(h) == 0 {
+		return h
+	}
+
+	filtered := make(map[string][]string, len(h))
+	for name, values := range h {
+		if !sensitiveHeaders[strings.ToLower(name)] {
+			filtered[name] = values
+		}
+	}
+
+	return filtered
+}
+
 // IsBearerAuth checks if the Authorization header uses the Bearer scheme (case-insensitive).
 func IsBearerAuth(authHeader string) bool {
 	parts := strings.SplitN(authHeader, " ", 2)
@@ -377,7 +593,7 @@ func ExtractBearerToken(authHeader string) (string, error) {
 }
 
 // WriteSuccessResponse writes a JSON success response with the given status code and data.
-func WriteSuccessResponse(w http.ResponseWriter, statusCode int, data interface{}) {
+func WriteSuccessResponse(ctx context.Context, w http.ResponseWriter, statusCode int, data interface{}) {
 	logger := log.GetLogger()
 
 	if statusCode == http.StatusNoContent {
@@ -388,11 +604,11 @@ func WriteSuccessResponse(w http.ResponseWriter, statusCode int, data interface{
 	// Encode to buffer first to ensure encoding succeeds before sending headers
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(data); err != nil {
-		logger.Error("Failed to encode response", log.Error(err))
+		logger.Error(ctx, "Failed to encode response", log.Error(err))
 		errResp := apierror.ErrorResponse{
-			Code:        serviceerror.ErrorEncodingError.Code,
-			Message:     serviceerror.ErrorEncodingError.Error,
-			Description: serviceerror.ErrorEncodingError.ErrorDescription,
+			Code:        tidcommon.ErrorEncodingError.Code,
+			Message:     tidcommon.ErrorEncodingError.Error,
+			Description: tidcommon.ErrorEncodingError.ErrorDescription,
 		}
 		b, _ := json.Marshal(errResp)
 		w.Header().Set(constants.ContentTypeHeaderName, constants.ContentTypeJSON)
@@ -408,17 +624,17 @@ func WriteSuccessResponse(w http.ResponseWriter, statusCode int, data interface{
 }
 
 // WriteErrorResponse writes a JSON i18n error response with the given status code and error details.
-func WriteErrorResponse(w http.ResponseWriter, statusCode int, errorResp apierror.ErrorResponse) {
+func WriteErrorResponse(ctx context.Context, w http.ResponseWriter, statusCode int, errorResp apierror.ErrorResponse) {
 	logger := log.GetLogger()
 	w.Header().Set(constants.ContentTypeHeaderName, constants.ContentTypeJSON)
 	w.WriteHeader(statusCode)
 
 	if err := json.NewEncoder(w).Encode(errorResp); err != nil {
-		logger.Error("Failed to encode i18n error response", log.Error(err))
+		logger.Error(ctx, "Failed to encode i18n error response", log.Error(err))
 		errResp := apierror.ErrorResponse{
-			Code:        serviceerror.ErrorEncodingError.Code,
-			Message:     serviceerror.ErrorEncodingError.Error,
-			Description: serviceerror.ErrorEncodingError.ErrorDescription,
+			Code:        tidcommon.ErrorEncodingError.Code,
+			Message:     tidcommon.ErrorEncodingError.Error,
+			Description: tidcommon.ErrorEncodingError.ErrorDescription,
 		}
 		b, _ := json.Marshal(errResp)
 		w.Header().Set(constants.ContentTypeHeaderName, constants.ContentTypeJSON)

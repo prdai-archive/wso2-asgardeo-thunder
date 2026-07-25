@@ -22,17 +22,20 @@ import (
 	"context"
 	"testing"
 
+	engineconfig "github.com/thunder-id/thunderid/pkg/thunderidengine/config"
+	"github.com/thunder-id/thunderid/pkg/thunderidengine/providers"
+
+	tidcommon "github.com/thunder-id/thunderid/pkg/thunderidengine/common"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/suite"
 
 	"github.com/thunder-id/thunderid/internal/attributecache"
-	inboundmodel "github.com/thunder-id/thunderid/internal/inboundclient/model"
+	oauthconfig "github.com/thunder-id/thunderid/internal/oauth/config"
 	"github.com/thunder-id/thunderid/internal/oauth/oauth2/constants"
-	"github.com/thunder-id/thunderid/internal/ou"
 	"github.com/thunder-id/thunderid/internal/system/config"
-	"github.com/thunder-id/thunderid/internal/system/error/serviceerror"
-	"github.com/thunder-id/thunderid/internal/system/i18n/core"
+	"github.com/thunder-id/thunderid/tests/mocks/actorprovidermock"
 	"github.com/thunder-id/thunderid/tests/mocks/attributecachemock"
 	"github.com/thunder-id/thunderid/tests/mocks/oumock"
 )
@@ -49,34 +52,12 @@ func (suite *UtilsTestSuite) SetupTest() {
 	config.ResetServerRuntime()
 
 	testConfig := &config.Config{
-		JWT: config.JWTConfig{
+		JWT: engineconfig.JWTConfig{
 			Issuer:         "https://thunder.io",
 			ValidityPeriod: 3600,
 		},
 	}
 	_ = config.InitializeServerRuntime("test", testConfig)
-}
-
-// ============================================================================
-// isSelfIssuer Tests
-// ============================================================================
-
-func (suite *UtilsTestSuite) TestisSelfIssuer_WithValidDeploymentIssuer() {
-	result := isSelfIssuer("https://thunder.io")
-
-	assert.True(suite.T(), result)
-}
-
-func (suite *UtilsTestSuite) TestisSelfIssuer_WithInvalidIssuer() {
-	result := isSelfIssuer("https://evil.example.com")
-
-	assert.False(suite.T(), result)
-}
-
-func (suite *UtilsTestSuite) TestisSelfIssuer_WithEmptyIssuer() {
-	result := isSelfIssuer("")
-
-	assert.False(suite.T(), result)
 }
 
 func (suite *UtilsTestSuite) TestJoinScopes_WithMultipleScopes() {
@@ -376,14 +357,14 @@ func (suite *UtilsTestSuite) TestFetchUserAttributes_GetAttributeCacheError() {
 	mockAttrCacheService := attributecachemock.NewAttributeCacheServiceInterfaceMock(suite.T())
 
 	// Mock GetAttributeCache to return error
-	serverErr := &serviceerror.ServiceError{
-		Type: serviceerror.ServerErrorType,
+	serverErr := &tidcommon.ServiceError{
+		Type: tidcommon.ServerErrorType,
 		Code: "CACHE_NOT_FOUND",
-		Error: core.I18nMessage{
+		Error: tidcommon.I18nMessage{
 			Key:          "cache_not_found",
 			DefaultValue: "Cache not found",
 		},
-		ErrorDescription: core.I18nMessage{
+		ErrorDescription: tidcommon.I18nMessage{
 			Key:          "cache_not_found_desc",
 			DefaultValue: "cache not found",
 		},
@@ -543,26 +524,22 @@ func (suite *UtilsTestSuite) TestFetchUserAttributes_CacheWithoutOUID() {
 }
 
 func (suite *UtilsTestSuite) TestResolveTokenConfig_RefreshToken_WithServerLevelConfig() {
-	// Reset and initialize config with refresh token validity period
-	config.ResetServerRuntime()
-	testConfig := &config.Config{
-		JWT: config.JWTConfig{
+	oauthApp := &providers.OAuthClient{
+		ClientID: "test-client",
+	}
+	cfg := oauthconfig.Config{
+		JWT: engineconfig.JWTConfig{
 			Issuer:         "https://thunder.io",
 			ValidityPeriod: 3600,
 		},
-		OAuth: config.OAuthConfig{
-			RefreshToken: config.RefreshTokenConfig{
-				ValidityPeriod: 86400, // 24 hours
+		OAuth: engineconfig.OAuthConfig{
+			RefreshToken: engineconfig.RefreshTokenConfig{
+				ValidityPeriod: 86400,
 			},
 		},
 	}
-	_ = config.InitializeServerRuntime("test", testConfig)
 
-	oauthApp := &inboundmodel.OAuthClient{
-		ClientID: "test-client",
-	}
-
-	result := ResolveTokenConfig(oauthApp, TokenTypeRefresh)
+	result := ResolveTokenConfig(cfg, oauthApp, TokenTypeRefresh, 0)
 
 	assert.NotNil(suite.T(), result)
 	assert.Equal(suite.T(), int64(86400), result.ValidityPeriod)
@@ -570,79 +547,61 @@ func (suite *UtilsTestSuite) TestResolveTokenConfig_RefreshToken_WithServerLevel
 }
 
 func (suite *UtilsTestSuite) TestResolveTokenConfig_RefreshToken_WithoutServerLevelConfig() {
-	// Reset and initialize config without refresh token validity period (zero value)
-	config.ResetServerRuntime()
-	testConfig := &config.Config{
-		JWT: config.JWTConfig{
+	oauthApp := &providers.OAuthClient{
+		ClientID: "test-client",
+	}
+	cfg := oauthconfig.Config{
+		JWT: engineconfig.JWTConfig{
 			Issuer:         "https://thunder.io",
 			ValidityPeriod: 3600,
 		},
-		OAuth: config.OAuthConfig{
-			RefreshToken: config.RefreshTokenConfig{
-				ValidityPeriod: 0, // Not set
-			},
-		},
-	}
-	_ = config.InitializeServerRuntime("test", testConfig)
-
-	oauthApp := &inboundmodel.OAuthClient{
-		ClientID: "test-client",
 	}
 
-	result := ResolveTokenConfig(oauthApp, TokenTypeRefresh)
+	result := ResolveTokenConfig(cfg, oauthApp, TokenTypeRefresh, 0)
 
 	assert.NotNil(suite.T(), result)
-	// Should fallback to default JWT validity period
 	assert.Equal(suite.T(), int64(3600), result.ValidityPeriod)
 }
 
 func (suite *UtilsTestSuite) TestResolveTokenConfig_RefreshToken_WithNilOAuthApp() {
-	// Reset and initialize config with refresh token validity period
-	config.ResetServerRuntime()
-	testConfig := &config.Config{
-		JWT: config.JWTConfig{
+	cfg := oauthconfig.Config{
+		JWT: engineconfig.JWTConfig{
 			Issuer:         "https://thunder.io",
 			ValidityPeriod: 3600,
 		},
-		OAuth: config.OAuthConfig{
-			RefreshToken: config.RefreshTokenConfig{
-				ValidityPeriod: 604800, // 7 days
+		OAuth: engineconfig.OAuthConfig{
+			RefreshToken: engineconfig.RefreshTokenConfig{
+				ValidityPeriod: 604800,
 			},
 		},
 	}
-	_ = config.InitializeServerRuntime("test", testConfig)
 
-	// oauthApp is nil
-	result := ResolveTokenConfig(nil, TokenTypeRefresh)
+	result := ResolveTokenConfig(cfg, nil, TokenTypeRefresh, 0)
 
 	assert.NotNil(suite.T(), result)
-	// Should still use server-level refresh token config
 	assert.Equal(suite.T(), int64(604800), result.ValidityPeriod)
 	assert.Equal(suite.T(), "https://thunder.io", result.Issuer)
 }
 
 func (suite *UtilsTestSuite) TestResolveTokenConfig_RefreshToken_WithTokenConfig() {
-	// Refresh token always uses server-level issuer from config
-	config.ResetServerRuntime()
-	testConfig := &config.Config{
-		JWT: config.JWTConfig{
+	cfg := oauthconfig.Config{
+		JWT: engineconfig.JWTConfig{
 			Issuer:         "https://thunder.io",
 			ValidityPeriod: 3600,
 		},
-		OAuth: config.OAuthConfig{
-			RefreshToken: config.RefreshTokenConfig{
+		OAuth: engineconfig.OAuthConfig{
+			RefreshToken: engineconfig.RefreshTokenConfig{
 				ValidityPeriod: 86400,
 			},
 		},
 	}
-	_ = config.InitializeServerRuntime("test", testConfig)
 
-	oauthApp := &inboundmodel.OAuthClient{
+	oauthApp := &providers.OAuthClient{
 		ClientID: "test-client",
-		Token:    &inboundmodel.OAuthTokenConfig{},
+		Token:    &providers.OAuthTokenConfig{},
 	}
 
-	result := ResolveTokenConfig(oauthApp, TokenTypeRefresh)
+	result := ResolveTokenConfig(cfg, oauthApp, TokenTypeRefresh, 0)
 
 	assert.NotNil(suite.T(), result)
 	assert.Equal(suite.T(), int64(86400), result.ValidityPeriod)
@@ -650,17 +609,14 @@ func (suite *UtilsTestSuite) TestResolveTokenConfig_RefreshToken_WithTokenConfig
 }
 
 func (suite *UtilsTestSuite) TestResolveTokenConfig_AccessToken_WithNilOAuthApp() {
-	config.ResetServerRuntime()
-	testConfig := &config.Config{
-		JWT: config.JWTConfig{
+	cfg := oauthconfig.Config{
+		JWT: engineconfig.JWTConfig{
 			Issuer:         "https://thunder.io",
 			ValidityPeriod: 3600,
 		},
 	}
-	_ = config.InitializeServerRuntime("test", testConfig)
 
-	// oauthApp is nil - should use default config
-	result := ResolveTokenConfig(nil, TokenTypeAccess)
+	result := ResolveTokenConfig(cfg, nil, TokenTypeAccess, 0)
 
 	assert.NotNil(suite.T(), result)
 	assert.Equal(suite.T(), int64(3600), result.ValidityPeriod)
@@ -668,22 +624,19 @@ func (suite *UtilsTestSuite) TestResolveTokenConfig_AccessToken_WithNilOAuthApp(
 }
 
 func (suite *UtilsTestSuite) TestResolveTokenConfig_AccessToken_WithNilToken() {
-	config.ResetServerRuntime()
-	testConfig := &config.Config{
-		JWT: config.JWTConfig{
+	cfg := oauthconfig.Config{
+		JWT: engineconfig.JWTConfig{
 			Issuer:         "https://thunder.io",
 			ValidityPeriod: 3600,
 		},
 	}
-	_ = config.InitializeServerRuntime("test", testConfig)
 
-	// oauthApp.Token is nil - should use default config
-	oauthApp := &inboundmodel.OAuthClient{
+	oauthApp := &providers.OAuthClient{
 		ClientID: "test-client",
 		Token:    nil,
 	}
 
-	result := ResolveTokenConfig(oauthApp, TokenTypeAccess)
+	result := ResolveTokenConfig(cfg, oauthApp, TokenTypeAccess, 0)
 
 	assert.NotNil(suite.T(), result)
 	assert.Equal(suite.T(), int64(3600), result.ValidityPeriod)
@@ -691,42 +644,40 @@ func (suite *UtilsTestSuite) TestResolveTokenConfig_AccessToken_WithNilToken() {
 }
 
 func (suite *UtilsTestSuite) TestResolveTokenConfig_AccessToken_WithAppLevelConfig() {
-	config.ResetServerRuntime()
-	testConfig := &config.Config{
-		JWT: config.JWTConfig{
+	cfg := oauthconfig.Config{
+		JWT: engineconfig.JWTConfig{
 			Issuer:         "https://thunder.io",
 			ValidityPeriod: 3600,
 		},
 	}
-	_ = config.InitializeServerRuntime("test", testConfig)
 
-	oauthApp := &inboundmodel.OAuthClient{
+	oauthApp := &providers.OAuthClient{
 		ClientID: "test-client",
-		Token: &inboundmodel.OAuthTokenConfig{
-			AccessToken: &inboundmodel.AccessTokenConfig{
-				ValidityPeriod: 7200,
+		Token: &providers.OAuthTokenConfig{
+			AccessToken: &providers.AccessTokenConfig{
+				UserConfig: &providers.AccessTokenSubConfig{
+					ValidityPeriod: 7200,
+				},
 			},
 		},
 	}
 
-	result := ResolveTokenConfig(oauthApp, TokenTypeAccess)
+	result := ResolveTokenConfig(
+		cfg, oauthApp, TokenTypeAccess, oauthApp.UserAccessTokenConfig().ValidityPeriodOrZero())
 
 	assert.NotNil(suite.T(), result)
 	assert.Equal(suite.T(), int64(7200), result.ValidityPeriod)
 }
 
 func (suite *UtilsTestSuite) TestResolveTokenConfig_IDToken_WithNilOAuthApp() {
-	config.ResetServerRuntime()
-	testConfig := &config.Config{
-		JWT: config.JWTConfig{
+	cfg := oauthconfig.Config{
+		JWT: engineconfig.JWTConfig{
 			Issuer:         "https://thunder.io",
 			ValidityPeriod: 3600,
 		},
 	}
-	_ = config.InitializeServerRuntime("test", testConfig)
 
-	// oauthApp is nil - should use default config
-	result := ResolveTokenConfig(nil, TokenTypeID)
+	result := ResolveTokenConfig(cfg, nil, TokenTypeID, 0)
 
 	assert.NotNil(suite.T(), result)
 	assert.Equal(suite.T(), int64(3600), result.ValidityPeriod)
@@ -734,22 +685,19 @@ func (suite *UtilsTestSuite) TestResolveTokenConfig_IDToken_WithNilOAuthApp() {
 }
 
 func (suite *UtilsTestSuite) TestResolveTokenConfig_IDToken_WithNilToken() {
-	config.ResetServerRuntime()
-	testConfig := &config.Config{
-		JWT: config.JWTConfig{
+	cfg := oauthconfig.Config{
+		JWT: engineconfig.JWTConfig{
 			Issuer:         "https://thunder.io",
 			ValidityPeriod: 3600,
 		},
 	}
-	_ = config.InitializeServerRuntime("test", testConfig)
 
-	// oauthApp.Token is nil - should use default config
-	oauthApp := &inboundmodel.OAuthClient{
+	oauthApp := &providers.OAuthClient{
 		ClientID: "test-client",
 		Token:    nil,
 	}
 
-	result := ResolveTokenConfig(oauthApp, TokenTypeID)
+	result := ResolveTokenConfig(cfg, oauthApp, TokenTypeID, 0)
 
 	assert.NotNil(suite.T(), result)
 	assert.Equal(suite.T(), int64(3600), result.ValidityPeriod)
@@ -757,64 +705,56 @@ func (suite *UtilsTestSuite) TestResolveTokenConfig_IDToken_WithNilToken() {
 }
 
 func (suite *UtilsTestSuite) TestResolveTokenConfig_IDToken_WithAppLevelConfig() {
-	config.ResetServerRuntime()
-	testConfig := &config.Config{
-		JWT: config.JWTConfig{
+	cfg := oauthconfig.Config{
+		JWT: engineconfig.JWTConfig{
 			Issuer:         "https://thunder.io",
 			ValidityPeriod: 3600,
 		},
 	}
-	_ = config.InitializeServerRuntime("test", testConfig)
 
-	oauthApp := &inboundmodel.OAuthClient{
+	oauthApp := &providers.OAuthClient{
 		ClientID: "test-client",
-		Token: &inboundmodel.OAuthTokenConfig{
-			IDToken: &inboundmodel.IDTokenConfig{
+		Token: &providers.OAuthTokenConfig{
+			IDToken: &providers.IDTokenConfig{
 				ValidityPeriod: 1800,
 			},
 		},
 	}
 
-	result := ResolveTokenConfig(oauthApp, TokenTypeID)
+	result := ResolveTokenConfig(cfg, oauthApp, TokenTypeID, 0)
 
 	assert.NotNil(suite.T(), result)
 	assert.Equal(suite.T(), int64(1800), result.ValidityPeriod)
 }
 
 func (suite *UtilsTestSuite) TestResolveTokenConfig_WithCustomIssuer_NilOAuthApp() {
-	config.ResetServerRuntime()
-	testConfig := &config.Config{
-		JWT: config.JWTConfig{
+	cfg := oauthconfig.Config{
+		JWT: engineconfig.JWTConfig{
 			Issuer:         "https://thunder.io",
 			ValidityPeriod: 3600,
 		},
 	}
-	_ = config.InitializeServerRuntime("test", testConfig)
 
-	// With nil oauthApp, should use default issuer
-	result := ResolveTokenConfig(nil, TokenTypeAccess)
+	result := ResolveTokenConfig(cfg, nil, TokenTypeAccess, 0)
 
 	assert.NotNil(suite.T(), result)
 	assert.Equal(suite.T(), "https://thunder.io", result.Issuer)
 }
 
 func (suite *UtilsTestSuite) TestResolveTokenConfig_WithTokenConfig_UsesServerIssuer() {
-	config.ResetServerRuntime()
-	testConfig := &config.Config{
-		JWT: config.JWTConfig{
+	cfg := oauthconfig.Config{
+		JWT: engineconfig.JWTConfig{
 			Issuer:         "https://thunder.io",
 			ValidityPeriod: 3600,
 		},
 	}
-	_ = config.InitializeServerRuntime("test", testConfig)
 
-	// OAuthApp with token config always uses server-level issuer from config
-	oauthApp := &inboundmodel.OAuthClient{
+	oauthApp := &providers.OAuthClient{
 		ClientID: "test-client",
-		Token:    &inboundmodel.OAuthTokenConfig{},
+		Token:    &providers.OAuthTokenConfig{},
 	}
 
-	result := ResolveTokenConfig(oauthApp, TokenTypeAccess)
+	result := ResolveTokenConfig(cfg, oauthApp, TokenTypeAccess, 0)
 
 	assert.NotNil(suite.T(), result)
 	assert.Equal(suite.T(), "https://thunder.io", result.Issuer)
@@ -825,10 +765,20 @@ const (
 	testBCCOUID  = "ou-456"
 )
 
-func newOAuthAppForClientAttributes(ouID string) *inboundmodel.OAuthClient {
-	return &inboundmodel.OAuthClient{
+func newOAuthAppForClientAttributes(ouID string) *providers.OAuthClient {
+	return newOAuthAppForClientAttributesWith(ouID,
+		[]string{constants.ClaimOUID, constants.ClaimOUName, constants.ClaimOUHandle})
+}
+
+func newOAuthAppForClientAttributesWith(ouID string, clientAttributes []string) *providers.OAuthClient {
+	return &providers.OAuthClient{
 		ID:   testBCCAppID,
 		OUID: ouID,
+		Token: &providers.OAuthTokenConfig{
+			AccessToken: &providers.AccessTokenConfig{
+				ClientConfig: &providers.AccessTokenSubConfig{Attributes: clientAttributes},
+			},
+		},
 	}
 }
 
@@ -836,7 +786,7 @@ func (suite *UtilsTestSuite) TestBuildClientAttributes_NoOUID_ReturnsNil() {
 	ous := oumock.NewOrganizationUnitServiceInterfaceMock(suite.T())
 
 	app := newOAuthAppForClientAttributes("")
-	claims, err := BuildClientAttributes(context.Background(), app, ous)
+	claims, err := BuildClientAttributes(context.Background(), app, ous, nil)
 
 	assert.NoError(suite.T(), err)
 	assert.Nil(suite.T(), claims)
@@ -845,7 +795,7 @@ func (suite *UtilsTestSuite) TestBuildClientAttributes_NoOUID_ReturnsNil() {
 func (suite *UtilsTestSuite) TestBuildClientAttributes_NilOAuthApp_ReturnsNil() {
 	ous := oumock.NewOrganizationUnitServiceInterfaceMock(suite.T())
 
-	claims, err := BuildClientAttributes(context.Background(), nil, ous)
+	claims, err := BuildClientAttributes(context.Background(), nil, ous, nil)
 
 	assert.NoError(suite.T(), err)
 	assert.Nil(suite.T(), claims)
@@ -854,14 +804,14 @@ func (suite *UtilsTestSuite) TestBuildClientAttributes_NilOAuthApp_ReturnsNil() 
 func (suite *UtilsTestSuite) TestBuildClientAttributes_HappyPath() {
 	ous := oumock.NewOrganizationUnitServiceInterfaceMock(suite.T())
 
-	ous.On("GetOrganizationUnit", context.Background(), testBCCOUID).Return(ou.OrganizationUnit{
+	ous.On("GetOrganizationUnit", context.Background(), testBCCOUID).Return(providers.OrganizationUnit{
 		ID:     testBCCOUID,
 		Name:   "Engineering",
 		Handle: "eng",
-	}, (*serviceerror.ServiceError)(nil))
+	}, (*tidcommon.ServiceError)(nil))
 
 	app := newOAuthAppForClientAttributes(testBCCOUID)
-	claims, err := BuildClientAttributes(context.Background(), app, ous)
+	claims, err := BuildClientAttributes(context.Background(), app, ous, nil)
 
 	assert.NoError(suite.T(), err)
 	assert.NotNil(suite.T(), claims)
@@ -874,15 +824,15 @@ func (suite *UtilsTestSuite) TestBuildClientAttributes_OULookupError_ReturnsErro
 	ous := oumock.NewOrganizationUnitServiceInterfaceMock(suite.T())
 
 	ous.On("GetOrganizationUnit", context.Background(), testBCCOUID).Return(
-		ou.OrganizationUnit{},
-		&serviceerror.ServiceError{
+		providers.OrganizationUnit{},
+		&tidcommon.ServiceError{
 			Code:  "OU-0001",
-			Error: core.I18nMessage{Key: "error.test.not_found", DefaultValue: "not found"},
+			Error: tidcommon.I18nMessage{Key: "error.test.not_found", DefaultValue: "not found"},
 		},
 	)
 
 	app := newOAuthAppForClientAttributes(testBCCOUID)
-	claims, err := BuildClientAttributes(context.Background(), app, ous)
+	claims, err := BuildClientAttributes(context.Background(), app, ous, nil)
 
 	assert.Error(suite.T(), err)
 	assert.Nil(suite.T(), claims)
@@ -890,8 +840,257 @@ func (suite *UtilsTestSuite) TestBuildClientAttributes_OULookupError_ReturnsErro
 
 func (suite *UtilsTestSuite) TestBuildClientAttributes_NilOUService_ReturnsNil() {
 	app := newOAuthAppForClientAttributes(testBCCOUID)
-	claims, err := BuildClientAttributes(context.Background(), app, nil)
+	claims, err := BuildClientAttributes(context.Background(), app, nil, nil)
 	assert.NoError(suite.T(), err)
+	assert.Nil(suite.T(), claims)
+}
+
+func (suite *UtilsTestSuite) TestBuildClientAttributes_OUAttributes_SkippedWhenNotRequested() {
+	ous := oumock.NewOrganizationUnitServiceInterfaceMock(suite.T())
+
+	app := newOAuthAppForClientAttributesWith(testBCCOUID, nil)
+	claims, err := BuildClientAttributes(context.Background(), app, ous, nil)
+
+	assert.NoError(suite.T(), err)
+	assert.Nil(suite.T(), claims)
+	ous.AssertNotCalled(suite.T(), "GetOrganizationUnit")
+}
+
+func (suite *UtilsTestSuite) TestBuildClientAttributes_OUOnly_SkipsEntityFetch() {
+	ous := oumock.NewOrganizationUnitServiceInterfaceMock(suite.T())
+	ous.On("GetOrganizationUnit", context.Background(), testBCCOUID).Return(providers.OrganizationUnit{
+		ID:     testBCCOUID,
+		Name:   "Engineering",
+		Handle: "eng",
+	}, (*tidcommon.ServiceError)(nil))
+	actors := actorprovidermock.NewActorProviderMock(suite.T())
+
+	app := newOAuthAppForClientAttributesWith(testBCCOUID,
+		[]string{constants.ClaimOUID, constants.ClaimOUName, constants.ClaimOUHandle})
+	claims, err := BuildClientAttributes(context.Background(), app, ous, actors)
+
+	assert.NoError(suite.T(), err)
+	assert.Equal(suite.T(), testBCCOUID, claims[constants.ClaimOUID])
+	actors.AssertNotCalled(suite.T(), "GetActor")
+}
+
+func (suite *UtilsTestSuite) TestBuildClientAttributes_OUAttributes_PartialSelection() {
+	ous := oumock.NewOrganizationUnitServiceInterfaceMock(suite.T())
+
+	ous.On("GetOrganizationUnit", context.Background(), testBCCOUID).Return(providers.OrganizationUnit{
+		ID:     testBCCOUID,
+		Name:   "Engineering",
+		Handle: "eng",
+	}, (*tidcommon.ServiceError)(nil))
+
+	app := newOAuthAppForClientAttributesWith(testBCCOUID, []string{constants.ClaimOUID})
+	claims, err := BuildClientAttributes(context.Background(), app, ous, nil)
+
+	assert.NoError(suite.T(), err)
+	assert.Equal(suite.T(), testBCCOUID, claims[constants.ClaimOUID])
+	assert.NotContains(suite.T(), claims, constants.ClaimOUName)
+	assert.NotContains(suite.T(), claims, constants.ClaimOUHandle)
+}
+
+func newOAuthAppForOwnAttributes(clientAttributes []string) *providers.OAuthClient {
+	return &providers.OAuthClient{
+		ID:             testBCCAppID,
+		EntityCategory: providers.EntityCategoryAgent,
+		Token: &providers.OAuthTokenConfig{
+			AccessToken: &providers.AccessTokenConfig{
+				ClientConfig: &providers.AccessTokenSubConfig{Attributes: clientAttributes},
+			},
+		},
+	}
+}
+
+func (suite *UtilsTestSuite) TestBuildClientAttributes_ResolvesRegardlessOfEntityCategory() {
+	actors := actorprovidermock.NewActorProviderMock(suite.T())
+	actors.On("GetActor", testBCCAppID).Return(&providers.Entity{
+		ID:         testBCCAppID,
+		Attributes: []byte(`{"modelProvider":"anthropic"}`),
+	}, (*tidcommon.ServiceError)(nil))
+
+	app := newOAuthAppForOwnAttributes([]string{"modelProvider"})
+	app.EntityCategory = providers.EntityCategoryUser
+	claims, err := BuildClientAttributes(context.Background(), app, nil, actors)
+
+	assert.NoError(suite.T(), err)
+	assert.Equal(suite.T(), "anthropic", claims["modelProvider"])
+}
+
+func (suite *UtilsTestSuite) TestBuildClientAttributes_NoClientAttributesConfigured_ReturnsNil() {
+	actors := actorprovidermock.NewActorProviderMock(suite.T())
+
+	app := newOAuthAppForOwnAttributes(nil)
+	claims, err := BuildClientAttributes(context.Background(), app, nil, actors)
+
+	assert.NoError(suite.T(), err)
+	assert.Nil(suite.T(), claims)
+}
+
+func (suite *UtilsTestSuite) TestBuildClientAttributes_AgentOwnAttributes_HappyPath() {
+	actors := actorprovidermock.NewActorProviderMock(suite.T())
+	actors.On("GetActor", testBCCAppID).Return(&providers.Entity{
+		ID:         testBCCAppID,
+		Attributes: []byte(`{"modelProvider":"anthropic","model":"claude","unrequested":"x"}`),
+	}, (*tidcommon.ServiceError)(nil))
+
+	app := newOAuthAppForOwnAttributes([]string{"modelProvider", "model"})
+	claims, err := BuildClientAttributes(context.Background(), app, nil, actors)
+
+	assert.NoError(suite.T(), err)
+	assert.Equal(suite.T(), "anthropic", claims["modelProvider"])
+	assert.Equal(suite.T(), "claude", claims["model"])
+	assert.NotContains(suite.T(), claims, "unrequested")
+}
+
+func (suite *UtilsTestSuite) TestBuildClientAttributes_AgentOwnAttributes_SkipsReservedClaimNames() {
+	actors := actorprovidermock.NewActorProviderMock(suite.T())
+	actors.On("GetActor", testBCCAppID).Return(&providers.Entity{
+		ID:         testBCCAppID,
+		Attributes: []byte(`{"scope":"malicious-override","modelProvider":"anthropic"}`),
+	}, (*tidcommon.ServiceError)(nil))
+
+	app := newOAuthAppForOwnAttributes([]string{"scope", "modelProvider"})
+	claims, err := BuildClientAttributes(context.Background(), app, nil, actors)
+
+	assert.NoError(suite.T(), err)
+	assert.Equal(suite.T(), "anthropic", claims["modelProvider"])
+	assert.NotContains(suite.T(), claims, "scope")
+}
+
+func (suite *UtilsTestSuite) TestBuildClientAttributes_AgentSystemAttributes_HappyPath() {
+	actors := actorprovidermock.NewActorProviderMock(suite.T())
+	actors.On("GetActor", testBCCAppID).Return(&providers.Entity{
+		ID:               testBCCAppID,
+		Category:         providers.EntityCategoryAgent,
+		Attributes:       []byte(`{"modelProvider":"anthropic"}`),
+		SystemAttributes: []byte(`{"name":"Ledger Agent","owner":"user-123","clientId":"cid","description":"d"}`),
+	}, (*tidcommon.ServiceError)(nil))
+
+	app := newOAuthAppForOwnAttributes([]string{"modelProvider", "name", "owner"})
+	claims, err := BuildClientAttributes(context.Background(), app, nil, actors)
+
+	assert.NoError(suite.T(), err)
+	assert.Equal(suite.T(), "anthropic", claims["modelProvider"])
+	assert.Equal(suite.T(), "Ledger Agent", claims["name"])
+	assert.Equal(suite.T(), "user-123", claims["owner"])
+	assert.NotContains(suite.T(), claims, "clientId")
+	assert.NotContains(suite.T(), claims, "description")
+}
+
+func (suite *UtilsTestSuite) TestBuildClientAttributes_GroupsAndRoles_Resolved() {
+	actors := actorprovidermock.NewActorProviderMock(suite.T())
+	actors.On("GetActorGroups", testBCCAppID).Return([]providers.EntityGroup{
+		{ID: "g1", Name: "engineering"},
+		{ID: "g2", Name: "admins"},
+	}, (*tidcommon.ServiceError)(nil))
+	actors.On("GetActorRoles", testBCCAppID, []string{"g1", "g2"}).
+		Return([]string{"admin", "editor"}, (*tidcommon.ServiceError)(nil))
+
+	app := newOAuthAppForOwnAttributes([]string{"groups", "roles"})
+	claims, err := BuildClientAttributes(context.Background(), app, nil, actors)
+
+	assert.NoError(suite.T(), err)
+	assert.ElementsMatch(suite.T(), []string{"engineering", "admins"}, claims["groups"])
+	assert.ElementsMatch(suite.T(), []string{"admin", "editor"}, claims["roles"])
+	actors.AssertNotCalled(suite.T(), "GetActor")
+}
+
+func (suite *UtilsTestSuite) TestBuildClientAttributes_GroupsOnly_DoesNotResolveRoles() {
+	actors := actorprovidermock.NewActorProviderMock(suite.T())
+	actors.On("GetActorGroups", testBCCAppID).Return([]providers.EntityGroup{
+		{ID: "g1", Name: "engineering"},
+	}, (*tidcommon.ServiceError)(nil))
+
+	app := newOAuthAppForOwnAttributes([]string{"groups"})
+	claims, err := BuildClientAttributes(context.Background(), app, nil, actors)
+
+	assert.NoError(suite.T(), err)
+	assert.ElementsMatch(suite.T(), []string{"engineering"}, claims["groups"])
+	assert.NotContains(suite.T(), claims, "roles")
+	actors.AssertNotCalled(suite.T(), "GetActorRoles")
+}
+
+func (suite *UtilsTestSuite) TestBuildClientAttributes_GroupRoles_SkippedWhenNotRequested() {
+	actors := actorprovidermock.NewActorProviderMock(suite.T())
+	actors.On("GetActor", testBCCAppID).Return(&providers.Entity{
+		ID:         testBCCAppID,
+		Category:   providers.EntityCategoryAgent,
+		Attributes: []byte(`{"modelProvider":"anthropic"}`),
+	}, (*tidcommon.ServiceError)(nil))
+
+	app := newOAuthAppForOwnAttributes([]string{"modelProvider"})
+	claims, err := BuildClientAttributes(context.Background(), app, nil, actors)
+
+	assert.NoError(suite.T(), err)
+	assert.Equal(suite.T(), "anthropic", claims["modelProvider"])
+	assert.NotContains(suite.T(), claims, "groups")
+	assert.NotContains(suite.T(), claims, "roles")
+	actors.AssertNotCalled(suite.T(), "GetActorGroups")
+	actors.AssertNotCalled(suite.T(), "GetActorRoles")
+}
+
+func (suite *UtilsTestSuite) TestBuildClientAttributes_SystemAttributes_SkippedForNonAgentEntity() {
+	actors := actorprovidermock.NewActorProviderMock(suite.T())
+	actors.On("GetActor", testBCCAppID).Return(&providers.Entity{
+		ID:               testBCCAppID,
+		Category:         providers.EntityCategoryApp,
+		SystemAttributes: []byte(`{"name":"My App"}`),
+	}, (*tidcommon.ServiceError)(nil))
+
+	app := newOAuthAppForOwnAttributes([]string{"name"})
+	claims, err := BuildClientAttributes(context.Background(), app, nil, actors)
+
+	assert.NoError(suite.T(), err)
+	assert.Nil(suite.T(), claims)
+}
+
+func (suite *UtilsTestSuite) TestBuildClientAttributes_SystemAttributes_EmptyWhenNotStored() {
+	actors := actorprovidermock.NewActorProviderMock(suite.T())
+	actors.On("GetActor", testBCCAppID).Return(&providers.Entity{
+		ID:       testBCCAppID,
+		Category: providers.EntityCategoryAgent,
+	}, (*tidcommon.ServiceError)(nil))
+
+	app := newOAuthAppForOwnAttributes([]string{"name", "owner"})
+	claims, err := BuildClientAttributes(context.Background(), app, nil, actors)
+
+	assert.NoError(suite.T(), err)
+	assert.Nil(suite.T(), claims)
+}
+
+func (suite *UtilsTestSuite) TestBuildClientAttributes_SystemAttributeWinsOverSchemaOnCollision() {
+	actors := actorprovidermock.NewActorProviderMock(suite.T())
+	actors.On("GetActor", testBCCAppID).Return(&providers.Entity{
+		ID:               testBCCAppID,
+		Category:         providers.EntityCategoryAgent,
+		Attributes:       []byte(`{"name":"schema-name"}`),
+		SystemAttributes: []byte(`{"name":"system-name"}`),
+	}, (*tidcommon.ServiceError)(nil))
+
+	app := newOAuthAppForOwnAttributes([]string{"name"})
+	claims, err := BuildClientAttributes(context.Background(), app, nil, actors)
+
+	assert.NoError(suite.T(), err)
+	assert.Equal(suite.T(), "system-name", claims["name"])
+}
+
+func (suite *UtilsTestSuite) TestBuildClientAttributes_AgentGetActorError_ReturnsError() {
+	actors := actorprovidermock.NewActorProviderMock(suite.T())
+	actors.On("GetActor", testBCCAppID).Return(
+		(*providers.Entity)(nil),
+		&tidcommon.ServiceError{
+			Code:  "AGT-0001",
+			Error: tidcommon.I18nMessage{Key: "error.test.not_found", DefaultValue: "not found"},
+		},
+	)
+
+	app := newOAuthAppForOwnAttributes([]string{"modelProvider"})
+	claims, err := BuildClientAttributes(context.Background(), app, nil, actors)
+
+	assert.Error(suite.T(), err)
 	assert.Nil(suite.T(), claims)
 }
 
@@ -970,29 +1169,45 @@ func (suite *UtilsTestSuite) TestExtractAudiences_SliceWithEmptyString_ReturnsEr
 }
 
 func (suite *UtilsTestSuite) TestResolveTokenConfig_RefreshToken_WithAppLevelConfig() {
-	config.GetServerRuntime().Config.OAuth.RefreshToken.ValidityPeriod = 86400
+	cfg := oauthconfig.Config{
+		JWT: engineconfig.JWTConfig{
+			Issuer:         "https://thunder.io",
+			ValidityPeriod: 3600,
+		},
+		OAuth: engineconfig.OAuthConfig{
+			RefreshToken: engineconfig.RefreshTokenConfig{ValidityPeriod: 86400},
+		},
+	}
 
-	oauthApp := &inboundmodel.OAuthClient{
-		Token: &inboundmodel.OAuthTokenConfig{
-			RefreshToken: &inboundmodel.RefreshTokenConfig{
+	oauthApp := &providers.OAuthClient{
+		Token: &providers.OAuthTokenConfig{
+			RefreshToken: &providers.RefreshTokenConfig{
 				ValidityPeriod: 7200,
 			},
 		},
 	}
 
-	result := ResolveTokenConfig(oauthApp, TokenTypeRefresh)
+	result := ResolveTokenConfig(cfg, oauthApp, TokenTypeRefresh, 0)
 
 	suite.Equal(int64(7200), result.ValidityPeriod)
 }
 
 func (suite *UtilsTestSuite) TestResolveTokenConfig_RefreshToken_FallsBackToServerConfig() {
-	config.GetServerRuntime().Config.OAuth.RefreshToken.ValidityPeriod = 86400
-
-	oauthApp := &inboundmodel.OAuthClient{
-		Token: &inboundmodel.OAuthTokenConfig{},
+	cfg := oauthconfig.Config{
+		JWT: engineconfig.JWTConfig{
+			Issuer:         "https://thunder.io",
+			ValidityPeriod: 3600,
+		},
+		OAuth: engineconfig.OAuthConfig{
+			RefreshToken: engineconfig.RefreshTokenConfig{ValidityPeriod: 86400},
+		},
 	}
 
-	result := ResolveTokenConfig(oauthApp, TokenTypeRefresh)
+	oauthApp := &providers.OAuthClient{
+		Token: &providers.OAuthTokenConfig{},
+	}
+
+	result := ResolveTokenConfig(cfg, oauthApp, TokenTypeRefresh, 0)
 
 	suite.Equal(int64(86400), result.ValidityPeriod)
 }

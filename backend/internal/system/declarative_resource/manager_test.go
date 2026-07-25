@@ -26,6 +26,8 @@ import (
 	"runtime"
 	"testing"
 
+	engineconfig "github.com/thunder-id/thunderid/pkg/thunderidengine/config"
+
 	"github.com/stretchr/testify/suite"
 
 	"github.com/thunder-id/thunderid/internal/system/config"
@@ -52,7 +54,7 @@ func TestFileBasedRuntimeManagerTestSuite(t *testing.T) {
 func (suite *FileBasedRuntimeManagerTestSuite) SetupSuite() {
 	// Initialize minimal config for testing
 	testConfig := &config.Config{
-		Server: config.ServerConfig{
+		Server: engineconfig.ServerConfig{
 			Hostname: "localhost",
 			Port:     8080,
 		},
@@ -101,7 +103,7 @@ func (suite *FileBasedRuntimeManagerTestSuite) setEnvVar(key, value string) {
 // Helper function to create test files in the declarative resources directory
 func (suite *FileBasedRuntimeManagerTestSuite) createTestFile(configDir, filename, content string) string {
 	serverHome := config.GetServerRuntime().ServerHome
-	declarativeDir := filepath.Join(serverHome, "repository", "resources", configDir)
+	declarativeDir := filepath.Join(serverHome, "config", "resources", configDir)
 	err := os.MkdirAll(declarativeDir, 0750)
 	suite.Require().NoError(err)
 
@@ -169,7 +171,7 @@ func (suite *FileBasedRuntimeManagerTestSuite) TestGetConfigs_EmptyDirectory() {
 	configDir := "empty-configs"
 	// Create empty directory
 	serverHome := config.GetServerRuntime().ServerHome
-	declarativeDir := filepath.Join(serverHome, "repository", "resources", configDir)
+	declarativeDir := filepath.Join(serverHome, "config", "resources", configDir)
 	err := os.MkdirAll(declarativeDir, 0750)
 	suite.Require().NoError(err)
 
@@ -187,7 +189,7 @@ func (suite *FileBasedRuntimeManagerTestSuite) TestGetConfigs_DirectoryWithSubdi
 
 	// Create a subdirectory
 	serverHome := config.GetServerRuntime().ServerHome
-	declarativeDir := filepath.Join(serverHome, "repository", "resources", configDir)
+	declarativeDir := filepath.Join(serverHome, "config", "resources", configDir)
 	subDir := filepath.Join(declarativeDir, "subdir")
 	err := os.MkdirAll(subDir, 0750)
 	suite.Require().NoError(err)
@@ -325,7 +327,7 @@ func (suite *FileBasedRuntimeManagerTestSuite) TestGetConfigs_DirectoryReadPermi
 
 	// Get the directory path and remove read permissions
 	serverHome := config.GetServerRuntime().ServerHome
-	declarativeDir := filepath.Join(serverHome, "repository", "resources", configDir)
+	declarativeDir := filepath.Join(serverHome, "config", "resources", configDir)
 
 	err := os.Chmod(declarativeDir, 0000)
 	suite.NoError(err)
@@ -348,7 +350,7 @@ func (suite *FileBasedRuntimeManagerTestSuite) TestGetConfigs_CorruptedFile() {
 
 	// Create a file with invalid UTF-8 sequences using the file system directly
 	serverHome := config.GetServerRuntime().ServerHome
-	declarativeDir := filepath.Join(serverHome, "repository", "resources", configDir)
+	declarativeDir := filepath.Join(serverHome, "config", "resources", configDir)
 	err := os.MkdirAll(declarativeDir, 0750)
 	suite.Require().NoError(err)
 
@@ -498,7 +500,7 @@ func (suite *FileBasedRuntimeManagerTestSuite) TestGetConfigs_BinaryFiles() {
 	// Create a binary file (non-text content)
 	binaryContent := []byte{0x00, 0x01, 0x02, 0x03, 0xFF, 0xFE, 0xFD}
 	serverHome := config.GetServerRuntime().ServerHome
-	declarativeDir := filepath.Join(serverHome, "repository", "resources", configDir)
+	declarativeDir := filepath.Join(serverHome, "config", "resources", configDir)
 	err := os.MkdirAll(declarativeDir, 0750)
 	suite.Require().NoError(err)
 
@@ -539,4 +541,127 @@ func (suite *FileBasedRuntimeManagerTestSuite) TestGetConfigs_HiddenFiles() {
 
 	suite.NoError(err)
 	suite.Len(configs, 2) // Both files should be read
+}
+
+// ──────────────────────── GetConfigsFromRootDir tests ────────────────────────
+
+// createRootResourceFile creates a YAML file directly inside config/resources/.
+func (suite *FileBasedRuntimeManagerTestSuite) createRootResourceFile(filename, content string) {
+	serverHome := config.GetServerRuntime().ServerHome
+	rootDir := filepath.Join(serverHome, "config", "resources")
+	err := os.MkdirAll(rootDir, 0750)
+	suite.Require().NoError(err)
+	filePath := filepath.Join(rootDir, filename)
+	err = os.WriteFile(filePath, []byte(content), 0600)
+	suite.Require().NoError(err)
+}
+
+// removeRootResourceFile removes a file from config/resources/ to restore test isolation.
+func (suite *FileBasedRuntimeManagerTestSuite) removeRootResourceFile(filename string) {
+	serverHome := config.GetServerRuntime().ServerHome
+	_ = os.Remove(filepath.Join(serverHome, "config", "resources", filename))
+}
+
+func (suite *FileBasedRuntimeManagerTestSuite) TestGetConfigsFromRootDir_MatchingDocument() {
+	content := `resource_type: widget
+id: w1
+name: Widget One
+`
+	suite.createRootResourceFile("root-test-match.yaml", content)
+	defer suite.removeRootResourceFile("root-test-match.yaml")
+
+	configs, err := GetConfigsFromRootDir("widget")
+
+	suite.NoError(err)
+	suite.Len(configs, 1)
+	suite.Contains(string(configs[0]), "id: w1")
+}
+
+func (suite *FileBasedRuntimeManagerTestSuite) TestGetConfigsFromRootDir_NoMatchingDocument() {
+	content := `resource_type: other
+id: o1
+name: Other Resource
+`
+	suite.createRootResourceFile("root-test-nomatch.yaml", content)
+	defer suite.removeRootResourceFile("root-test-nomatch.yaml")
+
+	configs, err := GetConfigsFromRootDir("widget")
+
+	suite.NoError(err)
+	suite.Empty(configs)
+}
+
+func (suite *FileBasedRuntimeManagerTestSuite) TestGetConfigsFromRootDir_MultipleFilesAndDocuments() {
+	file1 := `resource_type: widget
+id: w1
+name: Widget One
+---
+resource_type: gadget
+id: g1
+name: Gadget One
+`
+	file2 := `resource_type: widget
+id: w2
+name: Widget Two
+`
+	suite.createRootResourceFile("root-multi-1.yaml", file1)
+	suite.createRootResourceFile("root-multi-2.yaml", file2)
+	defer suite.removeRootResourceFile("root-multi-1.yaml")
+	defer suite.removeRootResourceFile("root-multi-2.yaml")
+
+	configs, err := GetConfigsFromRootDir("widget")
+
+	suite.NoError(err)
+	suite.Len(configs, 2)
+}
+
+func (suite *FileBasedRuntimeManagerTestSuite) TestGetConfigsFromRootDir_IgnoresSubdirectories() {
+	content := `resource_type: widget
+id: w1
+name: In Subdir
+`
+	suite.createTestFile("subdir-ignored", "resource.yaml", content)
+
+	configs, err := GetConfigsFromRootDir("widget-subdir-test")
+
+	suite.NoError(err)
+	suite.Empty(configs)
+}
+
+func (suite *FileBasedRuntimeManagerTestSuite) TestGetConfigsFromRootDir_IgnoresNonYAMLFiles() {
+	serverHome := config.GetServerRuntime().ServerHome
+	rootDir := filepath.Join(serverHome, "config", "resources")
+	err := os.MkdirAll(rootDir, 0750)
+	suite.Require().NoError(err)
+	txtPath := filepath.Join(rootDir, "root-ignored.txt")
+	err = os.WriteFile(txtPath, []byte("resource_type: widget\nid: w1\n"), 0600)
+	suite.Require().NoError(err)
+	defer func() { _ = os.Remove(txtPath) }()
+
+	configs, err := GetConfigsFromRootDir("widget-txt-test")
+
+	suite.NoError(err)
+	suite.Empty(configs)
+}
+
+func (suite *FileBasedRuntimeManagerTestSuite) TestGetConfigsFromRootDir_EmptyOnNoYAMLFiles() {
+	configs, err := GetConfigsFromRootDir("resource-type-no-root-yaml")
+
+	suite.NoError(err)
+	suite.Empty(configs)
+}
+
+func (suite *FileBasedRuntimeManagerTestSuite) TestGetConfigsFromRootDir_YmlExtension() {
+	content := `resource_type: thing
+id: t1
+name: Thing One
+`
+	suite.createRootResourceFile("root-test.yml", content)
+	defer suite.removeRootResourceFile("root-test.yml")
+
+	configs, err := GetConfigsFromRootDir("thing")
+
+	suite.NoError(err)
+	suite.Len(configs, 1)
+	suite.Contains(string(configs[0]), "id: t1")
 }

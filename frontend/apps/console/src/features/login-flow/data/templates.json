@@ -134,10 +134,10 @@
     "config": {
       "data": {
         "__generationMeta__": {
-          "defaultPropertySelectorId": "{{BASIC_AUTH_EXECUTION_STEP_ID}}",
+          "defaultPropertySelectorId": "{{CREDENTIALS_AUTH_EXECUTION_STEP_ID}}",
           "replacers": [
             {
-              "key": "BASIC_AUTH_EXECUTION_STEP_ID",
+              "key": "CREDENTIALS_AUTH_EXECUTION_STEP_ID",
               "type": "ID"
             },
             {
@@ -215,14 +215,8 @@
                       "label": "Sign In",
                       "action": {
                         "type": "NEXT",
-                        "onSuccess": "{{BASIC_AUTH_EXECUTION_STEP_ID}}"
+                        "onSuccess": "{{CREDENTIALS_AUTH_EXECUTION_STEP_ID}}"
                       }
-                    },
-                    {
-                      "category": "DISPLAY",
-                      "label": "<p class=\"rich-text-paragraph\"><span class=\"rich-text-pre-wrap\">Don't have an account? </span><a href=\"{{meta(application.sign_up_url)}}\" target=\"_blank\" rel=\"noopener noreferrer\" class=\"rich-text-link\"><span class=\"rich-text-pre-wrap\">Sign up</span></a></p>",
-                      "id": "{{ID}}",
-                      "type": "RICH_TEXT"
                     }
                   ]
                 }
@@ -230,7 +224,7 @@
             }
           },
           {
-            "id": "{{BASIC_AUTH_EXECUTION_STEP_ID}}",
+            "id": "{{CREDENTIALS_AUTH_EXECUTION_STEP_ID}}",
             "type": "TASK_EXECUTION",
             "size": {
               "width": 217,
@@ -244,7 +238,7 @@
               "action": {
                 "type": "EXECUTOR",
                 "executor": {
-                  "name": "BasicAuthExecutor"
+                  "name": "CredentialsAuthExecutor"
                 },
                 "onSuccess": "{{AUTH_ASSERT_EXECUTOR_ID}}",
                 "onFailure": "",
@@ -306,7 +300,8 @@
     "display": {
       "label": "Password Login or Google",
       "description": "Login experience with Google as an additional option",
-      "image": "assets/images/icons/google-generic.svg",
+      "image": "assets/images/icons/google.svg",
+      "preserveImageColor": true,
       "showOnResourcePanel": true
     },
     "config": {
@@ -319,7 +314,7 @@
               "type": "ID"
             },
             {
-              "key": "BASIC_AUTH_EXECUTION_STEP_ID",
+              "key": "CREDENTIALS_AUTH_EXECUTION_STEP_ID",
               "type": "ID"
             },
             {
@@ -397,7 +392,7 @@
                       "label": "Continue",
                       "action": {
                         "type": "NEXT",
-                        "onSuccess": "{{BASIC_AUTH_EXECUTION_STEP_ID}}"
+                        "onSuccess": "{{CREDENTIALS_AUTH_EXECUTION_STEP_ID}}"
                       }
                     }
                   ]
@@ -433,7 +428,7 @@
             }
           },
           {
-            "id": "{{BASIC_AUTH_EXECUTION_STEP_ID}}",
+            "id": "{{CREDENTIALS_AUTH_EXECUTION_STEP_ID}}",
             "type": "TASK_EXECUTION",
             "size": {
               "width": 217,
@@ -447,7 +442,7 @@
               "action": {
                 "type": "EXECUTOR",
                 "executor": {
-                  "name": "BasicAuthExecutor"
+                  "name": "CredentialsAuthExecutor"
                 },
                 "onSuccess": "{{AUTH_ASSERT_EXECUTOR_ID}}",
                 "onIncomplete": ""
@@ -542,7 +537,7 @@
           "defaultPropertySelectorId": "{{SMS_SEND_EXECUTOR_ID}}",
           "replacers": [
             {
-              "key": "BASIC_AUTH_EXECUTION_STEP_ID",
+              "key": "CREDENTIALS_AUTH_EXECUTION_STEP_ID",
               "type": "ID"
             },
             {
@@ -632,7 +627,7 @@
                       "label": "Sign In",
                       "action": {
                         "type": "NEXT",
-                        "onSuccess": "{{BASIC_AUTH_EXECUTION_STEP_ID}}"
+                        "onSuccess": "{{CREDENTIALS_AUTH_EXECUTION_STEP_ID}}"
                       }
                     }
                   ]
@@ -641,7 +636,7 @@
             }
           },
           {
-            "id": "{{BASIC_AUTH_EXECUTION_STEP_ID}}",
+            "id": "{{CREDENTIALS_AUTH_EXECUTION_STEP_ID}}",
             "type": "TASK_EXECUTION",
             "size": {
               "width": 217,
@@ -655,7 +650,7 @@
               "action": {
                 "type": "EXECUTOR",
                 "executor": {
-                  "name": "BasicAuthExecutor"
+                  "name": "CredentialsAuthExecutor"
                 },
                 "onSuccess": "{{SMS_SEND_EXECUTOR_ID}}",
                 "onFailure": "",
@@ -678,12 +673,39 @@
               "action": {
                 "type": "EXECUTOR",
                 "executor": {
-                  "name": "SMSOTPAuthExecutor",
-                  "mode": "send"
+                  "name": "OTPExecutor",
+                  "mode": "generate"
+                },
+                "onSuccess": "{{SMS_EXECUTOR_ID}}",
+                "onFailure": "",
+                "onIncomplete": ""
+              }
+            }
+          },
+          {
+            "id": "{{SMS_EXECUTOR_ID}}",
+            "type": "TASK_EXECUTION",
+            "size": {
+              "width": 200,
+              "height": 113
+            },
+            "position": {
+              "x": 1470,
+              "y": 291
+            },
+            "data": {
+              "action": {
+                "type": "EXECUTOR",
+                "executor": {
+                  "name": "SMSExecutor"
                 },
                 "onSuccess": "{{SMS_OTP_VERIFICATION_STEP_ID}}",
                 "onFailure": "",
                 "onIncomplete": ""
+              },
+              "properties": {
+                "senderId": "",
+                "smsTemplate": "OTP"
               }
             }
           },
@@ -766,7 +788,7 @@
               "action": {
                 "type": "EXECUTOR",
                 "executor": {
-                  "name": "SMSOTPAuthExecutor",
+                  "name": "OTPExecutor",
                   "mode": "verify"
                 },
                 "onSuccess": "{{AUTH_ASSERT_EXECUTOR_ID}}",
@@ -901,7 +923,7 @@
                       "label": "Mobile Number",
                       "required": true,
                       "placeholder": "Enter your mobile number",
-                      "ref": "mobileNumber"
+                      "ref": "mobile_number"
                     },
                     {
                       "id": "{{ID}}",
@@ -935,8 +957,43 @@
               "action": {
                 "type": "EXECUTOR",
                 "executor": {
-                  "name": "SMSOTPAuthExecutor",
-                  "mode": "send"
+                  "name": "OTPExecutor",
+                  "mode": "generate",
+                  "inputs": [
+                    {
+                      "ref": "mobile_number",
+                      "type": "PHONE_INPUT",
+                      "identifier": "mobile_number",
+                      "required": true
+                    }
+                  ]
+                },
+                "onSuccess": "{{SMS_EXECUTOR_ID}}",
+                "onFailure": "",
+                "onIncomplete": ""
+              }
+            }
+          },
+          {
+            "id": "{{SMS_EXECUTOR_ID}}",
+            "type": "TASK_EXECUTION",
+            "size": {
+              "width": 200,
+              "height": 113
+            },
+            "position": {
+              "x": 716,
+              "y": 350
+            },
+            "data": {
+              "action": {
+                "type": "EXECUTOR",
+                "executor": {
+                  "name": "SMSExecutor"
+                },
+                "properties": {
+                  "senderId": "",
+                  "smsTemplate": "OTP"
                 },
                 "onSuccess": "{{SMS_OTP_VERIFICATION_STEP_ID}}",
                 "onFailure": "",
@@ -1030,7 +1087,7 @@
               "action": {
                 "type": "EXECUTOR",
                 "executor": {
-                  "name": "SMSOTPAuthExecutor",
+                  "name": "OTPExecutor",
                   "mode": "verify"
                 },
                 "onSuccess": "{{AUTH_ASSERT_EXECUTOR_ID}}",
@@ -1122,7 +1179,7 @@
               "type": "ID"
             },
             {
-              "key": "BASIC_AUTH_FOR_REG_EXECUTOR_ID",
+              "key": "CREDENTIALS_AUTH_FOR_REG_EXECUTOR_ID",
               "type": "ID"
             },
             {
@@ -1200,12 +1257,6 @@
                         "type": "NEXT",
                         "onSuccess": "{{IDENTITY_RESOLVER_EXECUTOR_ID}}"
                       }
-                    },
-                    {
-                      "category": "DISPLAY",
-                      "label": "<p class=\"rich-text-paragraph\"><span class=\"rich-text-pre-wrap\">Don't have an account? </span><a href=\"{{meta(application.sign_up_url)}}\" target=\"_blank\" rel=\"noopener noreferrer\" class=\"rich-text-link\"><span class=\"rich-text-pre-wrap\">Sign up</span></a></p>",
-                      "id": "{{ID}}",
-                      "type": "RICH_TEXT"
                     }
                   ]
                 }
@@ -1340,7 +1391,7 @@
                       "label": "Verify & Register Passkey",
                       "action": {
                         "type": "NEXT",
-                        "onSuccess": "{{BASIC_AUTH_FOR_REG_EXECUTOR_ID}}"
+                        "onSuccess": "{{CREDENTIALS_AUTH_FOR_REG_EXECUTOR_ID}}"
                       }
                     }
                   ]
@@ -1349,7 +1400,7 @@
             }
           },
           {
-            "id": "{{BASIC_AUTH_FOR_REG_EXECUTOR_ID}}",
+            "id": "{{CREDENTIALS_AUTH_FOR_REG_EXECUTOR_ID}}",
             "type": "TASK_EXECUTION",
             "size": {
               "width": 217,
@@ -1363,7 +1414,7 @@
               "action": {
                 "type": "EXECUTOR",
                 "executor": {
-                  "name": "BasicAuthExecutor"
+                  "name": "CredentialsAuthExecutor"
                 },
                 "onSuccess": "{{PASSKEY_REGISTER_START_EXECUTOR_ID}}",
                 "onFailure": "{{PASSWORD_FOR_REG_VIEW_ID}}",
@@ -1455,6 +1506,296 @@
             "position": {
               "x": 3671,
               "y": 561
+            },
+            "config": {},
+            "data": {
+              "action": {
+                "type": "EXECUTOR",
+                "executor": {
+                  "name": "LoginCompletionExecutor"
+                }
+              }
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "resourceType": "TEMPLATE",
+    "category": "AUTHENTICATION",
+    "type": "MAGIC_LINK",
+    "display": {
+      "label": "Magic Link",
+      "description": "Authenticate users securely with an emailed Magic Link.",
+      "image": "assets/images/icons/link.svg",
+      "showOnResourcePanel": true
+    },
+    "config": {
+      "data": {
+        "__generationMeta__": {
+          "replacers": [
+            {
+              "key": "PROMPT_EMAIL_ID",
+              "type": "ID"
+            },
+            {
+              "key": "GENERATE_LINK_ID",
+              "type": "ID"
+            },
+            {
+              "key": "SEND_EMAIL_ID",
+              "type": "ID"
+            },
+            {
+              "key": "EMAIL_SENT_VIEW_ID",
+              "type": "ID"
+            },
+            {
+              "key": "VERIFY_LINK_ID",
+              "type": "ID"
+            },
+            {
+              "key": "AUTH_ASSERT_ID",
+              "type": "ID"
+            }
+          ]
+        },
+        "steps": [
+          {
+            "id": "start",
+            "type": "START",
+            "size": {
+              "width": 101,
+              "height": 34
+            },
+            "position": {
+              "x": -300,
+              "y": 300
+            }
+          },
+          {
+            "id": "{{PROMPT_EMAIL_ID}}",
+            "type": "VIEW",
+            "size": {
+              "width": 350,
+              "height": 343
+            },
+            "position": {
+              "x": -74,
+              "y": 145
+            },
+            "data": {
+              "components": [
+                {
+                  "id": "{{ID}}",
+                  "category": "DISPLAY",
+                  "type": "TEXT",
+                  "variant": "HEADING_3",
+                  "label": "Login with Magic Link"
+                },
+                {
+                  "category": "BLOCK",
+                  "type": "BLOCK",
+                  "id": "{{ID}}",
+                  "components": [
+                    {
+                      "id": "{{ID}}",
+                      "category": "FIELD",
+                      "type": "EMAIL_INPUT",
+                      "inputType": "email",
+                      "hint": "",
+                      "label": "Email",
+                      "required": true,
+                      "placeholder": "Enter your email address",
+                      "ref": "email"
+                    },
+                    {
+                      "category": "ACTION",
+                      "type": "ACTION",
+                      "id": "{{ID}}",
+                      "variant": "PRIMARY",
+                      "eventType": "SUBMIT",
+                      "label": "Send Magic Link",
+                      "action": {
+                        "onSuccess": "{{GENERATE_LINK_ID}}",
+                        "type": "NEXT"
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          {
+            "id": "{{GENERATE_LINK_ID}}",
+            "type": "TASK_EXECUTION",
+            "size": {
+              "width": 200,
+              "height": 100
+            },
+            "position": {
+              "x": 350,
+              "y": 266
+            },
+            "data": {
+              "action": {
+                "type": "EXECUTOR",
+                "executor": {
+                  "name": "MagicLinkExecutor",
+                  "mode": "generate"
+                },
+                "onSuccess": "{{SEND_EMAIL_ID}}",
+                "onFailure": "{{PROMPT_EMAIL_ID}}"
+              }
+            }
+          },
+          {
+            "id": "{{SEND_EMAIL_ID}}",
+            "type": "TASK_EXECUTION",
+            "size": {
+              "width": 200,
+              "height": 100
+            },
+            "position": {
+              "x": 650,
+              "y": 266
+            },
+            "data": {
+              "action": {
+                "type": "EXECUTOR",
+                "executor": {
+                  "name": "EmailExecutor",
+                  "mode": "send",
+                  "inputs": [
+                    {
+                      "identifier": "email",
+                      "type": "EMAIL_INPUT",
+                      "required": true
+                    }
+                  ]
+                },
+                "onSuccess": "{{EMAIL_SENT_VIEW_ID}}"
+              },
+              "properties": {
+                "emailTemplate": "MAGIC_LINK"
+              }
+            }
+          },
+          {
+            "id": "{{EMAIL_SENT_VIEW_ID}}",
+            "type": "VIEW",
+            "size": {
+              "width": 350,
+              "height": 400
+            },
+            "position": {
+              "x": 950,
+              "y": 450
+            },
+            "data": {
+              "prompts": [
+                {
+                  "inputs": [
+                    {
+                      "ref": "magic_link_token_input",
+                      "identifier": "magicLinkToken",
+                      "type": "HIDDEN",
+                      "required": true
+                    }
+                  ],
+                  "action": {
+                    "ref": "magic_link_action",
+                    "nextNode": "{{VERIFY_LINK_ID}}"
+                  }
+                }
+              ],
+              "components": [
+                {
+                  "alt": "{{ t(signin:images.app_logo.alt) }}",
+                  "category": "DISPLAY",
+                  "height": "60",
+                  "id": "{{ID}}",
+                  "resourceType": "ELEMENT",
+                  "src": "{{ meta(application.logoUrl) }}",
+                  "type": "IMAGE",
+                  "width": ""
+                },
+                {
+                  "align": "center",
+                  "category": "DISPLAY",
+                  "id": "{{ID}}",
+                  "label": "{{ t(signin:forms.magic_link.email_sent.title) }}",
+                  "resourceType": "ELEMENT",
+                  "type": "TEXT",
+                  "variant": "HEADING_1"
+                },
+                {
+                  "align": "center",
+                  "category": "DISPLAY",
+                  "id": "{{ID}}",
+                  "label": "{{ t(signin:forms.magic_link.email_sent.description) }}",
+                  "resourceType": "ELEMENT",
+                  "type": "TEXT",
+                  "variant": "BODY_1"
+                }
+              ]
+            }
+          },
+          {
+            "id": "{{VERIFY_LINK_ID}}",
+            "type": "TASK_EXECUTION",
+            "size": {
+              "width": 200,
+              "height": 100
+            },
+            "position": {
+              "x": 950,
+              "y": 266
+            },
+            "data": {
+              "action": {
+                "type": "EXECUTOR",
+                "executor": {
+                  "name": "MagicLinkExecutor",
+                  "mode": "verify"
+                },
+                "onSuccess": "{{AUTH_ASSERT_ID}}",
+                "onFailure": "{{PROMPT_EMAIL_ID}}"
+              }
+            }
+          },
+          {
+            "id": "{{AUTH_ASSERT_ID}}",
+            "type": "TASK_EXECUTION",
+            "size": {
+              "width": 244,
+              "height": 113
+            },
+            "position": {
+              "x": 1250,
+              "y": 260
+            },
+            "data": {
+              "action": {
+                "type": "EXECUTOR",
+                "executor": {
+                  "name": "AuthAssertExecutor"
+                },
+                "onSuccess": "END"
+              }
+            }
+          },
+          {
+            "id": "END",
+            "type": "END",
+            "size": {
+              "width": 85,
+              "height": 34
+            },
+            "position": {
+              "x": 1600,
+              "y": 300
             },
             "config": {},
             "data": {

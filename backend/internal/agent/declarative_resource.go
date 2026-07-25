@@ -24,6 +24,9 @@ import (
 	"fmt"
 	"testing"
 
+	tidcommon "github.com/thunder-id/thunderid/pkg/thunderidengine/common"
+	"github.com/thunder-id/thunderid/pkg/thunderidengine/providers"
+
 	"gopkg.in/yaml.v3"
 
 	"github.com/thunder-id/thunderid/internal/agent/model"
@@ -32,8 +35,8 @@ import (
 	inboundmodel "github.com/thunder-id/thunderid/internal/inboundclient/model"
 	serverconst "github.com/thunder-id/thunderid/internal/system/constants"
 	declarativeresource "github.com/thunder-id/thunderid/internal/system/declarative_resource"
-	"github.com/thunder-id/thunderid/internal/system/error/serviceerror"
 	"github.com/thunder-id/thunderid/internal/system/log"
+	"github.com/thunder-id/thunderid/internal/system/security"
 )
 
 const (
@@ -70,7 +73,7 @@ func (e *agentExporter) GetParameterizerType() string {
 
 // GetAllResourceIDs returns IDs of all mutable (non-declarative) agents.
 // In composite mode declarative agents are excluded so they are not re-exported.
-func (e *agentExporter) GetAllResourceIDs(ctx context.Context) ([]string, *serviceerror.ServiceError) {
+func (e *agentExporter) GetAllResourceIDs(ctx context.Context) ([]string, *tidcommon.ServiceError) {
 	offset := 0
 	limit := serverconst.MaxPageSize
 	ids := []string{}
@@ -98,7 +101,7 @@ func (e *agentExporter) GetAllResourceIDs(ctx context.Context) ([]string, *servi
 
 // GetResourceByID retrieves an agent by its ID for export.
 func (e *agentExporter) GetResourceByID(
-	ctx context.Context, id string) (interface{}, string, *serviceerror.ServiceError) {
+	ctx context.Context, id string) (interface{}, string, *tidcommon.ServiceError) {
 	a, err := e.service.GetAgent(ctx, id, false)
 	if err != nil {
 		return nil, "", err
@@ -115,7 +118,7 @@ func (e *agentExporter) GetResourceByID(
 }
 
 // ValidateResource validates an agent resource prior to export.
-func (e *agentExporter) ValidateResource(
+func (e *agentExporter) ValidateResource(ctx context.Context,
 	resource interface{}, id string, logger *log.Logger,
 ) (string, *declarativeresource.ExportError) {
 	a, ok := resource.(*model.AgentGetResponse)
@@ -123,7 +126,7 @@ func (e *agentExporter) ValidateResource(
 		return "", declarativeresource.CreateTypeError(resourceTypeAgent, id)
 	}
 
-	if err := declarativeresource.ValidateResourceName(
+	if err := declarativeresource.ValidateResourceName(ctx,
 		a.Name, resourceTypeAgent, id, "AGT_VALIDATION_ERROR", logger); err != nil {
 		return "", err
 	}
@@ -183,16 +186,16 @@ func (e *agentExporter) GetResourceRulesForResource(resource interface{}) *decla
 func makeAgentDeclarativeConfig(agentSvc AgentServiceInterface) entity.DeclarativeLoaderConfig {
 	return entity.DeclarativeLoaderConfig{
 		Directory: "agents",
-		Category:  entity.EntityCategoryAgent,
+		Category:  providers.EntityCategoryAgent,
 		Parser:    makeAgentEntityParser(agentSvc),
 	}
 }
 
-// makeAgentEntityParser returns a parser that converts agent YAML into an entity.Entity.
+// makeAgentEntityParser returns a parser that converts agent YAML into an providers.Entity.
 func makeAgentEntityParser(
 	agentSvc AgentServiceInterface,
-) func([]byte) (*entity.Entity, json.RawMessage, json.RawMessage, error) {
-	return func(data []byte) (*entity.Entity, json.RawMessage, json.RawMessage, error) {
+) func([]byte) (*providers.Entity, json.RawMessage, json.RawMessage, error) {
+	return func(data []byte) (*providers.Entity, json.RawMessage, json.RawMessage, error) {
 		if agentSvc == nil {
 			return nil, nil, nil, fmt.Errorf("agent service is required for declarative entity parsing")
 		}
@@ -223,7 +226,8 @@ func makeAgentEntityParser(
 			InboundAuthProfile: req.InboundAuthProfile,
 			InboundAuthConfig:  req.InboundAuthConfig,
 		}
-		clientID, clientSecret, _, svcErr := agentSvc.ValidateAgent(context.Background(), agent, req.ID)
+		clientID, clientSecret, _, svcErr := agentSvc.ValidateAgent(
+			security.WithRuntimeContext(context.Background()), agent, req.ID)
 		if svcErr != nil {
 			return nil, nil, nil, fmt.Errorf("failed to validate agent '%s': %v", req.ID, svcErr)
 		}
@@ -275,7 +279,8 @@ func makeAgentInboundParser(agentSvc AgentServiceInterface) func([]byte) (*inbou
 			InboundAuthProfile: req.InboundAuthProfile,
 			InboundAuthConfig:  req.InboundAuthConfig,
 		}
-		_, _, resolvedClient, svcErr := agentSvc.ValidateAgent(context.Background(), agent, req.ID)
+		_, _, resolvedClient, svcErr := agentSvc.ValidateAgent(
+			security.WithRuntimeContext(context.Background()), agent, req.ID)
 		if svcErr != nil {
 			return nil, fmt.Errorf("failed to validate agent '%s': %v", req.ID, svcErr)
 		}

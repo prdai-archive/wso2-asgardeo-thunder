@@ -20,11 +20,15 @@ package authz
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"testing"
 	"time"
+
+	engineconfig "github.com/thunder-id/thunderid/pkg/thunderidengine/config"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
@@ -33,6 +37,7 @@ import (
 	oauth2const "github.com/thunder-id/thunderid/internal/oauth/oauth2/constants"
 	oauth2model "github.com/thunder-id/thunderid/internal/oauth/oauth2/model"
 	"github.com/thunder-id/thunderid/internal/system/config"
+	"github.com/thunder-id/thunderid/tests/testhelpers"
 )
 
 const (
@@ -49,11 +54,10 @@ func TestAuthorizeHandlerTestSuite(t *testing.T) {
 	suite.Run(t, new(AuthorizeHandlerTestSuite))
 }
 
-func (suite *AuthorizeHandlerTestSuite) BeforeTest(suiteName, testName string) {
+func (suite *AuthorizeHandlerTestSuite) SetupTest() {
 	config.ResetServerRuntime()
-
 	testConfig := &config.Config{
-		GateClient: config.GateClientConfig{
+		GateClient: engineconfig.GateClientConfig{
 			Scheme:    "https",
 			Hostname:  "localhost",
 			Port:      3000,
@@ -65,26 +69,24 @@ func (suite *AuthorizeHandlerTestSuite) BeforeTest(suiteName, testName string) {
 				Type:   "sqlite",
 				SQLite: config.SQLiteDataSource{Path: ":memory:"},
 			},
-			Runtime: config.DataSource{
+			RuntimeTransient: config.DataSource{
 				Type:   "sqlite",
 				SQLite: config.SQLiteDataSource{Path: ":memory:"},
 			},
 		},
-		JWT: config.JWTConfig{
+		JWT: engineconfig.JWTConfig{
 			Issuer: "https://localhost:8090",
 		},
-		OAuth: config.OAuthConfig{
-			AuthorizationCode: config.AuthorizationCodeConfig{
+		OAuth: engineconfig.OAuthConfig{
+			AuthorizationCode: engineconfig.AuthorizationCodeConfig{
 				ValidityPeriod: 600,
 			},
 		},
 	}
 	_ = config.InitializeServerRuntime("test", testConfig)
-}
 
-func (suite *AuthorizeHandlerTestSuite) SetupTest() {
 	suite.mockAuthzService = NewAuthorizeServiceInterfaceMock(suite.T())
-	suite.handler = newAuthorizeHandler(suite.mockAuthzService).(*authorizeHandler)
+	suite.handler = newAuthorizeHandler(suite.mockAuthzService, authorizeServiceCfgFromRuntime()).(*authorizeHandler)
 }
 
 func (suite *AuthorizeHandlerTestSuite) TearDownTest() {
@@ -93,7 +95,7 @@ func (suite *AuthorizeHandlerTestSuite) TearDownTest() {
 
 func (suite *AuthorizeHandlerTestSuite) TestnewAuthorizeHandler() {
 	mockSvc := NewAuthorizeServiceInterfaceMock(suite.T())
-	handler := newAuthorizeHandler(mockSvc)
+	handler := newAuthorizeHandler(mockSvc, testhelpers.OAuthConfig())
 	assert.NotNil(suite.T(), handler)
 	assert.Implements(suite.T(), (*AuthorizeHandlerInterface)(nil), handler)
 }
@@ -107,8 +109,8 @@ func (suite *AuthorizeHandlerTestSuite) TestGetOAuthMessageForGetRequest_Success
 	assert.NotNil(suite.T(), msg)
 	if msg != nil {
 		assert.Equal(suite.T(), oauth2const.TypeInitialAuthorizationRequest, msg.RequestType)
-		assert.Equal(suite.T(), "test-client", msg.RequestQueryParams["client_id"])
-		assert.Equal(suite.T(), "https://example.com", msg.RequestQueryParams["redirect_uri"])
+		assert.Equal(suite.T(), "test-client", url.Values(msg.RequestQueryParams).Get("client_id"))
+		assert.Equal(suite.T(), "https://example.com", url.Values(msg.RequestQueryParams).Get("redirect_uri"))
 		assert.Empty(suite.T(), msg.AuthID)
 	}
 }
@@ -132,8 +134,8 @@ func (suite *AuthorizeHandlerTestSuite) TestGetOAuthMessageForGetRequest_WithCla
 	assert.NoError(suite.T(), err)
 	assert.NotNil(suite.T(), msg)
 	if msg != nil {
-		assert.Equal(suite.T(), "test-client", msg.RequestQueryParams["client_id"])
-		assert.Equal(suite.T(), "en-US fr-CA ja", msg.RequestQueryParams["claims_locales"])
+		assert.Equal(suite.T(), "test-client", url.Values(msg.RequestQueryParams).Get("client_id"))
+		assert.Equal(suite.T(), "en-US fr-CA ja", url.Values(msg.RequestQueryParams).Get("claims_locales"))
 	}
 }
 
@@ -164,7 +166,7 @@ func (suite *AuthorizeHandlerTestSuite) TestGetOAuthMessageForGetRequest_Multipl
 		assert.Equal(suite.T(), 2, len(msg.Resources))
 		assert.Contains(suite.T(), msg.Resources, "https://rs1.example.com")
 		assert.Contains(suite.T(), msg.Resources, "https://rs2.example.com")
-		assert.Equal(suite.T(), "test-client", msg.RequestQueryParams["client_id"])
+		assert.Equal(suite.T(), "test-client", url.Values(msg.RequestQueryParams).Get("client_id"))
 	}
 }
 
@@ -547,7 +549,7 @@ func (suite *AuthorizeHandlerTestSuite) TestRedirectToErrorPage_NilRequest() {
 
 func (suite *AuthorizeHandlerTestSuite) TestWriteAuthZResponseToErrorPage_WithState() {
 	rr := httptest.NewRecorder()
-	suite.handler.writeAuthZResponseToErrorPage(rr, "error_code", "error message", "test-state")
+	suite.handler.writeAuthZResponseToErrorPage(context.Background(), rr, "error_code", "error message", "test-state")
 
 	assert.Equal(suite.T(), http.StatusOK, rr.Code)
 	var resp AuthZPostResponse
@@ -558,7 +560,7 @@ func (suite *AuthorizeHandlerTestSuite) TestWriteAuthZResponseToErrorPage_WithSt
 
 func (suite *AuthorizeHandlerTestSuite) TestWriteAuthZResponseToErrorPage_NoState() {
 	rr := httptest.NewRecorder()
-	suite.handler.writeAuthZResponseToErrorPage(rr, "error_code", "error message", "")
+	suite.handler.writeAuthZResponseToErrorPage(context.Background(), rr, "error_code", "error message", "")
 
 	assert.Equal(suite.T(), http.StatusOK, rr.Code)
 	var resp AuthZPostResponse
@@ -571,7 +573,7 @@ func (suite *AuthorizeHandlerTestSuite) TestWriteAuthZResponseToErrorPage_NoStat
 func (suite *AuthorizeHandlerTestSuite) TestWriteAuthZResponse() {
 	rr := httptest.NewRecorder()
 
-	suite.handler.writeAuthZResponse(rr, "https://example.com/callback?code=abc123")
+	suite.handler.writeAuthZResponse(context.Background(), rr, "https://example.com/callback?code=abc123")
 
 	assert.Equal(suite.T(), http.StatusOK, rr.Code)
 	assert.Equal(suite.T(), "application/json", rr.Header().Get("Content-Type"))
@@ -587,14 +589,18 @@ func (suite *AuthorizeHandlerTestSuite) TestGetLoginPageRedirectURI_Success() {
 		"appId":  "test-app",
 	}
 
-	redirectURI, err := getLoginPageRedirectURI(queryParams)
+	redirectURI, err := getLoginPageRedirectURI(authorizeServiceCfgFromRuntime(), queryParams)
 	assert.NoError(suite.T(), err)
 	assert.Contains(suite.T(), redirectURI, "authId=test-key")
 	assert.Contains(suite.T(), redirectURI, "appId=test-app")
 }
 
 func (suite *AuthorizeHandlerTestSuite) TestGetErrorPageRedirectURL_Success() {
-	redirectURI, err := getErrorPageRedirectURL("invalid_request", "Missing parameter")
+	redirectURI, err := getErrorPageRedirectURL(
+		authorizeServiceCfgFromRuntime(),
+		"invalid_request",
+		"Missing parameter",
+	)
 	assert.NoError(suite.T(), err)
 	assert.Contains(suite.T(), redirectURI, "errorCode=invalid_request")
 	assert.Contains(suite.T(), redirectURI, "errorMessage=Missing+parameter")
@@ -613,7 +619,7 @@ func (suite *AuthorizeHandlerTestSuite) TestGetAuthorizationCode_Success() {
 	clms := &assertionClaims{userID: "test-user"}
 	authTime := time.Now()
 
-	result, err := createAuthorizationCode(authRequestCtx, clms, authTime)
+	result, err := createAuthorizationCode(authorizeServiceCfgFromRuntime(), authRequestCtx, clms, authTime)
 
 	assert.NoError(suite.T(), err)
 	assert.NotEmpty(suite.T(), result.CodeID)
@@ -637,7 +643,7 @@ func (suite *AuthorizeHandlerTestSuite) TestGetAuthorizationCode_MissingClientID
 	clms := &assertionClaims{userID: "test-user"}
 	authTime := time.Now()
 
-	result, err := createAuthorizationCode(authRequestCtx, clms, authTime)
+	result, err := createAuthorizationCode(authorizeServiceCfgFromRuntime(), authRequestCtx, clms, authTime)
 
 	assert.Error(suite.T(), err)
 	assert.Contains(suite.T(), err.Error(), "client_id or redirect_uri is missing")
@@ -655,7 +661,7 @@ func (suite *AuthorizeHandlerTestSuite) TestGetAuthorizationCode_MissingRedirect
 	clms := &assertionClaims{userID: "test-user"}
 	authTime := time.Now()
 
-	result, err := createAuthorizationCode(authRequestCtx, clms, authTime)
+	result, err := createAuthorizationCode(authorizeServiceCfgFromRuntime(), authRequestCtx, clms, authTime)
 
 	assert.Error(suite.T(), err)
 	assert.Contains(suite.T(), err.Error(), "client_id or redirect_uri is missing")
@@ -673,7 +679,7 @@ func (suite *AuthorizeHandlerTestSuite) TestGetAuthorizationCode_EmptyUserID() {
 	clms := &assertionClaims{userID: ""}
 	authTime := time.Now()
 
-	result, err := createAuthorizationCode(authRequestCtx, clms, authTime)
+	result, err := createAuthorizationCode(authorizeServiceCfgFromRuntime(), authRequestCtx, clms, authTime)
 
 	assert.Error(suite.T(), err)
 	assert.Contains(suite.T(), err.Error(), "authenticated user not found")
@@ -692,7 +698,7 @@ func (suite *AuthorizeHandlerTestSuite) TestGetAuthorizationCode_ZeroAuthTime() 
 	zeroAuthTime := time.Time{}
 	beforeCreation := time.Now()
 
-	result, err := createAuthorizationCode(authRequestCtx, clms, zeroAuthTime)
+	result, err := createAuthorizationCode(authorizeServiceCfgFromRuntime(), authRequestCtx, clms, zeroAuthTime)
 
 	assert.NoError(suite.T(), err)
 	assert.NotEmpty(suite.T(), result.CodeID)
@@ -717,7 +723,7 @@ func (suite *AuthorizeHandlerTestSuite) TestCreateAuthorizationCode_WithClaimsLo
 	clms := &assertionClaims{userID: "test-user"}
 	authTime := time.Now()
 
-	result, err := createAuthorizationCode(authRequestCtx, clms, authTime)
+	result, err := createAuthorizationCode(authorizeServiceCfgFromRuntime(), authRequestCtx, clms, authTime)
 
 	assert.NoError(suite.T(), err)
 	assert.Equal(suite.T(), "test-client", result.ClientID)

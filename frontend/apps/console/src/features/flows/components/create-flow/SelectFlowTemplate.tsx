@@ -56,7 +56,7 @@ const CATEGORY_LABELS: Record<string, string> = {
 const BRANDED_ICONS = new Set(['assets/images/icons/google.svg']);
 
 const TEMPLATE_ICONS: Record<string, string[]> = {
-  BASIC_AUTH: ['assets/images/icons/password.svg'],
+  CREDENTIALS_AUTH: ['assets/images/icons/password.svg'],
   GOOGLE: ['assets/images/icons/google.svg'],
   GITHUB: ['assets/images/icons/github.svg'],
   GOOGLE_GITHUB: ['assets/images/icons/google.svg', 'assets/images/icons/github.svg'],
@@ -77,8 +77,15 @@ const TEMPLATE_ICONS: Record<string, string[]> = {
   PASSKEY: ['assets/images/icons/fingerprint.svg'],
   BASIC_PASSKEY: ['assets/images/icons/password.svg', 'assets/images/icons/fingerprint.svg'],
   BASIC: ['assets/images/icons/password.svg'],
-  SELF_INVITE: ['assets/images/icons/email.svg'],
+  BASIC_WITH_PROMPT: ['assets/images/icons/password.svg', 'assets/images/icons/form.svg'],
+  BASIC_WITH_CONSENT: ['assets/images/icons/password.svg', 'assets/images/icons/stamp.svg'],
+  EMAIL_SELF_INVITE: ['assets/images/icons/email.svg'],
+  SMS_SELF_INVITE: ['assets/images/icons/mobile-message.svg'],
   Email_Link: ['assets/images/icons/email.svg'],
+  MAGIC_LINK: ['assets/images/icons/link.svg'],
+  BASIC_MAGIC_LINK: ['assets/images/icons/password.svg', 'assets/images/icons/link.svg'],
+  CIBA_EMAIL_NOTIFICATION: ['assets/images/icons/email-down.svg'],
+  DISAMBIGUATION_LOGIN: ['assets/images/icons/magnifying-glass.svg'],
   DEFAULT: ['assets/images/icons/user.svg'],
 };
 

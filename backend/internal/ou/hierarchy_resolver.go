@@ -22,10 +22,10 @@ import (
 	"context"
 	"errors"
 
+	tidcommon "github.com/thunder-id/thunderid/pkg/thunderidengine/common"
+
 	"github.com/thunder-id/thunderid/internal/system/log"
 	"github.com/thunder-id/thunderid/internal/system/sysauthz"
-
-	"github.com/thunder-id/thunderid/internal/system/error/serviceerror"
 )
 
 const loggerComponentNameHierarchyResolver = "OUHierarchyResolver"
@@ -50,7 +50,7 @@ func newOUHierarchyAdapter(store organizationUnitStoreInterface) sysauthz.OUHier
 // with no error so the authz layer can decide accordingly.
 func (r *ouHierarchyAdapter) IsAncestor(
 	ctx context.Context, ancestorOUID, descendantOUID string,
-) (bool, *serviceerror.ServiceError) {
+) (bool, *tidcommon.ServiceError) {
 	logger := log.GetLogger().With(log.String(log.LoggerKeyComponentName, loggerComponentNameHierarchyResolver))
 
 	if ancestorOUID == "" || descendantOUID == "" {
@@ -61,7 +61,7 @@ func (r *ouHierarchyAdapter) IsAncestor(
 	visited := make(map[string]struct{})
 	for {
 		if _, ok := visited[current]; ok {
-			logger.Error("Cyclic organization unit parent chain detected during ancestry check",
+			logger.Error(ctx, "Cyclic organization unit parent chain detected during ancestry check",
 				log.String("ouID", current))
 			return false, nil
 		}
@@ -71,13 +71,13 @@ func (r *ouHierarchyAdapter) IsAncestor(
 		if err != nil {
 			if errors.Is(err, ErrOrganizationUnitNotFound) {
 				// Broken chain — cannot confirm ancestry; deny-safe.
-				logger.Debug("Encountered missing organization unit during ancestry check",
+				logger.Debug(ctx, "Encountered missing organization unit during ancestry check",
 					log.String("ouID", current))
 				return false, nil
 			}
-			logger.Error("Failed to traverse organization unit hierarchy during ancestry check",
+			logger.Error(ctx, "Failed to traverse organization unit hierarchy during ancestry check",
 				log.Error(err))
-			return false, &serviceerror.InternalServerError
+			return false, &tidcommon.InternalServerError
 		}
 
 		if ou.Parent == nil {
@@ -99,7 +99,7 @@ func (r *ouHierarchyAdapter) IsAncestor(
 // ServiceError is returned so callers can handle incomplete results explicitly.
 func (r *ouHierarchyAdapter) GetAncestorOUIDs(
 	ctx context.Context, ouID string,
-) ([]string, *serviceerror.ServiceError) {
+) ([]string, *tidcommon.ServiceError) {
 	logger := log.GetLogger().With(log.String(log.LoggerKeyComponentName, loggerComponentNameHierarchyResolver))
 
 	if ouID == "" {
@@ -112,22 +112,22 @@ func (r *ouHierarchyAdapter) GetAncestorOUIDs(
 
 	for {
 		if _, ok := visited[current]; ok {
-			logger.Error("Cyclic organization unit parent chain detected while collecting ancestors",
+			logger.Error(ctx, "Cyclic organization unit parent chain detected while collecting ancestors",
 				log.String("ouID", current))
-			return nil, &serviceerror.InternalServerError
+			return nil, &tidcommon.InternalServerError
 		}
 		visited[current] = struct{}{}
 
 		ou, err := r.store.GetOrganizationUnit(ctx, current)
 		if err != nil {
 			if errors.Is(err, ErrOrganizationUnitNotFound) {
-				logger.Debug("Encountered missing organization unit while collecting ancestors",
+				logger.Debug(ctx, "Encountered missing organization unit while collecting ancestors",
 					log.String("ouID", current))
 				return nil, &ErrorOrganizationUnitNotFound
 			}
-			logger.Error("Failed to traverse organization unit hierarchy while collecting ancestors",
+			logger.Error(ctx, "Failed to traverse organization unit hierarchy while collecting ancestors",
 				log.Error(err))
-			return nil, &serviceerror.InternalServerError
+			return nil, &tidcommon.InternalServerError
 		}
 
 		if ou.Parent == nil {

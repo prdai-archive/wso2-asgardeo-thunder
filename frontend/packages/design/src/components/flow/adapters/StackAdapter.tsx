@@ -35,9 +35,6 @@ interface StackAdapterProps {
   onInputChange?: (field: string, value: string) => void;
   onSubmit?: (action: EmbeddedFlowComponent, inputs: Record<string, string>) => void;
   onValidate?: (components: EmbeddedFlowComponent[]) => boolean;
-  signUpFallbackUrl?: string;
-  signInFallbackUrl?: string;
-  forgotPasswordFallbackUrl?: string;
 }
 
 export default function StackAdapter({
@@ -50,15 +47,13 @@ export default function StackAdapter({
   onInputChange = () => null,
   onSubmit = () => null,
   onValidate = undefined,
-  signUpFallbackUrl = undefined,
-  signInFallbackUrl = undefined,
-  forgotPasswordFallbackUrl = undefined,
 }: StackAdapterProps): JSX.Element {
   const nestedComponents = (component.components ?? []) as FlowComponent[];
 
   return (
     <Stack
-      className={cn('Flow--stack')}
+      id={component.id}
+      className={[cn('Flow--stack'), component.classes].filter(Boolean).join(' ')}
       direction={component.direction ?? 'column'}
       spacing={component.gap ?? 2}
       alignItems={component.align ?? 'center'}
@@ -78,9 +73,6 @@ export default function StackAdapter({
           onSubmit={onSubmit}
           onValidate={onValidate}
           maxImageSize={STACK_IMAGE_MAX_SIZE}
-          signUpFallbackUrl={signUpFallbackUrl}
-          signInFallbackUrl={signInFallbackUrl}
-          forgotPasswordFallbackUrl={forgotPasswordFallbackUrl}
         />
       ))}
     </Stack>

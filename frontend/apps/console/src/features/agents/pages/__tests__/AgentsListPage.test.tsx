@@ -27,6 +27,11 @@ vi.mock('../../components/AgentsList', () => ({
   default: () => <div data-testid="agents-list">Agents List</div>,
 }));
 
+const mockLogger = {debug: vi.fn(), error: vi.fn(), info: vi.fn(), warn: vi.fn()};
+vi.mock('@thunderid/logger/react', () => ({
+  useLogger: () => mockLogger,
+}));
+
 // Mock react-router navigate
 const mockNavigate = vi.fn();
 vi.mock('react-router', async () => {
@@ -81,13 +86,6 @@ describe('AgentsListPage', () => {
     expect(screen.getByTestId('agent-add-button')).toBeInTheDocument();
   });
 
-  it('renders the search field', () => {
-    render(<AgentsListPage />);
-
-    const searchInput = screen.getByPlaceholderText('Search agents');
-    expect(searchInput).toBeInTheDocument();
-  });
-
   it('renders the AgentsList component', () => {
     render(<AgentsListPage />);
 
@@ -135,6 +133,7 @@ describe('AgentsListPage', () => {
     await user.click(screen.getByTestId('agent-add-button'));
 
     expect(mockNavigate).toHaveBeenCalledWith('/agents/create');
+    await vi.waitFor(() => expect(mockLogger.error).toHaveBeenCalled());
   });
 
   it('handles navigation errors gracefully when Schema navigation fails', async () => {
@@ -146,6 +145,7 @@ describe('AgentsListPage', () => {
     await user.click(screen.getByTestId('agent-schema-button'));
 
     expect(mockNavigate).toHaveBeenCalledWith('/agent-types/schema-1');
+    await vi.waitFor(() => expect(mockLogger.error).toHaveBeenCalled());
   });
 
   it('does not navigate when Schema is clicked but no default type exists', async () => {

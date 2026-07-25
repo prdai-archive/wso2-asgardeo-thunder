@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2025, WSO2 LLC. (https://www.wso2.com).
+ * Copyright (c) 2025-2026, WSO2 LLC. (https://www.wso2.com).
  *
  * WSO2 LLC. licenses this file to you under the Apache License,
  * Version 2.0 (the "License"); you may not use this file except
@@ -22,9 +22,9 @@ import (
 	"encoding/json"
 	"testing"
 
+	"github.com/stretchr/testify/suite"
 	"github.com/thunder-id/thunderid/tests/integration/flow/common"
 	"github.com/thunder-id/thunderid/tests/integration/testutils"
-	"github.com/stretchr/testify/suite"
 )
 
 var (
@@ -33,6 +33,101 @@ var (
 		Name:        "Registration Flow Test Organization Unit",
 		Description: "Organization unit for registration flow testing",
 		Parent:      nil,
+	}
+
+	testRegFlow = testutils.Flow{
+		Name:     "Basic Registration Flow With Auth Assert",
+		Handle:   "basic-reg-suite-flow",
+		FlowType: "REGISTRATION",
+		Nodes: []map[string]interface{}{
+			{"id": "start", "type": "START", "onSuccess": "user_type_resolver"},
+			{
+				"id":   "user_type_resolver",
+				"type": "TASK_EXECUTION",
+				"executor": map[string]interface{}{
+					"name": "UserTypeResolver",
+				},
+				"onSuccess":    "prompt_credentials",
+				"onIncomplete": "prompt_usertype",
+			},
+			{
+				"id":   "prompt_usertype",
+				"type": "PROMPT",
+				"meta": map[string]interface{}{
+					"components": []map[string]interface{}{
+						{"type": "BLOCK", "id": "block_usertype", "components": []map[string]interface{}{
+							{"type": "SELECT", "id": "usertype_input", "ref": "userType", "label": "User Type", "required": true, "options": []string{}},
+							{"type": "ACTION", "id": "action_usertype", "label": "Continue", "variant": "PRIMARY", "eventType": "SUBMIT"},
+						}},
+					},
+				},
+				"prompts": []map[string]interface{}{
+					{"inputs": []map[string]interface{}{{"ref": "usertype_input", "identifier": "userType", "type": "SELECT", "required": true}},
+						"action": map[string]interface{}{"ref": "action_usertype", "nextNode": "user_type_resolver"}},
+				},
+			},
+			{
+				"id":   "prompt_credentials",
+				"type": "PROMPT",
+				"meta": map[string]interface{}{
+					"components": []map[string]interface{}{
+						{"type": "BLOCK", "id": "block_creds", "components": []map[string]interface{}{
+							{"type": "TEXT_INPUT", "id": "input_username", "ref": "username", "label": "Username", "required": true},
+							{"type": "PASSWORD_INPUT", "id": "input_password", "ref": "password", "label": "Password", "required": true},
+							{"type": "ACTION", "id": "action_credentials", "label": "Continue", "variant": "PRIMARY", "eventType": "SUBMIT"},
+						}},
+					},
+				},
+				"prompts": []map[string]interface{}{
+					{"inputs": []map[string]interface{}{
+						{"ref": "input_username", "identifier": "username", "type": "TEXT_INPUT", "required": true},
+						{"ref": "input_password", "identifier": "password", "type": "PASSWORD_INPUT", "required": true},
+					}, "action": map[string]interface{}{"ref": "action_credentials", "nextNode": "credentials_auth"}},
+				},
+			},
+			{
+				"id":   "credentials_auth",
+				"type": "TASK_EXECUTION",
+				"executor": map[string]interface{}{
+					"name": "CredentialsAuthExecutor",
+				},
+				"onSuccess": "provisioning",
+			},
+			{
+				"id":   "provisioning",
+				"type": "TASK_EXECUTION",
+				"executor": map[string]interface{}{
+					"name": "ProvisioningExecutor",
+				},
+				"onSuccess":    "auth_assert",
+				"onIncomplete": "prompt_schema_attrs",
+			},
+			{
+				"id":   "prompt_schema_attrs",
+				"type": "PROMPT",
+				"meta": map[string]interface{}{
+					"components": []map[string]interface{}{
+						{"align": "center", "type": "TEXT", "id": "heading_schema_attrs", "label": "Complete Your Profile", "variant": "HEADING_1"},
+						{"type": "BLOCK", "id": "block_dynamic_user_inputs", "components": []map[string]interface{}{
+							{"type": "DYNAMIC_INPUT_PLACEHOLDER", "id": "dynamic_inputs"},
+							{"type": "ACTION", "id": "action_schema_attrs", "label": "Continue", "variant": "PRIMARY", "eventType": "SUBMIT"},
+						}},
+					},
+				},
+				"prompts": []map[string]interface{}{
+					{"inputs": []map[string]interface{}{}, "action": map[string]interface{}{"ref": "action_schema_attrs", "nextNode": "provisioning"}},
+				},
+			},
+			{
+				"id":   "auth_assert",
+				"type": "TASK_EXECUTION",
+				"executor": map[string]interface{}{
+					"name": "AuthAssertExecutor",
+				},
+				"onSuccess": "end",
+			},
+			{"id": "end", "type": "END"},
+		},
 	}
 
 	testUserType = testutils.UserType{
@@ -57,7 +152,7 @@ var (
 				"type":     "string",
 				"required": true,
 			},
-			"mobileNumber": map[string]interface{}{
+			"mobile_number": map[string]interface{}{
 				"type": "string",
 			},
 		},
@@ -69,9 +164,11 @@ type BasicRegistrationFlowTestSuite struct {
 	suite.Suite
 	config           *common.TestSuiteConfig
 	entityTypeID     string
-	testAppID        string
-	testOUID         string
-	testUserTypeName string
+	testAppID          string
+	testOUID           string
+	testUserTypeName   string
+	testFlowID         string
+	isolatedAuthFlowID string
 }
 
 func TestBasicRegistrationFlowTestSuite(t *testing.T) {
@@ -98,11 +195,19 @@ func (ts *BasicRegistrationFlowTestSuite) SetupSuite() {
 	ts.entityTypeID = schemaID
 	ts.testUserTypeName = testUserType.Name
 
-	// Look up the default registration flow ID
-	regFlowID, err := testutils.GetFlowIDByHandle("default-basic-flow", "REGISTRATION")
+	// Create the registration flow
+	flowID, err := testutils.CreateFlow(testRegFlow)
 	if err != nil {
-		ts.T().Fatalf("Failed to get default registration flow ID: %v", err)
+		ts.T().Fatalf("Failed to create suite registration flow: %v", err)
 	}
+	ts.testFlowID = flowID
+
+	// Create isolated auth flow to avoid cross-type reference validation with default auth flow.
+	isolatedAuthID, err := testutils.CreateIsolatedAuthFlow("basic-registration-isolated-auth")
+	if err != nil {
+		ts.T().Fatalf("Failed to create isolated auth flow: %v", err)
+	}
+	ts.isolatedAuthFlowID = isolatedAuthID
 
 	// Create test application with allowed user types
 	testApp := testutils.Application{
@@ -110,7 +215,8 @@ func (ts *BasicRegistrationFlowTestSuite) SetupSuite() {
 		Name:                      "Registration Flow Test Application",
 		Description:               "Application for testing registration flows",
 		IsRegistrationFlowEnabled: true,
-		RegistrationFlowID:        regFlowID,
+		RegistrationFlowID:        ts.testFlowID,
+		AuthFlowID:                ts.isolatedAuthFlowID,
 		ClientID:                  "reg_flow_test_client",
 		ClientSecret:              "reg_flow_test_secret",
 		RedirectURIs:              []string{"http://localhost:3000/callback"},
@@ -137,6 +243,20 @@ func (ts *BasicRegistrationFlowTestSuite) TearDownSuite() {
 	if ts.testAppID != "" {
 		if err := testutils.DeleteApplication(ts.testAppID); err != nil {
 			ts.T().Logf("Failed to delete test application during teardown: %v", err)
+		}
+	}
+
+	// Delete registration flow
+	if ts.testFlowID != "" {
+		if err := testutils.DeleteFlow(ts.testFlowID); err != nil {
+			ts.T().Logf("Failed to delete registration flow during teardown: %v", err)
+		}
+	}
+
+	// Delete isolated auth flow
+	if ts.isolatedAuthFlowID != "" {
+		if err := testutils.DeleteFlow(ts.isolatedAuthFlowID); err != nil {
+			ts.T().Logf("Failed to delete isolated auth flow during teardown: %v", err)
 		}
 	}
 
@@ -212,7 +332,7 @@ func (ts *BasicRegistrationFlowTestSuite) TestBasicRegistrationFlowSuccess() {
 	ts.Require().Equal("COMPLETE", completeFlowStep.FlowStatus, "Expected flow status to be COMPLETE")
 	ts.Require().NotEmpty(completeFlowStep.Assertion,
 		"JWT assertion should be returned after successful registration")
-	ts.Require().Empty(completeFlowStep.FailureReason, "Failure reason should be empty for successful registration")
+	ts.Require().Nil(completeFlowStep.Error, "Error should be nil for successful registration")
 
 	// Decode and validate JWT claims
 	jwtClaims, err := testutils.DecodeJWT(completeFlowStep.Assertion)
@@ -279,9 +399,9 @@ func (ts *BasicRegistrationFlowTestSuite) TestBasicRegistrationFlowDuplicateUser
 	// Step 3: Verify registration failure due to duplicate username
 	ts.Require().Equal("ERROR", completeFlowStep.FlowStatus, "Expected flow status to be ERROR")
 	ts.Require().Empty(completeFlowStep.Assertion, "No JWT assertion should be returned for failed registration")
-	ts.Require().NotEmpty(completeFlowStep.FailureReason, "Failure reason should be provided for duplicate user")
-	ts.Equal("User already exists with the provided attributes.", completeFlowStep.FailureReason,
-		"Failure reason should indicate duplicate username")
+	ts.Require().NotNil(completeFlowStep.Error, "Error should be provided for duplicate user")
+	ts.Equal("User already exists", completeFlowStep.Error.Message.DefaultValue,
+		"Error message should indicate duplicate username")
 }
 
 func (ts *BasicRegistrationFlowTestSuite) TestBasicRegistrationFlowInitialInvalidInput() {
@@ -304,7 +424,7 @@ func (ts *BasicRegistrationFlowTestSuite) TestBasicRegistrationFlowInitialInvali
 	// Step 3: Verify flow prompt for username again
 	ts.Require().Equal("INCOMPLETE", completeFlowStep.FlowStatus, "Expected flow status to be INCOMPLETE")
 	ts.Require().Empty(completeFlowStep.Assertion, "No JWT assertion should be returned for incomplete registration")
-	ts.Require().Empty(completeFlowStep.FailureReason, "Failure reason should be empty for incomplete registration")
+	ts.Require().Nil(completeFlowStep.Error, "Error should be nil for incomplete registration")
 	ts.Require().True(common.HasInput(completeFlowStep.Data.Inputs, "password"),
 		"Flow should prompt for password after invalid input")
 
@@ -342,7 +462,7 @@ func (ts *BasicRegistrationFlowTestSuite) TestBasicRegistrationFlowInitialInvali
 	ts.Require().Equal("COMPLETE", completeFlowStep.FlowStatus, "Expected flow status to be COMPLETE")
 	ts.Require().NotEmpty(completeFlowStep.Assertion,
 		"JWT assertion should be returned after successful registration")
-	ts.Require().Empty(completeFlowStep.FailureReason, "Failure reason should be empty for successful registration")
+	ts.Require().Nil(completeFlowStep.Error, "Error should be nil for successful registration")
 
 	// Decode and validate JWT claims
 	jwtClaims, err := testutils.DecodeJWT(completeFlowStep.Assertion)
@@ -390,7 +510,7 @@ func (ts *BasicRegistrationFlowTestSuite) TestBasicRegistrationFlowSingleRequest
 	ts.Require().Equal("COMPLETE", flowStep.FlowStatus, "Expected flow status to be COMPLETE")
 	ts.Require().NotEmpty(flowStep.Assertion,
 		"JWT assertion should be returned after successful registration")
-	ts.Require().Empty(flowStep.FailureReason, "Failure reason should be empty for successful registration")
+	ts.Require().Nil(flowStep.Error, "Error should be nil for successful registration")
 
 	// Decode and validate JWT claims
 	jwtClaims, err := testutils.DecodeJWT(flowStep.Assertion)
@@ -419,17 +539,14 @@ func (ts *BasicRegistrationFlowTestSuite) TestBasicRegistrationFlowSingleRequest
 // TestBasicRegistrationFlow_WithoutTokenConfig tests that userType and OU attributes are NOT included
 // in JWT assertion when TokenConfig is not specified.
 func (ts *BasicRegistrationFlowTestSuite) TestBasicRegistrationFlow_WithoutTokenConfig() {
-	// Look up the default registration flow
-	regFlowID, err := testutils.GetFlowIDByHandle("default-basic-flow", "REGISTRATION")
-	ts.Require().NoError(err, "Failed to get default registration flow ID")
-
 	// Create a new application without TokenConfig
 	appWithoutTokenConfig := testutils.Application{
 		Name:                      "Registration Flow Test Application Without Token Config",
 		OUID:                      ts.testOUID,
 		Description:               "Application for testing default behavior without token config",
 		IsRegistrationFlowEnabled: true,
-		RegistrationFlowID:        regFlowID,
+		RegistrationFlowID:        ts.testFlowID,
+		AuthFlowID:                ts.isolatedAuthFlowID,
 		ClientID:                  "reg_flow_test_client_no_token_config",
 		ClientSecret:              "reg_flow_test_secret_no_token_config",
 		RedirectURIs:              []string{"http://localhost:3000/callback"},
@@ -491,17 +608,14 @@ func (ts *BasicRegistrationFlowTestSuite) TestBasicRegistrationFlow_WithoutToken
 // TestBasicRegistrationFlow_WithEmptyUserAttributes tests that userType and OU attributes are NOT included
 // in JWT assertion when user_attributes is an empty array.
 func (ts *BasicRegistrationFlowTestSuite) TestBasicRegistrationFlow_WithEmptyUserAttributes() {
-	// Look up the default registration flow
-	regFlowID, err := testutils.GetFlowIDByHandle("default-basic-flow", "REGISTRATION")
-	ts.Require().NoError(err, "Failed to get default registration flow ID")
-
 	// Create a new application with empty user_attributes
 	appWithEmptyAttrs := testutils.Application{
 		Name:                      "Registration Flow Test Application With Empty User Attributes",
 		OUID:                      ts.testOUID,
 		Description:               "Application for testing behavior with empty user_attributes",
 		IsRegistrationFlowEnabled: true,
-		RegistrationFlowID:        regFlowID,
+		RegistrationFlowID:        ts.testFlowID,
+		AuthFlowID:                ts.isolatedAuthFlowID,
 		ClientID:                  "reg_flow_test_client_empty_attrs",
 		ClientSecret:              "reg_flow_test_secret_empty_attrs",
 		RedirectURIs:              []string{"http://localhost:3000/callback"},
@@ -586,8 +700,8 @@ func (ts *BasicRegistrationFlowTestSuite) TestSchemaDriverInputs_DynamicPromptFo
 		"email, given_name, family_name must be dynamically prompted")
 	ts.Require().False(common.HasInput(flowStep.Data.Inputs, "username"),
 		"username should not appear again — it was already provided")
-	ts.Require().False(common.HasInput(flowStep.Data.Inputs, "mobileNumber"),
-		"optional mobileNumber should not be prompted when not in node inputs")
+	ts.Require().False(common.HasInput(flowStep.Data.Inputs, "mobile_number"),
+		"optional mobile_number should not be prompted when not in node inputs")
 
 	// Step 3: Submit schema attrs and complete.
 	inputs = map[string]string{
@@ -632,10 +746,10 @@ func (ts *BasicRegistrationFlowTestSuite) TestSchemaDriverInputs_NoPromptWhenAll
 }
 
 // TestSchemaDriverInputs_OptionalAttrProvisionedWhenInNodeInputs verifies that an optional
-// schema attribute (mobileNumber) is collected and stored when it is explicitly listed as a
+// schema attribute (mobile_number) is collected and stored when it is explicitly listed as a
 // node input in the provisioning executor configuration.
 func (ts *BasicRegistrationFlowTestSuite) TestSchemaDriverInputs_OptionalAttrProvisionedWhenInNodeInputs() {
-	// Create a custom flow that adds mobileNumber as a node input on the provisioning executor.
+	// Create a custom flow that adds mobile_number as a node input on the provisioning executor.
 	optionalAttrFlow := testutils.Flow{
 		Name:     "Optional Attr Registration Flow",
 		Handle:   "optional-attr-reg-flow",
@@ -683,14 +797,14 @@ func (ts *BasicRegistrationFlowTestSuite) TestSchemaDriverInputs_OptionalAttrPro
 					{"inputs": []map[string]interface{}{
 						{"ref": "input_username", "identifier": "username", "type": "TEXT_INPUT", "required": true},
 						{"ref": "input_password", "identifier": "password", "type": "PASSWORD_INPUT", "required": true},
-					}, "action": map[string]interface{}{"ref": "action_credentials", "nextNode": "basic_auth"}},
+					}, "action": map[string]interface{}{"ref": "action_credentials", "nextNode": "credentials_auth"}},
 				},
 			},
 			{
-				"id":   "basic_auth",
+				"id":   "credentials_auth",
 				"type": "TASK_EXECUTION",
 				"executor": map[string]interface{}{
-					"name": "BasicAuthExecutor",
+					"name": "CredentialsAuthExecutor",
 				},
 				"onSuccess": "provisioning",
 			},
@@ -702,7 +816,7 @@ func (ts *BasicRegistrationFlowTestSuite) TestSchemaDriverInputs_OptionalAttrPro
 					"inputs": []map[string]interface{}{
 						{"ref": "input_001", "identifier": "username", "type": "TEXT_INPUT", "required": true},
 						{"ref": "input_002", "identifier": "password", "type": "PASSWORD_INPUT", "required": true},
-						{"ref": "input_003", "identifier": "mobileNumber", "type": "TEXT_INPUT", "required": false},
+						{"ref": "input_003", "identifier": "mobile_number", "type": "TEXT_INPUT", "required": false},
 					},
 				},
 				"onSuccess":    "auth_assert",
@@ -752,6 +866,7 @@ func (ts *BasicRegistrationFlowTestSuite) TestSchemaDriverInputs_OptionalAttrPro
 		RedirectURIs:              []string{"http://localhost:3000/callback"},
 		AllowedUserTypes:          []string{testUserType.Name},
 		RegistrationFlowID:        flowID,
+		AuthFlowID:                ts.isolatedAuthFlowID,
 	})
 	ts.Require().NoError(err, "Failed to create test app")
 	defer func() {
@@ -771,26 +886,26 @@ func (ts *BasicRegistrationFlowTestSuite) TestSchemaDriverInputs_OptionalAttrPro
 	flowStep, err = common.CompleteFlow(flowStep.ExecutionID, inputs, "action_credentials", flowStep.ChallengeToken)
 	ts.Require().NoError(err)
 
-	// Submit schema-required attrs and the optional mobileNumber.
+	// Submit schema-required attrs and the optional mobile_number.
 	ts.Require().Equal("INCOMPLETE", flowStep.FlowStatus)
 	inputs = map[string]string{
-		"email":        username + "@example.com",
-		"given_name":   "Optional",
-		"family_name":  "User",
-		"mobileNumber": mobile,
+		"email":         username + "@example.com",
+		"given_name":    "Optional",
+		"family_name":   "User",
+		"mobile_number": mobile,
 	}
 	flowStep, err = common.CompleteFlow(flowStep.ExecutionID, inputs, "action_schema_attrs", flowStep.ChallengeToken)
 	ts.Require().NoError(err)
 	ts.Require().Equal("COMPLETE", flowStep.FlowStatus)
 
-	// Verify mobileNumber was stored.
+	// Verify mobile_number was stored.
 	user, err := testutils.FindUserByAttribute("username", username)
 	ts.Require().NoError(err)
 	ts.Require().NotNil(user)
 	userAttrs, err := testutils.GetUserAttributes(*user)
 	ts.Require().NoError(err)
-	ts.Require().Equal(mobile, userAttrs["mobileNumber"],
-		"optional mobileNumber should be provisioned when listed in node inputs")
+	ts.Require().Equal(mobile, userAttrs["mobile_number"],
+		"optional mobile_number should be provisioned when listed in node inputs")
 	ts.config.CreatedUserIDs = append(ts.config.CreatedUserIDs, user.ID)
 }
 
@@ -919,7 +1034,7 @@ func (ts *BasicRegistrationFlowTestSuite) TestSchemaDriverInputs_DisplayNameUsed
 		}
 	}()
 
-	regFlowID, err := testutils.GetFlowIDByHandle("default-basic-flow", "REGISTRATION")
+	regFlowID, err := testutils.GetFlowIDByHandle("default-flow", "REGISTRATION")
 	ts.Require().NoError(err, "Failed to get default registration flow ID")
 
 	appID, err := testutils.CreateApplication(testutils.Application{
@@ -927,10 +1042,12 @@ func (ts *BasicRegistrationFlowTestSuite) TestSchemaDriverInputs_DisplayNameUsed
 		Name:                      "DisplayName Label Test App",
 		IsRegistrationFlowEnabled: true,
 		RegistrationFlowID:        regFlowID,
-		ClientID:                  "dn_label_test_client",
-		ClientSecret:              "dn_label_test_secret",
-		RedirectURIs:              []string{"http://localhost:3000/callback"},
-		AllowedUserTypes:          []string{schemaWithDisplayName.Name},
+		// This test uses the default registration flow, which CALLs the default auth flow.
+		// Let the server default AuthFlowID to the default auth flow so the two are consistent.
+		ClientID:         "dn_label_test_client",
+		ClientSecret:     "dn_label_test_secret",
+		RedirectURIs:     []string{"http://localhost:3000/callback"},
+		AllowedUserTypes: []string{schemaWithDisplayName.Name},
 	})
 	ts.Require().NoError(err, "Failed to create displayName test app")
 	defer func() {

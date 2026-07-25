@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2025, WSO2 LLC. (https://www.wso2.com).
+ * Copyright (c) 2025-2026, WSO2 LLC. (https://www.wso2.com).
  *
  * WSO2 LLC. licenses this file to you under the Apache License,
  * Version 2.0 (the "License"); you may not use this file except
@@ -19,30 +19,31 @@
 package executor
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
+	tidcommon "github.com/thunder-id/thunderid/pkg/thunderidengine/common"
+	"github.com/thunder-id/thunderid/pkg/thunderidengine/providers"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/suite"
 
-	authncm "github.com/thunder-id/thunderid/internal/authn/common"
-	"github.com/thunder-id/thunderid/internal/flow/common"
-	"github.com/thunder-id/thunderid/internal/flow/core"
-	"github.com/thunder-id/thunderid/internal/ou"
 	"github.com/thunder-id/thunderid/internal/system/config"
-	"github.com/thunder-id/thunderid/internal/system/error/serviceerror"
-	i18ncore "github.com/thunder-id/thunderid/internal/system/i18n/core"
+	sysContext "github.com/thunder-id/thunderid/internal/system/context"
+	"github.com/thunder-id/thunderid/tests/mocks/authnprovider/managermock"
 	"github.com/thunder-id/thunderid/tests/mocks/flow/coremock"
 	"github.com/thunder-id/thunderid/tests/mocks/oumock"
 )
 
 type HTTPRequestExecutorTestSuite struct {
 	suite.Suite
-	executor   *httpRequestExecutor
-	mockServer *httptest.Server
+	mockAuthnProvider *managermock.AuthnProviderManagerMock
+	executor          *httpRequestExecutor
+	mockServer        *httptest.Server
 }
 
 func TestHTTPRequestExecutorTestSuite(t *testing.T) {
@@ -58,11 +59,19 @@ func (suite *HTTPRequestExecutorTestSuite) TearDownSuite() {
 }
 
 func (suite *HTTPRequestExecutorTestSuite) SetupTest() {
+	suite.mockAuthnProvider = managermock.NewAuthnProviderManagerMock(suite.T())
 	mockFlowFactory := coremock.NewFlowFactoryInterfaceMock(suite.T())
-	mockFlowFactory.On("CreateExecutor", ExecutorNameHTTPRequest, common.ExecutorTypeUtility,
-		[]common.Input{}, []common.Input{}).
-		Return(newMockExecutor(ExecutorNameHTTPRequest, common.ExecutorTypeUtility, []common.Input{}, []common.Input{}))
-	suite.executor = newHTTPRequestExecutor(mockFlowFactory, nil)
+	mockFlowFactory.On("CreateExecutor", ExecutorNameHTTPRequest, providers.ExecutorTypeUtility,
+		[]providers.Input{}, []providers.Input{}, mock.Anything).
+		Return(newMockExecutor(ExecutorNameHTTPRequest, providers.ExecutorTypeUtility,
+			[]providers.Input{}, []providers.Input{}))
+	suite.executor = newHTTPRequestExecutor(mockFlowFactory, nil, suite.mockAuthnProvider)
+}
+
+func newHTTPRequestAuthUser() providers.AuthUser {
+	var authUser providers.AuthUser
+	_ = authUser.UnmarshalJSON([]byte(`{"default":{"entityReferenceToken":"tok","attributeToken":"tok"}}`))
+	return authUser
 }
 
 func (suite *HTTPRequestExecutorTestSuite) TearDownTest() {
@@ -87,7 +96,7 @@ func (suite *HTTPRequestExecutorTestSuite) TestResolvePlaceholdersInConfig() {
 		w.WriteHeader(http.StatusOK)
 	}))
 
-	ctx := &core.NodeContext{
+	ctx := &providers.NodeContext{
 		ExecutionID: "test-flow",
 		UserInputs: map[string]string{
 			"username": "testuser",
@@ -98,15 +107,15 @@ func (suite *HTTPRequestExecutorTestSuite) TestResolvePlaceholdersInConfig() {
 			"orgId":     "org-456",
 		},
 		NodeProperties: map[string]interface{}{
-			"url":    suite.mockServer.URL + "/api/users/{{ context.username }}",
+			"url":    suite.mockServer.URL + "/api/users/{{ctx(username)}}",
 			"method": "POST",
 			"headers": map[string]interface{}{
-				"X-Session-Id": "{{ context.sessionId }}",
-				"X-Org-Id":     "{{ context.orgId }}",
+				"X-Session-Id": "{{ctx(sessionId)}}",
+				"X-Org-Id":     "{{ctx(orgId)}}",
 			},
 			"body": map[string]interface{}{
-				"user":  "{{ context.username }}",
-				"email": "{{ context.email }}",
+				"user":  "{{ctx(username)}}",
+				"email": "{{ctx(email)}}",
 			},
 		},
 	}
@@ -114,7 +123,7 @@ func (suite *HTTPRequestExecutorTestSuite) TestResolvePlaceholdersInConfig() {
 	execResp, err := suite.executor.Execute(ctx)
 
 	assert.NoError(suite.T(), err)
-	assert.Equal(suite.T(), common.ExecComplete, execResp.Status)
+	assert.Equal(suite.T(), providers.ExecComplete, execResp.Status)
 
 	// Verify URL placeholder was resolved
 	assert.Equal(suite.T(), "/api/users/testuser", receivedURL)
@@ -129,7 +138,6 @@ func (suite *HTTPRequestExecutorTestSuite) TestResolvePlaceholdersInConfig() {
 }
 
 func (suite *HTTPRequestExecutorTestSuite) TestResolvePlaceholderUserIDSpecialHandling() {
-	// Test that userID is resolved correctly from AuthenticatedUser
 	var receivedBody map[string]interface{}
 
 	suite.mockServer = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -140,20 +148,23 @@ func (suite *HTTPRequestExecutorTestSuite) TestResolvePlaceholderUserIDSpecialHa
 		w.WriteHeader(http.StatusOK)
 	}))
 
-	ctx := &core.NodeContext{
+	authUser := newHTTPRequestAuthUser()
+	suite.mockAuthnProvider.On("GetEntityReference", mock.Anything, mock.Anything).
+		Return(authUser, &providers.EntityReference{EntityID: "auth-user-456"}, nil)
+
+	ctx := &providers.NodeContext{
+		Context:     context.Background(),
 		ExecutionID: "test-flow",
 		UserInputs: map[string]string{
-			"userId": "input-user-id", // This should NOT be used for userId
+			"userId": "input-user-id",
 		},
 		RuntimeData: map[string]string{},
-		AuthenticatedUser: authncm.AuthenticatedUser{
-			UserID: "auth-user-456",
-		},
+		AuthUser:    authUser,
 		NodeProperties: map[string]interface{}{
 			"url":    suite.mockServer.URL + "/api/user",
 			"method": "POST",
 			"body": map[string]interface{}{
-				"userId": "{{ context.userId }}",
+				"userId": "{{ctx(userId)}}",
 			},
 		},
 	}
@@ -161,9 +172,9 @@ func (suite *HTTPRequestExecutorTestSuite) TestResolvePlaceholderUserIDSpecialHa
 	execResp, err := suite.executor.Execute(ctx)
 
 	assert.NoError(suite.T(), err)
-	assert.Equal(suite.T(), common.ExecComplete, execResp.Status)
+	assert.Equal(suite.T(), providers.ExecComplete, execResp.Status)
 
-	// userId should be resolved from AuthenticatedUser, not from UserInputs
+	// userId should be resolved from GetEntityReference, not from UserInputs
 	assert.Equal(suite.T(), "auth-user-456", receivedBody["userId"])
 }
 
@@ -179,7 +190,7 @@ func (suite *HTTPRequestExecutorTestSuite) TestResolvePlaceholderRuntimeDataPrec
 		w.WriteHeader(http.StatusOK)
 	}))
 
-	ctx := &core.NodeContext{
+	ctx := &providers.NodeContext{
 		ExecutionID: "test-flow",
 		UserInputs: map[string]string{
 			"key": "user-input-value",
@@ -191,7 +202,7 @@ func (suite *HTTPRequestExecutorTestSuite) TestResolvePlaceholderRuntimeDataPrec
 			"url":    suite.mockServer.URL + "/api/test",
 			"method": "POST",
 			"body": map[string]interface{}{
-				"value": "{{ context.key }}",
+				"value": "{{ctx(key)}}",
 			},
 		},
 	}
@@ -199,7 +210,7 @@ func (suite *HTTPRequestExecutorTestSuite) TestResolvePlaceholderRuntimeDataPrec
 	execResp, err := suite.executor.Execute(ctx)
 
 	assert.NoError(suite.T(), err)
-	assert.Equal(suite.T(), common.ExecComplete, execResp.Status)
+	assert.Equal(suite.T(), providers.ExecComplete, execResp.Status)
 
 	// RuntimeData should take precedence
 	assert.Equal(suite.T(), "runtime-value", receivedBody["value"])
@@ -217,7 +228,7 @@ func (suite *HTTPRequestExecutorTestSuite) TestResolvePlaceholderNonExistentKey(
 		w.WriteHeader(http.StatusOK)
 	}))
 
-	ctx := &core.NodeContext{
+	ctx := &providers.NodeContext{
 		ExecutionID: "test-flow",
 		UserInputs:  map[string]string{},
 		RuntimeData: map[string]string{},
@@ -225,7 +236,7 @@ func (suite *HTTPRequestExecutorTestSuite) TestResolvePlaceholderNonExistentKey(
 			"url":    suite.mockServer.URL + "/api/test",
 			"method": "POST",
 			"body": map[string]interface{}{
-				"value": "{{ context.nonexistent }}",
+				"value": "{{ctx(nonexistent)}}",
 			},
 		},
 	}
@@ -233,14 +244,14 @@ func (suite *HTTPRequestExecutorTestSuite) TestResolvePlaceholderNonExistentKey(
 	execResp, err := suite.executor.Execute(ctx)
 
 	assert.NoError(suite.T(), err)
-	assert.Equal(suite.T(), common.ExecComplete, execResp.Status)
+	assert.Equal(suite.T(), providers.ExecComplete, execResp.Status)
 
 	// Non-existent key should keep placeholder
-	assert.Equal(suite.T(), "{{ context.nonexistent }}", receivedBody["value"])
+	assert.Equal(suite.T(), "{{ctx(nonexistent)}}", receivedBody["value"])
 }
 
 func (suite *HTTPRequestExecutorTestSuite) TestResolveMapPlaceholders() {
-	ctx := &core.NodeContext{
+	ctx := &providers.NodeContext{
 		ExecutionID: "test-flow",
 		UserInputs: map[string]string{
 			"username": "testuser",
@@ -253,23 +264,24 @@ func (suite *HTTPRequestExecutorTestSuite) TestResolveMapPlaceholders() {
 
 	input := map[string]interface{}{
 		"user": map[string]interface{}{
-			"name":  "{{ context.username }}",
-			"email": "{{ context.email }}",
+			"name":  "{{ctx(username)}}",
+			"email": "{{ctx(email)}}",
 			"metadata": map[string]interface{}{
-				"orgId":  "{{ context.orgId }}",
+				"orgId":  "{{ctx(orgId)}}",
 				"static": "value",
 			},
 		},
 		"items": []interface{}{
-			"{{ context.username }}",
+			"{{ctx(username)}}",
 			"static",
 			map[string]interface{}{
-				"nested": "{{ context.email }}",
+				"nested": "{{ctx(email)}}",
 			},
 		},
 	}
 
-	result := suite.executor.resolveMapPlaceholders(ctx, input)
+	execResp := &providers.ExecutorResponse{}
+	result := suite.executor.resolveMapPlaceholders(ctx, input, execResp)
 
 	expected := map[string]interface{}{
 		"user": map[string]interface{}{
@@ -309,7 +321,7 @@ func (suite *HTTPRequestExecutorTestSuite) TestExecute_SuccessfulGETRequest() {
 
 	responseMappingJSON := `{"id": "response.data.id", "name": "response.data.name"}`
 
-	ctx := &core.NodeContext{
+	ctx := &providers.NodeContext{
 		ExecutionID: "test-flow",
 		NodeProperties: map[string]interface{}{
 			"url":             suite.mockServer.URL + "/api/users/123",
@@ -323,7 +335,7 @@ func (suite *HTTPRequestExecutorTestSuite) TestExecute_SuccessfulGETRequest() {
 	execResp, err := suite.executor.Execute(ctx)
 
 	assert.NoError(suite.T(), err)
-	assert.Equal(suite.T(), common.ExecComplete, execResp.Status)
+	assert.Equal(suite.T(), providers.ExecComplete, execResp.Status)
 	assert.Equal(suite.T(), "123", execResp.RuntimeData["id"])
 	assert.Equal(suite.T(), "Test User", execResp.RuntimeData["name"])
 }
@@ -348,11 +360,11 @@ func (suite *HTTPRequestExecutorTestSuite) TestExecute_SuccessfulPOSTRequest() {
 		assert.NoError(suite.T(), err, "Failed to encode mock response")
 	}))
 
-	bodyJSON := `{"username": "{{ context.username }}", "email": "{{ context.email }}"}`
-	headersJSON := `{"Authorization": "Bearer token123", "X-Custom-Header": "{{ context.customValue }}"}`
+	bodyJSON := `{"username": "{{ctx(username)}}", "email": "{{ctx(email)}}"}`
+	headersJSON := `{"Authorization": "Bearer token123", "X-Custom-Header": "{{ctx(customValue)}}"}`
 	responseMappingJSON := `{"status": "response.data.status", "userId": "response.data.userId"}`
 
-	ctx := &core.NodeContext{
+	ctx := &providers.NodeContext{
 		ExecutionID: "test-flow",
 		NodeProperties: map[string]interface{}{
 			"url":             suite.mockServer.URL + "/api/users",
@@ -372,7 +384,7 @@ func (suite *HTTPRequestExecutorTestSuite) TestExecute_SuccessfulPOSTRequest() {
 	execResp, err := suite.executor.Execute(ctx)
 
 	assert.NoError(suite.T(), err)
-	assert.Equal(suite.T(), common.ExecComplete, execResp.Status)
+	assert.Equal(suite.T(), providers.ExecComplete, execResp.Status)
 	assert.Equal(suite.T(), "created", execResp.RuntimeData["status"])
 	assert.Equal(suite.T(), "new-user-123", execResp.RuntimeData["userId"])
 
@@ -383,6 +395,57 @@ func (suite *HTTPRequestExecutorTestSuite) TestExecute_SuccessfulPOSTRequest() {
 	// Verify headers
 	assert.Equal(suite.T(), "Bearer token123", receivedHeaders.Get("Authorization"))
 	assert.Equal(suite.T(), "custom123", receivedHeaders.Get("X-Custom-Header"))
+}
+
+func (suite *HTTPRequestExecutorTestSuite) TestExecute_PropagatesCorrelationID() {
+	var receivedHeaders http.Header
+	suite.mockServer = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		receivedHeaders = r.Header
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{"ok": true})
+	}))
+
+	ctx := &providers.NodeContext{
+		Context:     sysContext.WithTraceID(context.Background(), "trace-xyz"),
+		ExecutionID: "test-flow",
+		NodeProperties: map[string]interface{}{
+			"url":    suite.mockServer.URL + "/api",
+			"method": "GET",
+		},
+		UserInputs:  make(map[string]string),
+		RuntimeData: make(map[string]string),
+	}
+
+	_, err := suite.executor.Execute(ctx)
+
+	assert.NoError(suite.T(), err)
+	assert.Equal(suite.T(), "trace-xyz", receivedHeaders.Get("X-Correlation-ID"))
+}
+
+func (suite *HTTPRequestExecutorTestSuite) TestExecute_DoesNotOverrideConfiguredCorrelationID() {
+	var receivedHeaders http.Header
+	suite.mockServer = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		receivedHeaders = r.Header
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{"ok": true})
+	}))
+
+	ctx := &providers.NodeContext{
+		Context:     sysContext.WithTraceID(context.Background(), "trace-xyz"),
+		ExecutionID: "test-flow",
+		NodeProperties: map[string]interface{}{
+			"url":     suite.mockServer.URL + "/api",
+			"method":  "GET",
+			"headers": `{"X-Correlation-ID": "explicit-id"}`,
+		},
+		UserInputs:  make(map[string]string),
+		RuntimeData: make(map[string]string),
+	}
+
+	_, err := suite.executor.Execute(ctx)
+
+	assert.NoError(suite.T(), err)
+	assert.Equal(suite.T(), "explicit-id", receivedHeaders.Get("X-Correlation-ID"))
 }
 
 func (suite *HTTPRequestExecutorTestSuite) TestExecute_ResponseMapping() {
@@ -404,7 +467,7 @@ func (suite *HTTPRequestExecutorTestSuite) TestExecute_ResponseMapping() {
 	responseMappingJSON := `{"externalUserId": "response.data.data.userId", 
 	"profileUrl": "response.data.data.profileUrl", "timestamp": "response.data.metadata.timestamp"}`
 
-	ctx := &core.NodeContext{
+	ctx := &providers.NodeContext{
 		ExecutionID: "test-flow",
 		NodeProperties: map[string]interface{}{
 			"url":             suite.mockServer.URL + "/api/data",
@@ -417,7 +480,7 @@ func (suite *HTTPRequestExecutorTestSuite) TestExecute_ResponseMapping() {
 	execResp, err := suite.executor.Execute(ctx)
 
 	assert.NoError(suite.T(), err)
-	assert.Equal(suite.T(), common.ExecComplete, execResp.Status)
+	assert.Equal(suite.T(), providers.ExecComplete, execResp.Status)
 	assert.Equal(suite.T(), "user-789", execResp.RuntimeData["externalUserId"])
 	assert.Equal(suite.T(), "https://example.com/profile", execResp.RuntimeData["profileUrl"])
 	assert.Equal(suite.T(), "2025-11-12T10:00:00Z", execResp.RuntimeData["timestamp"])
@@ -431,7 +494,7 @@ func (suite *HTTPRequestExecutorTestSuite) TestExecute_DefaultMethod() {
 		w.WriteHeader(http.StatusOK)
 	}))
 
-	ctx := &core.NodeContext{
+	ctx := &providers.NodeContext{
 		ExecutionID: "test-flow",
 		NodeProperties: map[string]interface{}{
 			"url": suite.mockServer.URL + "/api/test",
@@ -444,7 +507,7 @@ func (suite *HTTPRequestExecutorTestSuite) TestExecute_DefaultMethod() {
 	execResp, err := suite.executor.Execute(ctx)
 
 	assert.NoError(suite.T(), err)
-	assert.Equal(suite.T(), common.ExecComplete, execResp.Status)
+	assert.Equal(suite.T(), providers.ExecComplete, execResp.Status)
 }
 
 func (suite *HTTPRequestExecutorTestSuite) TestExecute_ErrorHandling_FailOnErrorFalse() {
@@ -454,7 +517,7 @@ func (suite *HTTPRequestExecutorTestSuite) TestExecute_ErrorHandling_FailOnError
 		assert.NoError(suite.T(), err, "Failed to write mock error response")
 	}))
 
-	ctx := &core.NodeContext{
+	ctx := &providers.NodeContext{
 		ExecutionID: "test-flow",
 		NodeProperties: map[string]interface{}{
 			"url": suite.mockServer.URL + "/api/error",
@@ -467,7 +530,7 @@ func (suite *HTTPRequestExecutorTestSuite) TestExecute_ErrorHandling_FailOnError
 
 	assert.NoError(suite.T(), err)
 	// Should complete without failure when failOnError defaults to false
-	assert.Equal(suite.T(), common.ExecComplete, execResp.Status)
+	assert.Equal(suite.T(), providers.ExecComplete, execResp.Status)
 }
 
 func (suite *HTTPRequestExecutorTestSuite) TestExecute_ErrorHandling_FailOnErrorTrue() {
@@ -479,7 +542,7 @@ func (suite *HTTPRequestExecutorTestSuite) TestExecute_ErrorHandling_FailOnError
 
 	errorHandlingJSON := `{"failOnError": true}`
 
-	ctx := &core.NodeContext{
+	ctx := &providers.NodeContext{
 		ExecutionID: "test-flow",
 		NodeProperties: map[string]interface{}{
 			"url":           suite.mockServer.URL + "/api/error",
@@ -492,12 +555,12 @@ func (suite *HTTPRequestExecutorTestSuite) TestExecute_ErrorHandling_FailOnError
 	execResp, err := suite.executor.Execute(ctx)
 
 	assert.NoError(suite.T(), err)
-	assert.Equal(suite.T(), common.ExecFailure, execResp.Status)
-	assert.Contains(suite.T(), execResp.FailureReason, "HTTP request failed with status 400")
+	assert.Equal(suite.T(), providers.ExecFailure, execResp.Status)
+	assert.Contains(suite.T(), execResp.Error.ErrorDescription.DefaultValue, "HTTP request failed with status 400")
 }
 
 func (suite *HTTPRequestExecutorTestSuite) TestExecute_MissingURL() {
-	ctx := &core.NodeContext{
+	ctx := &providers.NodeContext{
 		ExecutionID: "test-flow",
 		NodeProperties: map[string]interface{}{
 			// URL is missing
@@ -511,12 +574,12 @@ func (suite *HTTPRequestExecutorTestSuite) TestExecute_MissingURL() {
 
 	assert.NoError(suite.T(), err)
 	// Configuration errors always fail the flow regardless of failOnError setting
-	assert.Equal(suite.T(), common.ExecFailure, execResp.Status)
-	assert.Contains(suite.T(), execResp.FailureReason, "url is required")
+	assert.Equal(suite.T(), providers.ExecFailure, execResp.Status)
+	assert.Equal(suite.T(), ErrHTTPRequestConfigInvalid.Error.DefaultValue, execResp.Error.Error.DefaultValue)
 }
 
 func (suite *HTTPRequestExecutorTestSuite) TestExecute_InvalidHTTPMethod() {
-	ctx := &core.NodeContext{
+	ctx := &providers.NodeContext{
 		ExecutionID: "test-flow",
 		NodeProperties: map[string]interface{}{
 			"url":    "https://example.com/api/test",
@@ -530,8 +593,8 @@ func (suite *HTTPRequestExecutorTestSuite) TestExecute_InvalidHTTPMethod() {
 
 	assert.NoError(suite.T(), err)
 	// Configuration errors always fail the flow regardless of failOnError setting
-	assert.Equal(suite.T(), common.ExecFailure, execResp.Status)
-	assert.Contains(suite.T(), execResp.FailureReason, "invalid HTTP method")
+	assert.Equal(suite.T(), providers.ExecFailure, execResp.Status)
+	assert.Equal(suite.T(), ErrHTTPRequestConfigInvalid.Error.DefaultValue, execResp.Error.Error.DefaultValue)
 }
 
 func (suite *HTTPRequestExecutorTestSuite) TestParseAndValidateConfig_TimeoutLimits() {
@@ -541,7 +604,7 @@ func (suite *HTTPRequestExecutorTestSuite) TestParseAndValidateConfig_TimeoutLim
 		"timeout": "60", // Exceeds max of 30
 	}
 
-	config, err := suite.executor.parseAndValidateConfig(properties)
+	config, err := suite.executor.parseAndValidateConfig(context.Background(), properties)
 	assert.NoError(suite.T(), err)
 	assert.Equal(suite.T(), maxHTTPRequestTimeout, config.Timeout, "Timeout should be capped at maximum")
 
@@ -550,7 +613,7 @@ func (suite *HTTPRequestExecutorTestSuite) TestParseAndValidateConfig_TimeoutLim
 		"url": "https://example.com/api/test",
 	}
 
-	config2, err := suite.executor.parseAndValidateConfig(properties2)
+	config2, err := suite.executor.parseAndValidateConfig(context.Background(), properties2)
 	assert.NoError(suite.T(), err)
 	assert.Equal(suite.T(), defaultHTTPTimeout, config2.Timeout)
 }
@@ -563,7 +626,7 @@ func (suite *HTTPRequestExecutorTestSuite) TestParseAndValidateConfig_RetryLimit
 		"errorHandling": errorHandlingJSON,
 	}
 
-	config, err := suite.executor.parseAndValidateConfig(properties)
+	config, err := suite.executor.parseAndValidateConfig(context.Background(), properties)
 	assert.NoError(suite.T(), err)
 	assert.Equal(suite.T(), maxHTTPRequestRetryCount, config.ErrorHandling.RetryCount)
 	assert.Equal(suite.T(), maxHTTPRequestRetryDelay, config.ErrorHandling.RetryDelay)
@@ -580,7 +643,7 @@ func (suite *HTTPRequestExecutorTestSuite) TestExecute_AllHTTPMethods() {
 			}))
 			defer suite.mockServer.Close()
 
-			ctx := &core.NodeContext{
+			ctx := &providers.NodeContext{
 				ExecutionID: "test-flow",
 				NodeProperties: map[string]interface{}{
 					"url":    suite.mockServer.URL + "/api/test",
@@ -593,7 +656,7 @@ func (suite *HTTPRequestExecutorTestSuite) TestExecute_AllHTTPMethods() {
 			execResp, err := suite.executor.Execute(ctx)
 
 			assert.NoError(suite.T(), err)
-			assert.Equal(suite.T(), common.ExecComplete, execResp.Status)
+			assert.Equal(suite.T(), providers.ExecComplete, execResp.Status)
 		})
 	}
 }
@@ -660,7 +723,7 @@ func (suite *HTTPRequestExecutorTestSuite) TestExecute_NonJSONResponse() {
 
 	responseMappingJSON := `{"raw": "response.data.raw"}`
 
-	ctx := &core.NodeContext{
+	ctx := &providers.NodeContext{
 		ExecutionID: "test-flow",
 		NodeProperties: map[string]interface{}{
 			"url":             suite.mockServer.URL + "/api/text",
@@ -673,7 +736,7 @@ func (suite *HTTPRequestExecutorTestSuite) TestExecute_NonJSONResponse() {
 	execResp, err := suite.executor.Execute(ctx)
 
 	assert.NoError(suite.T(), err)
-	assert.Equal(suite.T(), common.ExecComplete, execResp.Status)
+	assert.Equal(suite.T(), providers.ExecComplete, execResp.Status)
 	assert.Equal(suite.T(), "Plain text response", execResp.RuntimeData["raw"])
 }
 
@@ -690,7 +753,7 @@ func (suite *HTTPRequestExecutorTestSuite) TestExecute_ResponseStatusExtraction(
 
 	responseMappingJSON := `{"resourceId": "response.data.id", "statusCode": "response.status"}`
 
-	ctx := &core.NodeContext{
+	ctx := &providers.NodeContext{
 		ExecutionID: "test-flow",
 		NodeProperties: map[string]interface{}{
 			"url":             suite.mockServer.URL + "/api/resource",
@@ -704,14 +767,12 @@ func (suite *HTTPRequestExecutorTestSuite) TestExecute_ResponseStatusExtraction(
 	execResp, err := suite.executor.Execute(ctx)
 
 	assert.NoError(suite.T(), err)
-	assert.Equal(suite.T(), common.ExecComplete, execResp.Status)
+	assert.Equal(suite.T(), providers.ExecComplete, execResp.Status)
 	assert.Equal(suite.T(), "123", execResp.RuntimeData["resourceId"])
 	assert.Equal(suite.T(), "201", execResp.RuntimeData["statusCode"])
 }
 
-func (suite *HTTPRequestExecutorTestSuite) TestEnrichOURuntimeData_OUIDFromAuthenticatedUser() {
-	// When AuthenticatedUser.OUID is set, it should be used to fetch OU details
-	// and ouHandle/ouName should be enriched into RuntimeData before placeholder resolution.
+func (suite *HTTPRequestExecutorTestSuite) TestEnrichOURuntimeData_OUIDFromEntityReference() {
 	var receivedBody map[string]interface{}
 
 	suite.mockServer = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -724,33 +785,38 @@ func (suite *HTTPRequestExecutorTestSuite) TestEnrichOURuntimeData_OUIDFromAuthe
 
 	mockOUService := oumock.NewOrganizationUnitServiceInterfaceMock(suite.T())
 	mockOUService.On("GetOrganizationUnit", mock.Anything, "ou-auth-123").
-		Return(ou.OrganizationUnit{
+		Return(providers.OrganizationUnit{
 			ID:          "ou-auth-123",
 			Handle:      "acme-corp",
 			Name:        "Acme Corporation",
 			Description: "Acme Corporation description",
 		}, nil)
 
-	mockFlowFactory := coremock.NewFlowFactoryInterfaceMock(suite.T())
-	mockFlowFactory.On("CreateExecutor", ExecutorNameHTTPRequest, common.ExecutorTypeUtility,
-		[]common.Input{}, []common.Input{}).
-		Return(newMockExecutor(ExecutorNameHTTPRequest, common.ExecutorTypeUtility, []common.Input{}, []common.Input{}))
-	executor := newHTTPRequestExecutor(mockFlowFactory, mockOUService)
+	authUser := newHTTPRequestAuthUser()
+	mockAuthnProvider := managermock.NewAuthnProviderManagerMock(suite.T())
+	mockAuthnProvider.On("GetEntityReference", mock.Anything, mock.Anything).
+		Return(authUser, &providers.EntityReference{EntityID: "ou-auth-123"}, nil)
 
-	ctx := &core.NodeContext{
+	mockFlowFactory := coremock.NewFlowFactoryInterfaceMock(suite.T())
+	mockFlowFactory.On("CreateExecutor", ExecutorNameHTTPRequest, providers.ExecutorTypeUtility,
+		[]providers.Input{}, []providers.Input{}, mock.Anything).
+		Return(newMockExecutor(ExecutorNameHTTPRequest, providers.ExecutorTypeUtility,
+			[]providers.Input{}, []providers.Input{}))
+	executor := newHTTPRequestExecutor(mockFlowFactory, mockOUService, mockAuthnProvider)
+
+	ctx := &providers.NodeContext{
+		Context:     context.Background(),
 		ExecutionID: "test-flow",
-		AuthenticatedUser: authncm.AuthenticatedUser{
-			OUID: "ou-auth-123",
-		},
+		AuthUser:    authUser,
 		RuntimeData: map[string]string{},
 		UserInputs:  map[string]string{},
 		NodeProperties: map[string]interface{}{
 			"url":    suite.mockServer.URL + "/api/enrich",
 			"method": "POST",
 			"body": map[string]interface{}{
-				"orgHandle":      "{{ context.ouHandle }}",
-				"orgName":        "{{ context.ouName }}",
-				"orgDescription": "{{ context.ouDescription }}",
+				"orgHandle":      "{{ctx(ouHandle)}}",
+				"orgName":        "{{ctx(ouName)}}",
+				"orgDescription": "{{ctx(ouDescription)}}",
 			},
 		},
 	}
@@ -758,14 +824,13 @@ func (suite *HTTPRequestExecutorTestSuite) TestEnrichOURuntimeData_OUIDFromAuthe
 	execResp, err := executor.Execute(ctx)
 
 	assert.NoError(suite.T(), err)
-	assert.Equal(suite.T(), common.ExecComplete, execResp.Status)
+	assert.Equal(suite.T(), providers.ExecComplete, execResp.Status)
 	assert.Equal(suite.T(), "acme-corp", receivedBody["orgHandle"])
 	assert.Equal(suite.T(), "Acme Corporation", receivedBody["orgName"])
 	assert.Equal(suite.T(), "Acme Corporation description", receivedBody["orgDescription"])
 }
 
-func (suite *HTTPRequestExecutorTestSuite) TestEnrichOURuntimeData_FallbackToRuntimeData() {
-	// When AuthenticatedUser.OUID is absent, RuntimeData["ouId"] should be used to fetch OU details.
+func (suite *HTTPRequestExecutorTestSuite) TestEnrichOURuntimeData_OUIDFromRuntimeData() {
 	var receivedBody map[string]interface{}
 
 	suite.mockServer = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -778,24 +843,27 @@ func (suite *HTTPRequestExecutorTestSuite) TestEnrichOURuntimeData_FallbackToRun
 
 	mockOUService := oumock.NewOrganizationUnitServiceInterfaceMock(suite.T())
 	mockOUService.On("GetOrganizationUnit", mock.Anything, "ou-runtime-456").
-		Return(ou.OrganizationUnit{
+		Return(providers.OrganizationUnit{
 			ID:          "ou-runtime-456",
 			Handle:      "beta-org",
 			Name:        "Beta Organization",
 			Description: "Beta Organization description",
 		}, nil)
 
-	mockFlowFactory := coremock.NewFlowFactoryInterfaceMock(suite.T())
-	mockFlowFactory.On("CreateExecutor", ExecutorNameHTTPRequest, common.ExecutorTypeUtility,
-		[]common.Input{}, []common.Input{}).
-		Return(newMockExecutor(ExecutorNameHTTPRequest, common.ExecutorTypeUtility, []common.Input{}, []common.Input{}))
-	executor := newHTTPRequestExecutor(mockFlowFactory, mockOUService)
+	authUser := newHTTPRequestAuthUser()
+	mockAuthnProvider := managermock.NewAuthnProviderManagerMock(suite.T())
 
-	ctx := &core.NodeContext{
-		ExecutionID:       "test-flow",
-		AuthenticatedUser: authncm.AuthenticatedUser{
-			// OUID is empty — falls back to RuntimeData["ouId"]
-		},
+	mockFlowFactory := coremock.NewFlowFactoryInterfaceMock(suite.T())
+	mockFlowFactory.On("CreateExecutor", ExecutorNameHTTPRequest, providers.ExecutorTypeUtility,
+		[]providers.Input{}, []providers.Input{}, mock.Anything).
+		Return(newMockExecutor(ExecutorNameHTTPRequest, providers.ExecutorTypeUtility,
+			[]providers.Input{}, []providers.Input{}))
+	executor := newHTTPRequestExecutor(mockFlowFactory, mockOUService, mockAuthnProvider)
+
+	ctx := &providers.NodeContext{
+		Context:     context.Background(),
+		ExecutionID: "test-flow",
+		AuthUser:    authUser,
 		RuntimeData: map[string]string{
 			"ouId": "ou-runtime-456",
 		},
@@ -804,9 +872,9 @@ func (suite *HTTPRequestExecutorTestSuite) TestEnrichOURuntimeData_FallbackToRun
 			"url":    suite.mockServer.URL + "/api/enrich",
 			"method": "POST",
 			"body": map[string]interface{}{
-				"handle":      "{{ context.ouHandle }}",
-				"name":        "{{ context.ouName }}",
-				"description": "{{ context.ouDescription }}",
+				"handle":      "{{ctx(ouHandle)}}",
+				"name":        "{{ctx(ouName)}}",
+				"description": "{{ctx(ouDescription)}}",
 			},
 		},
 	}
@@ -814,15 +882,14 @@ func (suite *HTTPRequestExecutorTestSuite) TestEnrichOURuntimeData_FallbackToRun
 	execResp, err := executor.Execute(ctx)
 
 	assert.NoError(suite.T(), err)
-	assert.Equal(suite.T(), common.ExecComplete, execResp.Status)
+	assert.Equal(suite.T(), providers.ExecComplete, execResp.Status)
 	assert.Equal(suite.T(), "beta-org", receivedBody["handle"])
 	assert.Equal(suite.T(), "Beta Organization", receivedBody["name"])
 	assert.Equal(suite.T(), "Beta Organization description", receivedBody["description"])
+	mockAuthnProvider.AssertNotCalled(suite.T(), "GetEntityReference", mock.Anything, mock.Anything)
 }
 
-func (suite *HTTPRequestExecutorTestSuite) TestEnrichOURuntimeData_AuthenticatedUserOUIDPreferredOverRuntimeData() {
-	// When both AuthenticatedUser.OUID and RuntimeData["ouId"] are set,
-	// AuthenticatedUser.OUID should be preferred.
+func (suite *HTTPRequestExecutorTestSuite) TestEnrichOURuntimeData_RuntimeDataPreferredOverEntityRef() {
 	var receivedBody map[string]interface{}
 
 	suite.mockServer = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -834,34 +901,36 @@ func (suite *HTTPRequestExecutorTestSuite) TestEnrichOURuntimeData_Authenticated
 	}))
 
 	mockOUService := oumock.NewOrganizationUnitServiceInterfaceMock(suite.T())
-	// Only the AuthenticatedUser.OUID should trigger a lookup — not the RuntimeData fallback.
-	mockOUService.On("GetOrganizationUnit", mock.Anything, "ou-auth-primary").
-		Return(ou.OrganizationUnit{
-			ID:     "ou-auth-primary",
-			Handle: "primary-handle",
-			Name:   "Primary Org",
+	mockOUService.On("GetOrganizationUnit", mock.Anything, "ou-runtime-primary").
+		Return(providers.OrganizationUnit{
+			ID:     "ou-runtime-primary",
+			Handle: "runtime-handle",
+			Name:   "Runtime Org",
 		}, nil)
 
-	mockFlowFactory := coremock.NewFlowFactoryInterfaceMock(suite.T())
-	mockFlowFactory.On("CreateExecutor", ExecutorNameHTTPRequest, common.ExecutorTypeUtility,
-		[]common.Input{}, []common.Input{}).
-		Return(newMockExecutor(ExecutorNameHTTPRequest, common.ExecutorTypeUtility, []common.Input{}, []common.Input{}))
-	executor := newHTTPRequestExecutor(mockFlowFactory, mockOUService)
+	authUser := newHTTPRequestAuthUser()
+	mockAuthnProvider := managermock.NewAuthnProviderManagerMock(suite.T())
 
-	ctx := &core.NodeContext{
+	mockFlowFactory := coremock.NewFlowFactoryInterfaceMock(suite.T())
+	mockFlowFactory.On("CreateExecutor", ExecutorNameHTTPRequest, providers.ExecutorTypeUtility,
+		[]providers.Input{}, []providers.Input{}, mock.Anything).
+		Return(newMockExecutor(ExecutorNameHTTPRequest, providers.ExecutorTypeUtility,
+			[]providers.Input{}, []providers.Input{}))
+	executor := newHTTPRequestExecutor(mockFlowFactory, mockOUService, mockAuthnProvider)
+
+	ctx := &providers.NodeContext{
+		Context:     context.Background(),
 		ExecutionID: "test-flow",
-		AuthenticatedUser: authncm.AuthenticatedUser{
-			OUID: "ou-auth-primary",
-		},
+		AuthUser:    authUser,
 		RuntimeData: map[string]string{
-			"ouId": "ou-runtime-fallback", // should NOT be used
+			"ouId": "ou-runtime-primary",
 		},
 		UserInputs: map[string]string{},
 		NodeProperties: map[string]interface{}{
 			"url":    suite.mockServer.URL + "/api/enrich",
 			"method": "POST",
 			"body": map[string]interface{}{
-				"handle": "{{ context.ouHandle }}",
+				"handle": "{{ctx(ouHandle)}}",
 			},
 		},
 	}
@@ -869,15 +938,12 @@ func (suite *HTTPRequestExecutorTestSuite) TestEnrichOURuntimeData_Authenticated
 	execResp, err := executor.Execute(ctx)
 
 	assert.NoError(suite.T(), err)
-	assert.Equal(suite.T(), common.ExecComplete, execResp.Status)
-	assert.Equal(suite.T(), "primary-handle", receivedBody["handle"])
-	// The mock expectation for "ou-auth-primary" (not "ou-runtime-fallback") asserts the correct OU was fetched.
-	mockOUService.AssertNotCalled(suite.T(), "GetOrganizationUnit", mock.Anything, "ou-runtime-fallback")
+	assert.Equal(suite.T(), providers.ExecComplete, execResp.Status)
+	assert.Equal(suite.T(), "runtime-handle", receivedBody["handle"])
+	mockAuthnProvider.AssertNotCalled(suite.T(), "GetEntityReference", mock.Anything, mock.Anything)
 }
 
 func (suite *HTTPRequestExecutorTestSuite) TestEnrichOURuntimeData_OverwritesExistingRuntimeData() {
-	// When ctx.RuntimeData["ouHandle"] is pre-populated, enrichOURuntimeData must overwrite it
-	// with the value fetched from the OU service.
 	var receivedBody map[string]interface{}
 
 	suite.mockServer = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -890,32 +956,37 @@ func (suite *HTTPRequestExecutorTestSuite) TestEnrichOURuntimeData_OverwritesExi
 
 	mockOUService := oumock.NewOrganizationUnitServiceInterfaceMock(suite.T())
 	mockOUService.On("GetOrganizationUnit", mock.Anything, "ou-overwrite-test").
-		Return(ou.OrganizationUnit{
+		Return(providers.OrganizationUnit{
 			ID:     "ou-overwrite-test",
 			Handle: "fetched-handle",
 			Name:   "Fetched Org",
 		}, nil)
 
-	mockFlowFactory := coremock.NewFlowFactoryInterfaceMock(suite.T())
-	mockFlowFactory.On("CreateExecutor", ExecutorNameHTTPRequest, common.ExecutorTypeUtility,
-		[]common.Input{}, []common.Input{}).
-		Return(newMockExecutor(ExecutorNameHTTPRequest, common.ExecutorTypeUtility, []common.Input{}, []common.Input{}))
-	executor := newHTTPRequestExecutor(mockFlowFactory, mockOUService)
+	authUser := newHTTPRequestAuthUser()
+	mockAuthnProvider := managermock.NewAuthnProviderManagerMock(suite.T())
+	mockAuthnProvider.On("GetEntityReference", mock.Anything, mock.Anything).
+		Return(authUser, &providers.EntityReference{EntityID: "ou-overwrite-test"}, nil)
 
-	ctx := &core.NodeContext{
+	mockFlowFactory := coremock.NewFlowFactoryInterfaceMock(suite.T())
+	mockFlowFactory.On("CreateExecutor", ExecutorNameHTTPRequest, providers.ExecutorTypeUtility,
+		[]providers.Input{}, []providers.Input{}, mock.Anything).
+		Return(newMockExecutor(ExecutorNameHTTPRequest, providers.ExecutorTypeUtility,
+			[]providers.Input{}, []providers.Input{}))
+	executor := newHTTPRequestExecutor(mockFlowFactory, mockOUService, mockAuthnProvider)
+
+	ctx := &providers.NodeContext{
+		Context:     context.Background(),
 		ExecutionID: "test-flow",
-		AuthenticatedUser: authncm.AuthenticatedUser{
-			OUID: "ou-overwrite-test",
-		},
+		AuthUser:    authUser,
 		RuntimeData: map[string]string{
-			"ouHandle": "stale-handle", // pre-populated — must be overwritten
+			"ouHandle": "stale-handle",
 		},
 		UserInputs: map[string]string{},
 		NodeProperties: map[string]interface{}{
 			"url":    suite.mockServer.URL + "/api/enrich",
 			"method": "POST",
 			"body": map[string]interface{}{
-				"handle": "{{ context.ouHandle }}",
+				"handle": "{{ctx(ouHandle)}}",
 			},
 		},
 	}
@@ -923,14 +994,11 @@ func (suite *HTTPRequestExecutorTestSuite) TestEnrichOURuntimeData_OverwritesExi
 	execResp, err := executor.Execute(ctx)
 
 	assert.NoError(suite.T(), err)
-	assert.Equal(suite.T(), common.ExecComplete, execResp.Status)
-	// The fetched value must overwrite the stale preset value.
+	assert.Equal(suite.T(), providers.ExecComplete, execResp.Status)
 	assert.Equal(suite.T(), "fetched-handle", receivedBody["handle"])
 }
 
 func (suite *HTTPRequestExecutorTestSuite) TestEnrichOURuntimeData_OULookupFailure_GracefulDegradation() {
-	// When OU lookup fails, execution should continue (graceful degradation):
-	// a warning is logged but the executor completes, leaving placeholders unresolved.
 	var receivedBody map[string]interface{}
 
 	suite.mockServer = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -943,38 +1011,41 @@ func (suite *HTTPRequestExecutorTestSuite) TestEnrichOURuntimeData_OULookupFailu
 
 	mockOUService := oumock.NewOrganizationUnitServiceInterfaceMock(suite.T())
 	mockOUService.On("GetOrganizationUnit", mock.Anything, "ou-not-found").
-		Return(ou.OrganizationUnit{}, &serviceerror.ServiceError{
-			Error:            i18ncore.I18nMessage{DefaultValue: "ou_not_found"},
-			ErrorDescription: i18ncore.I18nMessage{DefaultValue: "organization unit not found"},
+		Return(providers.OrganizationUnit{}, &tidcommon.ServiceError{
+			Error:            tidcommon.I18nMessage{DefaultValue: "ou_not_found"},
+			ErrorDescription: tidcommon.I18nMessage{DefaultValue: "organization unit not found"},
 		})
 
-	mockFlowFactory := coremock.NewFlowFactoryInterfaceMock(suite.T())
-	mockFlowFactory.On("CreateExecutor", ExecutorNameHTTPRequest, common.ExecutorTypeUtility,
-		[]common.Input{}, []common.Input{}).
-		Return(newMockExecutor(ExecutorNameHTTPRequest, common.ExecutorTypeUtility, []common.Input{}, []common.Input{}))
-	executor := newHTTPRequestExecutor(mockFlowFactory, mockOUService)
+	authUser := newHTTPRequestAuthUser()
+	mockAuthnProvider := managermock.NewAuthnProviderManagerMock(suite.T())
+	mockAuthnProvider.On("GetEntityReference", mock.Anything, mock.Anything).
+		Return(authUser, &providers.EntityReference{EntityID: "ou-not-found"}, nil)
 
-	ctx := &core.NodeContext{
+	mockFlowFactory := coremock.NewFlowFactoryInterfaceMock(suite.T())
+	mockFlowFactory.On("CreateExecutor", ExecutorNameHTTPRequest, providers.ExecutorTypeUtility,
+		[]providers.Input{}, []providers.Input{}, mock.Anything).
+		Return(newMockExecutor(ExecutorNameHTTPRequest, providers.ExecutorTypeUtility,
+			[]providers.Input{}, []providers.Input{}))
+	executor := newHTTPRequestExecutor(mockFlowFactory, mockOUService, mockAuthnProvider)
+
+	ctx := &providers.NodeContext{
+		Context:     context.Background(),
 		ExecutionID: "test-flow",
-		AuthenticatedUser: authncm.AuthenticatedUser{
-			OUID: "ou-not-found",
-		},
+		AuthUser:    authUser,
 		RuntimeData: map[string]string{},
 		UserInputs:  map[string]string{},
 		NodeProperties: map[string]interface{}{
 			"url":    suite.mockServer.URL + "/api/enrich",
 			"method": "POST",
 			"body": map[string]interface{}{
-				"orgHandle": "{{ context.ouHandle }}",
+				"orgHandle": "{{ctx(ouHandle)}}",
 			},
 		},
 	}
 
 	execResp, err := executor.Execute(ctx)
 
-	// Execution must complete despite the OU lookup failure.
 	assert.NoError(suite.T(), err)
-	assert.Equal(suite.T(), common.ExecComplete, execResp.Status)
-	// ouHandle placeholder remains unresolved because enrichment failed.
-	assert.Equal(suite.T(), "{{ context.ouHandle }}", receivedBody["orgHandle"])
+	assert.Equal(suite.T(), providers.ExecComplete, execResp.Status)
+	assert.Equal(suite.T(), "{{ctx(ouHandle)}}", receivedBody["orgHandle"])
 }

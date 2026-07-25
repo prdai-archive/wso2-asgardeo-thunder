@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2025, WSO2 LLC. (https://www.wso2.com).
+ * Copyright (c) 2025-2026, WSO2 LLC. (https://www.wso2.com).
  *
  * WSO2 LLC. licenses this file to you under the Apache License,
  * Version 2.0 (the "License"); you may not use this file except
@@ -21,28 +21,30 @@
 /* eslint-disable @typescript-eslint/no-unsafe-member-access */
 /* eslint-disable @typescript-eslint/no-unsafe-call */
 
-import {EmbeddedFlowEventType, SignUp, useThunderID, type EmbeddedFlowComponent} from '@thunderid/react';
 import {FlowComponentRenderer, AuthCardLayout, useDesign} from '@thunderid/design';
+import {EmbeddedFlowEventType, SignUp, useThunderID, type EmbeddedFlowComponent} from '@thunderid/react';
 import {Box, Button, Alert, Typography, AlertTitle, CircularProgress} from '@wso2/oxygen-ui';
 import type {JSX} from 'react';
-import {useState} from 'react';
 import {Trans, useTranslation} from 'react-i18next';
 import {useNavigate} from 'react-router';
-import ROUTES from '../../constants/routes';
+import RouteConfig from '../../configs/RouteConfig';
 
 export default function SignUpBox(): JSX.Element {
   const navigate = useNavigate();
-  const {resolveFlowTemplateLiterals: resolve} = useThunderID();
+  const {resolveFlowTemplateLiterals: resolve, meta} = useThunderID();
   const {t} = useTranslation();
   const {isDesignEnabled} = useDesign();
-  const [flowError, setFlowError] = useState<string | null>(null);
-
   // For React Router navigate() — basename is handled by the router.
-  const signInPath = ROUTES.AUTH.SIGN_IN;
+  const signInPath = RouteConfig.signIn();
   // For window.location.href and new URL() (via afterSignUpUrl) — React Router basename is
   // bypassed, so an absolute URL with origin + base path must be constructed explicitly.
   // Vite appends a trailing slash to BASE_URL.
-  const afterSignUpUrl = `${window.location.origin}${import.meta.env.BASE_URL.replace(/\/$/, '')}${signInPath}`;
+  const signInUrl = `${window.location.origin}${import.meta.env.BASE_URL.replace(/\/$/, '')}${signInPath}`;
+  // Prefer the application's home URL from flow metadata so the user is returned to the
+  // app after sign-up instead of the gate sign-in page. Fall back to the sign-in page if
+  // the application URL is not available in the flow metadata.
+  const appUrl = meta?.application?.url;
+  const afterSignUpUrl = appUrl != null && appUrl !== '' ? appUrl : signInUrl;
 
   const renderFlowContent = (
     components: EmbeddedFlowComponent[],
@@ -74,7 +76,6 @@ export default function SignUpBox(): JSX.Element {
               resolve={resolve}
               onInputChange={handleInputChange}
               onSubmit={(action, inputs) => {
-                setFlowError(null);
                 const isTrigger = action.eventType === EmbeddedFlowEventType.Trigger || action.eventType === 'TRIGGER';
                 void handleSubmit(action, inputs, isTrigger);
               }}
@@ -107,16 +108,7 @@ export default function SignUpBox(): JSX.Element {
       showLogo={!isDesignEnabled}
       logoDisplay={!isDesignEnabled ? {xs: 'flex', md: 'none'} : {display: 'none'}}
     >
-      <SignUp
-        afterSignUpUrl={afterSignUpUrl}
-        onFlowChange={(response: any) => {
-          if (response?.failureReason) {
-            setFlowError(response.failureReason as string);
-          } else {
-            setFlowError(null);
-          }
-        }}
-      >
+      <SignUp afterSignUpUrl={afterSignUpUrl}>
         {({values, fieldErrors, error, touched, handleInputChange, handleSubmit, isLoading, components}: any) => (
           <>
             {!components ? (
@@ -131,12 +123,6 @@ export default function SignUpBox(): JSX.Element {
                     {error.message ?? t('signup:errors.signup.failed.description')}
                   </Alert>
                 )}
-                {flowError && (
-                  <Alert severity="error" sx={{mb: 2}}>
-                    {flowError}
-                  </Alert>
-                )}
-
                 {renderFlowContent(
                   components as EmbeddedFlowComponent[],
                   error,

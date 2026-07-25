@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2025, WSO2 LLC. (https://www.wso2.com).
+ * Copyright (c) 2025-2026, WSO2 LLC. (https://www.wso2.com).
  *
  * WSO2 LLC. licenses this file to you under the Apache License,
  * Version 2.0 (the "License"); you may not use this file except
@@ -19,12 +19,18 @@
 package core
 
 import (
+	"context"
+	"encoding/json"
 	"testing"
 
+	tidcommon "github.com/thunder-id/thunderid/pkg/thunderidengine/common"
+	"github.com/thunder-id/thunderid/pkg/thunderidengine/providers"
+
+	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/suite"
 
-	authncm "github.com/thunder-id/thunderid/internal/authn/common"
 	"github.com/thunder-id/thunderid/internal/flow/common"
+	"github.com/thunder-id/thunderid/tests/mocks/authnprovider/managermock"
 )
 
 const (
@@ -42,31 +48,35 @@ func TestExecutorTestSuite(t *testing.T) {
 }
 
 func (s *ExecutorTestSuite) TestNewExecutor() {
-	defaultInputs := []common.Input{{Identifier: testInputName, Required: true}}
-	prerequisites := []common.Input{{Identifier: userAttributeUserID, Required: true}}
+	defaultInputs := []providers.Input{{Identifier: testInputName, Required: true}}
+	prerequisites := []providers.Input{{Identifier: userAttributeUserID, Required: true}}
 
-	exec := newExecutor(testExecutorName, common.ExecutorTypeAuthentication, defaultInputs, prerequisites)
+	exec := newExecutor(testExecutorName, providers.ExecutorTypeAuthentication,
+		defaultInputs, prerequisites, &providers.ExecutorMeta{})
 
 	s.NotNil(exec)
 	s.Equal(testExecutorName, exec.GetName())
-	s.Equal(common.ExecutorTypeAuthentication, exec.GetType())
+	s.Equal(providers.ExecutorTypeAuthentication, exec.GetType())
 	s.Equal(defaultInputs, exec.GetDefaultInputs())
 	s.Equal(prerequisites, exec.GetPrerequisites())
 }
 
 func (s *ExecutorTestSuite) TestGetName() {
-	exec := newExecutor(testExecutorName, common.ExecutorTypeAuthentication, nil, nil)
+	exec := newExecutor(testExecutorName, providers.ExecutorTypeAuthentication,
+		nil, nil, &providers.ExecutorMeta{})
 	s.Equal(testExecutorName, exec.GetName())
 }
 
 func (s *ExecutorTestSuite) TestGetType() {
-	exec := newExecutor(testExecutorName, common.ExecutorTypeAuthentication, nil, nil)
-	s.Equal(common.ExecutorTypeAuthentication, exec.GetType())
+	exec := newExecutor(testExecutorName, providers.ExecutorTypeAuthentication,
+		nil, nil, &providers.ExecutorMeta{})
+	s.Equal(providers.ExecutorTypeAuthentication, exec.GetType())
 }
 
 func (s *ExecutorTestSuite) TestExecute() {
-	exec := newExecutor(testExecutorName, common.ExecutorTypeAuthentication, nil, nil)
-	ctx := &NodeContext{ExecutionID: "test-flow"}
+	exec := newExecutor(testExecutorName, providers.ExecutorTypeAuthentication,
+		nil, nil, &providers.ExecutorMeta{})
+	ctx := &providers.NodeContext{ExecutionID: "test-flow"}
 
 	resp, err := exec.Execute(ctx)
 
@@ -75,11 +85,12 @@ func (s *ExecutorTestSuite) TestExecute() {
 }
 
 func (s *ExecutorTestSuite) TestGetDefaultInputs() {
-	defaultInputs := []common.Input{
+	defaultInputs := []providers.Input{
 		{Identifier: testInputName, Required: true},
 		{Identifier: "password", Required: true},
 	}
-	exec := newExecutor(testExecutorName, common.ExecutorTypeAuthentication, defaultInputs, nil)
+	exec := newExecutor(testExecutorName, providers.ExecutorTypeAuthentication,
+		defaultInputs, nil, &providers.ExecutorMeta{})
 
 	result := exec.GetDefaultInputs()
 
@@ -87,8 +98,9 @@ func (s *ExecutorTestSuite) TestGetDefaultInputs() {
 }
 
 func (s *ExecutorTestSuite) TestGetPrerequisites() {
-	prerequisites := []common.Input{{Identifier: userAttributeUserID, Required: true}}
-	exec := newExecutor(testExecutorName, common.ExecutorTypeAuthentication, nil, prerequisites)
+	prerequisites := []providers.Input{{Identifier: userAttributeUserID, Required: true}}
+	exec := newExecutor(testExecutorName, providers.ExecutorTypeAuthentication,
+		nil, prerequisites, &providers.ExecutorMeta{})
 
 	result := exec.GetPrerequisites()
 
@@ -98,7 +110,7 @@ func (s *ExecutorTestSuite) TestGetPrerequisites() {
 func (s *ExecutorTestSuite) TestHasRequiredInputs() {
 	tests := []struct {
 		name              string
-		defaultInputs     []common.Input
+		defaultInputs     []providers.Input
 		userInputs        map[string]string
 		runtimeData       map[string]string
 		expectedHasInputs bool
@@ -106,7 +118,7 @@ func (s *ExecutorTestSuite) TestHasRequiredInputs() {
 	}{
 		{
 			"No inputs provided",
-			[]common.Input{{Identifier: testInputName, Required: true}},
+			[]providers.Input{{Identifier: testInputName, Required: true}},
 			map[string]string{},
 			map[string]string{},
 			false,
@@ -114,7 +126,7 @@ func (s *ExecutorTestSuite) TestHasRequiredInputs() {
 		},
 		{
 			"All data in user input",
-			[]common.Input{{Identifier: testInputName, Required: true}},
+			[]providers.Input{{Identifier: testInputName, Required: true}},
 			map[string]string{testInputName: testInputValue},
 			map[string]string{},
 			true,
@@ -122,7 +134,7 @@ func (s *ExecutorTestSuite) TestHasRequiredInputs() {
 		},
 		{
 			"Data in runtime data",
-			[]common.Input{{Identifier: testInputName, Required: true}},
+			[]providers.Input{{Identifier: testInputName, Required: true}},
 			map[string]string{},
 			map[string]string{testInputName: testInputValue},
 			true,
@@ -130,7 +142,7 @@ func (s *ExecutorTestSuite) TestHasRequiredInputs() {
 		},
 		{
 			"Partial data in user input",
-			[]common.Input{
+			[]providers.Input{
 				{Identifier: testInputName, Required: true},
 				{Identifier: "password", Required: true},
 			},
@@ -141,7 +153,7 @@ func (s *ExecutorTestSuite) TestHasRequiredInputs() {
 		},
 		{
 			"Empty inputs and empty context",
-			[]common.Input{},
+			[]providers.Input{},
 			map[string]string{},
 			map[string]string{},
 			false,
@@ -149,7 +161,7 @@ func (s *ExecutorTestSuite) TestHasRequiredInputs() {
 		},
 		{
 			"Data in forwarded data (string)",
-			[]common.Input{{Identifier: testInputName, Required: true}},
+			[]providers.Input{{Identifier: testInputName, Required: true}},
 			map[string]string{},
 			map[string]string{},
 			true,
@@ -157,7 +169,7 @@ func (s *ExecutorTestSuite) TestHasRequiredInputs() {
 		},
 		{
 			"Data in forwarded data (non-string)",
-			[]common.Input{{Identifier: testInputName, Required: true}},
+			[]providers.Input{{Identifier: testInputName, Required: true}},
 			map[string]string{},
 			map[string]string{},
 			false,
@@ -165,18 +177,18 @@ func (s *ExecutorTestSuite) TestHasRequiredInputs() {
 		},
 		{
 			"Partial data with forwarded data",
-			[]common.Input{
+			[]providers.Input{
 				{Identifier: testInputName, Required: true},
 				{Identifier: "password", Required: true},
 			},
 			map[string]string{testInputName: testInputValue},
 			map[string]string{},
-			true, // Both inputs satisfied (username from UserInputs, password from ForwardedData)
-			0,    // No missing inputs
+			true,
+			0,
 		},
 		{
 			"All sources empty",
-			[]common.Input{{Identifier: testInputName, Required: true}},
+			[]providers.Input{{Identifier: testInputName, Required: true}},
 			map[string]string{},
 			map[string]string{},
 			false,
@@ -184,7 +196,7 @@ func (s *ExecutorTestSuite) TestHasRequiredInputs() {
 		},
 		{
 			"Optional input prompts once",
-			[]common.Input{{Identifier: "nickname", Required: false}},
+			[]providers.Input{{Identifier: "nickname", Required: false}},
 			map[string]string{},
 			map[string]string{},
 			false,
@@ -192,7 +204,7 @@ func (s *ExecutorTestSuite) TestHasRequiredInputs() {
 		},
 		{
 			"Optional input already prompted",
-			[]common.Input{{Identifier: "nickname", Required: false}},
+			[]providers.Input{{Identifier: "nickname", Required: false}},
 			map[string]string{},
 			map[string]string{common.RuntimeKeyPresentedOptionalInputs: "nickname"},
 			true,
@@ -202,21 +214,21 @@ func (s *ExecutorTestSuite) TestHasRequiredInputs() {
 
 	for _, tt := range tests {
 		s.Run(tt.name, func() {
-			exec := newExecutor(testExecutorName, common.ExecutorTypeAuthentication, tt.defaultInputs, nil)
-			ctx := &NodeContext{
+			exec := newExecutor(testExecutorName, providers.ExecutorTypeAuthentication,
+				tt.defaultInputs, nil, &providers.ExecutorMeta{})
+			ctx := &providers.NodeContext{
 				ExecutionID: "test-flow",
 				UserInputs:  tt.userInputs,
 				RuntimeData: tt.runtimeData,
 			}
 
-			// Add ForwardedData for specific test cases
 			if tt.name == "Data in forwarded data (string)" {
 				ctx.ForwardedData = map[string]interface{}{
 					testInputName: testInputValue,
 				}
 			} else if tt.name == "Data in forwarded data (non-string)" {
 				ctx.ForwardedData = map[string]interface{}{
-					testInputName: 123, // Non-string value
+					testInputName: 123,
 				}
 			} else if tt.name == "Partial data with forwarded data" {
 				ctx.ForwardedData = map[string]interface{}{
@@ -226,7 +238,7 @@ func (s *ExecutorTestSuite) TestHasRequiredInputs() {
 				ctx.ForwardedData = map[string]interface{}{}
 			}
 
-			execResp := &common.ExecutorResponse{}
+			execResp := &providers.ExecutorResponse{}
 
 			result := exec.HasRequiredInputs(ctx, execResp)
 
@@ -236,173 +248,318 @@ func (s *ExecutorTestSuite) TestHasRequiredInputs() {
 	}
 }
 
+func (s *ExecutorTestSuite) newAuthenticatedAuthUser() providers.AuthUser {
+	raw := `{"default":{"entityReferenceToken":"tok","entityReference":{"entityId":"user-123","entityCategory":"","entityType":"","ouId":""},"attributeToken":"atok","attributes":{"attributes":{"email":{"value":"test@example.com"}}}}}` //nolint:lll
+	var authUser providers.AuthUser
+	err := json.Unmarshal([]byte(raw), &authUser)
+	s.Require().NoError(err)
+	return authUser
+}
+
 func (s *ExecutorTestSuite) TestValidatePrerequisites() {
 	tests := []struct {
-		name               string
-		prerequisites      []common.Input
-		authenticatedUser  authncm.AuthenticatedUser
-		userInputs         map[string]string
-		runtimeData        map[string]string
-		expectedValid      bool
-		expectedStatus     common.ExecutorStatus
-		expectedFailReason string
+		name           string
+		prerequisites  []providers.Input
+		authUser       providers.AuthUser
+		setupMock      func(*managermock.AuthnProviderManagerMock)
+		userInputs     map[string]string
+		runtimeData    map[string]string
+		forwardedData  map[string]interface{}
+		expectedValid  bool
+		expectedStatus providers.ExecutorStatus
+		expectError    bool
 	}{
 		{
 			"No prerequisites",
-			[]common.Input{},
-			authncm.AuthenticatedUser{},
+			[]providers.Input{},
+			providers.AuthUser{},
+			nil,
 			map[string]string{},
 			map[string]string{},
+			nil,
 			true,
 			"",
-			"",
+			false,
 		},
 		{
 			"UserID prerequisite met via authenticated user",
-			[]common.Input{{Identifier: userAttributeUserID, Required: true}},
-			authncm.AuthenticatedUser{UserID: "user-123"},
+			[]providers.Input{{Identifier: userAttributeUserID, Required: true}},
+			providers.AuthUser{},
+			func(m *managermock.AuthnProviderManagerMock) {
+				m.EXPECT().GetEntityReference(mock.Anything, mock.Anything).
+					Return(providers.AuthUser{}, &providers.EntityReference{EntityID: "user-123"}, nil)
+				m.EXPECT().GetUserAttributes(mock.Anything, mock.Anything, mock.Anything, mock.Anything).
+					Return(providers.AuthUser{}, &providers.AttributesResponse{}, nil)
+			},
 			map[string]string{},
 			map[string]string{},
+			nil,
 			true,
 			"",
-			"",
+			false,
 		},
 		{
-			"UserID prerequisite not met",
-			[]common.Input{{Identifier: userAttributeUserID, Required: true}},
-			authncm.AuthenticatedUser{},
+			"UserID prerequisite not met - no authn provider",
+			[]providers.Input{{Identifier: userAttributeUserID, Required: true}},
+			providers.AuthUser{},
+			nil,
 			map[string]string{},
 			map[string]string{},
+			nil,
 			false,
-			common.ExecFailure,
-			"Prerequisite not met: userID",
+			providers.ExecFailure,
+			true,
 		},
 		{
 			"Other prerequisite met via user input",
-			[]common.Input{{Identifier: "email", Required: true}},
-			authncm.AuthenticatedUser{},
+			[]providers.Input{{Identifier: "email", Required: true}},
+			providers.AuthUser{},
+			nil,
 			map[string]string{"email": "test@example.com"},
 			map[string]string{},
+			nil,
 			true,
 			"",
-			"",
+			false,
 		},
 		{
 			"Other prerequisite met via runtime data",
-			[]common.Input{{Identifier: "token", Required: true}},
-			authncm.AuthenticatedUser{},
+			[]providers.Input{{Identifier: "token", Required: true}},
+			providers.AuthUser{},
+			nil,
 			map[string]string{},
 			map[string]string{"token": "abc123"},
+			nil,
 			true,
 			"",
-			"",
+			false,
 		},
 		{
 			"Prerequisite not met",
-			[]common.Input{{Identifier: "apiKey", Required: true}},
-			authncm.AuthenticatedUser{},
+			[]providers.Input{{Identifier: "apiKey", Required: true}},
+			providers.AuthUser{},
+			nil,
 			map[string]string{},
 			map[string]string{},
+			nil,
 			false,
-			common.ExecFailure,
-			"Prerequisite not met: apiKey",
+			providers.ExecFailure,
+			true,
 		},
 		{
 			"Optional prerequisite not met",
-			[]common.Input{{Identifier: "optionalKey", Required: false}},
-			authncm.AuthenticatedUser{},
+			[]providers.Input{{Identifier: "optionalKey", Required: false}},
+			providers.AuthUser{},
+			nil,
 			map[string]string{},
 			map[string]string{},
+			nil,
 			true,
 			"",
-			"",
+			false,
 		},
 		{
 			"Prerequisite met via forwarded data (string)",
-			[]common.Input{{Identifier: "email", Required: true}},
-			authncm.AuthenticatedUser{},
+			[]providers.Input{{Identifier: "email", Required: true}},
+			providers.AuthUser{},
+			nil,
 			map[string]string{},
 			map[string]string{},
+			map[string]interface{}{"email": "test@example.com"},
 			true,
 			"",
-			"",
+			false,
 		},
 		{
 			"Prerequisite not met via forwarded data (non-string)",
-			[]common.Input{{Identifier: "email", Required: true}},
-			authncm.AuthenticatedUser{},
+			[]providers.Input{{Identifier: "email", Required: true}},
+			providers.AuthUser{},
+			nil,
 			map[string]string{},
 			map[string]string{},
+			map[string]interface{}{"email": 12345},
 			false,
-			common.ExecFailure,
-			"Prerequisite not met: email",
+			providers.ExecFailure,
+			true,
+		},
+		{
+			"UserID prerequisite met via authenticated user attributes",
+			[]providers.Input{{Identifier: "email", Required: true}},
+			providers.AuthUser{},
+			func(m *managermock.AuthnProviderManagerMock) {
+				m.EXPECT().GetEntityReference(mock.Anything, mock.Anything).
+					Return(providers.AuthUser{}, &providers.EntityReference{EntityID: "user-123"}, nil)
+				m.EXPECT().GetUserAttributes(mock.Anything, mock.Anything, mock.Anything, mock.Anything).
+					Return(providers.AuthUser{}, &providers.AttributesResponse{
+						Attributes: map[string]*providers.AttributeResponse{
+							"email": {Value: "test@example.com"},
+						},
+					}, nil)
+			},
+			map[string]string{},
+			map[string]string{},
+			nil,
+			true,
+			"",
+			false,
+		},
+		{
+			"GetEntityReference fails - prerequisite not met",
+			[]providers.Input{{Identifier: userAttributeUserID, Required: true}},
+			providers.AuthUser{},
+			func(m *managermock.AuthnProviderManagerMock) {
+				m.EXPECT().GetEntityReference(mock.Anything, mock.Anything).
+					Return(providers.AuthUser{}, nil, &tidcommon.InternalServerError)
+				m.EXPECT().GetUserAttributes(mock.Anything, mock.Anything, mock.Anything, mock.Anything).
+					Return(providers.AuthUser{}, &providers.AttributesResponse{}, nil)
+			},
+			map[string]string{},
+			map[string]string{},
+			nil,
+			false,
+			providers.ExecFailure,
+			true,
+		},
+		{
+			"GetUserAttributes fails - falls back to other sources",
+			[]providers.Input{{Identifier: "email", Required: true}},
+			providers.AuthUser{},
+			func(m *managermock.AuthnProviderManagerMock) {
+				m.EXPECT().GetEntityReference(mock.Anything, mock.Anything).
+					Return(providers.AuthUser{}, &providers.EntityReference{EntityID: "user-123"}, nil)
+				m.EXPECT().GetUserAttributes(mock.Anything, mock.Anything, mock.Anything, mock.Anything).
+					Return(providers.AuthUser{}, nil, &tidcommon.InternalServerError)
+			},
+			map[string]string{"email": "test@example.com"},
+			map[string]string{},
+			nil,
+			true,
+			"",
+			false,
+		},
+		{
+			"Entity reference empty ID - attribute still checked",
+			[]providers.Input{{Identifier: userAttributeUserID, Required: true}},
+			providers.AuthUser{},
+			func(m *managermock.AuthnProviderManagerMock) {
+				m.EXPECT().GetEntityReference(mock.Anything, mock.Anything).
+					Return(providers.AuthUser{}, &providers.EntityReference{EntityID: ""}, nil)
+				m.EXPECT().GetUserAttributes(mock.Anything, mock.Anything, mock.Anything, mock.Anything).
+					Return(providers.AuthUser{}, &providers.AttributesResponse{}, nil)
+			},
+			map[string]string{},
+			map[string]string{},
+			nil,
+			false,
+			providers.ExecFailure,
+			true,
 		},
 	}
 
 	for _, tt := range tests {
 		s.Run(tt.name, func() {
-			exec := newExecutor(testExecutorName, common.ExecutorTypeAuthentication, nil, tt.prerequisites)
-			ctx := &NodeContext{
-				ExecutionID:       "test-flow",
-				AuthenticatedUser: tt.authenticatedUser,
-				UserInputs:        tt.userInputs,
-				RuntimeData:       tt.runtimeData,
+			exec := newExecutor(testExecutorName, providers.ExecutorTypeAuthentication,
+				nil, tt.prerequisites, &providers.ExecutorMeta{})
+
+			var authnProvider providers.AuthnProviderManager
+			if tt.setupMock != nil {
+				authUser := s.newAuthenticatedAuthUser()
+				tt.authUser = authUser
+				mockProvider := managermock.NewAuthnProviderManagerMock(s.T())
+				tt.setupMock(mockProvider)
+				authnProvider = mockProvider
 			}
 
-			// Add ForwardedData for specific test cases
-			if tt.name == "Prerequisite met via forwarded data (string)" {
-				ctx.ForwardedData = map[string]interface{}{
-					"email": "test@example.com",
-				}
-			} else if tt.name == "Prerequisite not met via forwarded data (non-string)" {
-				ctx.ForwardedData = map[string]interface{}{
-					"email": 12345, // Non-string value
-				}
+			ctx := &providers.NodeContext{
+				Context:       context.Background(),
+				ExecutionID:   "test-flow",
+				AuthUser:      tt.authUser,
+				UserInputs:    tt.userInputs,
+				RuntimeData:   tt.runtimeData,
+				ForwardedData: tt.forwardedData,
 			}
 
-			execResp := &common.ExecutorResponse{}
+			execResp := &providers.ExecutorResponse{}
 
-			result := exec.ValidatePrerequisites(ctx, execResp)
+			result := exec.ValidatePrerequisites(ctx, execResp, authnProvider)
 
 			s.Equal(tt.expectedValid, result)
 			s.Equal(tt.expectedStatus, execResp.Status)
-			s.Equal(tt.expectedFailReason, execResp.FailureReason)
+			s.Equal(tt.expectError, execResp.Error != nil)
 		})
 	}
 }
 
 func (s *ExecutorTestSuite) TestGetUserIDFromContext() {
 	tests := []struct {
-		name              string
-		authenticatedUser authncm.AuthenticatedUser
-		runtimeData       map[string]string
-		userInputs        map[string]string
-		expectedUserID    string
+		name           string
+		authUser       providers.AuthUser
+		setupMock      func(*managermock.AuthnProviderManagerMock)
+		runtimeData    map[string]string
+		userInputs     map[string]string
+		expectedUserID string
 	}{
 		{
-			"UserID from authenticated user",
-			authncm.AuthenticatedUser{UserID: "user-123"},
-			map[string]string{},
-			map[string]string{},
-			"user-123",
-		},
-		{
 			"UserID from runtime data",
-			authncm.AuthenticatedUser{},
+			providers.AuthUser{},
+			nil,
 			map[string]string{userAttributeUserID: "user-456"},
 			map[string]string{},
 			"user-456",
 		},
 		{
-			"Priority: authenticated user over runtime data",
-			authncm.AuthenticatedUser{UserID: "user-auth"},
-			map[string]string{userAttributeUserID: "user-runtime"},
+			"UserID from authenticated user via authn provider",
+			providers.AuthUser{},
+			func(m *managermock.AuthnProviderManagerMock) {
+				m.EXPECT().GetEntityReference(mock.Anything, mock.Anything).
+					Return(providers.AuthUser{}, &providers.EntityReference{EntityID: "user-123"}, nil)
+			},
 			map[string]string{},
-			"user-auth",
+			map[string]string{},
+			"user-123",
 		},
 		{
-			"No userID available",
-			authncm.AuthenticatedUser{},
+			"Priority: runtime data over authenticated user",
+			providers.AuthUser{},
+			nil,
+			map[string]string{userAttributeUserID: "user-runtime"},
+			map[string]string{},
+			"user-runtime",
+		},
+		{
+			"No userID available - no authn provider",
+			providers.AuthUser{},
+			nil,
+			map[string]string{},
+			map[string]string{},
+			"",
+		},
+		{
+			"GetEntityReference fails - returns empty",
+			providers.AuthUser{},
+			func(m *managermock.AuthnProviderManagerMock) {
+				m.EXPECT().GetEntityReference(mock.Anything, mock.Anything).
+					Return(providers.AuthUser{}, nil, &tidcommon.InternalServerError)
+			},
+			map[string]string{},
+			map[string]string{},
+			"",
+		},
+		{
+			"Entity reference with empty ID - returns empty",
+			providers.AuthUser{},
+			func(m *managermock.AuthnProviderManagerMock) {
+				m.EXPECT().GetEntityReference(mock.Anything, mock.Anything).
+					Return(providers.AuthUser{}, &providers.EntityReference{EntityID: ""}, nil)
+			},
+			map[string]string{},
+			map[string]string{},
+			"",
+		},
+		{
+			"Nil authn provider with unauthenticated user",
+			providers.AuthUser{},
+			nil,
 			map[string]string{},
 			map[string]string{},
 			"",
@@ -411,14 +568,29 @@ func (s *ExecutorTestSuite) TestGetUserIDFromContext() {
 
 	for _, tt := range tests {
 		s.Run(tt.name, func() {
-			exec := newExecutor(testExecutorName, common.ExecutorTypeAuthentication, nil, nil)
-			ctx := &NodeContext{
-				AuthenticatedUser: tt.authenticatedUser,
-				RuntimeData:       tt.runtimeData,
-				UserInputs:        tt.userInputs,
+			exec := newExecutor(testExecutorName, providers.ExecutorTypeAuthentication,
+				nil, nil, &providers.ExecutorMeta{})
+
+			var authnProvider providers.AuthnProviderManager
+			if tt.setupMock != nil {
+				authUser := s.newAuthenticatedAuthUser()
+				tt.authUser = authUser
+				mockProvider := managermock.NewAuthnProviderManagerMock(s.T())
+				tt.setupMock(mockProvider)
+				authnProvider = mockProvider
 			}
 
-			result := exec.GetUserIDFromContext(ctx)
+			ctx := &providers.NodeContext{
+				Context:     context.Background(),
+				ExecutionID: "test-flow",
+				AuthUser:    tt.authUser,
+				RuntimeData: tt.runtimeData,
+				UserInputs:  tt.userInputs,
+			}
+
+			execResp := &providers.ExecutorResponse{}
+
+			result := exec.GetUserIDFromContext(ctx, execResp, authnProvider)
 
 			s.Equal(tt.expectedUserID, result)
 		})
@@ -428,36 +600,36 @@ func (s *ExecutorTestSuite) TestGetUserIDFromContext() {
 func (s *ExecutorTestSuite) TestGetRequiredInputs() {
 	tests := []struct {
 		name              string
-		defaultInputs     []common.Input
-		nodeInputs        []common.Input
+		defaultInputs     []providers.Input
+		nodeInputs        []providers.Input
 		expectedDataCount int
 		expectedContains  []string
 	}{
 		{
 			"No node input, use default only",
-			[]common.Input{{Identifier: testInputName, Required: true}},
-			[]common.Input{},
+			[]providers.Input{{Identifier: testInputName, Required: true}},
+			[]providers.Input{},
 			1,
 			[]string{testInputName},
 		},
 		{
 			"Node input provided, replaces default",
-			[]common.Input{{Identifier: testInputName, Required: true}},
-			[]common.Input{{Identifier: "email", Required: true}},
+			[]providers.Input{{Identifier: testInputName, Required: true}},
+			[]providers.Input{{Identifier: "email", Required: true}},
 			1,
 			[]string{"email"},
 		},
 		{
 			"Duplicate in node input, no duplication in result",
-			[]common.Input{{Identifier: testInputName, Required: true}},
-			[]common.Input{{Identifier: testInputName, Required: true}},
+			[]providers.Input{{Identifier: testInputName, Required: true}},
+			[]providers.Input{{Identifier: testInputName, Required: true}},
 			1,
 			[]string{testInputName},
 		},
 		{
 			"No default inputs, use node input",
-			[]common.Input{},
-			[]common.Input{{Identifier: "custom", Required: false}},
+			[]providers.Input{},
+			[]providers.Input{{Identifier: "custom", Required: false}},
 			1,
 			[]string{"custom"},
 		},
@@ -465,8 +637,9 @@ func (s *ExecutorTestSuite) TestGetRequiredInputs() {
 
 	for _, tt := range tests {
 		s.Run(tt.name, func() {
-			exec := newExecutor(testExecutorName, common.ExecutorTypeAuthentication, tt.defaultInputs, nil)
-			ctx := &NodeContext{ExecutionID: "test-flow", NodeInputs: tt.nodeInputs}
+			exec := newExecutor(testExecutorName, providers.ExecutorTypeAuthentication,
+				tt.defaultInputs, nil, &providers.ExecutorMeta{})
+			ctx := &providers.NodeContext{ExecutionID: "test-flow", NodeInputs: tt.nodeInputs}
 
 			result := exec.GetRequiredInputs(ctx)
 
@@ -483,4 +656,138 @@ func (s *ExecutorTestSuite) TestGetRequiredInputs() {
 			}
 		})
 	}
+}
+
+func (s *ExecutorTestSuite) TestGetExecutionPolicy() {
+	exec := newExecutor(testExecutorName, providers.ExecutorTypeAuthentication,
+		nil, nil, &providers.ExecutorMeta{})
+
+	s.Nil(exec.GetExecutionPolicy("default"))
+	s.Nil(exec.GetExecutionPolicy(""))
+	s.Nil(exec.GetExecutionPolicy("custom"))
+}
+
+func (s *ExecutorTestSuite) TestBuildProviderMetadata_Empty() {
+	ctx := &providers.NodeContext{}
+
+	metadata := BuildProviderMetadata(ctx)
+
+	s.NotNil(metadata)
+	s.Empty(metadata.RuntimeMetadata)
+}
+
+func (s *ExecutorTestSuite) TestBuildProviderMetadata_ProviderExtKeysIncluded() {
+	ctx := &providers.NodeContext{
+		RuntimeData: map[string]string{
+			"provider_ext_tenant": "tenant-123",
+			"provider_ext_hint":   "hint-value",
+			"other_key":           "should-be-excluded",
+		},
+	}
+
+	metadata := BuildProviderMetadata(ctx)
+
+	s.Equal([]string{"tenant-123"}, metadata.RuntimeMetadata["provider_ext_tenant"])
+	s.Equal([]string{"hint-value"}, metadata.RuntimeMetadata["provider_ext_hint"])
+	s.NotContains(metadata.RuntimeMetadata, "other_key")
+}
+
+func (s *ExecutorTestSuite) TestBuildProviderMetadata_InitiatorRequestFlattened() {
+	ctx := &providers.NodeContext{}
+	ctx.SetInitiatorRequest(&providers.InitiatorRequest{
+		Headers: map[string][]string{
+			"X-Custom-Header": {"header-value"},
+			"Accept":          {"application/json", "text/html"},
+		},
+		QueryParams: map[string][]string{
+			"client_id":  {"my-client"},
+			"MyCustomQP": {"value"},
+		},
+	})
+
+	metadata := BuildProviderMetadata(ctx)
+
+	// Header names are lowercased (HTTP headers are case-insensitive).
+	s.Equal([]string{"header-value"}, metadata.RuntimeMetadata["initiator_header_x-custom-header"])
+	s.Equal([]string{"application/json", "text/html"}, metadata.RuntimeMetadata["initiator_header_accept"])
+	// Query param names preserve original casing (query params are case-sensitive).
+	s.Equal([]string{"my-client"}, metadata.RuntimeMetadata["initiator_query_client_id"])
+	s.Equal([]string{"value"}, metadata.RuntimeMetadata["initiator_query_MyCustomQP"])
+	s.Nil(metadata.RuntimeMetadata["initiator_query_mycustomqp"])
+}
+
+func (s *ExecutorTestSuite) TestBuildProviderMetadata_HeaderCasingCollisionMerges() {
+	ctx := &providers.NodeContext{}
+	ctx.SetInitiatorRequest(&providers.InitiatorRequest{
+		Headers: map[string][]string{
+			"X-Custom": {"a"},
+			"x-custom": {"b"},
+		},
+	})
+
+	metadata := BuildProviderMetadata(ctx)
+
+	// Both header variants normalize to the same lowercase key, so values must be merged
+	// rather than one silently overwriting the other. Order is nondeterministic due to
+	// Go map iteration, so assert on set membership.
+	merged := metadata.RuntimeMetadata["initiator_header_x-custom"]
+	s.ElementsMatch([]string{"a", "b"}, merged)
+}
+
+func (s *ExecutorTestSuite) TestBuildProviderMetadata_NilInitiatorRequest() {
+	ctx := &providers.NodeContext{
+		RuntimeData: map[string]string{"provider_ext_k": "v"},
+	}
+
+	metadata := BuildProviderMetadata(ctx)
+
+	s.Equal([]string{"v"}, metadata.RuntimeMetadata["provider_ext_k"])
+}
+
+func (s *ExecutorTestSuite) TestBuildGetAttributesMetadata_WithLocale() {
+	ctx := &providers.NodeContext{
+		RuntimeData: map[string]string{
+			"required_locales": "en-US",
+		},
+	}
+
+	metadata := BuildGetAttributesMetadata(ctx)
+
+	s.NotNil(metadata)
+	s.Equal("en-US", metadata.Locale)
+}
+
+func (s *ExecutorTestSuite) TestBuildGetAttributesMetadata_WithoutLocale() {
+	ctx := &providers.NodeContext{
+		RuntimeData: map[string]string{},
+	}
+
+	metadata := BuildGetAttributesMetadata(ctx)
+
+	s.NotNil(metadata)
+	s.Empty(metadata.Locale)
+	s.Empty(metadata.RuntimeMetadata)
+}
+
+func (s *ExecutorTestSuite) TestBuildGetAttributesMetadata_ProviderExtAndInitiator() {
+	ctx := &providers.NodeContext{
+		RuntimeData: map[string]string{
+			"provider_ext_hint": "hint-value",
+			"required_locales":  "en-GB",
+			"ignored":           "yes",
+		},
+	}
+	ctx.SetInitiatorRequest(&providers.InitiatorRequest{
+		QueryParams: map[string][]string{
+			"scope": {"openid"},
+		},
+	})
+
+	metadata := BuildGetAttributesMetadata(ctx)
+
+	s.Equal("en-GB", metadata.Locale)
+	s.Equal([]string{"hint-value"}, metadata.RuntimeMetadata["provider_ext_hint"])
+	s.Equal([]string{"openid"}, metadata.RuntimeMetadata["initiator_query_scope"])
+	s.NotContains(metadata.RuntimeMetadata, "ignored")
+	s.NotContains(metadata.RuntimeMetadata, "required_locales")
 }

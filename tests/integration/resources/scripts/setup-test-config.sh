@@ -9,8 +9,8 @@ server:
 
 
 tls:
-  cert_file: "repository/resources/security/server.cert"
-  key_file: "repository/resources/security/server.key"
+  cert_file: "config/certs/server.cert"
+  key_file: "config/certs/server.key"
 
 database:
 EOF
@@ -27,22 +27,32 @@ if [ "$DB_TYPE" = "postgres" ]; then
       password: dbpassword
       sslmode: disable
 
-  runtime:
+  runtime_transient:
     type: postgres
     postgres:
       hostname: localhost
       port: 5432
-      name: runtimedb
+      name: runtime_transient
       username: dbuser
       password: dbpassword
       sslmode: disable
 
-  user:
+  entity:
     type: postgres
     postgres:
       hostname: localhost
       port: 5432
-      name: userdb
+      name: entitydb
+      username: dbuser
+      password: dbpassword
+      sslmode: disable
+
+  runtime_persistent:
+    type: postgres
+    postgres:
+      hostname: localhost
+      port: 5432
+      name: runtime_persistent
       username: dbuser
       password: dbpassword
       sslmode: disable
@@ -52,20 +62,26 @@ elif [ "$DB_TYPE" = "redis" ]; then
   config:
     type: sqlite
     sqlite:
-      path: "repository/database/configdb.db"
+      path: "database/configdb.db"
       options: "cache=shared"
 
-  runtime:
+  runtime_transient:
     type: redis
     redis:
       address: "localhost:6379"
       db: 0
       key_prefix: "thunderid"
 
-  user:
+  entity:
     type: sqlite
     sqlite:
-      path: "repository/database/userdb.db"
+      path: "database/entitydb.db"
+      options: "cache=shared"
+
+  runtime_persistent:
+    type: sqlite
+    sqlite:
+      path: "database/runtime_persistent.db"
       options: "cache=shared"
 EOF
 else
@@ -73,19 +89,25 @@ else
   config:
     type: sqlite
     sqlite:
-      path: "repository/database/configdb.db"
+      path: "database/configdb.db"
       options: "cache=shared"
 
-  runtime:
+  runtime_transient:
     type: sqlite
     sqlite:
-      path: "repository/database/runtimedb.db"
+      path: "database/runtime_transient.db"
       options: "cache=shared"
 
-  user:
+  entity:
     type: sqlite
     sqlite:
-      path: "repository/database/userdb.db"
+      path: "database/entitydb.db"
+      options: "cache=shared"
+
+  runtime_persistent:
+    type: sqlite
+    sqlite:
+      path: "database/runtime_persistent.db"
       options: "cache=shared"
 EOF
 fi
@@ -95,6 +117,9 @@ cat >> tests/integration/resources/deployment.yaml <<EOF
 
 flow:
   max_version_history: 3
+
+server_config:
+  store: composite
 
 oauth:
   allow_wildcard_redirect_uri: true
