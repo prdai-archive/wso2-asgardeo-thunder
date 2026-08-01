@@ -16,9 +16,7 @@
  * under the License.
  */
 
-import type {OAuth2Config} from '../../applications/models/oauth';
-import type {AssertionConfig} from '../../applications/models/token';
-
+import type {AssertionConfig, OAuth2Config} from '@thunderid/configure-applications';
 /**
  * Agent types are restricted to a single bootstrap-provisioned `default` schema. The constant
  * is shared by the create wizard (auto-pick the singleton) and the agent listing's Schema button.
@@ -43,6 +41,7 @@ export interface Agent {
   type: string;
   name: string;
   description?: string;
+  logoUrl?: string;
   owner?: string;
   clientId?: string;
   attributes?: Record<string, unknown>;
@@ -67,6 +66,7 @@ export interface BasicAgent {
   type: string;
   name: string;
   description?: string;
+  logoUrl?: string;
   clientId?: string;
   isReadOnly?: boolean;
 }
@@ -83,6 +83,7 @@ export interface CreateAgentRequest {
   type: string;
   name: string;
   description?: string;
+  logoUrl?: string;
   owner?: string;
   attributes?: Record<string, unknown>;
   inboundAuthConfig?: AgentInboundAuthConfig[];
@@ -93,6 +94,7 @@ export interface UpdateAgentRequest {
   type?: string;
   name?: string;
   description?: string;
+  logoUrl?: string;
   owner?: string;
   attributes?: Record<string, unknown>;
   allowedUserTypes?: string[];

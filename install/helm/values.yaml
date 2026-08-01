@@ -201,7 +201,7 @@ configuration:
   consoleClient:
     path: "/console"
     clientId: "CONSOLE"
-    scopes: "['openid', 'profile', 'email', 'ou', 'system', 'system:user', 'system:group', 'system:ou:view', 'system:usertype:view']"
+    scopes: "['openid', 'profile', 'email', 'group', 'ou', 'system']"
     # Resource indicator (audience) the console sends on token requests. Must match the
     # identifier of the System resource server seeded by the bootstrap defaults, which is
     # "<server.publicUrl>/mcp". Leave empty to derive it from server.publicUrl (default);
@@ -216,7 +216,7 @@ configuration:
     #   httpOnly: false
     #   publicUrl: "https://cp.example.com"
     #   clientId: "FEDERATED_CONSOLE"
-    #   scopes: "['openid', 'profile', 'email', 'group', 'ou', 'system', 'system:user', 'system:group', 'system:ou:view', 'system:usertype:view']"
+    #   scopes: "['openid', 'profile', 'email', 'group', 'ou', 'system']"
     #   # Type of external authorization server. Set to `generic` when the trusted
     #   # issuer is a generic OIDC provider. When `generic`, the console skips
     #   # ThunderID-specific bootstrap calls (flow metadata, branding preferences)
@@ -257,6 +257,11 @@ configuration:
       - id: "ecdsa-key"
         certFile: "config/certs/ecdsa-signing.cert"
         keyFile: "config/certs/ecdsa-signing.key"
+
+  # Attribute cache configuration
+  attributeCache:
+    encryption:
+      enabled: false
 
   # Database configuration
   database:
@@ -438,10 +443,8 @@ configuration:
 
   # Flow configuration
   flow:
-    defaultAuthFlowHandle: "default-flow"
-    defaultSignOutFlowHandle: "default-flow"
     maxVersionHistory: 3
-    autoInferRegistration: true
+    autoInferRegistration: false
     # Optional whitelist of built-in executor names to register at startup.
     # Leave empty to register all built-in executors.
     executors: []

@@ -21,9 +21,8 @@ import {
   OAuth2ResponseTypes,
   REFRESH_TOKEN_ISSUING_GRANTS,
   TokenEndpointAuthMethods,
-  type OAuth2Config,
-} from '../models/oauth';
-
+} from '@thunderid/configure-applications';
+import type {OAuth2Config} from '@thunderid/configure-applications';
 /**
  * Derived boolean flags describing the current OAuth2 configuration state.
  * Used by the OAuth2 config UI to drive toggle/picker disabled states and captions.
@@ -54,6 +53,30 @@ export function deriveOAuth2Flags(config: OAuth2Config): OAuth2Flags {
     isPkceForcedByPublicClient: isPublicClient,
     isPublicClientDisabledByGrants: hasClientCredentialsGrant || !hasAuthorizationCodeGrant,
   };
+}
+
+/**
+ * Grant types that authenticate an end user, unlocking the user-facing tabs (User token, Flows,
+ * Customization, and the general Access section).
+ */
+export const USER_ACCESS_GRANTS: readonly string[] = [
+  OAuth2GrantTypes.AUTHORIZATION_CODE,
+  OAuth2GrantTypes.CIBA,
+  OAuth2GrantTypes.PASSWORD,
+];
+
+/**
+ * Returns whether any granted flow acts on behalf of an end user.
+ */
+export function hasUserAccess(grantTypes: string[] | undefined): boolean {
+  return (grantTypes ?? []).some((grant) => USER_ACCESS_GRANTS.includes(grant));
+}
+
+/**
+ * Returns whether the client can obtain tokens as its own subject (client_credentials grant).
+ */
+export function hasClientAccess(grantTypes: string[] | undefined): boolean {
+  return (grantTypes ?? []).includes(OAuth2GrantTypes.CLIENT_CREDENTIALS);
 }
 
 /**

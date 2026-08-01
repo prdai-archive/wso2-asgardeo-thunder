@@ -19,7 +19,7 @@
 import Link from '@docusaurus/Link';
 import {useWindowSize} from '@docusaurus/theme-common';
 import {Box, Chip, Typography} from '@wso2/oxygen-ui';
-import {Bot, Check, Download, MonitorSmartphone, Server, Zap} from '@wso2/oxygen-ui-icons-react';
+import {AppWindow, Bot, Check, Download, MonitorSmartphone, Server, Zap} from '@wso2/oxygen-ui-icons-react';
 import React, {useCallback} from 'react';
 import AndroidLogo from './icons/AndroidLogo';
 import ExpressLogo from './icons/ExpressLogo';
@@ -53,10 +53,15 @@ const AGENT_QUICKSTARTS = [
   {Logo: LangChainLogo, href: '/docs/next/getting-started/connect-your-agent/langchain', label: 'LangChain'},
 ];
 
+const MCP_QUICKSTARTS = [
+  {Logo: Server, href: '/docs/next/getting-started/connect-your-mcp/server/python', label: 'Server'},
+  {Logo: AppWindow, href: '/docs/next/getting-started/connect-your-mcp/client/connect/mcp-inspector', label: 'Client'},
+];
+
 const CATEGORIES: {id: ConnectType; icon: React.ReactElement; label: string; description: string; comingSoon: boolean}[] = [
   {id: 'app',   icon: <MonitorSmartphone size={20} />, label: 'Application', description: 'Web, mobile and desktop apps.', comingSoon: false},
   {id: 'agent', icon: <Bot size={20} />,               label: 'AI Agent',    description: 'LLM-powered agents.',            comingSoon: false},
-  {id: 'mcp',   icon: <Server size={20} />,            label: 'MCP Server',  description: 'Model Context Protocol servers.', comingSoon: true},
+  {id: 'mcp',   icon: <Server size={20} />,            label: 'MCP',         description: 'Model Context Protocol servers and clients.', comingSoon: false},
 ];
 
 function selectCategory(type: ConnectType): void {
@@ -161,11 +166,15 @@ export default function DeveloperShortcut({
       ? ALL_FRAMEWORKS.filter(f => ['React', 'Next.js', 'Express', 'Vue'].includes(f.label))
       : selected === 'agent'
         ? AGENT_QUICKSTARTS
-        : null;
+        : selected === 'mcp'
+          ? MCP_QUICKSTARTS
+          : null;
   const quickstartFooter =
     selected === 'app'
       ? 'All application quickstarts are available in the sidebar.'
-      : 'More agent frameworks are coming soon.';
+      : selected === 'agent'
+        ? 'More agent frameworks are coming soon.'
+        : 'All MCP quickstarts are available in the sidebar.';
 
   return (
     <Box

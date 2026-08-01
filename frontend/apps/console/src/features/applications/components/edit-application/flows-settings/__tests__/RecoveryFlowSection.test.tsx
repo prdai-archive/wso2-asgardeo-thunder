@@ -18,10 +18,10 @@
 
 import {render, screen, waitFor} from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import type {Application} from '@thunderid/configure-applications';
 import {MemoryRouter} from 'react-router';
 import {describe, it, expect, vi, beforeEach} from 'vitest';
 import useGetFlows from '../../../../../flows/api/useGetFlows';
-import type {Application} from '../../../../models/application';
 import RecoveryFlowSection from '../RecoveryFlowSection';
 
 // Mock the useGetFlows hook
@@ -482,8 +482,8 @@ describe('RecoveryFlowSection', () => {
       );
 
       const links = container.querySelectorAll('a');
-      const editLink = Array.from(links).find((link) => link.getAttribute('href')?.includes('/flows/recovery/'));
-      expect(editLink).toHaveAttribute('href', '/flows/recovery/rec-flow-1');
+      const editLink = Array.from(links).find((link) => link.getAttribute('href')?.includes('/flows/rec-flow-'));
+      expect(editLink).toHaveAttribute('href', '/flows/rec-flow-1');
     });
 
     it('should display edit link with correct flow ID from editedApp', () => {
@@ -503,8 +503,8 @@ describe('RecoveryFlowSection', () => {
       );
 
       const links = container.querySelectorAll('a');
-      const editLink = Array.from(links).find((link) => link.getAttribute('href')?.includes('/flows/recovery/'));
-      expect(editLink).toHaveAttribute('href', '/flows/recovery/rec-flow-2');
+      const editLink = Array.from(links).find((link) => link.getAttribute('href')?.includes('/flows/rec-flow-'));
+      expect(editLink).toHaveAttribute('href', '/flows/rec-flow-2');
     });
 
     it('should display create link pointing to flows page', () => {

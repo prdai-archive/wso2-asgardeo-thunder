@@ -16,15 +16,15 @@
  * under the License.
  */
 
+import {OAuth2GrantTypes} from '@thunderid/configure-applications';
+import type {Application} from '@thunderid/configure-applications';
 import {Box, Stack, Tab, Tabs} from '@wso2/oxygen-ui';
 import {useEffect, useState, type JSX, type SyntheticEvent} from 'react';
 import {useTranslation} from 'react-i18next';
 import AgentAccessTokenSection from './AgentAccessTokenSection';
+import SettingsLockNotice from '../../../../applications/components/common/SettingsLockNotice';
 import EditTokenSettings from '../../../../applications/components/edit-application/token-settings/EditTokenSettings';
-import type {Application} from '../../../../applications/models/application';
-import {OAuth2GrantTypes} from '../../../../applications/models/oauth';
 import type {Agent, OAuthAgentConfig} from '../../../models/agent';
-import DelegationLockNotice from '../shared/DelegationLockNotice';
 
 interface EditTokensSettingsProps {
   agent: Agent;
@@ -32,6 +32,7 @@ interface EditTokensSettingsProps {
   oauth2Config?: OAuthAgentConfig;
   onFieldChange: (field: keyof Agent, value: unknown) => void;
   onValidationChange?: (hasErrors: boolean) => void;
+  sectionResetKey?: number;
 }
 
 export default function EditTokensSettings({
@@ -40,6 +41,7 @@ export default function EditTokensSettings({
   oauth2Config = undefined,
   onFieldChange,
   onValidationChange = undefined,
+  sectionResetKey = 0,
 }: EditTokensSettingsProps): JSX.Element {
   const {t} = useTranslation();
   const [subTab, setSubTab] = useState(0);
@@ -70,6 +72,7 @@ export default function EditTokensSettings({
       <Box sx={{pt: 3}}>
         {subTab === 0 && (
           <AgentAccessTokenSection
+            key={sectionResetKey}
             agent={agent}
             editedAgent={editedAgent}
             oauth2Config={oauth2Config}
@@ -78,11 +81,11 @@ export default function EditTokensSettings({
           />
         )}
         {subTab === 1 && (
-          <DelegationLockNotice
+          <SettingsLockNotice
             isUnlocked={isUnlocked}
             message={t(
               'agents:edit.tokens.delegationLock.message',
-              'These settings are frozen for this agent. Turn on Delegated mode in the Flows tab to unlock and start using them.',
+              'These settings are frozen for this agent. Turn on Delegated mode in the Advanced tab to unlock and start using them.',
             )}
           >
             <Stack spacing={3}>
@@ -94,9 +97,12 @@ export default function EditTokensSettings({
                 entityLabel="agent"
                 showUserInfoTab={false}
                 showActorClaim
+                actorSub={agent.id}
+                certificateLocation="Credentials"
+                sectionResetKey={sectionResetKey}
               />
             </Stack>
-          </DelegationLockNotice>
+          </SettingsLockNotice>
         )}
       </Box>
     </Box>

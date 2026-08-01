@@ -25,7 +25,6 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/thunder-id/thunderid/internal/attestation"
 	"github.com/thunder-id/thunderid/internal/attributecache"
 	"github.com/thunder-id/thunderid/internal/authn/assert"
 	authnprovidermgr "github.com/thunder-id/thunderid/internal/authnprovider/manager"
@@ -50,7 +49,6 @@ import (
 	"github.com/thunder-id/thunderid/internal/system/kmprovider"
 	"github.com/thunder-id/thunderid/internal/system/kmprovider/defaultkm/pki"
 	"github.com/thunder-id/thunderid/internal/system/log"
-	"github.com/thunder-id/thunderid/internal/system/transaction"
 	"github.com/thunder-id/thunderid/pkg/thunderidengine/config"
 	engineconfig "github.com/thunder-id/thunderid/pkg/thunderidengine/config"
 	"github.com/thunder-id/thunderid/pkg/thunderidengine/providers"
@@ -85,6 +83,7 @@ func New(mux *http.ServeMux, opts ...Option) *Engine {
 			Keys:       engineCtx.keyConfigs,
 			Encryption: engineCtx.encryptionConfig,
 		},
+		AttributeCache: engineCtx.attributeCacheConfig,
 	}
 
 	err = systemconfig.InitializeServerRuntime(engineCtx.serverHome, &sysConfig)
@@ -120,7 +119,8 @@ func New(mux *http.ServeMux, opts ...Option) *Engine {
 		}
 	}
 
-	engineCtx.attributeCacheService = attributecache.Initialize(engineCtx.runtimeStoreProvider)
+	engineCtx.attributeCacheService = attributecache.Initialize(engineCtx.runtimeStoreProvider,
+		engineCtx.runtimeCryptoSvc, systemconfig.GetServerRuntime().Config.AttributeCache.Encryption.Enabled)
 	engineCtx.authAssertGen = assert.Initialize()
 
 	authnProviderManager, err := authnprovidermgr.Initialize(
@@ -150,7 +150,8 @@ func New(mux *http.ServeMux, opts ...Option) *Engine {
 		ResourceService:   engineCtx.resourceProvider,
 	}
 	interceptorDeps := interceptor.InterceptorDependencies{
-		FlowFactory: engineCtx.flowFactory,
+		FlowFactory:    engineCtx.flowFactory,
+		CaptchaService: engineCtx.captchaValidationProvider,
 	}
 
 	engineCtx.execRegistry, err = executor.Initialize(execDeps, flowConfig.Flow)
@@ -170,14 +171,10 @@ func New(mux *http.ServeMux, opts ...Option) *Engine {
 	engineCtx.graphBuilder = graphbuilder.Initialize(engineCtx.flowFactory, engineCtx.execRegistry,
 		engineCtx.interceptorRegistry, graphCache)
 
-	attestationProvider, err := attestation.Initialize(engineCtx.runtimeCryptoSvc)
-	if err != nil {
-		logger.Fatal(ctx, "Failed to initialize attestation provider", log.Error(err))
-	}
 	engineCtx.flowExecService, err = flowexec.Initialize(mux, engineCtx.flowProvider, engineCtx.actorProvider,
 		engineCtx.execRegistry, engineCtx.interceptorRegistry, engineCtx.observabilitySvc,
-		engineCtx.runtimeCryptoSvc, attestationProvider, engineCtx.graphBuilder,
-		engineCtx.runtimeStoreProvider, engineCtx.transactioner, flowConfig)
+		engineCtx.runtimeCryptoSvc, engineCtx.attestationProvider, engineCtx.graphBuilder,
+		engineCtx.runtimeStoreProvider, engineCtx.transactioner, nil, flowConfig)
 	if err != nil {
 		logger.Fatal(ctx, "Failed to initialize flow execution service", log.Error(err))
 	}
@@ -307,7 +304,6 @@ type engineContext struct {
 	graphBuilder          graphbuilder.GraphBuilderInterface
 	authAssertGen         assert.AuthAssertGeneratorInterface
 	dpopVerifier          dpop.VerifierInterface
-	transactioner         transaction.Transactioner
 	flowExecService       flowexec.FlowExecServiceInterface
 	attributeCacheService attributecache.AttributeCacheServiceInterface
 
@@ -323,21 +319,25 @@ type engineContext struct {
 	keyConfigs             []engineconfig.KeyConfig
 	encryptionConfig       engineconfig.EncryptionConfig
 	logConfig              engineconfig.LogConfig
+	attributeCacheConfig   engineconfig.AttributeCacheConfig
 
-	actorProvider         providers.ActorProvider
-	defaultAuthnProvider  providers.AuthnProviderInterface
-	customAuthnProviders  map[string]providers.CustomAuthnProvider
-	resourceProvider      providers.ResourceServerProvider
-	ouProvider            providers.OrganizationUnitProvider
-	designResolveProvider providers.DesignProvider
-	flowProvider          providers.FlowProvider
-	i18nProvider          providers.I18nProvider
-	idpProvider           providers.IDPProvider
-	consentProvider       providers.ConsentProvider
-	customExecutors       map[string]providers.Executor
-	observabilitySvc      providers.ObservabilityProvider
-	authzProvider         providers.AuthorizationProvider
+	actorProvider             providers.ActorProvider
+	defaultAuthnProvider      providers.AuthnProviderInterface
+	customAuthnProviders      map[string]providers.CustomAuthnProvider
+	resourceProvider          providers.ResourceServerProvider
+	ouProvider                providers.OrganizationUnitProvider
+	designResolveProvider     providers.DesignProvider
+	flowProvider              providers.FlowProvider
+	i18nProvider              providers.I18nProvider
+	idpProvider               providers.IDPProvider
+	consentProvider           providers.ConsentProvider
+	customExecutors           map[string]providers.Executor
+	observabilitySvc          providers.ObservabilityProvider
+	authzProvider             providers.AuthorizationProvider
+	attestationProvider       providers.AttestationProvider
+	captchaValidationProvider providers.CaptchaValidationProvider
 
+	transactioner        providers.Transactioner
 	runtimeStoreProvider providers.RuntimeStoreProvider
 }
 
@@ -363,6 +363,11 @@ func WithKeyConfigs(keyConfigs []engineconfig.KeyConfig) Option {
 // WithEncryptionConfig supplies the encryption configs.
 func WithEncryptionConfig(encryptionConfig engineconfig.EncryptionConfig) Option {
 	return func(c *engineContext) { c.encryptionConfig = encryptionConfig }
+}
+
+// WithAttributeCacheConfig supplies the attribute cache configuration.
+func WithAttributeCacheConfig(config engineconfig.AttributeCacheConfig) Option {
+	return func(c *engineContext) { c.attributeCacheConfig = config }
 }
 
 // WithServerConfig supplies the server configuration.
@@ -487,4 +492,19 @@ func WithLogConfig(config engineconfig.LogConfig) Option {
 	return func(ctx *engineContext) {
 		ctx.logConfig = config
 	}
+}
+
+// WithAttestationProvider supplies the Attestation provider.
+func WithAttestationProvider(provider providers.AttestationProvider) Option {
+	return func(c *engineContext) { c.attestationProvider = provider }
+}
+
+// WithTransactioner supplies the Transactioner.
+func WithTransactioner(provider providers.Transactioner) Option {
+	return func(c *engineContext) { c.transactioner = provider }
+}
+
+// WithCaptchaValidationProvider supplies the CaptchaValidationProvider.
+func WithCaptchaValidationProvider(provider providers.CaptchaValidationProvider) Option {
+	return func(c *engineContext) { c.captchaValidationProvider = provider }
 }

@@ -17,6 +17,8 @@
  */
 
 import {SettingsCard} from '@thunderid/components';
+import {OAuth2ResponseTypes, TokenEndpointAuthMethods} from '@thunderid/configure-applications';
+import type {OAuth2Config} from '@thunderid/configure-applications';
 import {useThunderID} from '@thunderid/react';
 import {
   Box,
@@ -37,7 +39,6 @@ import {
 import {Lock} from '@wso2/oxygen-ui-icons-react';
 import {useTranslation} from 'react-i18next';
 import type {ApplicationTemplate} from '../../../models/application-templates';
-import {OAuth2ResponseTypes, TokenEndpointAuthMethods, type OAuth2Config} from '../../../models/oauth';
 import {getGrantTypeLabel} from '../../../utils/getGrantTypeLabel';
 import {
   applyGrantTypesChange,
@@ -294,7 +295,7 @@ export default function OAuth2ConfigSection({
         {/* Token Endpoint Auth Method */}
         <FormControl fullWidth size="small">
           <FormLabel htmlFor="token_endpoint_auth_method">
-            {t('applications:edit.advanced.labels.tokenEndpointAuthMethod', 'Token Endpoint Auth Method')}
+            {t('applications:edit.advanced.labels.tokenEndpointAuthMethod', 'Client Authentication Method')}
           </FormLabel>
           <Select
             id="token_endpoint_auth_method"
@@ -335,7 +336,7 @@ export default function OAuth2ConfigSection({
                   )
               : t(
                   'applications:edit.advanced.tokenEndpointAuthMethod.hint',
-                  'Defines how the client authenticates at the token endpoint.',
+                  'Defines how the client authenticates at protected endpoints.',
                 )}
           </Typography>
         </FormControl>

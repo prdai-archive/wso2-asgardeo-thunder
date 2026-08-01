@@ -18,10 +18,10 @@
 
 import {render, screen, waitFor} from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import type {Application} from '@thunderid/configure-applications';
 import {MemoryRouter} from 'react-router';
 import {describe, it, expect, vi, beforeEach} from 'vitest';
 import useGetFlows from '../../../../../flows/api/useGetFlows';
-import type {Application} from '../../../../models/application';
 import AuthenticationFlowSection from '../AuthenticationFlowSection';
 
 // Mock the useGetFlows hook
@@ -71,7 +71,7 @@ describe('AuthenticationFlowSection', () => {
         </MemoryRouter>,
       );
 
-      expect(screen.getByTestId('card-title')).toHaveTextContent('Authentication Flow');
+      expect(screen.getByTestId('card-title')).toHaveTextContent('Sign-in Flow');
       expect(screen.getByTestId('card-description')).toHaveTextContent(
         'Choose the flow that handles user login and authentication.',
       );
@@ -354,8 +354,8 @@ describe('AuthenticationFlowSection', () => {
       );
 
       const links = container.querySelectorAll('a');
-      const editLink = Array.from(links).find((link) => link.getAttribute('href')?.includes('/flows/signin/'));
-      expect(editLink).toHaveAttribute('href', '/flows/signin/auth-flow-1');
+      const editLink = Array.from(links).find((link) => link.getAttribute('href')?.includes('/flows/auth-flow-'));
+      expect(editLink).toHaveAttribute('href', '/flows/auth-flow-1');
     });
 
     it('should display edit link with correct flow ID from editedApp', () => {
@@ -375,8 +375,8 @@ describe('AuthenticationFlowSection', () => {
       );
 
       const links = container.querySelectorAll('a');
-      const editLink = Array.from(links).find((link) => link.getAttribute('href')?.includes('/flows/signin/'));
-      expect(editLink).toHaveAttribute('href', '/flows/signin/auth-flow-2');
+      const editLink = Array.from(links).find((link) => link.getAttribute('href')?.includes('/flows/auth-flow-'));
+      expect(editLink).toHaveAttribute('href', '/flows/auth-flow-2');
     });
 
     it('should display create link', () => {

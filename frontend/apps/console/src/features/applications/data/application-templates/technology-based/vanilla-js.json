@@ -1,7 +1,20 @@
 {
   "id": "vanilla-js",
+  "type": "browser",
   "displayName": "JavaScript",
   "description": "Browser application built with vanilla JavaScript",
+  "capabilities": {
+    "cors": true
+  },
+  "devServer": {
+    "id": "vite",
+    "label": "Vite",
+    "url": "http://localhost:5173"
+  },
+  "creationFlow": {
+    "steps": ["DETAILS", "SECURITY", "DESIGN", "CONFIGURE", "COMPLETE"],
+    "previewSteps": ["DETAILS", "SECURITY", "DESIGN"]
+  },
   "defaults": {
     "name": "JavaScript Application",
     "inboundAuthConfig": [

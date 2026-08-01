@@ -18,10 +18,10 @@
 
 import {render, screen, waitFor} from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import type {Application} from '@thunderid/configure-applications';
 import {MemoryRouter} from 'react-router';
 import {describe, it, expect, vi, beforeEach} from 'vitest';
 import useGetFlows from '../../../../../flows/api/useGetFlows';
-import type {Application} from '../../../../models/application';
 import RegistrationFlowSection from '../RegistrationFlowSection';
 
 // Mock the useGetFlows hook
@@ -89,7 +89,7 @@ describe('RegistrationFlowSection', () => {
         </MemoryRouter>,
       );
 
-      expect(screen.getByTestId('card-title')).toHaveTextContent('Registration Flow');
+      expect(screen.getByTestId('card-title')).toHaveTextContent('Sign-up Flow');
       expect(screen.getByTestId('card-description')).toHaveTextContent(
         'Choose the flow that handles user sign-up and account creation.',
       );

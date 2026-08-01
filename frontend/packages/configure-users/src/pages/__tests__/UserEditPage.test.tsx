@@ -159,6 +159,15 @@ vi.mock('@/components/edit-user/EditUserAttributes', () => ({
       <button type="button" onClick={() => onFieldChange('attributes', {department: 'sales'})}>
         Edit an attribute
       </button>
+      {/* Emits the original saved attributes, so the page treats it as no change. */}
+      <button
+        type="button"
+        onClick={() =>
+          onFieldChange('attributes', {username: 'john_doe', email: 'john@example.com', age: 30, active: true})
+        }
+      >
+        Revert attributes
+      </button>
     </div>
   ),
 }));
@@ -481,6 +490,18 @@ describe('UserEditPage', () => {
       expect(screen.getByRole('button', {name: 'Reset'})).toBeInTheDocument();
     });
 
+    it('hides the unsaved-changes bar when attributes are manually reverted to the saved values', async () => {
+      const user = userEvent.setup();
+      render(<UserEditPage />);
+
+      await user.click(screen.getByRole('tab', {name: 'Attributes'}));
+      await user.click(screen.getByText('Edit an attribute'));
+      expect(screen.getByText('You have unsaved changes')).toBeInTheDocument();
+
+      await user.click(screen.getByText('Revert attributes'));
+      expect(screen.queryByText('You have unsaved changes')).not.toBeInTheDocument();
+    });
+
     it('does not submit if user ouId is missing', async () => {
       const user = userEvent.setup();
       mockUseGetUser.mockReturnValue({
@@ -542,6 +563,52 @@ describe('UserEditPage', () => {
             type: 'Employee',
             attributes: {department: 'sales'},
           },
+        });
+      });
+    });
+
+    it('drops a staged optional attribute whose value no longer matches the schema', async () => {
+      const user = userEvent.setup();
+      // department is optional and typed number, but the staged value is the string 'sales'.
+      mockUseGetUserType.mockReturnValue({
+        data: {...mockSchemaData, schema: {...mockSchemaData.schema, department: {type: 'number'}}},
+        isLoading: false,
+        error: null,
+      });
+
+      render(<UserEditPage />);
+
+      await user.click(screen.getByRole('tab', {name: 'Attributes'}));
+      await user.click(screen.getByText('Edit an attribute'));
+      await user.click(screen.getByRole('button', {name: 'Save'}));
+
+      await waitFor(() => {
+        expect(mockUpdateMutateAsync).toHaveBeenCalledWith({
+          userId: 'user123',
+          data: {ouId: 'test-ou', type: 'Employee', attributes: {}},
+        });
+      });
+    });
+
+    it('keeps a required attribute even when its value no longer matches the schema', async () => {
+      const user = userEvent.setup();
+      // department is required, so the mismatched value is kept for the backend to reject.
+      mockUseGetUserType.mockReturnValue({
+        data: {...mockSchemaData, schema: {...mockSchemaData.schema, department: {type: 'number', required: true}}},
+        isLoading: false,
+        error: null,
+      });
+
+      render(<UserEditPage />);
+
+      await user.click(screen.getByRole('tab', {name: 'Attributes'}));
+      await user.click(screen.getByText('Edit an attribute'));
+      await user.click(screen.getByRole('button', {name: 'Save'}));
+
+      await waitFor(() => {
+        expect(mockUpdateMutateAsync).toHaveBeenCalledWith({
+          userId: 'user123',
+          data: {ouId: 'test-ou', type: 'Employee', attributes: {department: 'sales'}},
         });
       });
     });

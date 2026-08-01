@@ -325,6 +325,29 @@ describe('ViewUserTypePage', () => {
         expect(screen.getByText('Updated Schema')).toBeInTheDocument();
       });
     });
+
+    it('hides the unsaved-changes bar when the name is retyped back to its original value', async () => {
+      const user = userEvent.setup();
+      render(<ViewUserTypePage />);
+
+      await user.click(screen.getByRole('button', {name: /edit user type name/i}));
+      let nameInput = screen.getByRole('textbox', {name: /user type name/i});
+      await user.clear(nameInput);
+      await user.type(nameInput, 'Renamed Schema{Enter}');
+
+      await waitFor(() => {
+        expect(screen.getByText('You have unsaved changes')).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByRole('button', {name: /edit user type name/i}));
+      nameInput = screen.getByRole('textbox', {name: /user type name/i});
+      await user.clear(nameInput);
+      await user.type(nameInput, 'Employee Schema{Enter}');
+
+      await waitFor(() => {
+        expect(screen.queryByText('You have unsaved changes')).not.toBeInTheDocument();
+      });
+    });
   });
 
   describe('General Tab', () => {
@@ -883,7 +906,8 @@ describe('ViewUserTypePage', () => {
         expect(screen.getByText('PENDING')).toBeInTheDocument();
       });
 
-      // Save via the unsaved changes bar
+      // Save via the unsaved changes bar. Adding an enum value only widens the allowed set,
+      // which is not a breaking change, so no warning dialog appears and the save proceeds.
       const saveButton = screen.getByRole('button', {name: /^save$/i});
       await user.click(saveButton);
 
@@ -900,6 +924,96 @@ describe('ViewUserTypePage', () => {
           }),
         });
       });
+    });
+
+    it('warns before saving a breaking schema change and can be cancelled', async () => {
+      const user = userEvent.setup();
+
+      const userTypeWithEnum: ApiUserType = {
+        ...mockUserType,
+        schema: {
+          status: {
+            type: 'string',
+            required: true,
+            enum: ['ACTIVE', 'INACTIVE'],
+          },
+        },
+      };
+
+      mockUseGetUserType.mockReturnValue({
+        data: userTypeWithEnum,
+        isLoading: false,
+        error: null,
+        refetch: mockRefetch,
+      });
+
+      render(<ViewUserTypePage />);
+
+      await goToSchemaTab(user);
+      await expandProperty(user, 'status');
+
+      // Removing an allowed enum value narrows the set, a breaking change for existing users.
+      const activeChip = (await screen.findByText('ACTIVE')).closest('.MuiChip-root');
+      await user.click(within(activeChip as HTMLElement).getByTestId('CancelIcon'));
+
+      await waitFor(() => {
+        expect(screen.queryByText('ACTIVE')).not.toBeInTheDocument();
+      });
+
+      await user.click(screen.getByRole('button', {name: /^save$/i}));
+
+      // The confirmation dialog appears instead of saving immediately and lists the affected attribute.
+      const dialog = await screen.findByRole('dialog');
+      expect(within(dialog).getByText(/Confirm schema changes/i)).toBeInTheDocument();
+      expect(within(dialog).getByText('status')).toBeInTheDocument();
+
+      await user.click(within(dialog).getByRole('button', {name: /cancel/i}));
+
+      expect(mockUpdateMutateAsync).not.toHaveBeenCalled();
+    });
+
+    it('does not warn when a schema change is not breaking', async () => {
+      const user = userEvent.setup();
+      mockUpdateMutateAsync.mockResolvedValue(undefined);
+
+      const userTypeWithEnum: ApiUserType = {
+        ...mockUserType,
+        schema: {
+          status: {
+            type: 'string',
+            required: true,
+            enum: ['ACTIVE', 'INACTIVE'],
+          },
+        },
+      };
+
+      mockUseGetUserType.mockReturnValue({
+        data: userTypeWithEnum,
+        isLoading: false,
+        error: null,
+        refetch: mockRefetch,
+      });
+
+      render(<ViewUserTypePage />);
+
+      await goToSchemaTab(user);
+      await expandProperty(user, 'status');
+
+      // Adding an enum value only widens the allowed set, so no warning should appear.
+      const enumInput = await screen.findByPlaceholderText(/add value and press enter/i);
+      await user.type(enumInput, 'PENDING');
+      await user.click(screen.getByRole('button', {name: /^add$/i}));
+
+      await waitFor(() => {
+        expect(screen.getByText('PENDING')).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByRole('button', {name: /^save$/i}));
+
+      await waitFor(() => {
+        expect(mockUpdateMutateAsync).toHaveBeenCalled();
+      });
+      expect(screen.queryByText(/Confirm schema changes/i)).not.toBeInTheDocument();
     });
 
     it('saves schema with array type properties', async () => {
@@ -1399,6 +1513,7 @@ describe('ViewUserTypePage', () => {
       const saveButton = screen.getByRole('button', {name: /^save$/i});
       await user.click(saveButton);
 
+      // Widening the enum is not breaking, so the save proceeds without a warning.
       await waitFor(() => {
         expect(mockUpdateMutateAsync).toHaveBeenCalledWith({
           userTypeId: 'schema-123',
@@ -1454,6 +1569,9 @@ describe('ViewUserTypePage', () => {
       // Save should not include the display attribute since it became ineligible.
       const saveButton = screen.getByRole('button', {name: /^save$/i});
       await user.click(saveButton);
+
+      // Editing the schema shows a warning; continue.
+      await user.click(await screen.findByRole('button', {name: /^continue$/i}));
 
       await waitFor(() => {
         expect(mockUpdateMutateAsync).toHaveBeenCalledWith({

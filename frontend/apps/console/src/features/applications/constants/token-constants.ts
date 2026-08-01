@@ -42,6 +42,12 @@ const TokenConstants = {
   ADDITIONAL_AGENT_ATTRIBUTES: ['name', 'owner', 'ouHandle', 'ouId', 'ouName', 'groups', 'roles'],
 
   /**
+   * Optional claims that can be added to the client access token (client_credentials grant),
+   * where there is no end user to source attributes from.
+   */
+  CLIENT_TOKEN_OPTIONAL_CLAIMS: ['groups', 'ouHandle', 'ouId', 'ouName', 'roles'],
+
+  /**
    * Supported UserInfo response types
    */
   /**
@@ -60,11 +66,6 @@ const TokenConstants = {
   ID_TOKEN_ENCRYPTION_ENCS: ['A128CBC-HS256', 'A256GCM'],
 
   USER_INFO_RESPONSE_TYPES: ['JSON', 'JWS', 'JWE', 'NESTED_JWT'],
-
-  /**
-   * Supported JWS signing algorithms for UserInfo responses
-   */
-  USER_INFO_SIGNING_ALGS: ['RS256', 'RS512', 'PS256', 'ES256', 'ES384', 'ES512', 'EdDSA'],
 
   /**
    * Supported JWE key-management algorithms for UserInfo responses

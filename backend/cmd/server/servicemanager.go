@@ -234,9 +234,6 @@ func registerServices(mux *http.ServeMux, cacheManager cache.CacheManagerInterfa
 	fatalOnError(ctx, logger, err, "Failed to initialize connection declarative resources")
 	exporters = append(exporters, connectionExporter)
 
-	// Initialize passkey service
-	passkeyService := passkey.Initialize(entityService)
-
 	// Initialize magic link service
 	magicLinkService := magiclink.Initialize(jwtService)
 
@@ -259,6 +256,9 @@ func registerServices(mux *http.ServeMux, cacheManager cache.CacheManagerInterfa
 	runtimeStoreProvider, transactioner, err := runtimestore.Initialize(runtime.Config.Database.RuntimeTransient.Type,
 		runtime.Config.Server.Identifier)
 	fatalOnError(ctx, logger, err, "Failed to initialize runtime store")
+
+	// Initialize passkey service
+	passkeyService := passkey.Initialize(entityService, runtimeStoreProvider)
 
 	// Shared DPoP verifier (and its JTI replay cache) so OAuth and OpenID4VCI
 	// share JTI replay protection.
@@ -300,15 +300,22 @@ func registerServices(mux *http.ServeMux, cacheManager cache.CacheManagerInterfa
 	// guard created by the authn service.
 	authzen.Initialize(mux, authZService, entityProvider, resourceService, directAuthGuard)
 
-	attributeCacheService := attributecache.Initialize(runtimeStoreProvider)
+	attributeCacheService := attributecache.Initialize(runtimeStoreProvider, runtimeCryptoSvc,
+		runtime.Config.AttributeCache.Encryption.Enabled)
 
 	emailClient := initEmailClient(ctx, logger)
+
+	// Create the flow server-config handler early so it can be registered before serverconfig is
+	// initialized. The handle-existence validator is injected in a second phase after flowMgtService
+	// is available.
+	flowConfigHandler := flowmgt.NewFlowConfigHandler()
 
 	// Initialize server-wide configuration after its handler dependencies.
 	serverConfigHandlers := map[serverconfig.ConfigName]serverconfig.ServerConfigHandlerInterface{
 		serverconfig.ConfigNameCORS:                  cors.OriginHandler{},
 		serverconfig.ConfigNameDefaultResourceServer: resource.NewDefaultResourceServerConfigHandler(resourceService),
 		serverconfig.ConfigNameSession:               flowsession.ConfigHandler{},
+		serverconfig.ConfigNameFlow:                  flowConfigHandler,
 	}
 	serverConfigService, serverConfigExporter, err := serverconfig.Initialize(mux, cacheManager, serverConfigHandlers)
 	fatalOnError(ctx, logger, err, "Failed to initialize server config service")
@@ -367,8 +374,12 @@ func registerServices(mux *http.ServeMux, cacheManager cache.CacheManagerInterfa
 	)
 
 	flowMgtService, flowMgtExporter, err := flowmgt.Initialize(
-		mux, mcpServer, cacheManager, flowFactory, execRegistry, interceptorRegistry, graphBuilder)
+		mux, mcpServer, cacheManager, flowFactory, execRegistry, interceptorRegistry, graphBuilder,
+		serverConfigService, ouService, flowConfigHandler)
 	fatalOnError(ctx, logger, err, "Failed to initialize FlowMgtService")
+
+	// Two-phase initialization: inject the flow resolver into the OU service.
+	ouService.SetOUFlowResolver(flowMgtService)
 
 	exporters = append(exporters, flowMgtExporter)
 	certservice, err := cert.Initialize(cacheManager, dbprovider.GetDBProvider())
@@ -396,7 +407,7 @@ func registerServices(mux *http.ServeMux, cacheManager cache.CacheManagerInterfa
 	// TODO: Remove entityService dependency after finalizing declarative resource loading pattern
 	applicationService, applicationExporter, err := application.Initialize(
 		mux, mcpServer, entityProvider, entityService, inboundClientService, ouService, i18nService,
-		runtimeCryptoSvc)
+		runtimeCryptoSvc, serverConfigService)
 	fatalOnError(ctx, logger, err, "Failed to initialize ApplicationService")
 	exporters = append(exporters, applicationExporter)
 
@@ -460,7 +471,7 @@ func registerServices(mux *http.ServeMux, cacheManager cache.CacheManagerInterfa
 	attestationProvider := initAttestationProvider(ctx, logger, runtimeCryptoSvc)
 	flowExecService, err := flowexec.Initialize(mux, flowMgtService, actorProvider,
 		execRegistry, interceptorRegistry, observabilitySvc, runtimeCryptoSvc, attestationProvider,
-		graphBuilder, runtimeStoreProvider, transactioner, flowConfig)
+		graphBuilder, runtimeStoreProvider, transactioner, serverConfigService, flowConfig)
 	fatalOnError(ctx, logger, err, "Failed to initialize flow execution service")
 
 	// Initialize OAuth services.
@@ -538,7 +549,8 @@ func initSessionService(ctx context.Context, svc serverconfig.ServerConfigServic
 	criteriaRevoker flowsession.CriteriaRevoker, logger *log.Logger) (flowsession.Service, flowsession.Config) {
 	cfg := readSessionConfig(ctx, svc, logger)
 	sessionService, err := flowsession.Initialize(dbprovider.GetDBProvider(), deploymentID,
-		flowsession.NewTimeouts(cfg.IdleTimeoutSeconds, cfg.AbsoluteTimeoutSeconds), criteriaRevoker)
+		flowsession.NewTimeouts(cfg.IdleTimeoutSeconds, cfg.AbsoluteTimeoutSeconds,
+			cfg.ActivityRefreshIntervalSeconds), criteriaRevoker)
 	fatalOnError(ctx, logger, err, "Failed to initialize SSO session service")
 	return sessionService, cfg
 }

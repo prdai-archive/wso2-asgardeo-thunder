@@ -60,10 +60,12 @@ vi.mock('@thunderid/react', () => ({
     baseUrl,
     clientId,
     afterSignInUrl,
+    afterSignOutUrl,
     scopes,
     signInOptions,
     preferences,
     sendCookiesInRequests,
+    sendIdTokenInLogoutRequest,
     discovery,
     /* eslint-enable react/require-default-props */
   }: {
@@ -71,20 +73,24 @@ vi.mock('@thunderid/react', () => ({
     baseUrl?: string;
     clientId?: string;
     afterSignInUrl?: string;
+    afterSignOutUrl?: string;
     scopes?: string[];
     signInOptions?: Record<string, string>;
     preferences?: Record<string, unknown>;
     sendCookiesInRequests?: boolean;
+    sendIdTokenInLogoutRequest?: boolean;
     discovery?: Record<string, unknown>;
   }) => {
     capturedProviderProps = {
       baseUrl,
       clientId,
       afterSignInUrl,
+      afterSignOutUrl,
       scopes,
       signInOptions,
       preferences,
       sendCookiesInRequests,
+      sendIdTokenInLogoutRequest,
       discovery,
     };
     return (
@@ -93,6 +99,7 @@ vi.mock('@thunderid/react', () => ({
         data-base-url={baseUrl}
         data-client-id={clientId}
         data-after-sign-in-url={afterSignInUrl}
+        data-after-sign-out-url={afterSignOutUrl}
         data-scopes={scopes ? JSON.stringify(scopes) : undefined}
       >
         {children}
@@ -171,6 +178,15 @@ describe('withConfig (console)', () => {
     expect(capturedProviderProps.afterSignInUrl).toBe('https://custom-client.example.com');
   });
 
+  it('passes afterSignOutUrl from useConfig to ThunderIDProvider', () => {
+    mockGetClientUrl.mockReturnValue('https://custom-client.example.com/console');
+    mockGetServerUrl.mockReturnValue('https://server.example.com');
+    mockGetClientId.mockReturnValue('client-id');
+
+    render(<WithConfigComponent />);
+    expect(capturedProviderProps.afterSignOutUrl).toBe('https://custom-client.example.com/console');
+  });
+
   it('falls back to env VITE_THUNDER_BASE_URL when getTrustedIssuerUrl returns null', () => {
     mockGetTrustedIssuerUrl.mockReturnValue(null);
     mockGetTrustedIssuerClientId.mockReturnValue('client-id');
@@ -196,6 +212,15 @@ describe('withConfig (console)', () => {
 
     render(<WithConfigComponent />);
     expect(capturedProviderProps.afterSignInUrl).toBe('https://env-signin.example.com');
+  });
+
+  it('falls back to env VITE_THUNDER_AFTER_SIGN_IN_URL for afterSignOutUrl when getClientUrl returns null', () => {
+    mockGetClientUrl.mockReturnValue(null);
+    mockGetServerUrl.mockReturnValue('https://server.example.com');
+    mockGetClientId.mockReturnValue('client-id');
+
+    render(<WithConfigComponent />);
+    expect(capturedProviderProps.afterSignOutUrl).toBe('https://env-signin.example.com');
   });
 
   it('passes scopes when getTrustedIssuerScopes returns a non-empty array', () => {
@@ -347,6 +372,17 @@ describe('withConfig (console)', () => {
     });
   });
 
+  // --- RP-initiated logout ---
+
+  describe('rp-initiated logout', () => {
+    it('sets sendIdTokenInLogoutRequest=false so the ID token stays out of the sign-out URL', () => {
+      mockGetClientUrl.mockReturnValue('https://client.example.com');
+
+      render(<WithConfigComponent />);
+      expect(capturedProviderProps.sendIdTokenInLogoutRequest).toBe(false);
+    });
+  });
+
   // --- resource indicator ---
 
   describe('resource indicator', () => {
@@ -485,6 +521,14 @@ describe('withConfig (console)', () => {
 
       render(<WithConfigComponent />);
       expect(capturedProviderProps.afterSignInUrl).toBe('https://override-redirect.example.com');
+    });
+
+    it('overrides afterSignOutUrl with config.sdk.afterSignOutUrl', () => {
+      mockConfig.sdk = {afterSignOutUrl: 'https://override-signout.example.com'};
+      mockGetClientUrl.mockReturnValue('https://client.example.com');
+
+      render(<WithConfigComponent />);
+      expect(capturedProviderProps.afterSignOutUrl).toBe('https://override-signout.example.com');
     });
 
     it('overrides scopes with config.sdk.scopes', () => {

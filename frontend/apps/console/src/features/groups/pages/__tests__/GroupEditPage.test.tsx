@@ -356,6 +356,30 @@ describe('GroupEditPage', () => {
     });
   });
 
+  it('should hide the action bar when the name is retyped back to its original value', async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<GroupEditPage />);
+
+    const editName = async (to: string): Promise<void> => {
+      const h3 = screen.getAllByText(/Test Group|Renamed Group/).find((el) => el.tagName === 'H3');
+      await user.click(h3!.parentElement!.querySelector('button')!);
+      const input = screen.getByRole('textbox');
+      await user.clear(input);
+      await user.type(input, to);
+      await user.keyboard('{Enter}');
+    };
+
+    await editName('Renamed Group');
+    await waitFor(() => {
+      expect(screen.getByText('You have unsaved changes')).toBeInTheDocument();
+    });
+
+    await editName('Test Group');
+    await waitFor(() => {
+      expect(screen.queryByText('You have unsaved changes')).not.toBeInTheDocument();
+    });
+  });
+
   it('should cancel name editing on Escape', async () => {
     const user = userEvent.setup();
     renderWithProviders(<GroupEditPage />);
@@ -520,7 +544,7 @@ describe('GroupEditPage', () => {
     await user.click(screen.getByText('Save Changes'));
 
     await waitFor(() => {
-      expect(screen.getByText('Save failed')).toBeInTheDocument();
+      expect(screen.getByText('Failed to update group. Please try again.')).toBeInTheDocument();
     });
   });
 
@@ -596,7 +620,7 @@ describe('GroupEditPage', () => {
     await user.click(screen.getByText('Save Changes'));
 
     await waitFor(() => {
-      expect(screen.getByText('Save failed')).toBeInTheDocument();
+      expect(screen.getByText('Failed to update group. Please try again.')).toBeInTheDocument();
     });
 
     // Close the snackbar via the Alert's close button
@@ -604,7 +628,36 @@ describe('GroupEditPage', () => {
     await user.click(closeButton);
 
     await waitFor(() => {
-      expect(screen.queryByText('Save failed')).not.toBeInTheDocument();
+      expect(screen.queryByText('Failed to update group. Please try again.')).not.toBeInTheDocument();
+    });
+  });
+
+  it('should show mapped error message when the group name conflicts on save', async () => {
+    const error = new Error('Request failed') as Error & {response?: {data?: {code: string}}};
+    error.response = {data: {code: 'GRP-1004'}};
+    mockMutateAsync.mockRejectedValue(error);
+    const user = userEvent.setup();
+    renderWithProviders(<GroupEditPage />);
+
+    // Edit the name to trigger hasChanges
+    const h3Heading = screen.getAllByText('Test Group').find((el) => el.tagName === 'H3');
+    const nameEditBtn = h3Heading!.parentElement?.querySelector('button');
+    await user.click(nameEditBtn!);
+    const nameInput = screen.getByDisplayValue('Test Group');
+    await user.clear(nameInput);
+    await user.type(nameInput, 'New Name');
+    await user.keyboard('{Enter}');
+
+    await waitFor(() => {
+      expect(screen.getByText('Save Changes')).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByText('Save Changes'));
+
+    await waitFor(() => {
+      expect(
+        screen.getByText('A group with this name already exists in this organization unit. Choose a different name.'),
+      ).toBeInTheDocument();
     });
   });
 });

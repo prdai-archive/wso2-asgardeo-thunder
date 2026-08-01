@@ -29,7 +29,6 @@ import (
 	"github.com/thunder-id/thunderid/internal/system/database/provider"
 	"github.com/thunder-id/thunderid/internal/system/log"
 	"github.com/thunder-id/thunderid/internal/system/resourcedependency"
-	"github.com/thunder-id/thunderid/internal/system/transaction"
 	"github.com/thunder-id/thunderid/internal/system/utils"
 	"github.com/thunder-id/thunderid/pkg/thunderidengine/providers"
 )
@@ -37,11 +36,12 @@ import (
 // inboundClientJSONBlob is the internal structure for marshaling/unmarshaling the
 // PROPERTIES column.
 type inboundClientJSONBlob struct {
-	Assertion        *inboundmodel.AssertionConfig    `json:"assertion,omitempty"`
-	LoginConsent     *inboundmodel.LoginConsentConfig `json:"loginConsent,omitempty"`
-	AllowedUserTypes []string                         `json:"allowedUserTypes,omitempty"`
-	Attestation      *providers.AttestationConfig     `json:"attestation,omitempty"`
-	Properties       map[string]interface{}           `json:"properties,omitempty"`
+	Assertion             *inboundmodel.AssertionConfig    `json:"assertion,omitempty"`
+	LoginConsent          *inboundmodel.LoginConsentConfig `json:"loginConsent,omitempty"`
+	AllowedUserTypes      []string                         `json:"allowedUserTypes,omitempty"`
+	PasskeyAllowedOrigins []string                         `json:"passkeyAllowedOrigins,omitempty"`
+	Attestation           *providers.AttestationConfig     `json:"attestation,omitempty"`
+	Properties            map[string]interface{}           `json:"properties,omitempty"`
 }
 
 // inboundClientStoreInterface defines persistence operations for inbound clients.
@@ -78,7 +78,7 @@ type store struct {
 var getDBProvider = provider.GetDBProvider
 
 // newStore returns a database-backed inbound client store along with its transactioner.
-func newStore() (inboundClientStoreInterface, transaction.Transactioner, error) {
+func newStore() (inboundClientStoreInterface, providers.Transactioner, error) {
 	dbProvider := getDBProvider()
 	client, err := dbProvider.GetConfigDBClient()
 	if err != nil {
@@ -111,11 +111,12 @@ func marshalInboundClient(c inboundmodel.InboundClient) (
 	err error,
 ) {
 	blob := inboundClientJSONBlob{
-		Assertion:        c.Assertion,
-		LoginConsent:     c.LoginConsent,
-		AllowedUserTypes: c.AllowedUserTypes,
-		Attestation:      c.Attestation,
-		Properties:       c.Properties,
+		Assertion:             c.Assertion,
+		LoginConsent:          c.LoginConsent,
+		AllowedUserTypes:      c.AllowedUserTypes,
+		PasskeyAllowedOrigins: c.PasskeyAllowedOrigins,
+		Attestation:           c.Attestation,
+		Properties:            c.Properties,
 	}
 	propertiesBytes, err = marshalNullableJSON(blob)
 	if err != nil {
@@ -503,6 +504,7 @@ func buildInboundClientFromRow(ctx context.Context, row map[string]interface{}) 
 			client.Assertion = blob.Assertion
 			client.LoginConsent = blob.LoginConsent
 			client.AllowedUserTypes = blob.AllowedUserTypes
+			client.PasskeyAllowedOrigins = blob.PasskeyAllowedOrigins
 			client.Attestation = blob.Attestation
 			client.Properties = blob.Properties
 		}

@@ -150,6 +150,16 @@ type EncryptionConfig struct {
 	Key string `yaml:"key" json:"key"`
 }
 
+// AttributeCacheConfig holds the attribute cache configuration details.
+type AttributeCacheConfig struct {
+	Encryption AttributeCacheEncryptionConfig `yaml:"encryption" json:"encryption"`
+}
+
+// AttributeCacheEncryptionConfig holds the attribute cache encryption configuration details.
+type AttributeCacheEncryptionConfig struct {
+	Enabled bool `yaml:"enabled" json:"enabled"`
+}
+
 // JWTConfig holds the JWT configuration details.
 type JWTConfig struct {
 	Issuer         string `yaml:"issuer"           json:"issuer"`
@@ -275,20 +285,17 @@ type TokenExchangeConfig struct {
 
 // FlowConfig holds the configuration details for the flow service.
 type FlowConfig struct {
-	DefaultAuthFlowHandle    string `yaml:"default_auth_flow_handle"    json:"default_auth_flow_handle"`
-	DefaultSignOutFlowHandle string `yaml:"default_signout_flow_handle" json:"default_signout_flow_handle"`
-	UserOnboardingFlowHandle string `yaml:"user_onboarding_flow_handle" json:"user_onboarding_flow_handle"`
-	MaxVersionHistory        int    `yaml:"max_version_history"         json:"max_version_history"`
-	AutoInferRegistration    bool   `yaml:"auto_infer_registration"     json:"auto_infer_registration"`
-	Store                    string `yaml:"store"                       json:"store"`
+	MaxVersionHistory     int    `yaml:"max_version_history" json:"max_version_history"`
+	AutoInferRegistration bool   `yaml:"auto_infer_registration" json:"auto_infer_registration"`
+	Store                 string `yaml:"store"               json:"store"`
 	// Executors lists built-in executor names to register (e.g. CredentialsAuthExecutor).
 	// When empty, all built-in executors are registered. When set, only listed executors
 	// are available; omit only executors you intentionally disable on this node.
-	Executors []string `yaml:"executors"                   json:"executors"`
+	Executors []string `yaml:"executors"    json:"executors"`
 	// Interceptors lists built-in interceptor names to register (e.g. CaptchaInterceptor).
 	// When empty, all built-in interceptors are registered. When set, only listed interceptors
 	// are available; omit only interceptors you intentionally disable on this node.
-	Interceptors []string `yaml:"interceptors"                json:"interceptors"`
+	Interceptors []string `yaml:"interceptors" json:"interceptors"`
 }
 
 // RequiredClaim defines a claim name and expected value that must be present in the token.

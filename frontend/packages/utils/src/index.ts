@@ -29,6 +29,9 @@ export {default as isRelativeUrl} from './path/isRelativeUrl';
 
 // Object Operations
 export {default as isEmpty} from './object/isEmpty';
+export {default as isEqual} from './object/isEqual';
+export {default as isEqualIgnoringEmpty} from './object/isEqualIgnoringEmpty';
+export {default as isPlainObject} from './object/isPlainObject';
 export {default as merge} from './object/merge';
 
 // Error Utilities
@@ -45,3 +48,6 @@ export {
   TemplateLiteralType,
 } from './template/parseTemplateLiteral';
 export type {TemplateLiteralResult, TemplateLiteralHandlers} from './template/parseTemplateLiteral';
+
+// Validation
+export {EMAIL_REGEX} from './validation/emailRegex';

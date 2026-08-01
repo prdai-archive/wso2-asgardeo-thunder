@@ -23,12 +23,33 @@ import type {ReactNode} from 'react';
 import {describe, it, expect, vi, beforeEach} from 'vitest';
 import AgentEditPage from '../AgentEditPage';
 
-const {mockNavigate, mockRefetch, mockUseGetAgent, mockUseUpdateAgent, mockMutateAsync} = vi.hoisted(() => ({
+const {
+  mockNavigate,
+  mockRefetch,
+  mockUseGetAgent,
+  mockUseUpdateAgent,
+  mockMutateAsync,
+  mockUseGetAgentTypes,
+  mockUseGetAgentType,
+  mockUseLocation,
+} = vi.hoisted(() => ({
   mockNavigate: vi.fn(),
   mockRefetch: vi.fn(),
   mockUseGetAgent: vi.fn(),
   mockUseUpdateAgent: vi.fn(),
   mockMutateAsync: vi.fn(),
+  mockUseGetAgentTypes: vi.fn(),
+  mockUseGetAgentType: vi.fn(),
+  mockUseLocation: vi.fn(
+    (): {
+      state: {justCreatedSecret: {agentName: string; clientId?: string; clientSecret: string}} | null;
+    } => ({state: null}),
+  ),
+}));
+
+vi.mock('@thunderid/configure-agent-types', () => ({
+  useGetAgentTypes: () => mockUseGetAgentTypes(),
+  useGetAgentType: () => mockUseGetAgentType(),
 }));
 
 vi.mock('react-router', async () => {
@@ -37,6 +58,7 @@ vi.mock('react-router', async () => {
     ...actual,
     useNavigate: () => mockNavigate,
     useParams: () => ({agentId: 'agent-1'}),
+    useLocation: () => mockUseLocation(),
     Link: ({to, children = undefined, ...props}: {to: string; children?: ReactNode; [key: string]: unknown}) => (
       <a
         {...(props as Record<string, unknown>)}
@@ -152,6 +174,16 @@ describe('AgentEditPage', () => {
     });
     mockMutateAsync.mockResolvedValue(undefined);
     mockRefetch.mockResolvedValue({});
+    mockUseGetAgentTypes.mockReturnValue({
+      data: {types: [{id: 'default-type', name: 'default'}]},
+      isLoading: false,
+      error: null,
+    });
+    mockUseGetAgentType.mockReturnValue({
+      data: {id: 'default-type', name: 'default', schema: {}},
+      isLoading: false,
+      error: null,
+    });
   });
 
   describe('Loading and Error States', () => {
@@ -163,6 +195,14 @@ describe('AgentEditPage', () => {
         isError: false,
         refetch: mockRefetch,
       });
+
+      render(<AgentEditPage />);
+
+      expect(screen.getByRole('progressbar')).toBeInTheDocument();
+    });
+
+    it('renders a progressbar while the type schema is still resolving', () => {
+      mockUseGetAgentType.mockReturnValue({data: undefined, isLoading: true, error: null});
 
       render(<AgentEditPage />);
 
@@ -306,6 +346,57 @@ describe('AgentEditPage', () => {
     });
   });
 
+  describe('Unsaved-changes bar', () => {
+    const editName = async (user: ReturnType<typeof userEvent.setup>, from: string, to: string): Promise<void> => {
+      const editIcons = screen.getAllByRole('button').filter((b) => b.querySelector('svg'));
+      const nameEditButton = editIcons.find((btn) => btn.parentElement?.textContent?.includes(from));
+      if (!nameEditButton) throw new Error(`name edit button for "${from}" not found`);
+      await user.click(nameEditButton);
+      const input = screen.getByRole('textbox');
+      await user.clear(input);
+      await user.type(input, `${to}{Enter}`);
+    };
+
+    it('hides the bar when a field is manually retyped back to its original value', async () => {
+      const user = userEvent.setup();
+      render(<AgentEditPage />);
+
+      await editName(user, 'Test Agent', 'Renamed Agent');
+      expect(screen.getByText('You have unsaved changes')).toBeInTheDocument();
+
+      await editName(user, 'Renamed Agent', 'Test Agent');
+      await waitFor(() => {
+        expect(screen.queryByText('You have unsaved changes')).not.toBeInTheDocument();
+      });
+    });
+
+    it('keeps the bar visible when only one of two edited fields is reverted', async () => {
+      const user = userEvent.setup();
+      render(<AgentEditPage />);
+
+      // Edit description
+      const editIcons = screen.getAllByRole('button').filter((b) => b.querySelector('svg'));
+      const descEditButton = editIcons.find((btn) => btn.parentElement?.textContent?.includes('Test description'));
+      if (!descEditButton) throw new Error('description edit button not found');
+      await user.click(descEditButton);
+      const descInput = screen
+        .getAllByRole('textbox')
+        .find((el) => (el as HTMLTextAreaElement).value === 'Test description');
+      if (!descInput) throw new Error('description textarea not found');
+      await user.clear(descInput);
+      await user.type(descInput, 'Changed description');
+      descInput.dispatchEvent(new FocusEvent('blur', {bubbles: true}));
+
+      // Edit name, then revert only the name
+      await editName(user, 'Test Agent', 'Renamed Agent');
+      expect(screen.getByText('You have unsaved changes')).toBeInTheDocument();
+      await editName(user, 'Renamed Agent', 'Test Agent');
+
+      // Description is still changed, so the bar must stay visible
+      expect(screen.getByText('You have unsaved changes')).toBeInTheDocument();
+    });
+  });
+
   describe('Delete success', () => {
     it('navigates back to /agents when EditGeneralSettings reports onDeleteSuccess', async () => {
       const user = userEvent.setup();
@@ -345,6 +436,37 @@ describe('AgentEditPage', () => {
           }),
         );
       });
+    });
+
+    it('keeps the unsaved-changes bar and edited state when saving fails', async () => {
+      const user = userEvent.setup();
+      mockMutateAsync.mockRejectedValueOnce(new Error('Boom'));
+      render(<AgentEditPage />);
+
+      await user.click(screen.getByRole('tab', {name: 'Attributes'}));
+      await user.click(screen.getByText('Edit an attribute'));
+      await user.click(screen.getByRole('button', {name: 'Save'}));
+
+      await waitFor(() => {
+        expect(mockMutateAsync).toHaveBeenCalled();
+      });
+      expect(mockRefetch).not.toHaveBeenCalled();
+      expect(screen.getByText('You have unsaved changes')).toBeInTheDocument();
+    });
+  });
+
+  describe('Reset', () => {
+    it('clears edited fields and resets tab content when Reset is clicked', async () => {
+      const user = userEvent.setup();
+      render(<AgentEditPage />);
+
+      await user.click(screen.getByRole('tab', {name: 'Attributes'}));
+      await user.click(screen.getByText('Edit an attribute'));
+      expect(screen.getByText('You have unsaved changes')).toBeInTheDocument();
+
+      await user.click(screen.getByRole('button', {name: 'Reset'}));
+
+      expect(screen.queryByText('You have unsaved changes')).not.toBeInTheDocument();
     });
   });
 
@@ -539,6 +661,55 @@ describe('AgentEditPage', () => {
       await triggerAChange(user);
 
       expect(screen.getByRole('button', {name: 'Save'})).not.toBeDisabled();
+    });
+  });
+
+  describe('Client Secret Popup (just created)', () => {
+    afterEach(() => {
+      mockUseLocation.mockReturnValue({state: null});
+    });
+
+    it('does not render the secret dialog when there is no justCreatedSecret navigation state', () => {
+      render(<AgentEditPage />);
+
+      expect(screen.queryByTestId('agent-show-client-secret')).not.toBeInTheDocument();
+    });
+
+    it('renders the secret dialog when justCreatedSecret is present in location state', () => {
+      mockUseLocation.mockReturnValue({
+        state: {
+          justCreatedSecret: {
+            agentName: 'My New Agent',
+            clientId: 'new-agent-client-id',
+            clientSecret: 'brand-new-agent-secret',
+          },
+        },
+      });
+
+      render(<AgentEditPage />);
+
+      expect(screen.getByTestId('agent-show-client-secret')).toBeInTheDocument();
+      expect(screen.getByDisplayValue('brand-new-agent-secret')).toBeInTheDocument();
+    });
+
+    it('closes the secret dialog when Continue is clicked', async () => {
+      const user = userEvent.setup();
+      mockUseLocation.mockReturnValue({
+        state: {
+          justCreatedSecret: {
+            agentName: 'My New Agent',
+            clientSecret: 'brand-new-agent-secret',
+          },
+        },
+      });
+
+      render(<AgentEditPage />);
+
+      await user.click(screen.getByTestId('agent-client-secret-continue'));
+
+      await waitFor(() => {
+        expect(screen.queryByTestId('agent-show-client-secret')).not.toBeInTheDocument();
+      });
     });
   });
 });

@@ -16,6 +16,8 @@
  * under the License.
  */
 
+import {TokenEndpointAuthMethods} from '@thunderid/configure-applications';
+import type {Application, OAuth2Config} from '@thunderid/configure-applications';
 import {useConfig} from '@thunderid/contexts';
 import {Stack} from '@wso2/oxygen-ui';
 import {useState, useCallback} from 'react';
@@ -24,9 +26,7 @@ import {useTranslation} from 'react-i18next';
 import AccessSection from './AccessSection';
 import DangerZoneSection from './DangerZoneSection';
 import QuickCopySection from './QuickCopySection';
-import type {Application} from '../../../models/application';
-import {TokenEndpointAuthMethods} from '../../../models/oauth';
-import type {OAuth2Config} from '../../../models/oauth';
+import resolveApplicationType, {isClientCredentialsOnlyGrantSet} from '../../../utils/resolveApplicationType';
 import ApplicationDeleteDialog from '../../ApplicationDeleteDialog';
 import ClientSecretSuccessDialog from '../../ClientSecretSuccessDialog';
 import RegenerateFlowSecretDialog from '../../RegenerateFlowSecretDialog';
@@ -55,6 +55,11 @@ interface EditGeneralSettingsProps {
    */
   oauth2Config?: OAuth2Config;
   /**
+   * Bumped by the parent on Save/Reset to force AccessSection to remount and drop its local
+   * redirect URI list state.
+   */
+  sectionResetKey?: number;
+  /**
    * The name of the field that was recently copied to clipboard
    */
   copiedField: string | null;
@@ -73,6 +78,11 @@ interface EditGeneralSettingsProps {
    * @param hasErrors - Boolean indicating if the general settings have validation errors
    */
   onValidationChange?: (hasErrors: boolean) => void;
+  /**
+   * Whether to show user-facing access config (allowed user types, redirect URIs). Hidden for
+   * clients with no user-facing grant.
+   */
+  showUserAccessConfig?: boolean;
 }
 
 /**
@@ -91,10 +101,12 @@ export default function EditGeneralSettings({
   editedApp,
   onFieldChange,
   oauth2Config = undefined,
+  sectionResetKey = 0,
   copiedField,
   onCopyToClipboard,
   onDeleteSuccess = undefined,
   onValidationChange = undefined,
+  showUserAccessConfig = true,
 }: EditGeneralSettingsProps): JSX.Element {
   const {config} = useConfig();
   const {t} = useTranslation();
@@ -111,13 +123,19 @@ export default function EditGeneralSettings({
     oauth2Config?.tokenEndpointAuthMethod === TokenEndpointAuthMethods.CLIENT_SECRET_BASIC ||
     oauth2Config?.tokenEndpointAuthMethod === TokenEndpointAuthMethods.CLIENT_SECRET_POST;
 
-  // Only flow-native apps are issued a Flow Secret and can rotate it: embedded apps with no OAuth
-  // profile, or confidential non-redirect apps. Public, redirect (authorization_code), and
-  // machine-to-machine (client_credentials as the only grant) apps get no Flow Secret.
+  // Only flow-native apps are issued a Flow Secret and can rotate it: full-stack, custom, or mcp
+  // apps using the embedded (non-redirect) sign-in option. Browser (public redirect), mobile
+  // (attestation), and m2m (direct token, including client_credentials-only mcp configs) apps never
+  // hold one. The canonical application type is the discriminator, falling back to the OAuth config
+  // shape for legacy/custom apps.
+  const resolvedType = resolveApplicationType(application.type, oauth2Config);
   const grantTypes = oauth2Config?.grantTypes ?? [];
-  const isM2MClient = grantTypes.length === 1 && grantTypes[0] === 'client_credentials';
   const isFlowNativeClient =
-    !oauth2Config || (!oauth2Config.publicClient && !grantTypes.includes('authorization_code') && !isM2MClient);
+    (resolvedType === 'fullstack' || resolvedType === 'custom' || resolvedType === 'mcp') &&
+    (!oauth2Config ||
+      (!oauth2Config.publicClient &&
+        !grantTypes.includes('authorization_code') &&
+        !isClientCredentialsOnlyGrantSet(grantTypes)));
 
   const handleRegenerateClick = useCallback((): void => {
     setRegenerateDialogOpen(true);
@@ -157,11 +175,13 @@ export default function EditGeneralSettings({
           onCopyToClipboard={onCopyToClipboard}
         />
         <AccessSection
+          key={sectionResetKey}
           application={application}
           editedApp={editedApp}
           oauth2Config={oauth2Config}
           onFieldChange={onFieldChange}
           onValidationChange={onValidationChange}
+          showUserAccessConfig={showUserAccessConfig}
         />
         {!application.isReadOnly && oauth2Config?.clientId?.toUpperCase() !== systemConsoleClientId && (
           <DangerZoneSection

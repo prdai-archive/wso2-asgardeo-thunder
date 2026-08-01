@@ -18,8 +18,8 @@
 
 import {render, screen, within} from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import type {OAuth2Config} from '@thunderid/configure-applications';
 import {describe, it, expect, vi} from 'vitest';
-import type {OAuth2Config} from '../../../../../applications/models/oauth';
 import OperationModesSection from '../OperationModesSection';
 
 vi.mock('react-i18next', () => ({
@@ -55,7 +55,7 @@ describe('OperationModesSection', () => {
     render(<OperationModesSection oauth2Config={autonomousOnlyConfig} onOAuth2ConfigChange={vi.fn()} />);
 
     expect(
-      screen.getByText(/greyed-out grants unlock once you turn on Delegated mode in the Flows tab/i),
+      screen.getByText(/greyed-out grants unlock once you turn on Delegated mode at the top of this tab/i),
     ).toBeInTheDocument();
   });
 

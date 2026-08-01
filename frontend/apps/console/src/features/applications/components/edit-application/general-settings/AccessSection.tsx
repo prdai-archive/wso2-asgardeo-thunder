@@ -18,6 +18,7 @@
 
 import {zodResolver} from '@hookform/resolvers/zod';
 import {SettingsCard} from '@thunderid/components';
+import type {Application, OAuth2Config} from '@thunderid/configure-applications';
 import {useGetUserTypes} from '@thunderid/configure-user-types';
 import {
   Box,
@@ -38,8 +39,7 @@ import {useState, useEffect} from 'react';
 import {useForm, Controller} from 'react-hook-form';
 import {useTranslation} from 'react-i18next';
 import {z} from 'zod';
-import type {Application} from '../../../models/application';
-import type {OAuth2Config} from '../../../models/oauth';
+import isValidRedirectUriFormat from '../../../utils/isValidRedirectUriFormat';
 
 /**
  * Props for the {@link AccessSection} component.
@@ -68,6 +68,11 @@ interface AccessSectionProps {
    * @param hasErrors - Boolean indicating if the access settings have validation errors
    */
   onValidationChange?: (hasErrors: boolean) => void;
+  /**
+   * Whether to show user-facing access config (allowed user types, redirect URIs). Hidden for
+   * clients with no user-facing grant.
+   */
+  showUserAccessConfig?: boolean;
 }
 
 /**
@@ -89,6 +94,7 @@ export default function AccessSection({
   oauth2Config = undefined,
   onFieldChange,
   onValidationChange = undefined,
+  showUserAccessConfig = true,
 }: AccessSectionProps) {
   const {t} = useTranslation();
   const {data: userTypesData, isLoading: loadingUserTypes} = useGetUserTypes();
@@ -126,46 +132,22 @@ export default function AccessSection({
     void trigger();
   }, [trigger]);
 
-  // Effect to notify parent component of validation state changes
+  // Effect to notify parent component of validation state changes. Redirect URI errors are ignored
+  // when the user-access fields are hidden, since those settings no longer apply to the client.
   useEffect(() => {
     if (onValidationChange) {
-      const hasErrors =
-        !!errors.url || Object.keys(uriErrors).length > 0 || Object.keys(postLogoutUriErrors).length > 0;
-      onValidationChange(hasErrors);
+      const hasUriErrors =
+        showUserAccessConfig && (Object.keys(uriErrors).length > 0 || Object.keys(postLogoutUriErrors).length > 0);
+      onValidationChange(!!errors.url || hasUriErrors);
     }
-  }, [errors.url, uriErrors, postLogoutUriErrors, onValidationChange]);
-
-  // Pure URI-format check shared by the redirect and post-logout redirect URI fields.
-  const isValidUriFormat = (uri: string): boolean => {
-    try {
-      // Replace wildcards in the host portion with a placeholder so new URL() can parse it.
-      // Path wildcards (e.g., /callback/*, /**) parse fine natively.
-      // The backend enforces all wildcard rules (allowed patterns, server config).
-      const schemeEnd = uri.indexOf('://');
-      let uriForValidation = uri;
-      if (schemeEnd !== -1) {
-        const pathStart = uri.indexOf('/', schemeEnd + 3);
-        const hostPart = pathStart !== -1 ? uri.slice(schemeEnd + 3, pathStart) : uri.slice(schemeEnd + 3);
-        if (hostPart.includes('*')) {
-          const sanitizedHost = hostPart.replace(/\*/g, 'wildcard-placeholder');
-          uriForValidation =
-            uri.slice(0, schemeEnd + 3) + sanitizedHost + (pathStart !== -1 ? uri.slice(pathStart) : '');
-        }
-      }
-      // eslint-disable-next-line no-new
-      new URL(uriForValidation);
-      return true;
-    } catch {
-      return false;
-    }
-  };
+  }, [errors.url, uriErrors, postLogoutUriErrors, onValidationChange, showUserAccessConfig]);
 
   const validateUri = (uri: string, index: number): boolean => {
     if (!uri || uri.trim() === '') {
       setUriErrors((prev) => ({...prev, [index]: t('applications:edit.general.redirectUris.error.empty')}));
       return false;
     }
-    if (!isValidUriFormat(uri)) {
+    if (!isValidRedirectUriFormat(uri)) {
       setUriErrors((prev) => ({...prev, [index]: t('applications:edit.general.redirectUris.error.invalid')}));
       return false;
     }
@@ -188,7 +170,7 @@ export default function AccessSection({
       });
       return false;
     }
-    if (!isValidUriFormat(uri)) {
+    if (!isValidRedirectUriFormat(uri)) {
       setPostLogoutUriErrors((prev) => ({
         ...prev,
         [index]: t('applications:edit.general.postLogoutRedirectUris.error.invalid', 'Enter a valid URI'),
@@ -315,42 +297,44 @@ export default function AccessSection({
       description={t('applications:edit.general.sections.access.description')}
     >
       <Stack spacing={3}>
-        <FormControl fullWidth>
-          <FormLabel htmlFor="allowed-user-types-autocomplete">
-            {t('applications:edit.general.labels.allowedUserTypes')}
-          </FormLabel>
-          <Autocomplete
-            multiple
-            fullWidth
-            id="allowed-user-types-autocomplete"
-            options={userTypeOptions}
-            value={editedApp.allowedUserTypes ?? application.allowedUserTypes ?? []}
-            onChange={(_event, newValue) => onFieldChange('allowedUserTypes', newValue)}
-            loading={loadingUserTypes}
-            disabled={application.isReadOnly}
-            renderInput={(params) => (
-              <TextField
-                {...params}
-                placeholder={t('applications:edit.general.allowedUserTypes.placeholder')}
-                helperText={t('applications:edit.general.allowedUserTypes.hint')}
-                InputProps={{
-                  ...params.InputProps,
-                  endAdornment: (
-                    <>
-                      {loadingUserTypes ? <CircularProgress color="inherit" size={20} /> : null}
-                      {params.InputProps.endAdornment}
-                    </>
-                  ),
-                }}
-              />
-            )}
-            renderTags={(value, getTagProps) =>
-              value.map((option, index) => <Chip label={option} {...getTagProps({index})} key={option} />)
-            }
-            freeSolo={false}
-            disableClearable={false}
-          />
-        </FormControl>
+        {showUserAccessConfig && (
+          <FormControl fullWidth>
+            <FormLabel htmlFor="allowed-user-types-autocomplete">
+              {t('applications:edit.general.labels.allowedUserTypes')}
+            </FormLabel>
+            <Autocomplete
+              multiple
+              fullWidth
+              id="allowed-user-types-autocomplete"
+              options={userTypeOptions}
+              value={editedApp.allowedUserTypes ?? application.allowedUserTypes ?? []}
+              onChange={(_event, newValue) => onFieldChange('allowedUserTypes', newValue)}
+              loading={loadingUserTypes}
+              disabled={application.isReadOnly}
+              renderInput={(params) => (
+                <TextField
+                  {...params}
+                  placeholder={t('applications:edit.general.allowedUserTypes.placeholder')}
+                  helperText={t('applications:edit.general.allowedUserTypes.hint')}
+                  InputProps={{
+                    ...params.InputProps,
+                    endAdornment: (
+                      <>
+                        {loadingUserTypes ? <CircularProgress color="inherit" size={20} /> : null}
+                        {params.InputProps.endAdornment}
+                      </>
+                    ),
+                  }}
+                />
+              )}
+              renderTags={(value, getTagProps) =>
+                value.map((option, index) => <Chip label={option} {...getTagProps({index})} key={option} />)
+              }
+              freeSolo={false}
+              disableClearable={false}
+            />
+          </FormControl>
+        )}
 
         <FormControl fullWidth>
           <FormLabel htmlFor="application-url-input">{t('applications:edit.general.labels.applicationUrl')}</FormLabel>
@@ -375,7 +359,7 @@ export default function AccessSection({
           />
         </FormControl>
 
-        {oauth2Config && (
+        {showUserAccessConfig && oauth2Config && (
           <FormControl fullWidth>
             <FormLabel htmlFor="redirect-uris-section">{t('applications:edit.general.redirectUris.title')}</FormLabel>
             <Typography variant="caption" color="text.secondary" sx={{display: 'block', mb: 2}}>
@@ -415,7 +399,8 @@ export default function AccessSection({
 
               <Box>
                 <Button
-                  variant="outlined"
+                  variant="text"
+                  color="primary"
                   startIcon={<Plus />}
                   onClick={handleAddUri}
                   size="small"
@@ -428,7 +413,7 @@ export default function AccessSection({
           </FormControl>
         )}
 
-        {oauth2Config && (
+        {showUserAccessConfig && oauth2Config && (
           <FormControl fullWidth>
             <FormLabel htmlFor="post-logout-redirect-uris-section">
               {t('applications:edit.general.postLogoutRedirectUris.title', 'Post-Logout Redirect URIs')}
@@ -473,7 +458,8 @@ export default function AccessSection({
 
               <Box>
                 <Button
-                  variant="outlined"
+                  variant="text"
+                  color="primary"
                   startIcon={<Plus />}
                   onClick={handleAddPostLogoutUri}
                   size="small"

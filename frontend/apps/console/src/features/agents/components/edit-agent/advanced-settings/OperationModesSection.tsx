@@ -17,6 +17,8 @@
  */
 
 import {SettingsCard} from '@thunderid/components';
+import {OAuth2GrantTypes} from '@thunderid/configure-applications';
+import type {OAuth2Config} from '@thunderid/configure-applications';
 import {
   Alert,
   Box,
@@ -31,7 +33,6 @@ import {
 } from '@wso2/oxygen-ui';
 import {useTranslation} from 'react-i18next';
 import RedirectURIsSection from './RedirectURIsSection';
-import {OAuth2GrantTypes, type OAuth2Config} from '../../../../applications/models/oauth';
 import {getGrantTypeLabel} from '../../../../applications/utils/getGrantTypeLabel';
 import {applyGrantTypesChange} from '../../../../applications/utils/oauth2Rules';
 import {DELEGATED_ONLY_GRANTS} from '../../../constants/delegationGrants';
@@ -98,7 +99,7 @@ export default function OperationModesSection({
             <Alert severity="info" sx={{mb: 1.5}}>
               {t(
                 'agents:edit.advanced.oauthAccess.grantTypes.hint',
-                'The greyed-out grants unlock once you turn on Delegated mode in the Flows tab.',
+                'The greyed-out grants unlock once you turn on Delegated mode at the top of this tab.',
               )}
             </Alert>
             <Select

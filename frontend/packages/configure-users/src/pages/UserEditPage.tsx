@@ -26,6 +26,7 @@ import {
 import {useResolveDisplayName} from '@thunderid/hooks';
 import {useLogger} from '@thunderid/logger/react';
 import type {User} from '@thunderid/types';
+import {isEqualIgnoringEmpty} from '@thunderid/utils';
 import {
   Box,
   Stack,
@@ -59,6 +60,7 @@ import QuickCopySection from '../components/edit-user/QuickCopySection';
 import UserDeleteDialog from '../components/UserDeleteDialog';
 import UserConstants from '../constants/user-constants';
 import useUserRoutes from '../hooks/useUserRoutes';
+import {dropNonConformingOptionalAttributes} from '../utils/dropNonConformingAttributes';
 
 interface TabPanelProps {
   children?: ReactNode;
@@ -166,24 +168,33 @@ export default function UserEditPage() {
     const organizationUnitId = schemaOuId ?? user?.ouId;
     if (!userId || !organizationUnitId || !user?.type) return;
 
+    // Drop stale optional attribute values so an untouched mismatch doesn't block the update.
+    const attributes = dropNonConformingOptionalAttributes(
+      editedUser.attributes ?? user.attributes ?? {},
+      userTypeDetails?.schema,
+    );
+
     try {
       await updateUserMutation.mutateAsync({
         userId,
         data: {
           ouId: organizationUnitId,
           type: user.type,
-          attributes: editedUser.attributes ?? user.attributes,
+          attributes,
         },
       });
       setEditedUser({});
-      setAttributesResetKey((key) => key + 1);
       await refetch();
+      setAttributesResetKey((key) => key + 1);
     } catch (err) {
       logger.error('Failed to update user', {error: err});
     }
-  }, [schemaOuId, user, userId, editedUser, updateUserMutation, refetch, logger]);
+  }, [schemaOuId, user, userId, editedUser, userTypeDetails, updateUserMutation, refetch, logger]);
 
-  const hasChanges = Object.keys(editedUser).length > 0;
+  const hasChanges = useMemo(
+    () => Object.entries(editedUser).some(([key, value]) => !isEqualIgnoringEmpty(value, user?.[key as keyof User])),
+    [editedUser, user],
+  );
 
   const handleBack = async () => {
     await navigate(routes.list());

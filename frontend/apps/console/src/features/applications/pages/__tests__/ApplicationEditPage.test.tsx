@@ -18,12 +18,18 @@
 
 import type {UseQueryResult, UseMutationResult} from '@tanstack/react-query';
 import userEvent from '@testing-library/user-event';
+import {useGetApplication} from '@thunderid/configure-applications';
+import type {Application} from '@thunderid/configure-applications';
 import {render, screen, waitFor, fireEvent, within} from '@thunderid/test-utils';
+import {useState} from 'react';
 import {describe, it, expect, vi, beforeEach, afterEach} from 'vitest';
-import useGetApplication from '../../api/useGetApplication';
 import useUpdateApplication from '../../api/useUpdateApplication';
 import EditAdvancedSettings from '../../components/edit-application/advanced-settings/EditAdvancedSettings';
-import type {Application} from '../../models/application';
+import EditCustomizationSettings from '../../components/edit-application/customization-settings/EditCustomizationSettings';
+import EditGeneralSettings from '../../components/edit-application/general-settings/EditGeneralSettings';
+import McpConnectTab from '../../components/edit-application/mcp/McpConnectTab';
+import EditTokenSettings from '../../components/edit-application/token-settings/EditTokenSettings';
+import EditTokenSettingsTabs from '../../components/edit-application/token-settings/EditTokenSettingsTabs';
 import {getIntegrationGuideForTemplate} from '../../utils/getIntegrationGuidesForTemplate';
 import getTemplateMetadata from '../../utils/getTemplateMetadata';
 import ApplicationEditPage from '../ApplicationEditPage';
@@ -35,6 +41,7 @@ vi.mock('react-router', async () => {
     ...actual,
     useNavigate: vi.fn(() => vi.fn()),
     useParams: vi.fn(() => ({applicationId: 'test-app-id'})),
+    useLocation: vi.fn(() => ({state: null})),
   };
 });
 
@@ -65,8 +72,9 @@ vi.mock('react-i18next', () => ({
   }),
 }));
 
-vi.mock('../../api/useGetApplication', () => ({
-  default: vi.fn(),
+vi.mock('@thunderid/configure-applications', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@thunderid/configure-applications')>()),
+  useGetApplication: vi.fn(),
 }));
 
 vi.mock('../../api/useUpdateApplication', () => ({
@@ -112,6 +120,21 @@ vi.mock('../../components/edit-application/customization-settings/EditCustomizat
 }));
 
 vi.mock('../../components/edit-application/token-settings/EditTokenSettings', () => ({
+  default: vi.fn(function MockEditTokenSettings() {
+    // Mimics EditTokenSettings' real react-hook-form-backed Token Validity fields
+    const [clicks, setClicks] = useState(0);
+    return (
+      <div data-testid="edit-token-settings">
+        Token Settings, Clicks: {clicks}
+        <button type="button" data-testid="edit-token-settings-bump" onClick={() => setClicks((c) => c + 1)}>
+          Bump
+        </button>
+      </div>
+    );
+  }),
+}));
+
+vi.mock('../../components/edit-application/token-settings/EditTokenSettingsTabs', () => ({
   default: vi.fn(() => <div data-testid="edit-token-settings">Token Settings</div>),
 }));
 
@@ -221,6 +244,53 @@ const mockUseUpdateApplication = useUpdateApplication as ReturnType<typeof vi.fn
 const mockGetTemplateMetadata = getTemplateMetadata as ReturnType<typeof vi.fn>;
 const mockGetIntegrationGuidesForTemplate = getIntegrationGuideForTemplate as ReturnType<typeof vi.fn>;
 
+// Edits the inline name/description field displaying `currentValue` to `newValue` and commits with Enter.
+async function editInlineField(user: ReturnType<typeof userEvent.setup>, currentValue: string, newValue: string) {
+  const section = screen.getByText(currentValue).closest('div');
+  const editButton = section?.querySelector('button');
+  await user.click(editButton!);
+
+  const input = screen.getByRole('textbox');
+  await user.clear(input);
+  await user.type(input, `${newValue}{Enter}`);
+}
+
+async function mountSectionTab(user: ReturnType<typeof userEvent.setup>, tabName: string, testId: string) {
+  await user.click(screen.getByRole('tab', {name: tabName}));
+  await waitFor(() => {
+    expect(screen.getByTestId(testId)).toBeInTheDocument();
+  });
+}
+
+// Edits a field, clicks reset, and returns the sectionResetKey `mockedComponent` was called with
+// before and after the click. The caller is responsible for asserting on the returned keys.
+async function editFieldAndResetSection<P>(
+  user: ReturnType<typeof userEvent.setup>,
+  mockedComponent: (props: P) => unknown,
+  currentName: string,
+  newName: string,
+): Promise<{initialKey: number | undefined; keyAfterReset: number | undefined}> {
+  const readSectionResetKey = () =>
+    (vi.mocked(mockedComponent).mock.calls.at(-1)?.[0] as {sectionResetKey?: number} | undefined)?.sectionResetKey;
+
+  const initialKey = readSectionResetKey();
+
+  await editInlineField(user, currentName, newName);
+
+  await waitFor(() => {
+    expect(screen.getByRole('button', {name: /reset/i})).toBeInTheDocument();
+  });
+  await user.click(screen.getByRole('button', {name: /reset/i}));
+
+  let keyAfterReset: number | undefined;
+  await waitFor(() => {
+    keyAfterReset = readSectionResetKey();
+    expect(keyAfterReset).toBe((initialKey ?? 0) + 1);
+  });
+
+  return {initialKey, keyAfterReset};
+}
+
 describe('ApplicationEditPage', () => {
   const mockApplication: Application = {
     id: 'test-app-id',
@@ -229,6 +299,7 @@ describe('ApplicationEditPage', () => {
     template: 'react',
     logoUrl: 'https://example.com/logo.png',
     url: 'https://example.com',
+    allowedUserTypes: ['user'],
     inboundAuthConfig: [
       {
         type: 'oauth2',
@@ -744,6 +815,74 @@ describe('ApplicationEditPage', () => {
       });
     });
 
+    it('keeps save enabled for a user-facing client with a redirect URI but no allowed user types', async () => {
+      const user = userEvent.setup();
+      mockUseGetApplication.mockReturnValue({
+        data: {...mockApplication, allowedUserTypes: []},
+        isLoading: false,
+        isError: false,
+        error: null,
+      } as unknown as UseQueryResult<Application>);
+      renderComponent();
+
+      const nameSection = screen.getByText('Test Application').closest('div');
+      const editButton = nameSection?.querySelector('button');
+      await user.click(editButton!);
+      const nameInput = screen.getByRole('textbox');
+      await user.clear(nameInput);
+      await user.type(nameInput, 'Updated Application{Enter}');
+
+      await waitFor(() => {
+        expect(screen.getByRole('button', {name: /save changes/i})).toBeEnabled();
+      });
+    });
+
+    it('disables save with a named issue when authorization_code has no redirect URI', async () => {
+      const user = userEvent.setup();
+      mockUseGetApplication.mockReturnValue({
+        data: {
+          ...mockApplication,
+          inboundAuthConfig: [
+            {type: 'oauth2', config: {grantTypes: ['authorization_code'], responseTypes: ['code'], redirectUris: []}},
+          ],
+        },
+        isLoading: false,
+        isError: false,
+        error: null,
+      } as unknown as UseQueryResult<Application>);
+      renderComponent();
+
+      const nameSection = screen.getByText('Test Application').closest('div');
+      const editButton = nameSection?.querySelector('button');
+      await user.click(editButton!);
+      const nameInput = screen.getByRole('textbox');
+      await user.clear(nameInput);
+      await user.type(nameInput, 'Updated Application{Enter}');
+
+      await waitFor(() => {
+        expect(screen.getByText('applications:edit.page.validation.missingRedirectUri')).toBeInTheDocument();
+      });
+      expect(screen.getByRole('button', {name: /save changes/i})).toBeDisabled();
+    });
+
+    it('freezes the flows tab when no user-facing grant is granted', async () => {
+      const user = userEvent.setup();
+      mockUseGetApplication.mockReturnValue({
+        data: {
+          ...mockApplication,
+          inboundAuthConfig: [{type: 'oauth2', config: {grantTypes: ['client_credentials'], responseTypes: []}}],
+        },
+        isLoading: false,
+        isError: false,
+        error: null,
+      } as unknown as UseQueryResult<Application>);
+      renderComponent();
+
+      await user.click(screen.getByRole('tab', {name: /flows/i}));
+
+      expect(screen.getByText('applications:edit.userAccessLock.message')).toBeInTheDocument();
+    });
+
     it('should display reset and save buttons in action bar', async () => {
       const user = userEvent.setup();
       renderComponent();
@@ -760,6 +899,47 @@ describe('ApplicationEditPage', () => {
       await waitFor(() => {
         expect(screen.getByRole('button', {name: /reset/i})).toBeInTheDocument();
         expect(screen.getByRole('button', {name: /save changes/i})).toBeInTheDocument();
+      });
+    });
+
+    it('should hide the action bar when a field is manually retyped back to its original value', async () => {
+      const user = userEvent.setup();
+      renderComponent();
+
+      await editInlineField(user, 'Test Application', 'Updated Application');
+
+      await waitFor(() => {
+        expect(screen.getByText('You have unsaved changes')).toBeInTheDocument();
+      });
+
+      // Retype the exact original value
+      await editInlineField(user, 'Updated Application', 'Test Application');
+
+      await waitFor(() => {
+        expect(screen.queryByText('You have unsaved changes')).not.toBeInTheDocument();
+      });
+    });
+
+    it('should keep the action bar visible if only one of two edited fields is reverted', async () => {
+      const user = userEvent.setup();
+      renderComponent();
+
+      // Edit name
+      await editInlineField(user, 'Test Application', 'Updated Application');
+
+      // Edit description
+      await editInlineField(user, 'Test application description', 'Updated description');
+
+      await waitFor(() => {
+        expect(screen.getByText('You have unsaved changes')).toBeInTheDocument();
+      });
+
+      // Revert only the name
+      await editInlineField(user, 'Updated Application', 'Test Application');
+
+      // Description is still changed, so the bar must stay visible
+      await waitFor(() => {
+        expect(screen.getByText('You have unsaved changes')).toBeInTheDocument();
       });
     });
 
@@ -787,6 +967,51 @@ describe('ApplicationEditPage', () => {
       await waitFor(() => {
         expect(screen.queryByText('You have unsaved changes')).not.toBeInTheDocument();
       });
+    });
+
+    it('should bump sectionResetKey passed to EditGeneralSettings when reset is clicked', async () => {
+      const user = userEvent.setup();
+      renderComponent();
+
+      const {initialKey, keyAfterReset} = await editFieldAndResetSection(
+        user,
+        EditGeneralSettings,
+        'Test Application',
+        'Updated Application',
+      );
+      expect(keyAfterReset).toBe((initialKey ?? 0) + 1);
+    });
+
+    it('should bump sectionResetKey passed to EditCustomizationSettings when reset is clicked', async () => {
+      const user = userEvent.setup();
+      renderComponent();
+
+      // EditCustomizationSettings only mounts once its TabPanel is active
+      await mountSectionTab(user, 'Customization', 'edit-customization-settings');
+
+      const {initialKey, keyAfterReset} = await editFieldAndResetSection(
+        user,
+        EditCustomizationSettings,
+        'Test Application',
+        'Updated Application',
+      );
+      expect(keyAfterReset).toBe((initialKey ?? 0) + 1);
+    });
+
+    it('should bump sectionResetKey passed to EditTokenSettingsTabs when reset is clicked', async () => {
+      const user = userEvent.setup();
+      renderComponent();
+
+      // EditTokenSettingsTabs only mounts once its TabPanel is active
+      await mountSectionTab(user, 'Token', 'edit-token-settings');
+
+      const {initialKey, keyAfterReset} = await editFieldAndResetSection(
+        user,
+        EditTokenSettingsTabs,
+        'Test Application',
+        'Updated Application',
+      );
+      expect(keyAfterReset).toBe((initialKey ?? 0) + 1);
     });
 
     it('should save changes when save button is clicked', async () => {
@@ -826,6 +1051,43 @@ describe('ApplicationEditPage', () => {
         expect(callArgs).toHaveProperty('applicationId', 'test-app-id');
         expect(callArgs).toHaveProperty('data');
         expect(callArgs.data).toHaveProperty('name', 'Updated Application');
+      });
+    });
+
+    it('should bump sectionResetKey passed to EditGeneralSettings when save succeeds', async () => {
+      const user = userEvent.setup();
+      mockUseUpdateApplication.mockReturnValue({
+        mutate: mockUpdateApplicationMutate,
+        mutateAsync: vi.fn().mockResolvedValue(mockApplication),
+        isPending: false,
+        isError: false,
+        error: null,
+      } as unknown as UseMutationResult<Application, Error, Partial<Application>>);
+
+      // The bump only fires after refetch() resolves
+      mockUseGetApplication.mockReturnValue({
+        data: mockApplication,
+        isLoading: false,
+        isError: false,
+        error: null,
+        refetch: vi.fn().mockResolvedValue({data: mockApplication}),
+      } as unknown as UseQueryResult<Application>);
+
+      renderComponent();
+
+      const initialKey = vi.mocked(EditGeneralSettings).mock.calls.at(-1)?.[0].sectionResetKey;
+
+      await editInlineField(user, 'Test Application', 'Updated Application');
+
+      await waitFor(() => {
+        expect(screen.getByRole('button', {name: /save changes/i})).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByRole('button', {name: /save changes/i}));
+
+      await waitFor(() => {
+        const keyAfterSave = vi.mocked(EditGeneralSettings).mock.calls.at(-1)?.[0].sectionResetKey;
+        expect(keyAfterSave).toBe((initialKey ?? 0) + 1);
       });
     });
 
@@ -1586,6 +1848,80 @@ describe('ApplicationEditPage', () => {
       expect(lastCallProps?.allowedGrantTypes).toEqual(['authorization_code', 'refresh_token', 'client_credentials']);
     });
 
+    it('should bump sectionResetKey passed to McpConnectTab when reset is clicked', async () => {
+      mockUseGetApplication.mockReturnValue({
+        data: mockMcpApplication,
+        isLoading: false,
+        isError: false,
+        error: null,
+      } as UseQueryResult<Application>);
+
+      const user = userEvent.setup();
+      renderComponent();
+
+      // Make a change via the page header, which is shared across MCP and non-MCP layouts
+      const {initialKey, keyAfterReset} = await editFieldAndResetSection(
+        user,
+        McpConnectTab,
+        'Test MCP Client',
+        'Updated MCP Client',
+      );
+      expect(keyAfterReset).toBe((initialKey ?? 0) + 1);
+    });
+
+    it('should bump sectionResetKey passed to EditCustomizationSettings when reset is clicked in an mcp-client', async () => {
+      mockUseGetApplication.mockReturnValue({
+        data: mockMcpApplication,
+        isLoading: false,
+        isError: false,
+        error: null,
+      } as UseQueryResult<Application>);
+
+      const user = userEvent.setup();
+      renderComponent();
+
+      // EditCustomizationSettings only mounts once its TabPanel is active
+      await mountSectionTab(user, 'Customization', 'edit-customization-settings');
+
+      // Make a change via the page header, which is shared across MCP and non-MCP layouts
+      const {initialKey, keyAfterReset} = await editFieldAndResetSection(
+        user,
+        EditCustomizationSettings,
+        'Test MCP Client',
+        'Updated MCP Client',
+      );
+      expect(keyAfterReset).toBe((initialKey ?? 0) + 1);
+    });
+
+    it('does not remount EditTokenSettings, but bumps sectionResetKey, when reset is clicked in an mcp-client', async () => {
+      mockUseGetApplication.mockReturnValue({
+        data: mockMcpApplication,
+        isLoading: false,
+        isError: false,
+        error: null,
+      } as UseQueryResult<Application>);
+
+      const user = userEvent.setup();
+      renderComponent();
+
+      // EditTokenSettings only mounts once its TabPanel is active
+      await mountSectionTab(user, 'Token', 'edit-token-settings');
+
+      await user.click(screen.getByTestId('edit-token-settings-bump'));
+      expect(screen.getByTestId('edit-token-settings')).toHaveTextContent('Clicks: 1');
+
+      // Make a change via the page header, which is shared across MCP and non-MCP layouts
+      const {initialKey, keyAfterReset} = await editFieldAndResetSection(
+        user,
+        EditTokenSettings,
+        'Test MCP Client',
+        'Updated MCP Client',
+      );
+      expect(keyAfterReset).toBe((initialKey ?? 0) + 1);
+
+      expect(screen.getByTestId('edit-token-settings')).toHaveTextContent('Clicks: 1');
+    });
+
     it('locks the PKCE constraint for a user-delegated mcp-client Advanced tab', async () => {
       mockUseGetApplication.mockReturnValue({
         data: mockMcpApplication,
@@ -1662,6 +1998,58 @@ describe('ApplicationEditPage', () => {
       });
 
       expect(screen.getByRole('button', {name: 'Save Changes'})).toBeDisabled();
+    });
+  });
+
+  describe('Client Secret Popup (just created)', () => {
+    afterEach(async () => {
+      const {useLocation} = await import('react-router');
+      (useLocation as ReturnType<typeof vi.fn>).mockReturnValue({state: null});
+    });
+
+    it('should not render the secret dialog when there is no justCreatedSecret navigation state', () => {
+      renderComponent();
+
+      expect(screen.queryByTestId('application-show-client-secret')).not.toBeInTheDocument();
+    });
+
+    it('should render the secret dialog when justCreatedSecret is present in location state', async () => {
+      const {useLocation} = await import('react-router');
+      (useLocation as ReturnType<typeof vi.fn>).mockReturnValue({
+        state: {
+          justCreatedSecret: {
+            appName: 'My New App',
+            clientId: 'new-client-id',
+            clientSecret: 'brand-new-secret',
+          },
+        },
+      });
+
+      renderComponent();
+
+      expect(screen.getByTestId('application-show-client-secret')).toBeInTheDocument();
+      expect(screen.getByDisplayValue('brand-new-secret')).toBeInTheDocument();
+    });
+
+    it('should close the secret dialog when Continue is clicked', async () => {
+      const {useLocation} = await import('react-router');
+      (useLocation as ReturnType<typeof vi.fn>).mockReturnValue({
+        state: {
+          justCreatedSecret: {
+            appName: 'My New App',
+            clientSecret: 'brand-new-secret',
+          },
+        },
+      });
+
+      renderComponent();
+
+      const user = userEvent.setup();
+      await user.click(screen.getByTestId('application-client-secret-continue'));
+
+      await waitFor(() => {
+        expect(screen.queryByTestId('application-show-client-secret')).not.toBeInTheDocument();
+      });
     });
   });
 });

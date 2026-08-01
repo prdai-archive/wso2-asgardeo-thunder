@@ -16,6 +16,7 @@
  * under the License.
  */
 
+import type {OAuth2Config} from '@thunderid/configure-applications';
 import {
   Alert,
   Box,
@@ -31,7 +32,6 @@ import {
 import {Plus, Trash} from '@wso2/oxygen-ui-icons-react';
 import {useState, type JSX} from 'react';
 import {useTranslation} from 'react-i18next';
-import type {OAuth2Config} from '../../../../applications/models/oauth';
 import type {OAuthAgentConfig} from '../../../models/agent';
 
 const REDIRECT_USING_GRANTS = ['authorization_code'];
@@ -179,7 +179,7 @@ export default function RedirectURIsSection({
           ))}
           {isEditable && (
             <Box>
-              <Button variant="outlined" startIcon={<Plus />} onClick={handleAdd} size="small">
+              <Button variant="text" color="primary" startIcon={<Plus />} onClick={handleAdd} size="small">
                 {t('agents:edit.advanced.redirectUris.addUri', 'Add URI')}
               </Button>
             </Box>

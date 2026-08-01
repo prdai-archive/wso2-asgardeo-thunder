@@ -17,13 +17,13 @@
  */
 
 import {SettingsCard} from '@thunderid/components';
+import type {Application} from '@thunderid/configure-applications';
 import {Box, Typography, TextField, Autocomplete, CircularProgress, Alert} from '@wso2/oxygen-ui';
 import {useTranslation, Trans} from 'react-i18next';
 import {Link} from 'react-router';
 import RouteConfig from '../../../../../configs/RouteConfig';
 import useGetFlows from '../../../../flows/api/useGetFlows';
 import {FlowType} from '../../../../flows/models/flows';
-import type {Application} from '../../../models/application';
 
 /**
  * Props for the {@link RegistrationFlowSection} component.
@@ -91,10 +91,7 @@ export default function RegistrationFlowSection({
             components={[
               <Link
                 key="edit"
-                to={RouteConfig.flows.detail(
-                  'registration',
-                  editedApp.registrationFlowId ?? application.registrationFlowId ?? '',
-                )}
+                to={RouteConfig.flows.detail(editedApp.registrationFlowId ?? application.registrationFlowId ?? '')}
                 style={{color: 'inherit', fontWeight: 'bold', textDecoration: 'underline'}}
               />,
               <Link

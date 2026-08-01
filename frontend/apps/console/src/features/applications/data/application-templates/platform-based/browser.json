@@ -1,7 +1,15 @@
 {
   "id": "browser",
+  "type": "browser",
   "displayName": "Browser",
   "description": "Web application running in browser",
+  "capabilities": {
+    "cors": true
+  },
+  "creationFlow": {
+    "steps": ["DETAILS", "SECURITY", "DESIGN", "CONFIGURE", "COMPLETE"],
+    "previewSteps": ["DETAILS", "SECURITY", "DESIGN"]
+  },
   "defaults": {
     "name": "Browser Application",
     "inboundAuthConfig": [

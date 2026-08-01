@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2025, WSO2 LLC. (https://www.wso2.com).
+ * Copyright (c) 2025-2026, WSO2 LLC. (https://www.wso2.com).
  *
  * WSO2 LLC. licenses this file to you under the Apache License,
  * Version 2.0 (the "License"); you may not use this file except
@@ -16,10 +16,10 @@
  * under the License.
  */
 
+import type {ApplicationType, InboundAuthConfig, OAuth2Config} from '@thunderid/configure-applications';
 import type {JSX} from 'react';
+import type {ApplicationCreateFlowSignInApproach} from './application-create-flow';
 import type {CreationFlow} from './creation-flow';
-import type {InboundAuthConfig} from './inbound-auth';
-import type {OAuth2Config} from './oauth';
 
 /**
  * Technology-based application template identifiers.
@@ -180,6 +180,12 @@ export interface ApplicationTemplate {
    */
   creationFlow?: CreationFlow;
   /**
+   * Canonical backend application type this template maps to. Sent as the application `type` on
+   * creation. Templates that can resolve to more than one type (e.g. MCP client) may override this
+   * at creation time based on user selections.
+   */
+  type?: ApplicationType;
+  /**
    * Description of the template
    */
   description?: string;
@@ -190,6 +196,11 @@ export interface ApplicationTemplate {
     name?: string;
     inboundAuthConfig?: InboundAuthConfig[];
     allowedUserTypes?: string[];
+    /**
+     * Sign-in approach preselected for this template in the creation wizard's Configure step.
+     * Falls back to the wizard's own default (hosted pages) when omitted.
+     */
+    signInApproach?: ApplicationCreateFlowSignInApproach;
   };
   /**
    * Template-driven field constraints for the edit UI
@@ -211,6 +222,24 @@ export interface ApplicationTemplate {
      * the attestation configuration section is shown in the application's advanced settings.
      */
     attestation?: boolean;
+    /**
+     * Whether this template's Configuration step should offer a CORS Allowed Origins editor.
+     * Applies to public-client templates that call the token/userinfo endpoints directly from a
+     * browser origin; server-side templates exchange tokens off-browser and don't need it.
+     */
+    cors?: boolean;
+  };
+  /**
+   * Optional metadata describing the template's local development server, used to offer a
+   * "quick add" shortcut on the Configuration step for its conventional default URL.
+   */
+  devServer?: {
+    /** Identifier used to pick a logo for the quick-add banner (e.g. 'vite', 'nextjs', 'nuxt'). */
+    id: string;
+    /** Display name of the dev server/tool (e.g. 'Vite', 'Next.js', 'Nuxt'). */
+    label: string;
+    /** The dev server's conventional default URL (e.g. 'http://localhost:5173'). */
+    url: string;
   };
   /**
    * Optional integration guides for this template

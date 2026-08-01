@@ -20,7 +20,7 @@ import {CollisionPriority} from '@dnd-kit/abstract';
 import {move} from '@dnd-kit/helpers';
 import {DragDropProvider, DragOverlay, type DragDropEventHandlers} from '@dnd-kit/react';
 import {useIdentityProviders, useSMSProviders} from '@thunderid/configure-connections';
-import {Box, Button, Card, CardContent, Tooltip, Typography, type Theme} from '@wso2/oxygen-ui';
+import {Badge, Box, Button, Card, CardContent, Tooltip, Typography, type Theme} from '@wso2/oxygen-ui';
 import {ArrowLeft, Play, Save, Square} from '@wso2/oxygen-ui-icons-react';
 import {
   type Connection,
@@ -39,6 +39,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type MouseEvent as ReactMouseEvent,
   type ReactElement,
   type ReactNode,
   type SetStateAction,
@@ -46,11 +47,11 @@ import {
 import {useTranslation} from 'react-i18next';
 import {useNavigate} from 'react-router';
 import CanvasToolbar from './CanvasToolbar';
+import DiscardChangesDialog from './DiscardChangesDialog';
 import FormRequiresViewDialog from './FormRequiresViewDialog';
 import SimulationStepPreview from './SimulationStepPreview';
 import ValidationBadge from './ValidationBadge';
 import VisualFlow, {type VisualFlowPropsInterface} from './VisualFlow';
-import RouteConfig from '../../../../configs/RouteConfig';
 import VisualFlowConstants from '../../constants/VisualFlowConstants';
 import StepPreviewContext from '../../context/StepPreviewContext';
 import useComponentDelete from '../../hooks/useComponentDelete';
@@ -60,6 +61,7 @@ import useDeleteExecutionResource from '../../hooks/useDeleteExecutionResource';
 import useDragDropHandlers from '../../hooks/useDragDropHandlers';
 import useFlowConfig from '../../hooks/useFlowConfig';
 import useFlowEvents from '../../hooks/useFlowEvents';
+import useFlowRoutes from '../../hooks/useFlowRoutes';
 import useFlowSimulation from '../../hooks/useFlowSimulation';
 import useGenerateStepElement from '../../hooks/useGenerateStepElement';
 import useInteractionState from '../../hooks/useInteractionState';
@@ -73,10 +75,11 @@ import {BlockTypes, type Element} from '../../models/elements';
 import type {MetadataInterface} from '../../models/metadata';
 import Notification, {NotificationType} from '../../models/notification';
 import {ResourceTypes, type Resource, type Resources} from '../../models/resources';
-import {type Step, type StepData} from '../../models/steps';
+import {StepTypes, type Step, type StepData} from '../../models/steps';
 import {type Template} from '../../models/templates';
 import type {Widget} from '../../models/widget';
-import applyAutoLayout from '../../utils/applyAutoLayout';
+import applyAutoLayout, {hasUnpositionedNodes} from '../../utils/applyAutoLayout';
+import {EXECUTION_STACK_NODE_TYPE, getExecutionStackWidth} from '../../utils/compactGraphTransforms';
 import computeExecutorConnections from '../../utils/computeExecutorConnections';
 import generateResourceId from '../../utils/generateResourceId';
 import {resolveCollisions} from '../../utils/resolveCollisions';
@@ -104,6 +107,17 @@ export interface DecoratedVisualFlowPropsInterface extends Omit<VisualFlowPropsI
   initialEdges?: Edge[];
   nodes: Node[];
   edges: Edge[];
+  /**
+   * The untransformed graph nodes when `nodes` carries a display-only
+   * transform (compact-mode executor stacks). Used for validation syncing and
+   * persistence so hidden stack members are never lost. Defaults to `nodes`.
+   */
+  sourceNodes?: Node[];
+  /**
+   * The untransformed graph edges accompanying `sourceNodes`. Defaults to
+   * `edges`.
+   */
+  sourceEdges?: Edge[];
   mutateComponents: (components: Element[]) => Element[];
   onTemplateLoad: (template: Template) => [Node[], Edge[], Resource?, string?];
   onWidgetLoad: (
@@ -131,6 +145,26 @@ export interface DecoratedVisualFlowPropsInterface extends Omit<VisualFlowPropsI
    * Extra controls rendered at the bottom of the resource panel, below the resource sections.
    */
   resourcePanelFooter?: ReactNode;
+  /**
+   * Undo the last canvas edit. When provided, undo/redo controls appear in the toolbar.
+   */
+  onUndo?: () => void;
+  /**
+   * Redo the last undone canvas edit.
+   */
+  onRedo?: () => void;
+  /**
+   * Whether an undo step is available.
+   */
+  canUndo?: boolean;
+  /**
+   * Whether a redo step is available.
+   */
+  canRedo?: boolean;
+  /**
+   * Whether the flow has unsaved changes (drives the Save-button indicator).
+   */
+  isDirty?: boolean;
 }
 
 /**
@@ -143,6 +177,8 @@ function DecoratedVisualFlow({
   resources,
   nodes,
   edges,
+  sourceNodes = undefined,
+  sourceEdges = undefined,
   setNodes,
   setEdges,
   onNodesChange,
@@ -159,6 +195,11 @@ function DecoratedVisualFlow({
   onFlowTitleChange,
   triggerAutoLayoutOnLoad = false,
   resourcePanelFooter = undefined,
+  onUndo = undefined,
+  onRedo = undefined,
+  canUndo = false,
+  canRedo = false,
+  isDirty = false,
   ...rest
 }: DecoratedVisualFlowPropsInterface): ReactElement {
   useDeleteExecutionResource();
@@ -171,7 +212,7 @@ function DecoratedVisualFlow({
   const {isResourcePanelOpen, isResourcePropertiesPanelOpen, setIsResourcePanelOpen, setIsOpenResourcePropertiesPanel} =
     useUIPanelState();
   const {notifyElementAdded, onAutoLayout} = useFlowEvents();
-  const {isFlowMetadataLoading, metadata, setFlowNodes} = useFlowConfig();
+  const {isFlowMetadataLoading, isVerboseMode, metadata, setFlowNodes, setFlowEdges} = useFlowConfig();
   const {onResourceDropOnCanvas} = useInteractionState();
 
   // Sync controlled nodes to the shared FlowConfig context so that
@@ -183,10 +224,13 @@ function DecoratedVisualFlow({
   const prevNodeDataRefsRef = useRef<Map<string, unknown>>(new Map());
 
   useEffect(() => {
-    let dataChanged = nodes.length !== prevNodeDataRefsRef.current.size;
+    // Validation must see the real graph, not the compact display transform
+    // (which hides stacked executor members).
+    const validationNodes = sourceNodes ?? nodes;
+    let dataChanged = validationNodes.length !== prevNodeDataRefsRef.current.size;
 
     if (!dataChanged) {
-      for (const node of nodes) {
+      for (const node of validationNodes) {
         if (prevNodeDataRefsRef.current.get(node.id) !== node.data) {
           dataChanged = true;
           break;
@@ -196,16 +240,32 @@ function DecoratedVisualFlow({
 
     if (dataChanged) {
       const newRefs = new Map<string, unknown>();
-      for (const node of nodes) {
+      for (const node of validationNodes) {
         newRefs.set(node.id, node.data);
       }
       prevNodeDataRefsRef.current = newRefs;
-      setFlowNodes(nodes);
+      setFlowNodes(validationNodes);
     }
-  }, [nodes, setFlowNodes]);
+  }, [nodes, sourceNodes, setFlowNodes]);
+
+  // Edges are pushed alongside the nodes so graph validation rules can inspect
+  // what an element connects to. Like the nodes, these must be the real graph
+  // rather than the compact display transform, whose stack rewiring would hide
+  // an element's true target. Keyed on a structural signature rather than array
+  // identity, which also changes on hover and simulation decoration.
+  const validationEdges = sourceEdges ?? edges;
+  const edgeSignature = validationEdges
+    .map((edge) => `${edge.id}|${edge.source}|${edge.sourceHandle ?? ''}|${edge.target}`)
+    .join(';');
+
+  useEffect(() => {
+    setFlowEdges(validationEdges);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [edgeSignature, setFlowEdges]);
   const {generateStepElement} = useGenerateStepElement();
   const {t} = useTranslation();
   const navigate = useNavigate();
+  const flowRoutes = useFlowRoutes();
   const {notifications, openValidationPanel} = useValidationStatus();
 
   const {errorCount, warningCount} = useMemo(() => {
@@ -298,27 +358,60 @@ function DecoratedVisualFlow({
   // Memoized handleSave. Nodes/edges come back from the React Flow store, which
   // holds the decorated display arrays while previewing — strip the simulation
   // styling so it is never persisted into the flow's layout data.
-  const handleSave = useCallback((): void => {
+  const persistCanvas = useCallback((): void => {
     const {viewport} = toObject();
+    // Persist the real graph: in compact mode the canvas holds a display-only
+    // transform (executor stacks) that must never reach the flow definition.
     const canvasData = {
-      nodes: stripSimulationNodeClasses(getNodes()),
-      edges: stripSimulationEdgeClasses(getEdges()),
+      nodes: sourceNodes ?? stripSimulationNodeClasses(getNodes()),
+      edges: sourceEdges ?? stripSimulationEdgeClasses(getEdges()),
       viewport,
     };
     onSave?.(canvasData);
-  }, [toObject, getNodes, getEdges, onSave]);
+  }, [toObject, getNodes, getEdges, onSave, sourceNodes, sourceEdges]);
 
+  // The one auto-layout path for both the toolbar button and the compact
+  // toggle. It is mode-aware: compact mode uses tighter spacing and feeds the
+  // layout engine the known chip/stack sizes (which may not be measured yet
+  // right after a toggle), so re-running it in compact mode reproduces the
+  // same tight layout instead of rearranging with detailed-mode metrics.
   const handleAutoLayout = useCallback((): void => {
     const currentNodes = stripSimulationNodeClasses(getNodes());
     const currentEdges = getEdges();
-    applyAutoLayout(currentNodes, currentEdges, {
-      nodeSpacing: 100,
-      rankSpacing: 160,
-      offsetX: 50,
-      offsetY: 50,
-    })
+
+    const chipSize = VisualFlowConstants.FLOW_BUILDER_COMPACT_EXECUTION_NODE_SIZE;
+    const layoutNodes = isVerboseMode
+      ? currentNodes
+      : currentNodes.map((node) => {
+          if (node.type === StepTypes.Execution) {
+            return {...node, measured: {height: chipSize, width: chipSize}};
+          }
+          if (node.type === EXECUTION_STACK_NODE_TYPE) {
+            const memberCount = (node.data as {memberIds?: string[]} | undefined)?.memberIds?.length ?? 1;
+            return {...node, measured: {height: chipSize, width: getExecutionStackWidth(memberCount)}};
+          }
+          return node;
+        });
+
+    const spacing = isVerboseMode ? {nodeSpacing: 100, rankSpacing: 160} : {nodeSpacing: 60, rankSpacing: 80};
+
+    applyAutoLayout(layoutNodes, currentEdges, {...spacing, offsetX: 50, offsetY: 50})
       .then((layoutedNodes) => {
-        setNodes(layoutedNodes);
+        // Map positions back onto the graph state by id. Synthetic stack
+        // nodes expand onto their members so the state graph follows the
+        // display layout without ever absorbing display-only nodes.
+        const positionById = new Map<string, {x: number; y: number}>();
+        layoutedNodes.forEach((node) => {
+          positionById.set(node.id, node.position);
+          const memberIds = (node.data as {memberIds?: string[]} | undefined)?.memberIds;
+          memberIds?.forEach((memberId) => positionById.set(memberId, node.position));
+        });
+        setNodes((nodesNow) =>
+          nodesNow.map((node) => {
+            const position = positionById.get(node.id);
+            return position ? {...node, position} : node;
+          }),
+        );
         requestAnimationFrame(() => {
           fitView({padding: 0.2, duration: 300}).catch(() => {
             // Ignore fitView errors - layout is still applied
@@ -328,7 +421,27 @@ function DecoratedVisualFlow({
       .catch(() => {
         // Layout failed, keep original positions
       });
-  }, [getNodes, getEdges, setNodes, fitView]);
+  }, [getNodes, getEdges, setNodes, fitView, isVerboseMode]);
+
+  // Every compact/detailed toggle re-runs the shared auto-layout path above
+  // so the canvas always fits the size the nodes render at in the new mode.
+  // Two frames are awaited so the swapped node components are committed and
+  // re-measured before the layout reads their sizes (compact feeds explicit
+  // chip sizes; detailed relies on the fresh measurements).
+  const prevVerboseModeRef = useRef<boolean>(isVerboseMode);
+
+  useEffect(() => {
+    if (prevVerboseModeRef.current === isVerboseMode) {
+      return;
+    }
+    prevVerboseModeRef.current = isVerboseMode;
+
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        handleAutoLayout();
+      });
+    });
+  }, [isVerboseMode, handleAutoLayout]);
 
   // Track whether auto-layout has been triggered to prevent multiple triggers
   const autoLayoutTriggeredRef = useRef<boolean>(false);
@@ -349,14 +462,10 @@ function DecoratedVisualFlow({
       return;
     }
 
-    // Check if nodes need auto-layout by detecting if multiple nodes are at the same position
-    // (which happens when layout data is missing and all default to {x: 0, y: 0})
-    const nodesAtOrigin = currentNodes.filter((node) => node.position.x === 0 && node.position.y === 0);
-
-    // If more than one node is at the origin, we need auto-layout
-    const needsAutoLayout = nodesAtOrigin.length > 1;
-
-    if (needsAutoLayout) {
+    // Nodes need a layout when several sit at the origin, i.e. the flow was
+    // stored without layout data. FlowBuilder uses the same check to know the
+    // load-time layout is still pending, so it must stay shared.
+    if (hasUnpositionedNodes(currentNodes)) {
       autoLayoutTriggeredRef.current = true;
       // Delay slightly to ensure nodes are fully rendered with their measured dimensions
       requestAnimationFrame(() => {
@@ -392,6 +501,17 @@ function DecoratedVisualFlow({
       startSimulation();
     }
   }, [isSimulationActive, stopSimulation, startSimulation]);
+
+  const handleSave = useCallback((): void => {
+    if (isSimulationActive) {
+      // Saving during preview: exit the preview first so the persisted viewport
+      // is the settled canvas view rather than the preview's zoomed-in camera.
+      stopSimulation();
+      fitView({padding: 0.2, duration: 0}).then(persistCanvas).catch(persistCanvas);
+      return;
+    }
+    persistCanvas();
+  }, [isSimulationActive, stopSimulation, fitView, persistCanvas]);
 
   // Derived presentation state: while simulating, dim everything off the walked
   // path and animate the traversed edges. Returns the original arrays untouched
@@ -440,18 +560,36 @@ function DecoratedVisualFlow({
   }, [edges, simulation.isSimulating, simulation.pathEdges, simulation.previewedOption]);
 
   const handleNodeClick = useCallback(
-    (_event: unknown, node: Node): void => {
+    (event: ReactMouseEvent, node: Node): void => {
       // Bring the clicked node into focus so it is comfortable to configure,
       // especially in large flows viewed zoomed-out. Honors the simulation's
       // static-view toggle — no camera jumps when the user opted out.
       if (simulation.isSimulating && !simulation.followCamera) {
         return;
       }
+      // Clicking a stack expands it: the node disappears mid-animation, so
+      // focusing it would strand the viewport (the expansion re-layouts).
+      if (node.type === EXECUTION_STACK_NODE_TYPE) {
+        return;
+      }
+      // The node header's actions (configure, delete) are inside the node, so
+      // their clicks arrive here too. Deleting this way used to throw the
+      // canvas to the origin: React Flow queues a fitView and runs it after the
+      // next node update, which is the deletion itself, leaving it with no node
+      // to fit. Re-centring on a button press is unwanted regardless, so the
+      // header actions never move the camera.
+      if (event.target instanceof Element && event.target.closest('button')) {
+        return;
+      }
+      // Also skip a node that has already left the canvas, for the same reason.
+      if (!getNodes().some((candidate) => candidate.id === node.id)) {
+        return;
+      }
       fitView({nodes: [{id: node.id}], padding: 0.3, maxZoom: 1.2, duration: 500}).catch(() => {
         // Ignore fitView errors - focusing is best-effort
       });
     },
-    [fitView, simulation.isSimulating, simulation.followCamera],
+    [fitView, getNodes, simulation.isSimulating, simulation.followCamera],
   );
 
   const handleEdgeMouseEnter = useCallback(
@@ -705,10 +843,22 @@ function DecoratedVisualFlow({
     [updateNodeData, updateNodeInternals],
   );
 
+  const [isDiscardDialogOpen, setIsDiscardDialogOpen] = useState<boolean>(false);
+
   const handleBackToFlows = useCallback((): void => {
+    if (isDirty) {
+      setIsDiscardDialogOpen(true);
+      return;
+    }
     // eslint-disable-next-line @typescript-eslint/no-floating-promises
-    navigate(RouteConfig.flows.list());
-  }, [navigate]);
+    navigate(flowRoutes.flows.list());
+  }, [flowRoutes, isDirty, navigate]);
+
+  const handleConfirmDiscard = useCallback((): void => {
+    setIsDiscardDialogOpen(false);
+    // eslint-disable-next-line @typescript-eslint/no-floating-promises
+    navigate(flowRoutes.flows.list());
+  }, [flowRoutes, navigate]);
 
   const simulationNode = useMemo(
     () => nodes.find((node: Node) => node.id === simulation.currentNodeId) ?? null,
@@ -841,7 +991,13 @@ function DecoratedVisualFlow({
 
         {/* Centered toolbar */}
         <Box sx={{flex: 1, display: 'flex', justifyContent: 'center'}}>
-          <CanvasToolbar onAutoLayout={handleAutoLayout} />
+          <CanvasToolbar
+            onAutoLayout={handleAutoLayout}
+            onUndo={onUndo}
+            onRedo={onRedo}
+            canUndo={canUndo}
+            canRedo={canRedo}
+          />
         </Box>
 
         <Box sx={{display: 'flex', alignItems: 'center', gap: 1}}>
@@ -860,23 +1016,55 @@ function DecoratedVisualFlow({
             title={
               hasErrors
                 ? t('flows:core.headerPanel.saveDisabledTooltip', 'Fix validation errors before saving')
-                : isSimulationActive
-                  ? t('flows:core.headerPanel.saveDisabledDuringPreview', 'Stop the preview before saving')
+                : isDirty && onSave
+                  ? t('flows:core.headerPanel.unsavedChanges', 'You have unsaved changes')
                   : ''
             }
           >
             <span>
-              <Button
-                variant="contained"
-                // Saving mid-preview would persist the preview's zoomed-in camera
-                // as the flow's viewport — stop the preview first.
-                disabled={hasErrors || !onSave || isSimulationActive}
-                startIcon={<Save size={18} />}
-                onClick={handleSave}
-                data-testid="save-flow-button"
+              <Badge
+                color="primary"
+                variant="dot"
+                invisible={!isDirty || hasErrors || !onSave}
+                overlap="rectangular"
+                anchorOrigin={{vertical: 'top', horizontal: 'right'}}
+                data-testid="save-dirty-indicator"
+                sx={(theme) => ({
+                  '& .MuiBadge-badge': {
+                    minWidth: 12,
+                    height: 12,
+                    borderRadius: '50%',
+                    // A ring in the header background separates the blue dot from
+                    // the filled Save button so it stays visible.
+                    border: `2px solid ${theme.palette.background.default}`,
+                    boxShadow: `0 0 0 1px ${theme.palette.primary.main}`,
+                  },
+                  // The pulse animates `transform`, and an animation outranks the
+                  // `scale(0)` MUI hides a badge with — running it unconditionally
+                  // would keep the dot on screen for a clean flow. It is scoped to
+                  // the visible state, and its keyframes carry MUI's own translate
+                  // so the dot stays anchored to the button's corner.
+                  '& .MuiBadge-badge:not(.MuiBadge-invisible)': {
+                    animation: 'save-dirty-pulse 1.8s ease-in-out infinite',
+                  },
+                  '@keyframes save-dirty-pulse': {
+                    '0%, 100%': {transform: 'scale(1) translate(50%, -50%)', opacity: 1},
+                    '50%': {transform: 'scale(1.25) translate(50%, -50%)', opacity: 0.75},
+                  },
+                })}
               >
-                {t('flows:core.headerPanel.save')}
-              </Button>
+                <Button
+                  variant="contained"
+                  disabled={hasErrors || !onSave}
+                  startIcon={<Save size={18} />}
+                  // Saving during preview stops it first (handleSave), so the
+                  // button stays enabled instead of blocking on the preview.
+                  onClick={handleSave}
+                  data-testid="save-flow-button"
+                >
+                  {t('flows:core.headerPanel.save', 'Save')}
+                </Button>
+              </Badge>
             </span>
           </Tooltip>
         </Box>
@@ -962,6 +1150,11 @@ function DecoratedVisualFlow({
         scenario={dropScenario}
         onClose={handleContainerDialogClose}
         onConfirm={handleContainerDialogConfirm}
+      />
+      <DiscardChangesDialog
+        open={isDiscardDialogOpen}
+        onClose={() => setIsDiscardDialogOpen(false)}
+        onConfirm={handleConfirmDiscard}
       />
     </Box>
   );

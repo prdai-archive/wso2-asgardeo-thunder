@@ -17,11 +17,16 @@
  */
 
 import {PageLoadingAnimation, ResourceAvatar, UnsavedChangesBar} from '@thunderid/components';
+import {useGetAgentType, useGetAgentTypes} from '@thunderid/configure-agent-types';
+import {dropNonConformingOptionalAttributes} from '@thunderid/configure-users';
 import {useLogger} from '@thunderid/logger/react';
+import {isEqualIgnoringEmpty} from '@thunderid/utils';
 import {
   Alert,
   Box,
   Button,
+  Dialog,
+  DialogContent,
   IconButton,
   PageContent,
   PageTitle,
@@ -34,10 +39,11 @@ import {
 import {ArrowLeft, Edit} from '@wso2/oxygen-ui-icons-react';
 import {useState, useCallback, useMemo, type SyntheticEvent, type JSX, type ReactNode} from 'react';
 import {useTranslation} from 'react-i18next';
-import {Link, useNavigate, useParams} from 'react-router';
+import {Link, useLocation, useNavigate, useParams} from 'react-router';
 import RouteConfig from '../../../configs/RouteConfig';
 import useGetAgent from '../api/useGetAgent';
 import useUpdateAgent from '../api/useUpdateAgent';
+import ShowClientSecret from '../components/create-agent/ShowClientSecret';
 import EditAccessSettings from '../components/edit-agent/access/EditAccessSettings';
 import EditAdvancedSettings from '../components/edit-agent/advanced-settings/EditAdvancedSettings';
 import EditAgentAttributes from '../components/edit-agent/attributes/EditAgentAttributes';
@@ -52,6 +58,12 @@ interface TabPanelProps {
   children?: ReactNode;
   index: number;
   value: number;
+}
+
+interface JustCreatedSecret {
+  agentName: string;
+  clientId?: string;
+  clientSecret: string;
 }
 
 function TabPanel({children = null, value, index, ...other}: TabPanelProps) {
@@ -71,17 +83,26 @@ function TabPanel({children = null, value, index, ...other}: TabPanelProps) {
 export default function AgentEditPage(): JSX.Element {
   const {t} = useTranslation();
   const navigate = useNavigate();
+  const location = useLocation();
   const logger = useLogger('AgentEditPage');
   const {agentId} = useParams<{agentId: string}>();
 
   const {data: agent, isLoading, error, isError, refetch} = useGetAgent(agentId ?? '');
   const updateAgent = useUpdateAgent();
 
+  const justCreatedSecret = (location.state as {justCreatedSecret?: JustCreatedSecret} | null)?.justCreatedSecret;
+  const [secretDialogOpen, setSecretDialogOpen] = useState(Boolean(justCreatedSecret));
+
+  // The agent's type schema, used to drop stale attribute values on save.
+  const {data: agentTypesData, isLoading: isTypesLoading} = useGetAgentTypes();
+  const matchedSchema = agentTypesData?.types?.find((s) => s.name === agent?.type);
+  const {data: agentTypeDetails, isLoading: isTypeLoading} = useGetAgentType(matchedSchema?.id);
+  // Block save until the schema settles, else stale values bypass sanitization.
+  const isSchemaResolving = isTypesLoading || isTypeLoading;
+
   const [activeTab, setActiveTab] = useState(0);
   const [editedAgent, setEditedAgent] = useState<Partial<Agent>>({});
-  // Bumped on Save/Reset to force EditAgentAttributes to remount with a clean form — it keeps
-  // its own react-hook-form state locally, which a `setEditedAgent({})` alone wouldn't reset.
-  const [attributesResetKey, setAttributesResetKey] = useState(0);
+  const [sectionResetKey, setSectionResetKey] = useState(0);
   const [copiedField, setCopiedField] = useState<string | null>(null);
   const [isEditingName, setIsEditingName] = useState(false);
   const [isEditingDescription, setIsEditingDescription] = useState(false);
@@ -131,19 +152,25 @@ export default function AgentEditPage(): JSX.Element {
     const {certificate, ...updatedData} = {...agent, ...editedAgent} as Agent & {certificate?: unknown};
     void certificate;
 
+    // Drop stale optional attribute values so an untouched mismatch doesn't block the update.
+    const attributes = dropNonConformingOptionalAttributes(updatedData.attributes ?? {}, agentTypeDetails?.schema);
+
     try {
-      await updateAgent.mutateAsync({agentId, data: updatedData});
+      await updateAgent.mutateAsync({agentId, data: {...updatedData, attributes}});
       setEditedAgent({});
-      setAttributesResetKey((key) => key + 1);
       await refetch();
-    } catch {
-      logger.error('Failed to update agent');
+      setSectionResetKey((key) => key + 1);
+    } catch (err) {
+      logger.error('Failed to update agent', {error: err});
     }
-  }, [agent, agentId, editedAgent, updateAgent, refetch, logger]);
+  }, [agent, agentId, editedAgent, agentTypeDetails, updateAgent, refetch, logger]);
 
-  const hasChanges = useMemo(() => Object.keys(editedAgent).length > 0, [editedAgent]);
+  const hasChanges = useMemo(
+    () => Object.entries(editedAgent).some(([key, value]) => !isEqualIgnoringEmpty(value, agent?.[key as keyof Agent])),
+    [editedAgent, agent],
+  );
 
-  if (isLoading) {
+  if (isLoading || isSchemaResolving) {
     return <PageLoadingAnimation />;
   }
 
@@ -256,7 +283,7 @@ export default function AgentEditPage(): JSX.Element {
       label: t('agents:edit.page.tabs.attributes', 'Attributes'),
       render: () => (
         <EditAgentAttributes
-          key={attributesResetKey}
+          key={sectionResetKey}
           agent={agent}
           editedAgent={editedAgent}
           onFieldChange={handleFieldChange}
@@ -312,6 +339,7 @@ export default function AgentEditPage(): JSX.Element {
           oauth2Config={oauth2Config}
           onFieldChange={handleFieldChange}
           onValidationChange={handleValidationChange('token')}
+          sectionResetKey={sectionResetKey}
         />
       ),
     });
@@ -344,7 +372,7 @@ export default function AgentEditPage(): JSX.Element {
           {t('agents:edit.page.back', 'Back to agents')}
         </PageTitle.BackButton>
         <PageTitle.Avatar sx={{overflow: 'visible'}}>
-          <ResourceAvatar size={55} fallback={AgentConstants.DEFAULT_AVATAR} />
+          <ResourceAvatar size={55} value={agent.logoUrl} fallback={AgentConstants.DEFAULT_AVATAR} />
         </PageTitle.Avatar>
         <PageTitle.Header>
           <Stack direction="row" alignItems="center" spacing={1} mb={1}>
@@ -462,12 +490,25 @@ export default function AgentEditPage(): JSX.Element {
           saveDisabled={hasAnyValidationError || agent.isReadOnly === true}
           onReset={() => {
             setEditedAgent({});
-            setAttributesResetKey((key) => key + 1);
+            setSectionResetKey((key) => key + 1);
           }}
           onSave={() => {
             void handleSave();
           }}
         />
+      )}
+
+      {justCreatedSecret && (
+        <Dialog open={secretDialogOpen} onClose={() => setSecretDialogOpen(false)} maxWidth="sm" fullWidth>
+          <DialogContent>
+            <ShowClientSecret
+              agentName={justCreatedSecret.agentName}
+              clientId={justCreatedSecret.clientId}
+              clientSecret={justCreatedSecret.clientSecret}
+              onContinue={() => setSecretDialogOpen(false)}
+            />
+          </DialogContent>
+        </Dialog>
       )}
     </PageContent>
   );

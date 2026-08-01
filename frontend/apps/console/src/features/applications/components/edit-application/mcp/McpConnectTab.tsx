@@ -17,17 +17,15 @@
  */
 
 import {SettingsCard} from '@thunderid/components';
+import {TokenEndpointAuthMethods} from '@thunderid/configure-applications';
+import type {Application, OAuth2Config} from '@thunderid/configure-applications';
 import {Box, Button, Chip, FormControl, FormLabel, Stack, TextField} from '@wso2/oxygen-ui';
 import {Bot, UserRound} from '@wso2/oxygen-ui-icons-react';
 import type {JSX} from 'react';
 import {useCallback, useState} from 'react';
 import {useTranslation} from 'react-i18next';
 import McpAccessSection from './McpAccessSection';
-import type {Application} from '../../../models/application';
-import {McpClientTypes} from '../../../models/mcp-client';
-import {TokenEndpointAuthMethods} from '../../../models/oauth';
-import type {OAuth2Config} from '../../../models/oauth';
-import deriveMcpClientType from '../../../utils/deriveMcpClientType';
+import resolveApplicationType, {isClientCredentialsOnlyGrantSet} from '../../../utils/resolveApplicationType';
 import ApplicationDeleteDialog from '../../ApplicationDeleteDialog';
 import ClientSecretSuccessDialog from '../../ClientSecretSuccessDialog';
 import CopyableField from '../../common/CopyableField';
@@ -57,6 +55,12 @@ export interface McpConnectTabProps {
    * @param value - The new value for the field
    */
   onFieldChange: (field: keyof Application, value: unknown) => void;
+
+  /**
+   * Bumped by the parent on Save/Reset to force McpAccessSection to remount and drop its local
+   * redirect URI list state.
+   */
+  sectionResetKey?: number;
 
   /**
    * Whether the application is read-only, disabling all inputs and actions
@@ -113,6 +117,7 @@ export default function McpConnectTab({
   application,
   oauth2Config = undefined,
   onFieldChange,
+  sectionResetKey = 0,
   isReadOnly,
   onDeleteSuccess = undefined,
   onValidationChange = undefined,
@@ -126,20 +131,26 @@ export default function McpConnectTab({
   const [flowSecretDialogOpen, setFlowSecretDialogOpen] = useState(false);
   const [newFlowSecret, setNewFlowSecret] = useState<string>('');
 
-  const clientType = deriveMcpClientType(oauth2Config?.grantTypes);
-  const isM2m = clientType === McpClientTypes.M2M;
+  // The canonical application type (explicit type, falling back to config shape) drives the
+  // client-type badge, rather than inferring M2M from grant shape.
+  const resolvedType = resolveApplicationType(application.type, oauth2Config);
+  const isM2m = resolvedType === 'm2m';
 
   const isConfidentialClient =
     oauth2Config?.tokenEndpointAuthMethod === TokenEndpointAuthMethods.CLIENT_SECRET_BASIC ||
     oauth2Config?.tokenEndpointAuthMethod === TokenEndpointAuthMethods.CLIENT_SECRET_POST;
 
-  // Only flow-native apps are issued a Flow Secret and can rotate it: embedded apps with no OAuth
-  // profile, or confidential non-redirect apps. Public, redirect (authorization_code), and
-  // machine-to-machine (client_credentials as the only grant) apps get no Flow Secret.
+  // Only flow-native apps are issued a Flow Secret and can rotate it: full-stack, custom, or mcp
+  // apps using the embedded (non-redirect) sign-in option. Browser (public redirect) and m2m (direct
+  // token, including client_credentials-only mcp configs) apps never hold one, regardless of OAuth
+  // config shape.
   const grantTypes = oauth2Config?.grantTypes ?? [];
-  const isM2MClient = grantTypes.length === 1 && grantTypes[0] === 'client_credentials';
   const isFlowNativeClient =
-    !oauth2Config || (!oauth2Config.publicClient && !grantTypes.includes('authorization_code') && !isM2MClient);
+    (resolvedType === 'fullstack' || resolvedType === 'custom' || resolvedType === 'mcp') &&
+    (!oauth2Config ||
+      (!oauth2Config.publicClient &&
+        !grantTypes.includes('authorization_code') &&
+        !isClientCredentialsOnlyGrantSet(grantTypes)));
 
   const handleRegenerateClick = useCallback((): void => {
     setRegenerateDialogOpen(true);
@@ -247,6 +258,7 @@ export default function McpConnectTab({
 
         {!isM2m && (
           <McpAccessSection
+            key={sectionResetKey}
             application={application}
             oauth2Config={oauth2Config}
             onFieldChange={onFieldChange}

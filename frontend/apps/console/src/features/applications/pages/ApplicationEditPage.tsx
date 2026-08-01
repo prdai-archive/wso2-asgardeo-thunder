@@ -17,7 +17,10 @@
  */
 
 import {PageLoadingAnimation, ResourceAvatar, UnsavedChangesBar} from '@thunderid/components';
+import {OAuth2GrantTypes, TokenEndpointAuthMethods, useGetApplication} from '@thunderid/configure-applications';
+import type {Application, OAuth2Config} from '@thunderid/configure-applications';
 import {useLogger} from '@thunderid/logger/react';
+import {isEqualIgnoringEmpty} from '@thunderid/utils';
 import {
   Box,
   Stack,
@@ -31,14 +34,17 @@ import {
   Tab,
   PageContent,
   PageTitle,
+  Dialog,
+  DialogContent,
 } from '@wso2/oxygen-ui';
 import {ArrowLeft, Edit} from '@wso2/oxygen-ui-icons-react';
 import {useState, useCallback, useMemo, type SyntheticEvent} from 'react';
 import {useTranslation} from 'react-i18next';
-import {Link, useNavigate, useParams} from 'react-router';
+import {Link, useLocation, useNavigate, useParams} from 'react-router';
 import RouteConfig from '../../../configs/RouteConfig';
-import useGetApplication from '../api/useGetApplication';
 import useUpdateApplication from '../api/useUpdateApplication';
+import SettingsLockNotice from '../components/common/SettingsLockNotice';
+import ShowClientSecret from '../components/create-application/ShowClientSecret';
 import EditAdvancedSettings from '../components/edit-application/advanced-settings/EditAdvancedSettings';
 import EditCustomizationSettings from '../components/edit-application/customization-settings/EditCustomizationSettings';
 import EditFlowsSettings from '../components/edit-application/flows-settings/EditFlowsSettings';
@@ -46,16 +52,17 @@ import EditGeneralSettings from '../components/edit-application/general-settings
 import IntegrationGuides from '../components/edit-application/integration-guides/IntegrationGuides';
 import McpConnectTab from '../components/edit-application/mcp/McpConnectTab';
 import EditTokenSettings from '../components/edit-application/token-settings/EditTokenSettings';
+import EditTokenSettingsTabs from '../components/edit-application/token-settings/EditTokenSettingsTabs';
 import ApplicationConstants from '../constants/application-constants';
 import TemplateConstants from '../constants/template-constants';
-import type {Application} from '../models/application';
 import {McpClientTypes} from '../models/mcp-client';
-import type {OAuth2Config} from '../models/oauth';
 import deriveMcpClientType from '../utils/deriveMcpClientType';
 import {getIntegrationGuideForTemplate} from '../utils/getIntegrationGuidesForTemplate';
 import getTemplateCapabilities from '../utils/getTemplateCapabilities';
 import getTemplateFieldConstraints from '../utils/getTemplateFieldConstraints';
 import getTemplateMetadata from '../utils/getTemplateMetadata';
+import isValidRedirectUriFormat from '../utils/isValidRedirectUriFormat';
+import {hasUserAccess} from '../utils/oauth2Rules';
 
 interface McpTabConfig {
   key: string;
@@ -68,6 +75,13 @@ interface TabPanelProps {
   children?: React.ReactNode;
   index: number;
   value: number;
+}
+
+interface JustCreatedSecret {
+  appName: string;
+  clientId?: string;
+  clientSecret?: string;
+  flowSecret?: string;
 }
 
 function TabPanel({children = null, value, index, ...other}: TabPanelProps) {
@@ -88,13 +102,21 @@ export default function ApplicationEditPage() {
   const logger = useLogger('ApplicationEditPage');
   const {t} = useTranslation();
   const navigate = useNavigate();
+  const location = useLocation();
   const {applicationId} = useParams<{applicationId: string}>();
 
   const {data: application, isLoading, error, isError, refetch} = useGetApplication(applicationId ?? '');
   const updateApplication = useUpdateApplication();
 
+  const justCreatedSecret = (location.state as {justCreatedSecret?: JustCreatedSecret} | null)?.justCreatedSecret;
+  const [secretDialogOpen, setSecretDialogOpen] = useState(Boolean(justCreatedSecret));
+
   const [activeTab, setActiveTab] = useState(0);
   const [editedApp, setEditedApp] = useState<Partial<Application>>({});
+  // Bumped on Save/Reset to force AccessSection/McpAccessSection/UrlsSection to remount with a
+  // clean form — they keep local state (redirect URI list, react-hook-form defaults) that a
+  // `setEditedApp({})` alone wouldn't reset.
+  const [sectionResetKey, setSectionResetKey] = useState(0);
   const [copiedField, setCopiedField] = useState<string | null>(null);
   const [isEditingName, setIsEditingName] = useState(false);
   const [isEditingDescription, setIsEditingDescription] = useState(false);
@@ -163,12 +185,20 @@ export default function ApplicationEditPage() {
       });
       setEditedApp({});
       await refetch();
+      // Bumped only after refetch resolves to prevent stale data being passed to the remounted sections.
+      setSectionResetKey((key) => key + 1);
     } catch {
       logger.error('Failed to update application');
     }
   }, [application, applicationId, editedApp, updateApplication, refetch, logger]);
 
-  const hasChanges = useMemo(() => Object.keys(editedApp).length > 0, [editedApp]);
+  const hasChanges = useMemo(
+    () =>
+      Object.entries(editedApp).some(
+        ([key, value]) => !isEqualIgnoringEmpty(value, application?.[key as keyof Application]),
+      ),
+    [editedApp, application],
+  );
 
   if (isLoading) {
     return <PageLoadingAnimation />;
@@ -217,6 +247,40 @@ export default function ApplicationEditPage() {
   const isMcpClient = application.template === TemplateConstants.MCP_CLIENT_TEMPLATE_ID;
   const isMcpM2mOnly = deriveMcpClientType(oauth2Config?.grantTypes) === McpClientTypes.M2M;
 
+  // User-facing tabs (Flows, Customization) and the general Access section only apply when the
+  // client can act on behalf of a user. When it can't, they are frozen/hidden rather than removed.
+  const userAccessUnlocked = !oauth2Config || hasUserAccess(oauth2Config.grantTypes);
+  const userGatedApplication = userAccessUnlocked ? application : {...application, isReadOnly: true};
+  const userAccessLockMessage = t(
+    'applications:edit.userAccessLock.message',
+    'These settings apply only to user-facing flows. Enable a user-facing grant (e.g. authorization code) in the Advanced tab to configure them.',
+  );
+
+  // Page-level required checks, gated on the grant types they apply to, surfaced by name in the
+  // save bar. Computed from state (not reported by the tabs) since inactive tabs are unmounted.
+  // MCP clients run their own validation via McpConnectTab, so these are skipped there.
+  const grantTypes = oauth2Config?.grantTypes ?? [];
+  const hasAuthorizationCodeGrant = grantTypes.includes(OAuth2GrantTypes.AUTHORIZATION_CODE);
+  const hasValidRedirectUri = (oauth2Config?.redirectUris ?? []).some((uri) => isValidRedirectUriFormat(uri));
+  const isMissingRedirectUri = !isMcpClient && hasAuthorizationCodeGrant && !hasValidRedirectUri;
+  const isMissingCertificate =
+    !isMcpClient &&
+    oauth2Config?.tokenEndpointAuthMethod === TokenEndpointAuthMethods.PRIVATE_KEY_JWT &&
+    !oauth2Config?.certificate?.value;
+
+  // Each issue is a full, standalone sentence so the message needs no grammar assembly and stays
+  // translatable; multiple issues read as consecutive sentences.
+  const validationIssues: string[] = [];
+  if (isMissingRedirectUri) {
+    validationIssues.push(t('applications:edit.page.validation.missingRedirectUri', 'A redirect URI is required.'));
+  }
+  if (isMissingCertificate) {
+    validationIssues.push(t('applications:edit.page.validation.missingCertificate', 'A certificate is required.'));
+  }
+
+  const unsavedChangesMessage =
+    validationIssues.length > 0 ? validationIssues.join(' ') : t('applications:edit.page.unsavedChanges');
+
   const mcpTabs: McpTabConfig[] = isMcpClient
     ? (
         [
@@ -233,6 +297,7 @@ export default function ApplicationEditPage() {
                   handleBack().catch(() => null);
                 }}
                 onValidationChange={setMcpAccessInvalid}
+                sectionResetKey={sectionResetKey}
               />
             ),
           },
@@ -253,6 +318,7 @@ export default function ApplicationEditPage() {
                 editedApp={editedApp}
                 onFieldChange={handleFieldChange}
                 onValidationChange={setCustomizationSettingsInvalid}
+                sectionResetKey={sectionResetKey}
               />
             ),
             hidden: isMcpM2mOnly,
@@ -262,6 +328,7 @@ export default function ApplicationEditPage() {
             label: t('applications:edit.page.tabs.token'),
             panel: (
               <EditTokenSettings
+                sectionResetKey={sectionResetKey}
                 application={application}
                 oauth2Config={oauth2Config}
                 onFieldChange={handleFieldChange}
@@ -543,27 +610,39 @@ export default function ApplicationEditPage() {
                   handleBack().catch(() => null);
                 }}
                 onValidationChange={setGeneralSettingsInvalid}
+                showUserAccessConfig={userAccessUnlocked}
+                sectionResetKey={sectionResetKey}
               />
             </TabPanel>
 
             {/* Flows Tab */}
             <TabPanel value={activeTab} index={hasIntegrationGuides ? 2 : 1}>
-              <EditFlowsSettings application={application} editedApp={editedApp} onFieldChange={handleFieldChange} />
+              <SettingsLockNotice isUnlocked={userAccessUnlocked} message={userAccessLockMessage}>
+                <EditFlowsSettings
+                  application={userGatedApplication}
+                  editedApp={editedApp}
+                  onFieldChange={handleFieldChange}
+                />
+              </SettingsLockNotice>
             </TabPanel>
 
             {/* Customization Tab */}
             <TabPanel value={activeTab} index={hasIntegrationGuides ? 3 : 2}>
-              <EditCustomizationSettings
-                application={application}
-                editedApp={editedApp}
-                onFieldChange={handleFieldChange}
-                onValidationChange={setCustomizationSettingsInvalid}
-              />
+              <SettingsLockNotice isUnlocked={userAccessUnlocked} message={userAccessLockMessage}>
+                <EditCustomizationSettings
+                  application={userGatedApplication}
+                  editedApp={editedApp}
+                  onFieldChange={handleFieldChange}
+                  onValidationChange={setCustomizationSettingsInvalid}
+                  sectionResetKey={sectionResetKey}
+                />
+              </SettingsLockNotice>
             </TabPanel>
 
             {/* Token Tab */}
             <TabPanel value={activeTab} index={hasIntegrationGuides ? 4 : 3}>
-              <EditTokenSettings
+              <EditTokenSettingsTabs
+                sectionResetKey={sectionResetKey}
                 application={application}
                 oauth2Config={oauth2Config}
                 onFieldChange={handleFieldChange}
@@ -590,7 +669,7 @@ export default function ApplicationEditPage() {
       {/* Floating Action Bar */}
       {hasChanges && (
         <UnsavedChangesBar
-          message={t('applications:edit.page.unsavedChanges')}
+          message={unsavedChangesMessage}
           resetLabel={t('applications:edit.page.reset')}
           saveLabel={t('applications:edit.page.save')}
           savingLabel={t('applications:edit.page.saving')}
@@ -601,6 +680,8 @@ export default function ApplicationEditPage() {
             customizationSettingsInvalid ||
             advancedSettingsInvalid ||
             generalSettingsInvalid ||
+            isMissingRedirectUri ||
+            isMissingCertificate ||
             application.isReadOnly === true
           }
           onReset={() => {
@@ -610,11 +691,24 @@ export default function ApplicationEditPage() {
             setAdvancedSettingsInvalid(false);
             setCustomizationSettingsInvalid(false);
             setGeneralSettingsInvalid(false);
+            setSectionResetKey((key) => key + 1);
           }}
           onSave={() => {
             handleSave().catch(() => null);
           }}
         />
+      )}
+
+      {justCreatedSecret && (
+        <Dialog open={secretDialogOpen} onClose={() => setSecretDialogOpen(false)} maxWidth="sm" fullWidth>
+          <DialogContent>
+            <ShowClientSecret
+              clientSecret={justCreatedSecret.clientSecret}
+              flowSecret={justCreatedSecret.flowSecret}
+              onContinue={() => setSecretDialogOpen(false)}
+            />
+          </DialogContent>
+        </Dialog>
       )}
     </PageContent>
   );

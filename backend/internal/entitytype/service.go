@@ -26,6 +26,7 @@ import (
 	"fmt"
 
 	tidcommon "github.com/thunder-id/thunderid/pkg/thunderidengine/common"
+	"github.com/thunder-id/thunderid/pkg/thunderidengine/providers"
 
 	"github.com/thunder-id/thunderid/internal/entitytype/model"
 	oupkg "github.com/thunder-id/thunderid/internal/ou"
@@ -33,7 +34,6 @@ import (
 	"github.com/thunder-id/thunderid/internal/system/log"
 	"github.com/thunder-id/thunderid/internal/system/security"
 	"github.com/thunder-id/thunderid/internal/system/sysauthz"
-	"github.com/thunder-id/thunderid/internal/system/transaction"
 	"github.com/thunder-id/thunderid/internal/system/utils"
 )
 
@@ -84,13 +84,16 @@ type EntityTypeServiceInterface interface {
 		ctx context.Context, category TypeCategory, names []string,
 	) (map[string]string, *tidcommon.ServiceError)
 	ResolveEntityTypeHandles(ctx context.Context, entityType *EntityType) *tidcommon.ServiceError
+	GetEntityTypeSchema(
+		ctx context.Context, category TypeCategory, userTypeName string,
+	) (*EntityType, *tidcommon.ServiceError)
 }
 
 // entityTypeService is the default implementation of the EntityTypeServiceInterface.
 type entityTypeService struct {
 	entityTypeStore entityTypeStoreInterface
 	ouService       oupkg.OrganizationUnitServiceInterface
-	transactioner   transaction.Transactioner
+	transactioner   providers.Transactioner
 	authzService    sysauthz.SystemAuthorizationServiceInterface
 }
 
@@ -98,7 +101,7 @@ type entityTypeService struct {
 func newEntityTypeService(
 	ouService oupkg.OrganizationUnitServiceInterface,
 	store entityTypeStoreInterface,
-	transactioner transaction.Transactioner,
+	transactioner providers.Transactioner,
 	authzService sysauthz.SystemAuthorizationServiceInterface,
 ) EntityTypeServiceInterface {
 	return &entityTypeService{
@@ -322,6 +325,31 @@ func (us *entityTypeService) GetEntityType(
 		} else if handle, ok := handleMap[entityType.OUID]; ok {
 			entityType.OUHandle = handle
 		}
+	}
+
+	return &entityType, nil
+}
+
+// GetEntityTypeSchema retrieves the schema config by name without admin access check
+func (us *entityTypeService) GetEntityTypeSchema(
+	ctx context.Context, category TypeCategory, userTypeName string,
+) (*EntityType, *tidcommon.ServiceError) {
+	logger := log.GetLogger().With(log.String(log.LoggerKeyComponentName, entityTypeLoggerComponentName))
+
+	if svcErr := validateCategory(category); svcErr != nil {
+		return nil, svcErr
+	}
+
+	if userTypeName == "" {
+		return nil, invalidEntityTypeRequestErr(category, "schema name must not be empty")
+	}
+
+	entityType, err := us.entityTypeStore.GetEntityTypeByName(ctx, category, userTypeName)
+	if err != nil {
+		if errors.Is(err, ErrEntityTypeNotFound) {
+			return nil, entityTypeNotFoundErr(category)
+		}
+		return nil, logAndReturnServerError(ctx, logger, "Failed to get entity type", err)
 	}
 
 	return &entityType, nil

@@ -47,7 +47,6 @@ import (
 	"github.com/thunder-id/thunderid/internal/system/jose/jwe"
 	"github.com/thunder-id/thunderid/internal/system/jose/jwt"
 	kmprovider "github.com/thunder-id/thunderid/internal/system/kmprovider/common"
-	"github.com/thunder-id/thunderid/internal/system/transaction"
 	"github.com/thunder-id/thunderid/pkg/thunderidengine/providers"
 )
 
@@ -69,7 +68,7 @@ func Initialize(
 	idpService providers.IDPProvider,
 	dpopVerifier dpop.VerifierInterface,
 	runtimeStore providers.RuntimeStoreProvider,
-	transactioner transaction.Transactioner,
+	transactioner providers.Transactioner,
 	cfg oauthconfig.Config,
 ) error {
 	jwks.Initialize(mux, runtimeCrypto)
@@ -104,7 +103,7 @@ func Initialize(
 	if len(cfg.OAuth.AllowedGrantTypes) == 0 ||
 		slices.Contains(cfg.OAuth.AllowedGrantTypes, string(providers.GrantTypeCIBA)) {
 		cibaService = ciba.Initialize(mux, jwtService, actorProvider, authnProvider, flowExecService,
-			discoveryService, resourceService, cfg)
+			discoveryService, resourceService, runtimeStore, cfg)
 	}
 
 	grantHandlerProvider := granthandlers.Initialize(

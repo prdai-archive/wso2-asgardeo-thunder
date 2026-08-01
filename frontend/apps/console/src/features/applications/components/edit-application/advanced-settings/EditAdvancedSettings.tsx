@@ -16,6 +16,13 @@
  * under the License.
  */
 
+import type {
+  Application,
+  AttestationConfig,
+  InboundAuthConfig,
+  OAuth2Config,
+  OAuth2Token,
+} from '@thunderid/configure-applications';
 import {Stack} from '@wso2/oxygen-ui';
 import {useEffect, useState} from 'react';
 import AttestationSection from './AttestationSection';
@@ -24,10 +31,8 @@ import CertificateSection from './CertificateSection';
 import IdentityAssertionsSection from './IdentityAssertionsSection';
 import MetadataSection from './MetadataSection';
 import OAuth2ConfigSection from './OAuth2ConfigSection';
-import type {Application} from '../../../models/application';
+import PasskeysSection from './PasskeysSection';
 import type {ApplicationTemplate} from '../../../models/application-templates';
-import type {InboundAuthConfig} from '../../../models/inbound-auth';
-import type {AttestationConfig, OAuth2Config, OAuth2Token} from '../../../models/oauth';
 
 /**
  * Props for the {@link EditAdvancedSettings} component.
@@ -98,12 +103,16 @@ export default function EditAdvancedSettings({
   // Identity assertions and attestation validate independently; each is tracked separately so one
   // resolving doesn't clobber the other's still-invalid state when both report to the single
   // upward onValidationChange prop.
+  // Identity assertions, attestation, and passkeys validate independently; each is tracked
+  // separately so one resolving doesn't clobber the other's still-invalid state when both report
+  // to the single upward onValidationChange prop.
   const [identityAssertionsInvalid, setIdentityAssertionsInvalid] = useState(false);
   const [attestationInvalid, setAttestationInvalid] = useState(false);
+  const [passkeysInvalid, setPasskeysInvalid] = useState(false);
 
   useEffect(() => {
-    onValidationChange?.(identityAssertionsInvalid || attestationInvalid);
-  }, [identityAssertionsInvalid, attestationInvalid, onValidationChange]);
+    onValidationChange?.(identityAssertionsInvalid || attestationInvalid || passkeysInvalid);
+  }, [identityAssertionsInvalid, attestationInvalid, passkeysInvalid, onValidationChange]);
 
   const handleOAuth2ConfigChange = (updates: Partial<OAuth2Config>) => {
     const currentInboundAuth: InboundAuthConfig[] = editedApp.inboundAuthConfig ?? application.inboundAuthConfig ?? [];
@@ -127,6 +136,22 @@ export default function EditAdvancedSettings({
   // Prefer the edited value whenever it has been set — including an explicit null, which represents
   // the user clearing attestation. Only fall back to the stored value when the field is untouched.
   const currentAttestation = 'attestation' in editedApp ? editedApp.attestation : application.attestation;
+
+  const handlePasskeysChange = (origins: string[]): void => {
+    onFieldChange('passkeyAllowedOrigins', origins);
+  };
+
+  const currentPasskeyOrigins = editedApp.passkeyAllowedOrigins ?? application.passkeyAllowedOrigins ?? [];
+
+  // Encrypted ID token / UserInfo formats are encrypted to the client certificate, so removing the
+  // certificate while one is selected would produce an invalid config. Used to block that removal.
+  const idTokenResponseType = oauth2Config?.token?.idToken?.responseType;
+  const userInfoResponseType = oauth2Config?.userInfo?.responseType;
+  const encryptionDependsOnCert =
+    idTokenResponseType === 'JWE' ||
+    idTokenResponseType === 'NESTED_JWT' ||
+    userInfoResponseType === 'JWE' ||
+    userInfoResponseType === 'NESTED_JWT';
 
   const handleTokenConfigChange = (tokenUpdates: Partial<OAuth2Token>, oauth2Updates: Partial<OAuth2Config> = {}) => {
     const currentInboundAuth: InboundAuthConfig[] = editedApp.inboundAuthConfig ?? application.inboundAuthConfig ?? [];
@@ -179,6 +204,7 @@ export default function EditAdvancedSettings({
         certificate={oauth2Config?.certificate}
         onCertificateChange={handleCertificateChange}
         required={oauth2Config?.tokenEndpointAuthMethod === 'private_key_jwt'}
+        encryptionDependsOnCert={encryptionDependsOnCert}
         disabled={application.isReadOnly}
       />
       {showAttestation && (
@@ -189,6 +215,12 @@ export default function EditAdvancedSettings({
           onValidationChange={setAttestationInvalid}
         />
       )}
+      <PasskeysSection
+        allowedOrigins={currentPasskeyOrigins}
+        onPasskeysChange={application.isReadOnly ? undefined : handlePasskeysChange}
+        disabled={application.isReadOnly}
+        onValidationChange={setPasskeysInvalid}
+      />
       <MetadataSection application={application} />
     </Stack>
   );

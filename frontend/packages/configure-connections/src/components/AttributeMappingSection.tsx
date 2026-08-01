@@ -239,7 +239,8 @@ function MappingGroupEditor({
         })}
         <Box>
           <Button
-            variant="outlined"
+            variant="text"
+            color="primary"
             size="small"
             startIcon={<Plus size={16} />}
             onClick={onAddRow}
@@ -351,6 +352,14 @@ export default function AttributeMappingSection({
   const valid: boolean =
     !groupUserTypeMissing && !groupRowIncomplete && !defaultMissing && !externalMissing && !valueEntryIncomplete;
 
+  // Keep the latest onChange without making the report-up effect depend on its identity: a caller
+  // passing an inline handler (e.g. ConnectionDetailPage) would otherwise re-trigger the effect on
+  // every parent render, and since the effect derives a fresh config object each time, that loops forever.
+  const onChangeRef = useRef(onChange);
+  useEffect(() => {
+    onChangeRef.current = onChange;
+  });
+
   useEffect(() => {
     const hasContent: boolean =
       anyGroupHasContent || effectiveResolveDynamic || linking.some((entry) => entry.value.trim() !== '');
@@ -370,7 +379,7 @@ export default function AttributeMappingSection({
       })),
       linking: linking.map((entry) => entry.value),
     });
-    onChange(config, valid);
+    onChangeRef.current(config, valid);
   }, [
     defaultUserType,
     effectiveResolveDynamic,
@@ -382,7 +391,6 @@ export default function AttributeMappingSection({
     anyGroupHasContent,
     userTypeList,
     wasUnconfigured,
-    onChange,
   ]);
 
   const defaultOptions: string[] = useMemo(
@@ -582,7 +590,8 @@ export default function AttributeMappingSection({
                       {showAddValue && (
                         <Box>
                           <Button
-                            variant="outlined"
+                            variant="text"
+                            color="primary"
                             size="small"
                             startIcon={<Plus size={16} />}
                             onClick={addValue}
@@ -658,7 +667,8 @@ export default function AttributeMappingSection({
           {showAddUserType && (
             <Box>
               <Button
-                variant="outlined"
+                variant="text"
+                color="primary"
                 size="small"
                 startIcon={<Plus size={16} />}
                 onClick={addGroup}
@@ -718,7 +728,8 @@ export default function AttributeMappingSection({
           })}
           <Box>
             <Button
-              variant="outlined"
+              variant="text"
+              color="primary"
               size="small"
               startIcon={<Plus size={16} />}
               onClick={addLink}
