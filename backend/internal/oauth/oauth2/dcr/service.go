@@ -1,20 +1,5 @@
-/*
- * Copyright (c) 2025, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2025 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 package dcr
 
@@ -318,13 +303,24 @@ func buildTokenConfig(request *DCRRegistrationRequest) *providers.OAuthTokenConf
 	return &providers.OAuthTokenConfig{IDToken: idToken}
 }
 
-// buildIDTokenConfig maps ID token encryption fields from a DCR request to an IDTokenConfig.
+// buildIDTokenConfig maps ID token alg fields from a DCR request to an IDTokenConfig.
+// ResponseType is derived from the algorithm fields per OIDC DCR conventions.
 func buildIDTokenConfig(request *DCRRegistrationRequest) *providers.IDTokenConfig {
-	if request.IDTokenEncryptedResponseAlg == "" && request.IDTokenEncryptedResponseEnc == "" {
+	if request.IDTokenSignedResponseAlg == "" && request.IDTokenEncryptedResponseAlg == "" &&
+		request.IDTokenEncryptedResponseEnc == "" {
 		return nil
 	}
+	hasEnc := request.IDTokenEncryptedResponseAlg != "" || request.IDTokenEncryptedResponseEnc != ""
+	responseType := providers.IDTokenResponseTypeJWT
+	switch {
+	case hasEnc && request.IDTokenSignedResponseAlg != "":
+		responseType = providers.IDTokenResponseTypeNESTEDJWT
+	case hasEnc:
+		responseType = providers.IDTokenResponseTypeJWE
+	}
 	return &providers.IDTokenConfig{
-		ResponseType:  providers.IDTokenResponseTypeJWE,
+		ResponseType:  responseType,
+		SigningAlg:    request.IDTokenSignedResponseAlg,
 		EncryptionAlg: request.IDTokenEncryptedResponseAlg,
 		EncryptionEnc: request.IDTokenEncryptedResponseEnc,
 	}
@@ -366,8 +362,9 @@ func (ds *dcrService) convertApplicationToDCRResponse(appDTO *model.ApplicationD
 		userInfoEncryptedEnc = oauthConfig.UserInfo.EncryptionEnc
 	}
 
-	var idTokenEncryptedAlg, idTokenEncryptedEnc string
+	var idTokenSignedAlg, idTokenEncryptedAlg, idTokenEncryptedEnc string
 	if oauthConfig.Token != nil && oauthConfig.Token.IDToken != nil {
+		idTokenSignedAlg = oauthConfig.Token.IDToken.SigningAlg
 		idTokenEncryptedAlg = oauthConfig.Token.IDToken.EncryptionAlg
 		idTokenEncryptedEnc = oauthConfig.Token.IDToken.EncryptionEnc
 	}
@@ -396,6 +393,7 @@ func (ds *dcrService) convertApplicationToDCRResponse(appDTO *model.ApplicationD
 		UserInfoSignedResponseAlg:          userInfoSignedAlg,
 		UserInfoEncryptedResponseAlg:       userInfoEncryptedAlg,
 		UserInfoEncryptedResponseEnc:       userInfoEncryptedEnc,
+		IDTokenSignedResponseAlg:           idTokenSignedAlg,
 		IDTokenEncryptedResponseAlg:        idTokenEncryptedAlg,
 		IDTokenEncryptedResponseEnc:        idTokenEncryptedEnc,
 	}

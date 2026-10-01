@@ -1,20 +1,5 @@
-/*
- * Copyright (c) 2025, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2025 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 package entitytype
 
@@ -39,12 +24,12 @@ func Initialize(
 	cacheManager cache.CacheManagerInterface,
 	ouService oupkg.OrganizationUnitServiceInterface,
 	authzService sysauthz.SystemAuthorizationServiceInterface,
-) (EntityTypeServiceInterface, declarativeresource.ResourceExporter, error) {
+) (EntityTypeServiceInterface, declarativeresource.ResourceExporter, declarativeresource.ResourceExporter, error) {
 	// Step 1: Determine store mode and initialize store and transactioner
 	storeMode := getEntityTypeStoreMode()
 	entityTypeStore, transactioner, err := initializeStore(storeMode, cacheManager)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 
 	// Step 2: Create service with store
@@ -54,7 +39,7 @@ func Initialize(
 	// Step 3: Load declarative resources into store (if applicable)
 	if storeMode == serverconst.StoreModeComposite || storeMode == serverconst.StoreModeDeclarative {
 		if err := loadDeclarativeResources(entityTypeStore, entityTypeService); err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
 	}
 
@@ -67,8 +52,9 @@ func Initialize(
 		registerMCPTools(mcpServer, entityTypeService)
 	}
 
-	exporter := newEntityTypeExporter(entityTypeService)
-	return entityTypeService, exporter, nil
+	userTypeExporter := newEntityTypeExporter(entityTypeService, TypeCategoryUser)
+	agentTypeExporter := newEntityTypeExporter(entityTypeService, TypeCategoryAgent)
+	return entityTypeService, userTypeExporter, agentTypeExporter, nil
 }
 
 // Store Selection (based on entity_type.store configuration):

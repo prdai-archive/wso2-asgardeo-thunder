@@ -1,20 +1,5 @@
-/*
- * Copyright (c) 2026, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2026 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 package presentation
 
@@ -51,11 +36,16 @@ import (
 func Initialize(
 	mux *http.ServeMux, ouService ou.OrganizationUnitServiceInterface,
 ) (PresentationDefinitionServiceInterface, declarativeresource.ResourceExporter, error) {
-	store, err := initializeStore()
+	store, fileStore, dbStore, err := initializeStore()
 	if err != nil {
 		return nil, nil, err
 	}
 	svc := newPresentationDefinitionService(store, ouService)
+	if fileStore != nil {
+		if err := loadDeclarativeResources(fileStore, dbStore, svc); err != nil {
+			return nil, nil, err
+		}
+	}
 	registerRoutes(mux, newDefinitionHandler(svc))
 	return svc, newDefinitionExporter(svc), nil
 }
@@ -95,31 +85,31 @@ func registerRoutes(mux *http.ServeMux, h *definitionHandler) {
 }
 
 // initializeStore builds the presentation-definition store based on the configured store mode.
-func initializeStore() (definitionStoreInterface, error) {
+func initializeStore() (definitionStoreInterface, *definitionFileBasedStore, definitionStoreInterface, error) {
 	storeMode, err := getDefinitionStoreMode()
 	if err != nil {
-		return nil, err
+		return nil, nil, nil, err
 	}
 
 	switch storeMode {
 	case serverconst.StoreModeComposite:
 		fileStore := newDefinitionFileBasedStore()
 		dbStore := newDefinitionStore()
-		if err := loadDeclarativeResources(&definitionStorer{store: fileStore}); err != nil {
-			return nil, err
-		}
-		return newCompositeDefinitionStore(fileStore, dbStore), nil
+		return newCompositeDefinitionStore(fileStore, dbStore), fileStore, dbStore, nil
 
 	case serverconst.StoreModeDeclarative:
 		fileStore := newDefinitionFileBasedStore()
-		if err := loadDeclarativeResources(&definitionStorer{store: fileStore}); err != nil {
-			return nil, err
-		}
-		return fileStore, nil
+		return fileStore, fileStore, nil, nil
 
 	default:
-		return newDefinitionStore(), nil
+		return newDefinitionStore(), nil, nil, nil
 	}
+}
+
+// isDeclarativeModeEnabled checks if immutable-only store mode is enabled for presentation definitions.
+func isDeclarativeModeEnabled() bool {
+	mode, err := getDefinitionStoreMode()
+	return err == nil && mode == serverconst.StoreModeDeclarative
 }
 
 // getDefinitionStoreMode determines the store mode for presentation definitions.

@@ -67,7 +67,6 @@ Optional settings are not part of the creation wizard. After creation, open the 
 |-------|-------------|
 | **UserInfo endpoint** | The provider's userinfo endpoint. Used to fetch additional profile claims. |
 | **JWKS endpoint** | The URL of the provider's JSON Web Key Set. Required when **Enable token exchange** is on. |
-| **Logout endpoint** | The provider's logout endpoint, used to end the user session on logout. |
 | **Issuer** | The provider's issuer identifier, expected in tokens from this provider. Required when **Enable token exchange** is on. |
 | **Scopes** | Space-separated OIDC scopes to request. Defaults to `openid email profile` if left blank. |
 | **Prompt** | Optional prompt value forwarded to the provider's authorization request, for example `select_account` or `consent`. |
@@ -101,7 +100,7 @@ Behavior:
 - The local attribute must be defined in the user type's schema; this is validated when you save the connection.
 - An attribute whose name is mapped is renamed to its local attribute; attributes without a mapping pass through unchanged.
 
-The mapping applies both when a user signs in through this connection in an authentication flow and when a token from this provider is exchanged (see [Trusted Issuer](../../trusted-issuer#attribute-configuration)). The resulting local attributes flow into the issued access and ID tokens, subject to the application's `userAttributes` configuration.
+The mapping applies both when a user signs in through this connection in an authentication flow and when a token from this provider is exchanged (see [Trusted Issuer](../../trusted-issuer)). The resulting local attributes flow into the issued access and ID tokens, subject to the application's `userAttributes` configuration.
 
 ### Account Linking
 

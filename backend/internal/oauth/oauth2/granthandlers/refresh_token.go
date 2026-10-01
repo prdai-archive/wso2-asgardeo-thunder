@@ -1,25 +1,11 @@
-/*
- * Copyright (c) 2025-2026, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2025-2026 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 package granthandlers
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"slices"
 	"strings"
@@ -29,6 +15,7 @@ import (
 	"github.com/thunder-id/thunderid/pkg/thunderidengine/providers"
 
 	"github.com/thunder-id/thunderid/internal/attributecache"
+	authnprovidercm "github.com/thunder-id/thunderid/internal/authnprovider/common"
 	oauthconfig "github.com/thunder-id/thunderid/internal/oauth/config"
 	"github.com/thunder-id/thunderid/internal/oauth/oauth2/constants"
 	"github.com/thunder-id/thunderid/internal/oauth/oauth2/dpop"
@@ -49,6 +36,8 @@ type refreshTokenGrantHandler struct {
 	tokenValidator   tokenservice.TokenValidatorInterface
 	attrCacheService attributecache.AttributeCacheServiceInterface
 	resourceService  providers.ResourceServerProvider
+	authzService     providers.AuthorizationProvider
+	actorProvider    providers.ActorProvider
 	refreshRevoker   revocation.RefreshTokenRevokerInterface
 	criteriaRevoker  revocation.CriteriaRevokerInterface
 }
@@ -60,6 +49,8 @@ func newRefreshTokenGrantHandler(
 	tokenValidator tokenservice.TokenValidatorInterface,
 	attrCacheService attributecache.AttributeCacheServiceInterface,
 	resourceService providers.ResourceServerProvider,
+	authzService providers.AuthorizationProvider,
+	actorProvider providers.ActorProvider,
 	refreshRevoker revocation.RefreshTokenRevokerInterface,
 	criteriaRevoker revocation.CriteriaRevokerInterface,
 	cfg oauthconfig.Config,
@@ -71,6 +62,8 @@ func newRefreshTokenGrantHandler(
 		tokenValidator:   tokenValidator,
 		attrCacheService: attrCacheService,
 		resourceService:  resourceService,
+		authzService:     authzService,
+		actorProvider:    actorProvider,
 		refreshRevoker:   refreshRevoker,
 		criteriaRevoker:  criteriaRevoker,
 	}
@@ -105,18 +98,14 @@ func (h *refreshTokenGrantHandler) ValidateGrant(ctx context.Context, tokenReque
 	return nil
 }
 
-// HandleGrant processes the refresh token grant request and generates a new token response.
-func (h *refreshTokenGrantHandler) HandleGrant(ctx context.Context, tokenRequest *model.TokenRequest,
-	oauthApp *providers.OAuthClient) (
-	*model.TokenResponseDTO, *model.ErrorResponse) {
-	logger := log.GetLogger().With(log.String(log.LoggerKeyComponentName, "RefreshTokenGrantHandler"))
-
-	// Validate refresh token using token validator
-	// ValidateRefreshToken verifies the token and enforces the RFC 7009 deny list. A revoked token is
-	// rejected as invalid_grant like any other invalid token; an unavailable deny list fails closed
-	// with a server_error.
-	refreshTokenClaims, err := h.tokenValidator.ValidateRefreshToken(
-		ctx, tokenRequest.RefreshToken, tokenRequest.ClientID)
+// resolveRefreshToken validates the presented refresh token and confirms it was issued to the
+// requesting client. ValidateRefreshToken enforces the RFC 7009 deny list, so a revoked token is
+// rejected as invalid_grant like any other invalid token and an unavailable deny list fails closed
+// with a server_error.
+func (h *refreshTokenGrantHandler) resolveRefreshToken(ctx context.Context,
+	tokenRequest *model.TokenRequest, logger *log.Logger) (
+	*tokenservice.RefreshTokenClaims, *model.ErrorResponse) {
+	refreshTokenClaims, err := h.tokenValidator.ValidateRefreshToken(ctx, tokenRequest.RefreshToken)
 	if err != nil {
 		logger.Debug(ctx, "Failed to validate refresh token", log.Error(err))
 		if errors.Is(err, revocation.ErrEnforcementUnavailable) {
@@ -136,7 +125,35 @@ func (h *refreshTokenGrantHandler) HandleGrant(ctx context.Context, tokenRequest
 		}
 	}
 
+	// A client may only redeem refresh tokens issued to it.
+	if refreshTokenClaims.ClientID != tokenRequest.ClientID {
+		logger.Debug(ctx, "Refresh token does not belong to the requesting client")
+		return nil, &model.ErrorResponse{
+			Error:            constants.ErrorInvalidGrant,
+			ErrorDescription: "Invalid refresh token",
+		}
+	}
+
+	return refreshTokenClaims, nil
+}
+
+// HandleGrant processes the refresh token grant request and generates a new token response.
+func (h *refreshTokenGrantHandler) HandleGrant(ctx context.Context, tokenRequest *model.TokenRequest,
+	oauthApp *providers.OAuthClient) (
+	*model.TokenResponseDTO, *model.ErrorResponse) {
+	logger := log.GetLogger().With(log.String(log.LoggerKeyComponentName, "RefreshTokenGrantHandler"))
+
+	refreshTokenClaims, errResp := h.resolveRefreshToken(ctx, tokenRequest, logger)
+	if errResp != nil {
+		return nil, errResp
+	}
+
 	if errResp := dpop.VerifyProofBinding(ctx, refreshTokenClaims.DPoPJkt, "refresh token"); errResp != nil {
+		return nil, errResp
+	}
+
+	subjectEntity, errResp := h.verifyCredentialsUnchanged(ctx, refreshTokenClaims, oauthApp, logger)
+	if errResp != nil {
 		return nil, errResp
 	}
 
@@ -194,9 +211,14 @@ func (h *refreshTokenGrantHandler) HandleGrant(ctx context.Context, tokenRequest
 		if scopeErr != nil {
 			return nil, scopeErr
 		}
-		newTokenScopes = make([]string, 0, len(oidcScopes)+len(downscopedNonOidc))
+		authorizedNonOidc, authzErr := h.reauthorizeScopes(
+			ctx, subjectEntity, targetRS.ID, downscopedNonOidc, logger)
+		if authzErr != nil {
+			return nil, authzErr
+		}
+		newTokenScopes = make([]string, 0, len(oidcScopes)+len(authorizedNonOidc))
 		newTokenScopes = append(newTokenScopes, oidcScopes...)
-		newTokenScopes = append(newTokenScopes, downscopedNonOidc...)
+		newTokenScopes = append(newTokenScopes, authorizedNonOidc...)
 	}
 
 	// Get user attributes from attribute cache.
@@ -241,6 +263,7 @@ func (h *refreshTokenGrantHandler) HandleGrant(ctx context.Context, tokenRequest
 		DPoPJkt:           dpop.GetJkt(ctx),
 		TokenFamilyID:     refreshTokenClaims.TokenFamilyID,
 	}
+	setRefreshSubjectIdentity(accessTokenCtx, subjectEntity, cacheEntry)
 	// Replay the on-behalf-of decision frozen at issuance, sourced from the stored marker
 	// rather than the client's current setting.
 	if refreshTokenClaims.ActorSub != "" {
@@ -258,6 +281,7 @@ func (h *refreshTokenGrantHandler) HandleGrant(ctx context.Context, tokenRequest
 	// Prepare the token response
 	tokenResponse := &model.TokenResponseDTO{
 		AccessToken: *accessToken,
+		SessionID:   refreshTokenClaims.SessionID,
 	}
 
 	// Generate ID token if 'openid' scope is present
@@ -269,6 +293,7 @@ func (h *refreshTokenGrantHandler) HandleGrant(ctx context.Context, tokenRequest
 			UserAttributes: attrs,
 			OAuthApp:       oauthApp,
 			ClaimsRequest:  refreshTokenClaims.ClaimsRequest,
+			SessionID:      refreshTokenClaims.SessionID,
 		})
 		if idErr != nil {
 			logger.Error(ctx, "Failed to generate ID token", log.Error(idErr))
@@ -290,7 +315,8 @@ func (h *refreshTokenGrantHandler) HandleGrant(ctx context.Context, tokenRequest
 			refreshTokenClaims.Sub, audiences,
 			refreshTokenClaims.GrantType, newTokenScopes,
 			refreshTokenClaims.ClaimsRequest, refreshTokenClaims.ClaimsLocales,
-			refreshTokenClaims.AttributeCacheID, refreshTokenClaims.TokenFamilyID)
+			refreshTokenClaims.AttributeCacheID, refreshTokenClaims.TokenFamilyID,
+			refreshTokenClaims.Exp)
 		if errResp != nil && errResp.Error != "" {
 			logger.Error(ctx, "Failed to issue refresh token", log.String("error", errResp.Error))
 			return nil, errResp
@@ -299,7 +325,7 @@ func (h *refreshTokenGrantHandler) HandleGrant(ctx context.Context, tokenRequest
 		// Single-use: revoke the consumed refresh token so it cannot be replayed (RFC 9700 §4.14.2).
 		// Fail closed — if the revocation cannot be recorded, the old token would remain usable, so the
 		// rotation is rejected and the client retries with the still-valid old token.
-		if h.refreshRevoker != nil && h.cfg.OAuth.RefreshToken.RevokePreviousOnRenew {
+		if h.refreshRevoker != nil && h.cfg.OAuth.RefreshToken.RevokePreviousOnRenewEnabled() {
 			expiryTime := time.Unix(refreshTokenClaims.Exp, 0).UTC()
 			if err := h.refreshRevoker.RevokeRefreshToken(
 				ctx, refreshTokenClaims.JTI, expiryTime); err != nil {
@@ -319,8 +345,8 @@ func (h *refreshTokenGrantHandler) HandleGrant(ctx context.Context, tokenRequest
 		}
 	}
 
-	if errResp := h.extendCacheTTL(ctx, cacheEntry, oauthApp, refreshTokenClaims.Iat,
-		accessToken.ExpiresIn, renewRefreshToken, refreshTokenClaims.AttributeCacheID,
+	if errResp := h.extendCacheTTL(ctx, cacheEntry, refreshTokenClaims.Exp,
+		accessToken.ExpiresIn, refreshTokenClaims.AttributeCacheID,
 		logger); errResp != nil {
 		return nil, errResp
 	}
@@ -334,7 +360,7 @@ func (h *refreshTokenGrantHandler) HandleGrant(ctx context.Context, tokenRequest
 // verified upstream, so its tfid claim is trustworthy; the payload is decoded here only to read it.
 func (h *refreshTokenGrantHandler) revokeTokenFamilyOnReplay(ctx context.Context, refreshToken string,
 	logger *log.Logger) {
-	if h.criteriaRevoker == nil || !h.cfg.OAuth.Revocation.TokenFamily.OnRefreshReplay {
+	if h.criteriaRevoker == nil || !h.cfg.OAuth.Revocation.TokenFamily.OnRefreshReplayEnabled() {
 		return
 	}
 	claims, err := jwt.DecodeJWTPayload(refreshToken)
@@ -364,8 +390,13 @@ func (h *refreshTokenGrantHandler) IssueRefreshToken(
 	claimsLocales string,
 	attributeCacheID string,
 	tokenFamilyID string,
+	expiresAt int64,
 ) *model.ErrorResponse {
+	if tokenResponse == nil {
+		tokenResponse = &model.TokenResponseDTO{}
+	}
 	tokenCtx := &tokenservice.RefreshTokenBuildContext{
+		ExpiresAt:            expiresAt,
 		ClientID:             oauthApp.ClientID,
 		Scopes:               scopes,
 		GrantType:            grantType,
@@ -377,6 +408,7 @@ func (h *refreshTokenGrantHandler) IssueRefreshToken(
 		ClaimsLocales:        claimsLocales,
 		DPoPJkt:              dpopJktForRefresh(ctx, oauthApp),
 		TokenFamilyID:        tokenFamilyID,
+		SessionID:            tokenResponse.SessionID,
 	}
 	if oauthApp.ShouldAppendActorClaim() {
 		tokenCtx.ActorSub = oauthApp.ID
@@ -391,9 +423,6 @@ func (h *refreshTokenGrantHandler) IssueRefreshToken(
 		}
 	}
 
-	if tokenResponse == nil {
-		tokenResponse = &model.TokenResponseDTO{}
-	}
 	tokenResponse.RefreshToken = *refreshToken
 	return nil
 }
@@ -409,7 +438,7 @@ func dpopJktForRefresh(ctx context.Context, oauthApp *providers.OAuthClient) str
 
 // extendCacheTTL extends the attribute cache TTL when the desired lifetime exceeds what is already
 // stored. The desired TTL is the larger of:
-//   - the refresh token's actual expiry (iat + validity; for a renewed token, iat = now)
+//   - the refresh token's expiry, which a rotated token inherits, so it is the same either way
 //   - the newly issued access token's expiry (now + ExpiresIn)
 //
 // This ensures the cache outlives whichever token lives longest without needlessly
@@ -417,9 +446,7 @@ func dpopJktForRefresh(ctx context.Context, oauthApp *providers.OAuthClient) str
 func (h *refreshTokenGrantHandler) extendCacheTTL(
 	ctx context.Context,
 	cacheEntry *attributecache.AttributeCache,
-	oauthApp *providers.OAuthClient,
-	refreshIat, accessExpiresIn int64,
-	renewRefreshToken bool,
+	refreshExpiry, accessExpiresIn int64,
 	cacheID string,
 	logger *log.Logger,
 ) *model.ErrorResponse {
@@ -427,12 +454,6 @@ func (h *refreshTokenGrantHandler) extendCacheTTL(
 		return nil
 	}
 	now := time.Now().Unix()
-	refreshValidity := tokenservice.ResolveTokenConfig(
-		h.cfg, oauthApp, tokenservice.TokenTypeRefresh, 0).ValidityPeriod
-	if renewRefreshToken {
-		refreshIat = now // newly issued token starts from now
-	}
-	refreshExpiry := refreshIat + refreshValidity
 	accessExpiry := now + accessExpiresIn
 	maxExpiry := refreshExpiry
 	if accessExpiry > maxExpiry {
@@ -450,6 +471,217 @@ func (h *refreshTokenGrantHandler) extendCacheTTL(
 		}
 	}
 	return nil
+}
+
+// verifyCredentialsUnchanged rejects a refresh token established at or before the user's password or
+// the client's secret last changed. It returns the subject's entity for reauthorizeScopes to reuse.
+func (h *refreshTokenGrantHandler) verifyCredentialsUnchanged(ctx context.Context,
+	claims *tokenservice.RefreshTokenClaims, oauthApp *providers.OAuthClient,
+	logger *log.Logger) (*providers.Entity, *model.ErrorResponse) {
+	if h.actorProvider == nil {
+		return nil, nil
+	}
+
+	subjectEntity, errResp := h.resolveSubjectEntity(ctx, claims.Sub, oauthApp, logger)
+	if errResp != nil {
+		return nil, errResp
+	}
+	if credentialChangedSince(ctx, subjectEntity, claims.Iat, logger) {
+		logger.Debug(ctx, "Rejecting refresh token established before a user credential change")
+		return nil, &model.ErrorResponse{
+			Error:            constants.ErrorInvalidGrant,
+			ErrorDescription: "Invalid refresh token",
+		}
+	}
+
+	if oauthApp == nil || oauthApp.ID == "" || oauthApp.ID == claims.Sub {
+		return subjectEntity, nil
+	}
+	clientEntity, svcErr := h.actorProvider.GetActor(oauthApp.ID)
+	if svcErr != nil {
+		logger.Error(ctx, "Failed to resolve the refresh token client",
+			log.String("error", svcErr.Error.DefaultValue))
+		return nil, &model.ErrorResponse{
+			Error:            constants.ErrorServerError,
+			ErrorDescription: "Failed to verify credential state",
+		}
+	}
+	if credentialChangedSince(ctx, clientEntity, claims.Iat, logger) {
+		logger.Debug(ctx, "Rejecting refresh token established before a client secret rotation")
+		return nil, &model.ErrorResponse{
+			Error:            constants.ErrorInvalidGrant,
+			ErrorDescription: "Invalid refresh token",
+		}
+	}
+	return subjectEntity, nil
+}
+
+// setRefreshSubjectIdentity records which entity the refreshed token is for, so issuance reports the
+// subject without resolving it again.
+//
+// Two sources, in order. The entity resolved while verifying this refresh token is preferred: it is
+// already in hand, so this costs nothing. It is nil when sub named no entity, which is what a sub
+// mapped to an attribute such as an email address looks like — there the attribute cache entry
+// created during login is the only server-side record of the resource ID, since the refresh token
+// carries none. Neither source leaves both fields empty, and the builder then falls back to resolving
+// sub itself.
+func setRefreshSubjectIdentity(accessTokenCtx *tokenservice.AccessTokenBuildContext,
+	subjectEntity *providers.Entity, cacheEntry *attributecache.AttributeCache) {
+	if subjectEntity != nil {
+		accessTokenCtx.SubjectEntityID = subjectEntity.ID
+		accessTokenCtx.SubjectCategory = string(subjectEntity.Category)
+		return
+	}
+	if cacheEntry != nil && cacheEntry.SubjectID != "" {
+		accessTokenCtx.SubjectEntityID = cacheEntry.SubjectID
+		accessTokenCtx.SubjectCategory = cacheEntry.SubjectCategory
+	}
+}
+
+// resolveSubjectEntity resolves the token's subject to its entity, or nil when it does not name one.
+//
+// sub is not always an entity ID: a client can map it to a user attribute
+// (InboundClient.SubjectAttribute). An unresolvable subject is therefore ambiguous, and the client's
+// mapping settles it. A client that maps nothing can only have issued an entity ID, so the subject
+// is gone.
+func (h *refreshTokenGrantHandler) resolveSubjectEntity(ctx context.Context, subject string,
+	oauthApp *providers.OAuthClient, logger *log.Logger) (*providers.Entity, *model.ErrorResponse) {
+	if subject == "" {
+		return nil, nil
+	}
+
+	entity, svcErr := h.actorProvider.GetActor(subject)
+	if svcErr == nil {
+		return entity, nil
+	}
+	if svcErr.Type != tidcommon.ClientErrorType {
+		logger.Error(ctx, "Failed to resolve refresh token subject",
+			log.String("error", svcErr.Error.DefaultValue))
+		return nil, &model.ErrorResponse{
+			Error:            constants.ErrorServerError,
+			ErrorDescription: "Failed to resolve the refresh token subject",
+		}
+	}
+
+	mapsSubject, errResp := h.clientMapsSubject(ctx, oauthApp, logger)
+	if errResp != nil {
+		return nil, errResp
+	}
+	if mapsSubject {
+		logger.Debug(ctx, "Refresh token subject is a mapped value; skipping subject-derived checks")
+		return nil, nil
+	}
+
+	logger.Debug(ctx, "Refresh token subject no longer exists")
+	return nil, &model.ErrorResponse{
+		Error:            constants.ErrorInvalidGrant,
+		ErrorDescription: "Invalid refresh token",
+	}
+}
+
+// clientMapsSubject reports whether the client maps the token subject to a user attribute. An
+// unidentifiable client reports true, since the caller rejects on false.
+func (h *refreshTokenGrantHandler) clientMapsSubject(ctx context.Context,
+	oauthApp *providers.OAuthClient, logger *log.Logger) (bool, *model.ErrorResponse) {
+	if oauthApp == nil || oauthApp.ID == "" {
+		return true, nil
+	}
+
+	client, svcErr := h.actorProvider.GetInboundClientByID(ctx, oauthApp.ID)
+	if svcErr != nil {
+		logger.Error(ctx, "Failed to resolve the client's subject mapping",
+			log.String("error", svcErr.Error.DefaultValue))
+		return false, &model.ErrorResponse{
+			Error:            constants.ErrorServerError,
+			ErrorDescription: "Failed to resolve the refresh token subject",
+		}
+	}
+	return client != nil && len(client.SubjectAttribute) > 0, nil
+}
+
+// credentialChangedSince reports whether the entity's credential changed at or after iat, which has
+// second granularity, so a change in the same second counts. An absent marker reports false. So does
+// an unreadable one, since locking the entity out is the worse failure, but that is a data fault and
+// is logged.
+func credentialChangedSince(ctx context.Context, entity *providers.Entity, iat int64,
+	logger *log.Logger) bool {
+	if entity == nil || len(entity.SystemAttributes) == 0 {
+		return false
+	}
+	var attrs map[string]interface{}
+	if err := json.Unmarshal(entity.SystemAttributes, &attrs); err != nil {
+		logger.Error(ctx, "Failed to parse system attributes while reading the credential marker",
+			log.MaskedString(log.LoggerKeyUserID, entity.ID), log.Error(err))
+		return false
+	}
+	value, present := attrs[authnprovidercm.SystemAttrCredentialUpdatedAt]
+	if !present {
+		return false
+	}
+	raw, ok := value.(string)
+	if !ok || raw == "" {
+		logger.Error(ctx, "Credential marker is not a non-empty string",
+			log.MaskedString(log.LoggerKeyUserID, entity.ID))
+		return false
+	}
+	changedAt, err := time.Parse(time.RFC3339, raw)
+	if err != nil {
+		logger.Error(ctx, "Credential marker is not a valid RFC 3339 timestamp",
+			log.MaskedString(log.LoggerKeyUserID, entity.ID), log.Error(err))
+		return false
+	}
+	return iat <= changedAt.UTC().Unix()
+}
+
+// reauthorizeScopes re-evaluates the subject's permission scopes against their current role and group
+// assignments, dropping the ones they no longer hold.
+func (h *refreshTokenGrantHandler) reauthorizeScopes(ctx context.Context, subjectEntity *providers.Entity,
+	resourceServerID string, scopes []string, logger *log.Logger) ([]string, *model.ErrorResponse) {
+	// An unresolved subject (a mapped sub) would authorize nothing and strip every scope.
+	if len(scopes) == 0 || h.authzService == nil || subjectEntity == nil || subjectEntity.ID == "" {
+		return scopes, nil
+	}
+	subject := subjectEntity.ID
+
+	// Roles reach a subject directly and through their groups, so both are evaluated together.
+	groups, groupErr := h.actorProvider.GetActorGroups(subject)
+	if groupErr != nil {
+		logger.Error(ctx, "Failed to resolve group memberships for refresh token subject",
+			log.MaskedString(log.LoggerKeyUserID, subject),
+			log.String("error", groupErr.Error.DefaultValue))
+		return nil, &model.ErrorResponse{
+			Error:            constants.ErrorServerError,
+			ErrorDescription: "Failed to generate token",
+		}
+	}
+	var groupIDs []string
+	for _, group := range groups {
+		if group.ID != "" && !slices.Contains(groupIDs, group.ID) {
+			groupIDs = append(groupIDs, group.ID)
+		}
+	}
+
+	authzResp, svcErr := h.authzService.EvaluateAccessBatch(ctx,
+		tokenservice.BuildAccessEvaluationsRequest(
+			subject, subjectEntity.Category.String(), groupIDs, nil, scopes, resourceServerID))
+	if svcErr != nil {
+		logger.Error(ctx, "Failed to evaluate authorized permissions for refresh token subject",
+			log.MaskedString(log.LoggerKeyUserID, subject),
+			log.String("error", svcErr.Error.DefaultValue))
+		return nil, &model.ErrorResponse{
+			Error:            constants.ErrorServerError,
+			ErrorDescription: "Failed to generate token",
+		}
+	}
+
+	authorizedScopes := tokenservice.FilterAuthorizedScopes(scopes, authzResp.Evaluations)
+	if len(authorizedScopes) != len(scopes) {
+		logger.Debug(ctx, "Dropped permission scopes the subject is no longer authorized for",
+			log.MaskedString(log.LoggerKeyUserID, subject),
+			log.Int("grantedCount", len(scopes)),
+			log.Int("authorizedCount", len(authorizedScopes)))
+	}
+	return authorizedScopes, nil
 }
 
 // validateAndApplyScopes validates and applies OAuth2 scope downscoping logic per RFC 6749 §6.

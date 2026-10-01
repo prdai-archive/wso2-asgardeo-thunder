@@ -1,25 +1,11 @@
-/*
- * Copyright (c) 2026, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2026 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 package revocation
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"testing"
 	"time"
@@ -30,7 +16,12 @@ import (
 
 	"github.com/thunder-id/thunderid/internal/system/config"
 
+	_ "modernc.org/sqlite"
+
 	"github.com/thunder-id/thunderid/tests/mocks/database/providermock"
+
+	"github.com/thunder-id/thunderid/internal/system/deployment"
+	engineconfig "github.com/thunder-id/thunderid/pkg/thunderidengine/config"
 )
 
 const testDeploymentID = "test-deployment-id"
@@ -49,6 +40,12 @@ func TestRevocationStoreTestSuite(t *testing.T) {
 }
 
 func (suite *RevocationStoreTestSuite) SetupTest() {
+	// The store resolves its deployment from the loaded runtime rather than holding one, and
+	// other suites in this package reset the runtime, so load it per test.
+	config.ResetServerRuntime()
+	_ = config.InitializeServerRuntime("", &config.Config{
+		Server: engineconfig.ServerConfig{Identifier: testDeploymentID},
+	})
 	testConfig := &config.Config{
 		Database: config.DatabaseConfig{
 			RuntimePersistent: config.DataSource{
@@ -63,8 +60,7 @@ func (suite *RevocationStoreTestSuite) SetupTest() {
 	suite.mockDBClient = providermock.NewDBClientInterfaceMock(suite.T())
 
 	suite.store = &revocationStore{
-		dbProvider:   suite.mockdbProvider,
-		deploymentID: testDeploymentID,
+		dbProvider: suite.mockdbProvider,
 	}
 
 	suite.testToken = RevokedToken{
@@ -77,7 +73,7 @@ func (suite *RevocationStoreTestSuite) SetupTest() {
 
 	suite.testCriterion = revocationCriterion{
 		ID:         "test-criterion-id",
-		Type:       criterionTypeTokenFamily,
+		Type:       CriterionTypeTokenFamily,
 		Value:      "tfid-123",
 		Reason:     RevocationReasonRefreshReplay,
 		RevokedAt:  time.Now().UTC(),
@@ -236,6 +232,20 @@ func (suite *RevocationStoreTestSuite) TestInsertCriterion_GeneratesIDWhenEmpty(
 	suite.mockDBClient.AssertExpectations(suite.T())
 }
 
+func (suite *RevocationStoreTestSuite) TestInsertCriterion_WithBoundaryReason() {
+	suite.testCriterion.Reason = RevocationReasonApplicationSecretRegenerated
+	suite.mockdbProvider.On("GetRuntimePersistentDBClient").Return(suite.mockDBClient, nil)
+	suite.mockDBClient.On("ExecuteContext", mock.Anything, queryInsertRevocationCriterion,
+		suite.testCriterion.ID, string(suite.testCriterion.Type), suite.testCriterion.Value,
+		string(RevocationReasonApplicationSecretRegenerated), suite.testCriterion.RevokedAt,
+		suite.testCriterion.ExpiryTime, testDeploymentID).
+		Return(int64(1), nil)
+
+	err := suite.store.insertCriterion(context.Background(), suite.testCriterion)
+	assert.NoError(suite.T(), err)
+	suite.mockDBClient.AssertExpectations(suite.T())
+}
+
 func (suite *RevocationStoreTestSuite) TestInsertCriterion_DBClientError() {
 	suite.mockdbProvider.On("GetRuntimePersistentDBClient").Return(nil, errors.New("db client error"))
 
@@ -256,36 +266,156 @@ func (suite *RevocationStoreTestSuite) TestInsertCriterion_ExecError() {
 	assert.Contains(suite.T(), err.Error(), "error inserting revocation criterion")
 }
 
-func (suite *RevocationStoreTestSuite) TestIsCriterionRevoked_True() {
+func (suite *RevocationStoreTestSuite) TestAreCriteriaRevoked_True() {
 	suite.mockdbProvider.On("GetRuntimePersistentDBClient").Return(suite.mockDBClient, nil)
-	suite.mockDBClient.On("QueryContext", mock.Anything, queryIsCriterionRevoked,
-		string(criterionTypeTokenFamily), "tfid-123", mock.Anything, testDeploymentID).
+	suite.mockDBClient.On("QueryContext", mock.Anything, mock.Anything,
+		testDeploymentID, mock.Anything, time.Time{}, string(CriterionTypeTokenFamily), "tfid-123").
 		Return([]map[string]interface{}{{"1": 1}}, nil)
 
-	revoked, err := suite.store.isCriterionRevoked(context.Background(), criterionTypeTokenFamily, "tfid-123")
+	revoked, err := suite.store.areCriteriaRevoked(context.Background(),
+		[]Criterion{{Type: CriterionTypeTokenFamily, Value: "tfid-123"}}, time.Time{})
 	assert.NoError(suite.T(), err)
 	assert.True(suite.T(), revoked)
 }
 
-func (suite *RevocationStoreTestSuite) TestIsCriterionRevoked_False() {
+func (suite *RevocationStoreTestSuite) TestAreCriteriaRevoked_False() {
 	suite.mockdbProvider.On("GetRuntimePersistentDBClient").Return(suite.mockDBClient, nil)
-	suite.mockDBClient.On("QueryContext", mock.Anything, queryIsCriterionRevoked,
-		string(criterionTypeTokenFamily), "tfid-123", mock.Anything, testDeploymentID).
+	suite.mockDBClient.On("QueryContext", mock.Anything, mock.Anything,
+		testDeploymentID, mock.Anything, time.Time{}, string(CriterionTypeTokenFamily), "tfid-123").
 		Return([]map[string]interface{}{}, nil)
 
-	revoked, err := suite.store.isCriterionRevoked(context.Background(), criterionTypeTokenFamily, "tfid-123")
+	revoked, err := suite.store.areCriteriaRevoked(context.Background(),
+		[]Criterion{{Type: CriterionTypeTokenFamily, Value: "tfid-123"}}, time.Time{})
 	assert.NoError(suite.T(), err)
 	assert.False(suite.T(), revoked)
 }
 
-func (suite *RevocationStoreTestSuite) TestIsCriterionRevoked_QueryError() {
+func (suite *RevocationStoreTestSuite) TestAreCriteriaRevoked_PassesEstablishedAt() {
+	establishedAt := time.Now().UTC().Add(-time.Minute).Truncate(time.Second)
 	suite.mockdbProvider.On("GetRuntimePersistentDBClient").Return(suite.mockDBClient, nil)
-	suite.mockDBClient.On("QueryContext", mock.Anything, queryIsCriterionRevoked,
-		string(criterionTypeTokenFamily), "tfid-123", mock.Anything, testDeploymentID).
+	suite.mockDBClient.On("QueryContext", mock.Anything, mock.Anything,
+		testDeploymentID, mock.Anything, establishedAt, string(CriterionTypeSubject), "user-123").
+		Return([]map[string]interface{}{{"1": 1}}, nil)
+
+	revoked, err := suite.store.areCriteriaRevoked(context.Background(),
+		[]Criterion{{Type: CriterionTypeSubject, Value: "user-123"}}, establishedAt)
+	assert.NoError(suite.T(), err)
+	assert.True(suite.T(), revoked)
+}
+
+// Every dimension must be covered by one statement: token validation is a hot path, so a second
+// criterion must not cost a second round trip.
+func (suite *RevocationStoreTestSuite) TestAreCriteriaRevoked_ChecksAllDimensionsInOneQuery() {
+	suite.mockdbProvider.On("GetRuntimePersistentDBClient").Return(suite.mockDBClient, nil)
+	suite.mockDBClient.On("QueryContext", mock.Anything, mock.Anything,
+		testDeploymentID, mock.Anything, time.Time{},
+		string(CriterionTypeTokenFamily), "tfid-123",
+		string(CriterionTypeSubject), "user-123").
+		Return([]map[string]interface{}{{"1": 1}}, nil).Once()
+
+	revoked, err := suite.store.areCriteriaRevoked(context.Background(), []Criterion{
+		{Type: CriterionTypeTokenFamily, Value: "tfid-123"},
+		{Type: CriterionTypeSubject, Value: "user-123"},
+	}, time.Time{})
+	assert.NoError(suite.T(), err)
+	assert.True(suite.T(), revoked)
+	suite.mockDBClient.AssertNumberOfCalls(suite.T(), "QueryContext", 1)
+}
+
+func (suite *RevocationStoreTestSuite) TestAreCriteriaRevoked_EmptyCriteriaSkipsQuery() {
+	revoked, err := suite.store.areCriteriaRevoked(context.Background(), nil, time.Time{})
+	assert.NoError(suite.T(), err)
+	assert.False(suite.T(), revoked)
+	suite.mockDBClient.AssertNotCalled(suite.T(), "QueryContext")
+}
+
+func (suite *RevocationStoreTestSuite) TestAreCriteriaRevoked_QueryError() {
+	suite.mockdbProvider.On("GetRuntimePersistentDBClient").Return(suite.mockDBClient, nil)
+	suite.mockDBClient.On("QueryContext", mock.Anything, mock.Anything,
+		testDeploymentID, mock.Anything, time.Time{}, string(CriterionTypeTokenFamily), "tfid-123").
 		Return([]map[string]interface{}(nil), errors.New("query error"))
 
-	revoked, err := suite.store.isCriterionRevoked(context.Background(), criterionTypeTokenFamily, "tfid-123")
+	revoked, err := suite.store.areCriteriaRevoked(context.Background(),
+		[]Criterion{{Type: CriterionTypeTokenFamily, Value: "tfid-123"}}, time.Time{})
 	assert.Error(suite.T(), err)
 	assert.False(suite.T(), revoked)
-	assert.Contains(suite.T(), err.Error(), "error checking revocation criterion")
+	assert.Contains(suite.T(), err.Error(), "error checking revocation criteria")
+}
+
+func (suite *RevocationStoreTestSuite) TestCriterionUpsertDoesNotWeakenTerminalRevocation() {
+	db, err := sql.Open("sqlite", ":memory:")
+	suite.Require().NoError(err)
+	suite.T().Cleanup(func() { suite.Require().NoError(db.Close()) })
+	suite.createCriteriaTable(db)
+
+	now := time.Now().UTC().Truncate(time.Second)
+	terminalExpiry := now.Add(24 * time.Hour)
+	_, err = db.Exec(queryInsertRevocationCriterion.Query, "terminal", "subject", "user-1",
+		"user_deleted", now, terminalExpiry, "deployment-1")
+	suite.Require().NoError(err)
+	_, err = db.Exec(queryInsertRevocationCriterion.Query, "boundary", "subject", "user-1",
+		string(RevocationReasonRoleAssignmentRemoved), now.Add(time.Hour), now.Add(2*time.Hour), "deployment-1")
+	suite.Require().NoError(err)
+
+	var reason string
+	var revokedAt, expiry time.Time
+	err = db.QueryRow(`SELECT REASON, REVOKED_AT, EXPIRY_TIME FROM "REVOCATION_CRITERIA"
+		WHERE DEPLOYMENT_ID = ? AND CRITERION_TYPE = ? AND CRITERION_VALUE = ?`,
+		"deployment-1", "subject", "user-1").Scan(&reason, &revokedAt, &expiry)
+	suite.Require().NoError(err)
+	suite.Equal("user_deleted", reason)
+	suite.True(revokedAt.Equal(now))
+	suite.True(expiry.Equal(terminalExpiry))
+}
+
+func (suite *RevocationStoreTestSuite) TestCriterionUpsertPromotesBoundaryToTerminalRevocation() {
+	db, err := sql.Open("sqlite", ":memory:")
+	suite.Require().NoError(err)
+	suite.T().Cleanup(func() { suite.Require().NoError(db.Close()) })
+	suite.createCriteriaTable(db)
+
+	now := time.Now().UTC().Truncate(time.Second)
+	_, err = db.Exec(queryInsertRevocationCriterion.Query, "boundary", "subject", "user-1",
+		string(RevocationReasonRoleAssignmentRemoved), now, now.Add(time.Hour), "deployment-1")
+	suite.Require().NoError(err)
+	terminalExpiry := now.Add(24 * time.Hour)
+	_, err = db.Exec(queryInsertRevocationCriterion.Query, "terminal", "subject", "user-1",
+		"user_deleted", now.Add(time.Hour), terminalExpiry, "deployment-1")
+	suite.Require().NoError(err)
+
+	var reason string
+	var expiry time.Time
+	err = db.QueryRow(`SELECT REASON, EXPIRY_TIME FROM "REVOCATION_CRITERIA"
+		WHERE DEPLOYMENT_ID = ? AND CRITERION_TYPE = ? AND CRITERION_VALUE = ?`,
+		"deployment-1", "subject", "user-1").Scan(&reason, &expiry)
+	suite.Require().NoError(err)
+	suite.Equal("user_deleted", reason)
+	suite.True(expiry.Equal(terminalExpiry))
+}
+
+func (suite *RevocationStoreTestSuite) createCriteriaTable(db *sql.DB) {
+	_, err := db.Exec(`CREATE TABLE "REVOCATION_CRITERIA" (
+		ID TEXT PRIMARY KEY, CRITERION_TYPE TEXT NOT NULL, CRITERION_VALUE TEXT NOT NULL,
+		REASON TEXT NOT NULL, REVOKED_AT TIMESTAMP NOT NULL, EXPIRY_TIME TIMESTAMP NOT NULL,
+		DEPLOYMENT_ID TEXT NOT NULL,
+		UNIQUE (DEPLOYMENT_ID, CRITERION_TYPE, CRITERION_VALUE))`)
+	suite.Require().NoError(err)
+}
+
+// A request names the deployment it acts for, and the store must scope by that rather than by the
+// identifier this server was configured with. Getting this wrong reads another deployment's rows,
+// which no other assertion here would catch: every other test runs on an unscoped context, where
+// the two values coincide.
+func (suite *RevocationStoreTestSuite) TestInsertRevokedToken_ScopesByTheRequestDeployment() {
+	suite.mockdbProvider.On("GetRuntimePersistentDBClient").Return(suite.mockDBClient, nil)
+	suite.mockDBClient.On("ExecuteContext", mock.Anything, queryInsertRevokedToken,
+		suite.testToken.ID, suite.testToken.JTI,
+		string(suite.testToken.RevocationReason), suite.testToken.RevokedAt, suite.testToken.ExpiryTime,
+		"acme").
+		Return(int64(1), nil)
+
+	err := suite.store.InsertRevokedToken(deployment.WithID(context.Background(), "acme"), suite.testToken)
+
+	assert.NoError(suite.T(), err)
+	suite.mockDBClient.AssertExpectations(suite.T())
 }

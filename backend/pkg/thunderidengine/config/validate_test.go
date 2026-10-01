@@ -1,20 +1,5 @@
-/*
- * Copyright (c) 2026, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2026 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 package config
 
@@ -27,6 +12,10 @@ import (
 
 	"github.com/thunder-id/thunderid/internal/system/cors"
 )
+
+func boolPtr(b bool) *bool { return &b }
+
+func strPtr(s string) *string { return &s }
 
 type ValidateTestSuite struct {
 	suite.Suite
@@ -148,9 +137,79 @@ func (suite *ValidateTestSuite) TestSecurityConfig_Validate() {
 
 	suite.T().Run("propagates TokenRevocation error", func(t *testing.T) {
 		c := &SecurityConfig{
-			TokenRevocation: TokenRevocationConfig{Enabled: true, SyncIntervalSeconds: -1},
+			TokenRevocation: TokenRevocationConfig{Enabled: boolPtr(true), SyncIntervalSeconds: -1},
 		}
 		assert.ErrorContains(t, c.Validate(), "sync_interval_seconds")
+	})
+
+	suite.T().Run("propagates REST error", func(t *testing.T) {
+		c := &SecurityConfig{REST: RESTConfig{Audience: strPtr("")}}
+		assert.ErrorContains(t, c.Validate(), "rest.audience")
+	})
+
+	suite.T().Run("propagates MCP error", func(t *testing.T) {
+		c := &SecurityConfig{MCP: MCPConfig{Audience: strPtr("")}}
+		assert.ErrorContains(t, c.Validate(), "mcp.audience")
+	})
+}
+
+// ----- MCPConfig -----
+
+func (suite *ValidateTestSuite) TestMCPConfig_Validate() {
+	suite.T().Run("absent audience passes", func(t *testing.T) {
+		assert.NoError(t, (&MCPConfig{}).Validate())
+	})
+
+	suite.T().Run("configured audience passes", func(t *testing.T) {
+		assert.NoError(t, (&MCPConfig{Audience: strPtr("https://id.example.com/mcp")}).Validate())
+	})
+
+	// Unlike REST, omitting the MCP audience does not disable the check — it falls back to the
+	// derived resource identifier. An explicitly empty value is still a misconfiguration.
+	suite.T().Run("explicitly empty audience fails", func(t *testing.T) {
+		assert.ErrorContains(t, (&MCPConfig{Audience: strPtr("")}).Validate(), "mcp.audience")
+	})
+
+	// http is accepted: the identifier the server derives for itself is http when
+	// server.http_only is set, so configuring that same value explicitly must not be rejected.
+	suite.T().Run("http audience passes", func(t *testing.T) {
+		assert.NoError(t, (&MCPConfig{Audience: strPtr("http://localhost:8090/mcp")}).Validate())
+	})
+}
+
+// ----- audience normalisation -----
+
+// Surrounding whitespace is never meaningful in an identifier, and an audience carrying it would
+// silently match nothing. Trim it instead of failing startup over a formatting slip.
+func (suite *ValidateTestSuite) TestOptionalAudience_TrimsSurroundingWhitespace() {
+	cfg := &RESTConfig{Audience: strPtr("  https://localhost:8090/mcp\t")}
+
+	assert.NoError(suite.T(), cfg.Validate())
+	assert.Equal(suite.T(), "https://localhost:8090/mcp", *cfg.Audience)
+}
+
+// Whitespace-only is empty once trimmed, and empty is the one value that fails open: it would leave
+// the gate unenforced rather than merely unmatched.
+func (suite *ValidateTestSuite) TestOptionalAudience_WhitespaceOnlyIsEmpty() {
+	assert.ErrorContains(suite.T(),
+		(&RESTConfig{Audience: strPtr("   ")}).Validate(), "rest.audience")
+}
+
+// ----- RESTConfig -----
+
+func (suite *ValidateTestSuite) TestRESTConfig_Validate() {
+	suite.T().Run("absent audience passes", func(t *testing.T) {
+		assert.NoError(t, (&RESTConfig{}).Validate())
+	})
+
+	suite.T().Run("configured audience passes", func(t *testing.T) {
+		assert.NoError(t, (&RESTConfig{Audience: strPtr("https://localhost:8090/mcp")}).Validate())
+	})
+
+	// An explicitly empty audience must fail startup rather than silently leaving the REST gate
+	// unenforced — omitting the key is the way to opt out.
+	suite.T().Run("explicitly empty audience fails", func(t *testing.T) {
+		assert.ErrorContains(t, (&RESTConfig{Audience: strPtr("")}).Validate(), "rest.audience")
 	})
 }
 
@@ -158,31 +217,31 @@ func (suite *ValidateTestSuite) TestSecurityConfig_Validate() {
 
 func (suite *ValidateTestSuite) TestTokenRevocationConfig_Validate() {
 	suite.T().Run("disabled skips validation", func(t *testing.T) {
-		assert.NoError(t, (&TokenRevocationConfig{Enabled: false, SyncIntervalSeconds: -1}).Validate())
+		assert.NoError(t, (&TokenRevocationConfig{Enabled: boolPtr(false), SyncIntervalSeconds: -1}).Validate())
 	})
 
 	suite.T().Run("negative interval fails when enabled", func(t *testing.T) {
 		assert.ErrorContains(t,
-			(&TokenRevocationConfig{Enabled: true, SyncIntervalSeconds: -1}).Validate(),
+			(&TokenRevocationConfig{Enabled: boolPtr(true), SyncIntervalSeconds: -1}).Validate(),
 			"sync_interval_seconds")
 	})
 
 	suite.T().Run("zero interval passes when enabled", func(t *testing.T) {
-		assert.NoError(t, (&TokenRevocationConfig{Enabled: true, SyncIntervalSeconds: 0}).Validate())
+		assert.NoError(t, (&TokenRevocationConfig{Enabled: boolPtr(true), SyncIntervalSeconds: 0}).Validate())
 	})
 
 	suite.T().Run("positive interval passes when enabled", func(t *testing.T) {
 		assert.NoError(t,
-			(&TokenRevocationConfig{Enabled: true, Source: "db", SyncIntervalSeconds: 30}).Validate())
+			(&TokenRevocationConfig{Enabled: boolPtr(true), Source: "db", SyncIntervalSeconds: 30}).Validate())
 	})
 
 	suite.T().Run("empty source passes when enabled", func(t *testing.T) {
-		assert.NoError(t, (&TokenRevocationConfig{Enabled: true, SyncIntervalSeconds: 30}).Validate())
+		assert.NoError(t, (&TokenRevocationConfig{Enabled: boolPtr(true), SyncIntervalSeconds: 30}).Validate())
 	})
 
 	suite.T().Run("unsupported source fails when enabled", func(t *testing.T) {
 		assert.ErrorContains(t,
-			(&TokenRevocationConfig{Enabled: true, Source: "events", SyncIntervalSeconds: 30}).Validate(),
+			(&TokenRevocationConfig{Enabled: boolPtr(true), Source: "events", SyncIntervalSeconds: 30}).Validate(),
 			"source")
 	})
 }
@@ -314,4 +373,27 @@ func (suite *ValidateTestSuite) TestCORSConfig_Validate() {
 		suite.Require().NoError(yaml.Unmarshal([]byte(`- regex: '['`), &origins))
 		assert.Error(t, cors.Validate(origins))
 	})
+}
+
+// ----- OAuthConfig.SendServerErrorsToClientEnabled -----
+
+// TestOAuthConfig_SendServerErrorsToClientEnabled tests the behavior of the SendServerErrorsToClientEnabled method.
+func (suite *ValidateTestSuite) TestOAuthConfig_SendServerErrorsToClientEnabled() {
+	enabled, disabled := true, false
+	tests := []struct {
+		name     string
+		value    *bool
+		expected bool
+	}{
+		{"UnsetDefaultsToSuppressing", nil, false},
+		{"ExplicitTrue", &enabled, true},
+		{"ExplicitFalse", &disabled, false},
+	}
+
+	for _, tt := range tests {
+		suite.T().Run(tt.name, func(t *testing.T) {
+			c := OAuthConfig{SendServerErrorsToClient: tt.value}
+			assert.Equal(t, tt.expected, c.SendServerErrorsToClientEnabled())
+		})
+	}
 }

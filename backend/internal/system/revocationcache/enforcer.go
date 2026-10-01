@@ -1,33 +1,19 @@
-/*
- * Copyright (c) 2026, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2026 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 package revocationcache
 
-import "context"
+import (
+	"context"
 
-// EnforcerInterface answers revocation checks for the Resource Server enforcement point. jti is the
-// token's own identifier and tokenFamilyID is its grant's token family id (tfid); a token is rejected
-// when either is on the cached deny list. Reads are served entirely from the in-memory cache, so the
-// request hot path never touches the source.
+	"github.com/thunder-id/thunderid/internal/system/security"
+)
+
+// EnforcerInterface answers revocation checks for the Resource Server enforcement point. A token is
+// rejected when its JTI, token family, ThunderID subject, or owning OAuth client is cached as revoked.
 type EnforcerInterface interface {
-	// EnsureNotRevoked returns nil when the token may proceed and errTokenRevoked when its jti or its
-	// token family id is present in the cached deny list. Empty jti and tokenFamilyID are each a no-op.
-	EnsureNotRevoked(ctx context.Context, jti, tokenFamilyID string) error
+	// EnsureNotRevoked returns nil when the token may proceed.
+	EnsureNotRevoked(ctx context.Context, identity security.RevocationIdentity) error
 }
 
 // enforcer serves revocation checks from the in-memory cache. It holds no write capability.
@@ -40,13 +26,18 @@ func newEnforcer(cache *revokedCache) *enforcer {
 	return &enforcer{cache: cache}
 }
 
-// EnsureNotRevoked returns errTokenRevoked when the token's jti or token family id is on the cached
-// deny list, nil otherwise. Empty identifiers are treated as nothing to enforce.
-func (e *enforcer) EnsureNotRevoked(_ context.Context, jti, tokenFamilyID string) error {
-	if jti != "" && e.cache.isTokenRevoked(jti) {
+// EnsureNotRevoked returns errTokenRevoked when the identity matches a cached deny-list entry.
+func (e *enforcer) EnsureNotRevoked(_ context.Context, identity security.RevocationIdentity) error {
+	if identity.JTI != "" && e.cache.isTokenRevoked(identity.JTI) {
 		return errTokenRevoked
 	}
-	if tokenFamilyID != "" && e.cache.isTokenFamilyRevoked(tokenFamilyID) {
+	if identity.TokenFamilyID != "" && e.cache.isTokenFamilyRevoked(identity.TokenFamilyID) {
+		return errTokenRevoked
+	}
+	if identity.Subject != "" && e.cache.isSubjectRevoked(identity.Subject, identity.EstablishedAt) {
+		return errTokenRevoked
+	}
+	if identity.AppKey != "" && e.cache.isAppKeyRevoked(identity.AppKey, identity.EstablishedAt) {
 		return errTokenRevoked
 	}
 	return nil
@@ -56,4 +47,6 @@ func (e *enforcer) EnsureNotRevoked(_ context.Context, jti, tokenFamilyID string
 type noopEnforcer struct{}
 
 // EnsureNotRevoked always returns nil.
-func (noopEnforcer) EnsureNotRevoked(_ context.Context, _, _ string) error { return nil }
+func (noopEnforcer) EnsureNotRevoked(_ context.Context, _ security.RevocationIdentity) error {
+	return nil
+}

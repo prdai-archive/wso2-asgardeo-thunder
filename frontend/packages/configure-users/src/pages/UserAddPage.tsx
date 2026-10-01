@@ -1,23 +1,8 @@
-/**
- * Copyright (c) 2026, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied. See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2026 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 import {zodResolver} from '@hookform/resolvers/zod';
-import {PageLoadingAnimation} from '@thunderid/components';
+import {FullScreenCreationWizardLayout, PageLoadingAnimation} from '@thunderid/components';
 import {OrganizationUnitTreePicker} from '@thunderid/configure-organization-units';
 import {CopyableTextAdapter, type FlowComponent, mapEmbeddedFlowTextColor} from '@thunderid/design';
 import {useLogger} from '@thunderid/logger/react';
@@ -25,7 +10,6 @@ import {
   EmbeddedFlowComponentType,
   EmbeddedFlowEventType,
   InviteUser,
-  useThunderID,
   type EmbeddedFlowComponent,
   type InviteUserRenderProps,
 } from '@thunderid/react';
@@ -39,26 +23,27 @@ import {
   Alert,
   AlertTitle,
   TextField,
-  IconButton,
+  Checkbox,
   FormControl,
+  FormControlLabel,
   FormLabel,
   Select,
   MenuItem,
-  LinearProgress,
-  AppBreadcrumbs,
   CircularProgress,
   Card,
   CardActionArea,
   CardContent,
 } from '@wso2/oxygen-ui';
-import {X, UserPlus, Send} from '@wso2/oxygen-ui-icons-react';
+import {UserPlus, Send} from '@wso2/oxygen-ui-icons-react';
 import {useState, useEffect, useMemo, useCallback, useRef, type JSX} from 'react';
 import {useForm, Controller} from 'react-hook-form';
 import {useTranslation} from 'react-i18next';
 import {useNavigate} from 'react-router';
 import {z} from 'zod';
 import CredentialFieldInput from '../components/CredentialFieldInput';
+import useFlowTextResolver from '../hooks/useFlowTextResolver';
 import useUserRoutes from '../hooks/useUserRoutes';
+import getUserErrorMessage from '../utils/getUserErrorMessage';
 
 /** Typed shape for flow sub-components */
 type FlowSubComponent = EmbeddedFlowComponent & {
@@ -174,11 +159,13 @@ function InviteUserStepContent({
   flowError,
   handleClose,
   onResetLocalState,
+  onClearFlowError,
 }: {
   renderProps: InviteUserRenderProps;
   flowError: string | null;
   handleClose: () => void;
   onResetLocalState: () => void;
+  onClearFlowError: () => void;
 }): JSX.Element {
   const {
     additionalData,
@@ -191,10 +178,19 @@ function InviteUserStepContent({
     resetFlow,
     isValid: propsIsValid,
   } = renderProps;
-  const {resolveFlowTemplateLiterals: rawResolve} = useThunderID();
-  const resolve = useCallback((text?: string) => (text ? rawResolve(text) : undefined), [rawResolve]);
+  const resolve = useFlowTextResolver();
   const {t} = useTranslation();
   const [activeActionId, setActiveActionId] = useState<string | null>(null);
+
+  // A submit failure is stale once the user edits a field. Only user-driven edits clear it: the
+  // automatic organization unit prefill below keeps the raw handler so it cannot wipe a fresh error.
+  const handleUserInputChange = useCallback(
+    (field: string, value: string): void => {
+      onClearFlowError();
+      handleInputChange(field, value);
+    },
+    [handleInputChange, onClearFlowError],
+  );
 
   const buildFormSchema = useMemo(
     () =>
@@ -215,6 +211,8 @@ function InviteUserStepContent({
                 comp.type === 'PHONE_INPUT' ||
                 comp.type === 'PASSWORD_INPUT' ||
                 comp.type === 'SELECT' ||
+                comp.type === 'BOOLEAN_INPUT' ||
+                comp.type === 'NUMBER_INPUT' ||
                 comp.type === 'OU_SELECT') &&
               comp.ref
             ) {
@@ -229,6 +227,11 @@ function InviteUserStepContent({
               }
 
               const labelText = typeof comp.label === 'string' ? comp.label : comp.ref;
+              if (comp.type === 'BOOLEAN_INPUT') {
+                // A required boolean is satisfied by either answer, so it carries no min-length rule.
+                shape[comp.ref] = fieldSchema;
+                return;
+              }
               if (comp.required) {
                 fieldSchema = (fieldSchema as z.ZodString).min(
                   1,
@@ -268,7 +271,11 @@ function InviteUserStepContent({
     const labelText = typeof label === 'string' ? label : '';
     const placeholderText = typeof placeholder === 'string' ? placeholder : '';
 
-    if (String(type) === String(EmbeddedFlowComponentType.TextInput) || type === 'TEXT_INPUT') {
+    if (
+      String(type) === String(EmbeddedFlowComponentType.TextInput) ||
+      type === 'TEXT_INPUT' ||
+      type === 'NUMBER_INPUT'
+    ) {
       return (
         <FormControl key={component.id ?? index} required={required}>
           <FormLabel htmlFor={ref}>{resolve(labelText) ?? labelText}</FormLabel>
@@ -282,7 +289,7 @@ function InviteUserStepContent({
                 fullWidth
                 size="small"
                 id={ref}
-                type="text"
+                type={type === 'NUMBER_INPUT' ? 'number' : 'text'}
                 placeholder={resolve(placeholderText) ?? placeholderText}
                 autoComplete="off"
                 required={required}
@@ -408,6 +415,40 @@ function InviteUserStepContent({
       );
     }
 
+    if (type === 'BOOLEAN_INPUT') {
+      return (
+        <FormControl key={component.id ?? index} required={required}>
+          <Controller
+            name={ref}
+            control={formControl}
+            render={({field}) => (
+              <FormControlLabel
+                control={
+                  <Checkbox
+                    id={ref}
+                    size="small"
+                    disabled={isFormLoading}
+                    checked={field.value === 'true'}
+                    onChange={(e) => {
+                      const next = String(e.target.checked);
+                      field.onChange(next);
+                      handleInputChangeFn(ref, next);
+                    }}
+                  />
+                }
+                label={resolve(labelText) ?? labelText}
+              />
+            )}
+          />
+          {hint && (
+            <Typography variant="caption" color="text.secondary">
+              {hint}
+            </Typography>
+          )}
+        </FormControl>
+      );
+    }
+
     if (type === 'OU_SELECT') {
       return (
         <FormControl key={component.id ?? index} fullWidth required={required}>
@@ -518,6 +559,29 @@ function InviteUserStepContent({
     }
   }, [components, values, reset]);
 
+  // Seed boolean fields with their unchecked value. A boolean answer is meaningful even when the
+  // user never touches the field, and without a seeded value a required boolean attribute is
+  // absent from the submission and can never be satisfied.
+  useEffect(() => {
+    if (!components?.length) return;
+
+    const findBooleanRefs = (comps: EmbeddedFlowComponent[]): string[] => {
+      const refs: string[] = [];
+      for (const comp of comps) {
+        if (comp.type === 'BOOLEAN_INPUT' && comp.ref) refs.push(comp.ref);
+        if (comp.components) refs.push(...findBooleanRefs(comp.components));
+      }
+      return refs;
+    };
+
+    findBooleanRefs(components as EmbeddedFlowComponent[]).forEach((booleanRef) => {
+      if (values?.[booleanRef] === undefined) {
+        setValue(booleanRef, 'false', {shouldValidate: true});
+        handleInputChange(booleanRef, 'false');
+      }
+    });
+  }, [components, values, setValue, handleInputChange]);
+
   // Pre-select the root OU (user type's OU) when the OU_SELECT step renders.
   useEffect(() => {
     // Key matches BE constant AdditionalDataKeyRootOUID = "rootOuId"
@@ -553,7 +617,12 @@ function InviteUserStepContent({
       <Box>
         <Alert severity="error" sx={{mb: 2}}>
           <AlertTitle>{t('users:errors.failed.title', 'Error')}</AlertTitle>
-          {error.message ?? t('users:errors.failed.description', 'An error occurred.')}
+          {getUserErrorMessage(
+            error,
+            (key, options) => t(key.includes(':') ? key : `users:${key}`, options),
+            'errors.failed.description',
+            'An error occurred. Please try again.',
+          )}
         </Alert>
         <Box sx={{display: 'flex', justifyContent: 'flex-end'}}>
           <Button variant="outlined" onClick={handleClose}>
@@ -576,7 +645,14 @@ function InviteUserStepContent({
       {(flowError ?? error) && (
         <Alert severity="error" sx={{mb: 2}}>
           <AlertTitle>{t('users:errors.failed.title', 'Error')}</AlertTitle>
-          {flowError ?? error?.message ?? t('users:errors.failed.description', 'An error occurred.')}
+          {flowError ??
+            (error &&
+              getUserErrorMessage(
+                error,
+                (key, options) => t(key.includes(':') ? key : `users:${key}`, options),
+                'errors.failed.description',
+                'An error occurred. Please try again.',
+              ))}
         </Alert>
       )}
       <Stack direction="column" spacing={4}>
@@ -656,7 +732,14 @@ function InviteUserStepContent({
                 sx={{display: 'flex', flexDirection: 'column', width: '100%', gap: 2}}
               >
                 {blockComponents.map((subComponent, compIndex) => {
-                  const field = renderFormField(subComponent, compIndex, control, errors, isLoading, handleInputChange);
+                  const field = renderFormField(
+                    subComponent,
+                    compIndex,
+                    control,
+                    errors,
+                    isLoading,
+                    handleUserInputChange,
+                  );
                   if (field) return field;
 
                   // STACK — render action children side by side
@@ -856,6 +939,7 @@ function InviteUserFlowBridge({
   onInviteComplete,
   onOuStepDetected,
   onResetLocalState,
+  onClearFlowError,
   onResetFlowAvailable = undefined,
 }: {
   renderProps: InviteUserRenderProps;
@@ -865,10 +949,10 @@ function InviteUserFlowBridge({
   onInviteComplete: () => void;
   onOuStepDetected: () => void;
   onResetLocalState: () => void;
+  onClearFlowError: () => void;
   onResetFlowAvailable?: (resetFn: () => void) => void;
 }): JSX.Element {
-  const {resolveFlowTemplateLiterals: rawResolve} = useThunderID();
-  const resolve = useCallback((text?: string) => (text ? rawResolve(text) : undefined), [rawResolve]);
+  const resolve = useFlowTextResolver();
   const {t} = useTranslation();
   const components = renderProps.components as EmbeddedFlowComponent[] | undefined;
 
@@ -913,6 +997,7 @@ function InviteUserFlowBridge({
       flowError={flowError}
       handleClose={handleClose}
       onResetLocalState={onResetLocalState}
+      onClearFlowError={onClearFlowError}
     />
   );
 }
@@ -972,6 +1057,10 @@ export default function UserAddPage(): JSX.Element {
     setHasOuStep(true);
   }, []);
 
+  const handleClearFlowError = useCallback(() => {
+    setFlowError(null);
+  }, []);
+
   const handleResetLocalState = useCallback(() => {
     setBreadcrumbs([t('users:addUser', 'Add User')]);
     prevStepLabelRef.current = '';
@@ -986,127 +1075,84 @@ export default function UserAddPage(): JSX.Element {
   const progress = Math.min((breadcrumbs.length / totalSteps) * 100, 100);
 
   return (
-    <Box sx={{minHeight: '100vh', display: 'flex', flexDirection: 'column'}}>
-      {/* Progress bar */}
-      <LinearProgress variant="determinate" value={progress} sx={{height: 6}} />
+    <FullScreenCreationWizardLayout
+      onClose={handleClose}
+      progress={progress}
+      breadcrumbItems={breadcrumbs.map((label, index) => {
+        const isFirstItem = index === 0;
 
-      <Box sx={{flex: 1, display: 'flex', flexDirection: 'column'}}>
-        {/* Header with close button and breadcrumb */}
-        <Box sx={{p: 4, display: 'flex', justifyContent: 'space-between', alignItems: 'center'}}>
-          <Stack direction="row" alignItems="center" spacing={2}>
-            <IconButton
-              aria-label={t('common:actions.close', 'Close')}
-              onClick={handleClose}
-              sx={{
-                bgcolor: 'background.paper',
-                '&:hover': {bgcolor: 'action.hover'},
-                boxShadow: 1,
-              }}
-            >
-              <X size={24} />
-            </IconButton>
-            <AppBreadcrumbs
-              items={breadcrumbs.map((label, index) => {
-                const isFirstItem = index === 0;
-
-                return {
-                  key: `breadcrumb-${index}`,
-                  label,
-                  onClick: isFirstItem
-                    ? () => {
-                        if (resetFlowRef.current) {
-                          resetFlowRef.current();
-                          setBreadcrumbs([t('users:addUser', 'Add User')]);
-                        }
-                      }
-                    : undefined,
-                  disabled: !isFirstItem,
-                };
-              })}
-            />
-          </Stack>
-        </Box>
-
-        {/* Main content */}
-        <Box sx={{flex: 1, display: 'flex', minHeight: 0}}>
-          <Box
-            sx={{
-              flex: 1,
-              display: 'flex',
-              flexDirection: 'column',
-              py: 8,
-              px: 20,
-              mx: 'auto',
-              alignItems: 'flex-start',
+        return {
+          key: `breadcrumb-${index}`,
+          label,
+          onClick: isFirstItem
+            ? () => {
+                if (resetFlowRef.current) {
+                  resetFlowRef.current();
+                  handleResetLocalState();
+                }
+              }
+            : undefined,
+          disabled: !isFirstItem,
+        };
+      })}
+      footer={null}
+    >
+      <InviteUser
+        onError={(err: Error) => {
+          if (isMissingOnboardingFlow(err)) {
+            handleManualCreateFallback();
+            return;
+          }
+          logger.error('User onboarding error', {error: err});
+          // onFlowChange runs first and sees the full error envelope, including the code. The SDK
+          // flattens that envelope into a plain Error before onError, so only fill in here when
+          // onFlowChange had nothing to report (for example, a thrown network failure).
+          setFlowError(
+            (current) =>
+              current ??
+              getUserErrorMessage(
+                err,
+                (key, options) => t(key.includes(':') ? key : `users:${key}`, options),
+                'errors.failed.description',
+                'An error occurred. Please try again.',
+              ),
+          );
+        }}
+        onFlowChange={(response) => {
+          if (isMissingOnboardingFlow(response)) {
+            handleManualCreateFallback();
+            return;
+          }
+          if (!response?.error) {
+            setFlowError(null);
+            return;
+          }
+          setFlowError(
+            getUserErrorMessage(
+              response as unknown as Error,
+              (key, options) => t(key.includes(':') ? key : `users:${key}`, options),
+              'errors.failed.description',
+              'An error occurred. Please try again.',
+            ),
+          );
+        }}
+      >
+        {(renderProps: InviteUserRenderProps) => (
+          <InviteUserFlowBridge
+            renderProps={renderProps}
+            flowError={flowError}
+            handleClose={handleClose}
+            onStepLabelChange={handleStepLabelChange}
+            onInviteComplete={handleInviteComplete}
+            onOuStepDetected={handleOuStepDetected}
+            onResetLocalState={handleResetLocalState}
+            onClearFlowError={handleClearFlowError}
+            onResetFlowAvailable={(resetFn) => {
+              resetFlowRef.current = resetFn;
             }}
-          >
-            <Box
-              sx={{
-                width: '100%',
-                maxWidth: 800,
-                flex: 1,
-                display: 'flex',
-                flexDirection: 'column',
-              }}
-            >
-              <InviteUser
-                onError={(err: Error) => {
-                  if (isMissingOnboardingFlow(err)) {
-                    handleManualCreateFallback();
-                    return;
-                  }
-                  logger.error('User onboarding error', {error: err});
-                }}
-                onFlowChange={(response) => {
-                  if (isMissingOnboardingFlow(response)) {
-                    handleManualCreateFallback();
-                    return;
-                  }
-                  const messageKey = (response?.error as Record<string, unknown> | undefined)?.['message'] as
-                    | Record<string, unknown>
-                    | undefined;
-                  const key = messageKey?.['key'] as string | undefined;
-                  if (key) {
-                    const translated: string = t(key);
-                    if (translated !== key) {
-                      setFlowError(translated);
-
-                      return;
-                    }
-                  }
-                  const fallback =
-                    (
-                      (response?.error as Record<string, unknown> | undefined)?.['message'] as
-                        | Record<string, unknown>
-                        | undefined
-                    )?.['defaultValue'] ??
-                    (
-                      (response?.error as Record<string, unknown> | undefined)?.['description'] as
-                        | Record<string, unknown>
-                        | undefined
-                    )?.['defaultValue'];
-                  setFlowError((fallback as string | undefined) ?? null);
-                }}
-              >
-                {(renderProps: InviteUserRenderProps) => (
-                  <InviteUserFlowBridge
-                    renderProps={renderProps}
-                    flowError={flowError}
-                    handleClose={handleClose}
-                    onStepLabelChange={handleStepLabelChange}
-                    onInviteComplete={handleInviteComplete}
-                    onOuStepDetected={handleOuStepDetected}
-                    onResetLocalState={handleResetLocalState}
-                    onResetFlowAvailable={(resetFn) => {
-                      resetFlowRef.current = resetFn;
-                    }}
-                  />
-                )}
-              </InviteUser>
-            </Box>
-          </Box>
-        </Box>
-      </Box>
-    </Box>
+          />
+        )}
+      </InviteUser>
+    </FullScreenCreationWizardLayout>
   );
 }

@@ -1,20 +1,5 @@
-/*
- * Copyright (c) 2025, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2025 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 package mgt
 
@@ -29,6 +14,10 @@ import (
 
 	"github.com/thunder-id/thunderid/tests/mocks/database/modelmock"
 	"github.com/thunder-id/thunderid/tests/mocks/database/providermock"
+
+	"github.com/thunder-id/thunderid/internal/system/config"
+	"github.com/thunder-id/thunderid/internal/system/deployment"
+	engineconfig "github.com/thunder-id/thunderid/pkg/thunderidengine/config"
 )
 
 const testDeploymentID = "test-deployment-id"
@@ -62,12 +51,17 @@ func TestI18nStoreTestSuite(t *testing.T) {
 }
 
 func (suite *I18nStoreTestSuite) SetupTest() {
+	// The store resolves its deployment from the loaded runtime rather than holding one, and
+	// other suites in this package reset the runtime, so load it per test.
+	config.ResetServerRuntime()
+	_ = config.InitializeServerRuntime("", &config.Config{
+		Server: engineconfig.ServerConfig{Identifier: testDeploymentID},
+	})
 	suite.mockDBProvider = providermock.NewDBProviderInterfaceMock(suite.T())
 	suite.mockDBClient = providermock.NewDBClientInterfaceMock(suite.T())
 	suite.mockTx = modelmock.NewTxInterfaceMock(suite.T())
 	suite.store = &i18nStore{
-		dbProvider:   suite.mockDBProvider,
-		deploymentID: testDeploymentID,
+		dbProvider: suite.mockDBProvider,
 	}
 }
 
@@ -79,7 +73,7 @@ func (suite *I18nStoreTestSuite) TestGetDistinctLanguages_Success() {
 		{"language_code": "fr-FR"},
 	}, nil)
 
-	langs, err := suite.store.GetDistinctLanguages()
+	langs, err := suite.store.GetDistinctLanguages(context.Background())
 
 	suite.NoError(err)
 	suite.Len(langs, 2)
@@ -91,7 +85,7 @@ func (suite *I18nStoreTestSuite) TestGetDistinctLanguages_QueryError() {
 	suite.mockDBProvider.On("GetConfigDBClient").Return(suite.mockDBClient, nil)
 	suite.mockDBClient.On("Query", queryGetDistinctLanguages, testDeploymentID).Return(nil, errors.New("db error"))
 
-	langs, err := suite.store.GetDistinctLanguages()
+	langs, err := suite.store.GetDistinctLanguages(context.Background())
 
 	suite.Error(err)
 	suite.Nil(langs)
@@ -106,7 +100,7 @@ func (suite *I18nStoreTestSuite) TestGetTranslations_Success() {
 		},
 	}, nil)
 
-	trans, err := suite.store.GetTranslations()
+	trans, err := suite.store.GetTranslations(context.Background())
 
 	suite.NoError(err)
 	suite.NotNil(trans)
@@ -123,7 +117,7 @@ func (suite *I18nStoreTestSuite) TestGetTranslationsByNamespace_Success() {
 			},
 		}, nil)
 
-	trans, err := suite.store.GetTranslationsByNamespace("ns1")
+	trans, err := suite.store.GetTranslationsByNamespace(context.Background(), "ns1")
 
 	suite.NoError(err)
 	suite.NotNil(trans)
@@ -139,7 +133,7 @@ func (suite *I18nStoreTestSuite) TestGetTranslationsByKey_Success() {
 		},
 	}, nil)
 
-	trans, err := suite.store.GetTranslationsByKey("k1", "ns1")
+	trans, err := suite.store.GetTranslationsByKey(context.Background(), "k1", "ns1")
 
 	suite.NoError(err)
 	suite.NotNil(trans)
@@ -151,7 +145,7 @@ func (suite *I18nStoreTestSuite) TestGetTranslationsByKey_NotFound() {
 	suite.mockDBClient.On("Query", queryGetTranslation, "k1", "ns1", testDeploymentID).
 		Return([]map[string]interface{}{}, nil)
 
-	trans, err := suite.store.GetTranslationsByKey("k1", "ns1")
+	trans, err := suite.store.GetTranslationsByKey(context.Background(), "k1", "ns1")
 	suite.NoError(err)
 	suite.NotNil(trans)
 	suite.Empty(trans)
@@ -165,7 +159,7 @@ func (suite *I18nStoreTestSuite) TestUpsertTranslation_Success() {
 	suite.mockDBClient.On("Execute", queryUpsertTranslation, "k", "en", "ns", "v", testDeploymentID).
 		Return(int64(1), nil)
 
-	err := suite.store.UpsertTranslation(translation)
+	err := suite.store.UpsertTranslation(context.Background(), translation)
 
 	suite.NoError(err)
 }
@@ -176,7 +170,7 @@ func (suite *I18nStoreTestSuite) TestDeleteTranslation_Success() {
 	suite.mockDBClient.On("Execute", queryDeleteTranslation, "en", "k", "ns", testDeploymentID).
 		Return(int64(1), nil)
 
-	err := suite.store.DeleteTranslation("en", "k", "ns")
+	err := suite.store.DeleteTranslation(context.Background(), "en", "k", "ns")
 
 	suite.NoError(err)
 }
@@ -187,7 +181,7 @@ func (suite *I18nStoreTestSuite) TestDeleteTranslationsByLanguage_Success() {
 	suite.mockDBClient.On("Execute", queryDeleteTranslationsByLanguage, "en", testDeploymentID).
 		Return(int64(1), nil)
 
-	err := suite.store.DeleteTranslationsByLanguage("en")
+	err := suite.store.DeleteTranslationsByLanguage(context.Background(), "en")
 
 	suite.NoError(err)
 }
@@ -211,7 +205,7 @@ func (suite *I18nStoreTestSuite) TestUpsertTranslationsByLanguage_Success() {
 
 	suite.mockTx.On("Commit").Return(nil)
 
-	err := suite.store.UpsertTranslationsByLanguage("en", translations)
+	err := suite.store.UpsertTranslationsByLanguage(context.Background(), "en", translations)
 
 	suite.NoError(err)
 }
@@ -232,7 +226,7 @@ func (suite *I18nStoreTestSuite) TestUpsertTranslationsByLanguage_RollbackOnInse
 
 	suite.mockTx.On("Rollback").Return(nil)
 
-	err := suite.store.UpsertTranslationsByLanguage("en", translations)
+	err := suite.store.UpsertTranslationsByLanguage(context.Background(), "en", translations)
 
 	suite.Error(err)
 	suite.Contains(err.Error(), "failed to insert translation")
@@ -243,7 +237,7 @@ func (suite *I18nStoreTestSuite) TestUpsertTranslationsByLanguage_BeginTxError()
 	suite.mockDBProvider.On("GetConfigDBClient").Return(suite.mockDBClient, nil)
 	suite.mockDBClient.On("BeginTx").Return(nil, errors.New("begin error"))
 
-	err := suite.store.UpsertTranslationsByLanguage("l", translations)
+	err := suite.store.UpsertTranslationsByLanguage(context.Background(), "l", translations)
 
 	suite.Error(err)
 	suite.Contains(err.Error(), "failed to begin transaction")
@@ -257,7 +251,7 @@ func (suite *I18nStoreTestSuite) TestUpsertTranslationsByLanguage_DeleteError() 
 		Return(nil, errors.New("delete error"))
 	suite.mockTx.On("Rollback").Return(nil)
 
-	err := suite.store.UpsertTranslationsByLanguage("l", translations)
+	err := suite.store.UpsertTranslationsByLanguage(context.Background(), "l", translations)
 
 	suite.Error(err)
 	suite.Contains(err.Error(), "failed to delete translations")
@@ -271,7 +265,7 @@ func (suite *I18nStoreTestSuite) TestUpsertTranslationsByLanguage_RollbackError(
 		Return(nil, errors.New("delete error"))
 	suite.mockTx.On("Rollback").Return(errors.New("rollback error"))
 
-	err := suite.store.UpsertTranslationsByLanguage("l", translations)
+	err := suite.store.UpsertTranslationsByLanguage(context.Background(), "l", translations)
 
 	suite.Error(err)
 	suite.Contains(err.Error(), "failed to delete translations")
@@ -290,7 +284,7 @@ func (suite *I18nStoreTestSuite) TestUpsertTranslationsByLanguage_CommitError() 
 		Return(&mockResult{}, nil)
 	suite.mockTx.On("Commit").Return(errors.New("commit error"))
 
-	err := suite.store.UpsertTranslationsByLanguage("l", translations)
+	err := suite.store.UpsertTranslationsByLanguage(context.Background(), "l", translations)
 
 	suite.Error(err)
 	suite.Contains(err.Error(), "failed to commit transaction")
@@ -302,7 +296,7 @@ func (suite *I18nStoreTestSuite) TestUpsertTranslation_Error() {
 	suite.mockDBClient.On("Execute", queryUpsertTranslation, "k", "en", "ns", "v", testDeploymentID).
 		Return(int64(0), errors.New("exec error"))
 
-	err := suite.store.UpsertTranslation(translation)
+	err := suite.store.UpsertTranslation(context.Background(), translation)
 
 	suite.Error(err)
 }
@@ -312,7 +306,7 @@ func (suite *I18nStoreTestSuite) TestDeleteTranslation_Error() {
 	suite.mockDBClient.On("Execute", queryDeleteTranslation, "en", "k", "ns", testDeploymentID).
 		Return(int64(0), errors.New("exec error"))
 
-	err := suite.store.DeleteTranslation("en", "k", "ns")
+	err := suite.store.DeleteTranslation(context.Background(), "en", "k", "ns")
 
 	suite.Error(err)
 }
@@ -322,7 +316,7 @@ func (suite *I18nStoreTestSuite) TestDeleteTranslationsByLanguage_Error() {
 	suite.mockDBClient.On("Execute", queryDeleteTranslationsByLanguage, "en", testDeploymentID).
 		Return(int64(0), errors.New("exec error"))
 
-	err := suite.store.DeleteTranslationsByLanguage("en")
+	err := suite.store.DeleteTranslationsByLanguage(context.Background(), "en")
 
 	suite.Error(err)
 }
@@ -332,7 +326,7 @@ func (suite *I18nStoreTestSuite) TestGetTranslations_QueryError() {
 	suite.mockDBClient.On("Query", queryGetTranslations, testDeploymentID).
 		Return(nil, errors.New("query error"))
 
-	result, err := suite.store.GetTranslations()
+	result, err := suite.store.GetTranslations(context.Background())
 
 	suite.Nil(result)
 	suite.Error(err)
@@ -343,7 +337,7 @@ func (suite *I18nStoreTestSuite) TestGetTranslationsByNamespace_QueryError() {
 	suite.mockDBClient.On("Query", queryGetTranslationsByNamespace, "ns", testDeploymentID).
 		Return(nil, errors.New("query error"))
 
-	result, err := suite.store.GetTranslationsByNamespace("ns")
+	result, err := suite.store.GetTranslationsByNamespace(context.Background(), "ns")
 
 	suite.Nil(result)
 	suite.Error(err)
@@ -354,7 +348,7 @@ func (suite *I18nStoreTestSuite) TestGetTranslationsByKey_QueryError() {
 	suite.mockDBClient.On("Query", queryGetTranslation, "k", "ns", testDeploymentID).
 		Return(nil, errors.New("query error"))
 
-	result, err := suite.store.GetTranslationsByKey("k", "ns")
+	result, err := suite.store.GetTranslationsByKey(context.Background(), "k", "ns")
 
 	suite.Nil(result)
 	suite.Error(err)
@@ -393,7 +387,7 @@ func (suite *I18nStoreTestSuite) TestGetTranslations_ParsingError() {
 		{"message_key": 123}, // Invalid type
 	}, nil)
 
-	result, err := suite.store.GetTranslations()
+	result, err := suite.store.GetTranslations(context.Background())
 
 	suite.Nil(result)
 	suite.Error(err)
@@ -405,7 +399,7 @@ func (suite *I18nStoreTestSuite) TestGetTranslationsByKey_ParsingError() {
 		{"message_key": 123}, // Invalid type
 	}, nil)
 
-	result, err := suite.store.GetTranslationsByKey("k", "ns")
+	result, err := suite.store.GetTranslationsByKey(context.Background(), "k", "ns")
 
 	suite.Nil(result)
 	suite.Error(err)
@@ -417,7 +411,7 @@ func (suite *I18nStoreTestSuite) TestGetDistinctLanguages_ParsingError() {
 		{"language_code": 123}, // Invalid type
 	}, nil)
 
-	result, err := suite.store.GetDistinctLanguages()
+	result, err := suite.store.GetDistinctLanguages(context.Background())
 
 	suite.Nil(result)
 	suite.Error(err)
@@ -428,35 +422,35 @@ func (suite *I18nStoreTestSuite) TestGetDBClient_Error() {
 
 	var err error
 
-	_, err = suite.store.GetDistinctLanguages()
+	_, err = suite.store.GetDistinctLanguages(context.Background())
 	suite.Error(err)
 	suite.Contains(err.Error(), "failed to get database client")
 
-	_, err = suite.store.GetTranslations()
+	_, err = suite.store.GetTranslations(context.Background())
 	suite.Error(err)
 	suite.Contains(err.Error(), "failed to get database client")
 
-	_, err = suite.store.GetTranslationsByNamespace("ns")
+	_, err = suite.store.GetTranslationsByNamespace(context.Background(), "ns")
 	suite.Error(err)
 	suite.Contains(err.Error(), "failed to get database client")
 
-	_, err = suite.store.GetTranslationsByKey("k", "ns")
+	_, err = suite.store.GetTranslationsByKey(context.Background(), "k", "ns")
 	suite.Error(err)
 	suite.Contains(err.Error(), "failed to get database client")
 
-	err = suite.store.UpsertTranslationsByLanguage("en", nil)
+	err = suite.store.UpsertTranslationsByLanguage(context.Background(), "en", nil)
 	suite.Error(err)
 	suite.Contains(err.Error(), "failed to get database client")
 
-	err = suite.store.UpsertTranslation(Translation{})
+	err = suite.store.UpsertTranslation(context.Background(), Translation{})
 	suite.Error(err)
 	suite.Contains(err.Error(), "failed to get database client")
 
-	err = suite.store.DeleteTranslation("en", "k", "ns")
+	err = suite.store.DeleteTranslation(context.Background(), "en", "k", "ns")
 	suite.Error(err)
 	suite.Contains(err.Error(), "failed to get database client")
 
-	err = suite.store.DeleteTranslationsByLanguage("en")
+	err = suite.store.DeleteTranslationsByLanguage(context.Background(), "en")
 	suite.Error(err)
 	suite.Contains(err.Error(), "failed to get database client")
 
@@ -517,4 +511,20 @@ func (suite *I18nStoreTestSuite) TestDeleteTranslationsByKey_Error() {
 
 	suite.Error(err)
 	suite.Contains(err.Error(), "failed to delete translations by namespace and key")
+}
+
+// A request names the deployment it acts for, and the store must scope by that rather than by the
+// identifier this server was configured with. Getting this wrong reads another deployment's rows,
+// which no other assertion here would catch: every other test runs on an unscoped context, where
+// the two values coincide.
+func (suite *I18nStoreTestSuite) TestGetDistinctLanguages_ScopesByTheRequestDeployment() {
+	suite.mockDBProvider.On("GetConfigDBClient").Return(suite.mockDBClient, nil)
+	suite.mockDBClient.On("Query", queryGetDistinctLanguages, "acme").Return([]map[string]interface{}{
+		{"language_code": "en-US"},
+	}, nil)
+
+	langs, err := suite.store.GetDistinctLanguages(deployment.WithID(context.Background(), "acme"))
+
+	suite.NoError(err)
+	suite.Len(langs, 1)
 }

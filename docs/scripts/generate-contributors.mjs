@@ -1,20 +1,5 @@
-/**
- * Copyright (c) 2026, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied. See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2026 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 import {existsSync, mkdirSync, writeFileSync} from 'fs';
 import {join, dirname} from 'path';
@@ -27,9 +12,9 @@ const __dirname = dirname(__filename);
 
 const OUTPUT_FILE = join(__dirname, '..', 'static', 'data', 'contributors.json');
 
+const PROJECT_NAME = DocusaurusProductConfig.project.name;
 const GITHUB_REPO = DocusaurusProductConfig.project.source.github.fullName;
-const GITHUB_REPO_API_URL = `https://api.github.com/repos/${GITHUB_REPO}`;
-const GITHUB_CONTRIBUTORS_API_URL = `${GITHUB_REPO_API_URL}/contributors`;
+const GITHUB_ORG = GITHUB_REPO.split('/')[0];
 
 const logger = createLogger('generate-contributors');
 
@@ -49,7 +34,7 @@ const IGNORED_LOGINS = new Set(
 
 function getGitHubHeaders() {
   return {
-    'User-Agent': 'Thunder-Docs-Contributors-Generator',
+    'User-Agent': `${PROJECT_NAME}-Docs-Contributors-Generator`,
     ...(process.env.GITHUB_TOKEN ? {Authorization: `token ${process.env.GITHUB_TOKEN}`} : {}),
   };
 }
@@ -67,11 +52,17 @@ async function fetchJsonWithHeaders(url) {
   return {body: await response.json(), headers: response.headers};
 }
 
-async function fetchAllContributors() {
-  logger.info(`Fetching contributors from ${GITHUB_CONTRIBUTORS_API_URL}...`);
+// Discovered from the org itself rather than a hardcoded list, so a newly created repo
+// picks up contributors here without this script needing an update. Archived repos and
+// forks are skipped: an archived repo is retired, and a fork's contributors are upstream's,
+// not this org's own.
+async function fetchOrgRepos() {
+  const orgReposApiUrl = `https://api.github.com/orgs/${GITHUB_ORG}/repos`;
 
-  const contributors = [];
-  let nextUrl = `${GITHUB_CONTRIBUTORS_API_URL}?per_page=100&anon=false`;
+  logger.info(`Fetching repositories for org ${GITHUB_ORG}...`);
+
+  const repos = [];
+  let nextUrl = `${orgReposApiUrl}?type=public&per_page=100`;
 
   while (nextUrl) {
     const {body, headers} = await fetchJsonWithHeaders(nextUrl);
@@ -80,7 +71,7 @@ async function fetchAllContributors() {
       throw new Error(`Unexpected response format from ${nextUrl}`);
     }
 
-    contributors.push(...body);
+    repos.push(...body);
 
     const linkHeader = headers.get('link') || '';
     const nextLinkMatch = linkHeader.match(/<([^>]+)>\s*;\s*rel="next"/i);
@@ -88,7 +79,65 @@ async function fetchAllContributors() {
     nextUrl = nextLinkMatch ? nextLinkMatch[1] : null;
   }
 
-  return contributors;
+  return repos.filter((repo) => !repo.archived && !repo.fork).map((repo) => repo.full_name);
+}
+
+async function fetchRepoContributors(fullName) {
+  const contributorsApiUrl = `https://api.github.com/repos/${fullName}/contributors`;
+
+  try {
+    logger.info(`Fetching contributors from ${contributorsApiUrl}...`);
+
+    const contributors = [];
+    let nextUrl = `${contributorsApiUrl}?per_page=100&anon=false`;
+
+    while (nextUrl) {
+      const {body, headers} = await fetchJsonWithHeaders(nextUrl);
+
+      if (!Array.isArray(body)) {
+        throw new Error(`Unexpected response format from ${nextUrl}`);
+      }
+
+      contributors.push(...body);
+
+      const linkHeader = headers.get('link') || '';
+      const nextLinkMatch = linkHeader.match(/<([^>]+)>\s*;\s*rel="next"/i);
+
+      nextUrl = nextLinkMatch ? nextLinkMatch[1] : null;
+    }
+
+    return contributors;
+  } catch (error) {
+    // Keep the other repos aggregating even if one is unreachable (rate-limited, private,
+    // renamed, or not created yet) — matches generate-sdk-releases.mjs's per-repo handling.
+    logger.warn(`Failed to fetch contributors for ${fullName}: ${error.message}`);
+
+    return [];
+  }
+}
+
+// The same person contributes to more than one repo, so merge by login and sum their
+// contributions across every repo before filtering/shaping — a contributor who is only
+// active in an SDK repo, not this docs repo, would otherwise never appear at all.
+function mergeContributorsByLogin(perRepoLists) {
+  const merged = new Map();
+
+  for (const contributors of perRepoLists) {
+    for (const contributor of contributors) {
+      const existing = merged.get(contributor.login);
+
+      if (existing) {
+        existing.contributions += contributor.contributions;
+      } else {
+        merged.set(contributor.login, {...contributor});
+      }
+    }
+  }
+
+  // GitHub's own /contributors response is pre-sorted by contributions descending; the merge
+  // above loses that ordering, and the UI's default "Commits" sort relies on the data already
+  // being sorted rather than re-sorting client-side.
+  return [...merged.values()].sort((a, b) => b.contributions - a.contributions);
 }
 
 function shouldInclude(contributor) {
@@ -100,8 +149,20 @@ function shouldInclude(contributor) {
 
 async function generate() {
   try {
-    const all = await fetchAllContributors();
-    const contributors = all
+    let repos;
+
+    try {
+      repos = await fetchOrgRepos();
+    } catch (error) {
+      // A failed org listing (rate limit, network) shouldn't zero out the whole file — fall
+      // back to just this repo rather than letting the outer catch write an empty result.
+      logger.warn(`Failed to list ${GITHUB_ORG} repos, falling back to ${GITHUB_REPO}: ${error.message}`);
+      repos = [GITHUB_REPO];
+    }
+
+    const perRepo = await Promise.all(repos.map(fetchRepoContributors));
+    const merged = mergeContributorsByLogin(perRepo);
+    const contributors = merged
       .filter(shouldInclude)
       .map((c) => ({
         avatarUrl: c.avatar_url,

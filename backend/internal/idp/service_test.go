@@ -1,20 +1,5 @@
-/*
- * Copyright (c) 2025, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2025 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 package idp
 
@@ -31,6 +16,8 @@ import (
 	"github.com/stretchr/testify/suite"
 
 	"github.com/thunder-id/thunderid/internal/entitytype"
+	"github.com/thunder-id/thunderid/internal/group"
+	"github.com/thunder-id/thunderid/internal/role"
 	"github.com/thunder-id/thunderid/internal/system/cmodels"
 	"github.com/thunder-id/thunderid/internal/system/config"
 	declarativeresource "github.com/thunder-id/thunderid/internal/system/declarative_resource"
@@ -38,6 +25,9 @@ import (
 	"github.com/thunder-id/thunderid/internal/system/resourcedependency"
 	"github.com/thunder-id/thunderid/internal/system/utils"
 	"github.com/thunder-id/thunderid/tests/mocks/entitytypemock"
+	"github.com/thunder-id/thunderid/tests/mocks/groupmock"
+	"github.com/thunder-id/thunderid/tests/mocks/resourceserverprovidermock"
+	"github.com/thunder-id/thunderid/tests/mocks/rolemock"
 )
 
 type mockTransactioner struct{}
@@ -80,9 +70,12 @@ func newNoBlockingDepsRegistry() *stubDependencyRegistry {
 
 type IDPServiceTestSuite struct {
 	suite.Suite
-	mockStore  *idpStoreInterfaceMock
-	mockET     *entitytypemock.EntityTypeServiceInterfaceMock
-	idpService *idpService
+	mockStore    *idpStoreInterfaceMock
+	mockET       *entitytypemock.EntityTypeServiceInterfaceMock
+	mockRole     *rolemock.RoleServiceInterfaceMock
+	mockGroup    *groupmock.GroupServiceInterfaceMock
+	mockResource *resourceserverprovidermock.ResourceServerProviderMock
+	idpService   *idpService
 }
 
 const (
@@ -105,6 +98,17 @@ func (s *IDPServiceTestSuite) SetupTest() {
 
 	s.mockStore = newIdpStoreInterfaceMock(s.T())
 	s.mockET = entitytypemock.NewEntityTypeServiceInterfaceMock(s.T())
+	// Create and update now seed schema-aware defaults, which lists user types first. Default to a
+	// deployment with none, so the target is unresolvable and seeding is a no-op for tests that are
+	// not about it. Tests that exercise seeding build their own service with a dedicated mock.
+	s.mockET.On("GetEntityTypeList", mock.Anything, entitytype.TypeCategoryUser,
+		mock.Anything, mock.Anything, mock.Anything).
+		Return(&entitytype.EntityTypeListResponse{}, nil).Maybe()
+	// Unused unless a test configures AuthorizationRuleMappings: no expectations are set here, so a test
+	// that never reaches the existence check never touches them.
+	s.mockRole = rolemock.NewRoleServiceInterfaceMock(s.T())
+	s.mockGroup = groupmock.NewGroupServiceInterfaceMock(s.T())
+	s.mockResource = resourceserverprovidermock.NewResourceServerProviderMock(s.T())
 	s.idpService = &idpService{
 		idpStore:           s.mockStore,
 		transactioner:      &mockTransactioner{},
@@ -112,6 +116,9 @@ func (s *IDPServiceTestSuite) SetupTest() {
 		logger:             log.GetLogger().With(log.String(log.LoggerKeyComponentName, "IdPService")),
 		uuidGenerator:      utils.GenerateUUIDv7,
 		entityTypeService:  s.mockET,
+		roleService:        s.mockRole,
+		groupService:       s.mockGroup,
+		resourceService:    s.mockResource,
 	}
 }
 
@@ -1065,7 +1072,7 @@ func (s *IDPServiceTestSuite) TestUpdateIdentityProvider_FailsForDeclarativeIDP(
 	fileStore.On("GetIdentityProviderByName", context.Background(), "Updated Name").
 		Return((*providers.IDPDTO)(nil), ErrIDPNotFound)
 
-	service := newIDPService(compositeStore, nil, &mockTransactioner{})
+	service := newIDPService(compositeStore, nil, nil, nil, nil, &mockTransactioner{})
 
 	updatedIDP := &providers.IDPDTO{
 		Name:        "Updated Name",
@@ -1117,7 +1124,7 @@ func (s *IDPServiceTestSuite) TestUpdateIdentityProvider_SucceedsForMutableIDP()
 		return dto.ID == idpID && dto.Name == "Updated Name"
 	})).Return(nil)
 
-	service := newIDPService(compositeStore, nil, &mockTransactioner{})
+	service := newIDPService(compositeStore, nil, nil, nil, nil, &mockTransactioner{})
 
 	updatedIDP := &providers.IDPDTO{
 		Name:        "Updated Name",
@@ -1159,7 +1166,7 @@ func (s *IDPServiceTestSuite) TestDeleteIdentityProvider_FailsForDeclarativeIDP(
 	dbStore.On("GetIdentityProvider", context.Background(), idpID).Return((*providers.IDPDTO)(nil), ErrIDPNotFound)
 	fileStore.On("GetIdentityProvider", context.Background(), idpID).Return(existingIDP, nil)
 
-	service := newIDPService(compositeStore, nil, &mockTransactioner{})
+	service := newIDPService(compositeStore, nil, nil, nil, nil, &mockTransactioner{})
 	service.SetDependencyRegistry(newNoBlockingDepsRegistry())
 
 	err := service.DeleteIdentityProvider(context.Background(), idpID)
@@ -1197,7 +1204,7 @@ func (s *IDPServiceTestSuite) TestDeleteIdentityProvider_SucceedsForMutableIDP()
 	dbStore.On("GetIdentityProvider", context.Background(), idpID).Return(existingIDP, nil)
 	dbStore.On("DeleteIdentityProvider", context.Background(), idpID).Return(nil)
 
-	service := newIDPService(compositeStore, nil, &mockTransactioner{})
+	service := newIDPService(compositeStore, nil, nil, nil, nil, &mockTransactioner{})
 	service.SetDependencyRegistry(newNoBlockingDepsRegistry())
 
 	err := service.DeleteIdentityProvider(context.Background(), idpID)
@@ -1230,7 +1237,8 @@ func (s *IDPServiceTestSuite) TestValidateAttributeConfiguration_AccountLinkingO
 }
 
 func (s *IDPServiceTestSuite) TestValidateAttributeConfiguration_Valid() {
-	s.mockET.On("GetAttributes", mock.Anything, entitytype.TypeCategoryUser, "person", false, true, false).
+	s.mockET.On("GetAttributes", mock.Anything, entitytype.TypeCategoryUser, "person",
+		entitytype.AttributeFilter{AllowNonCredential: true}).
 		Return([]entitytype.AttributeInfo{{Attribute: "firstName"}, {Attribute: "email"}},
 			(*tidcommon.ServiceError)(nil))
 
@@ -1254,7 +1262,8 @@ func (s *IDPServiceTestSuite) TestValidateAttributeConfiguration_EmptyEntityType
 }
 
 func (s *IDPServiceTestSuite) TestValidateAttributeConfiguration_EmptyMappings() {
-	s.mockET.On("GetAttributes", mock.Anything, entitytype.TypeCategoryUser, "person", false, true, false).
+	s.mockET.On("GetAttributes", mock.Anything, entitytype.TypeCategoryUser, "person",
+		entitytype.AttributeFilter{AllowNonCredential: true}).
 		Return([]entitytype.AttributeInfo{{Attribute: "firstName"}}, (*tidcommon.ServiceError)(nil))
 	idp := &providers.IDPDTO{AttributeConfiguration: singleProfileMapping("person", nil)}
 	svcErr := s.idpService.validateAttributeConfiguration(context.Background(), idp)
@@ -1262,7 +1271,8 @@ func (s *IDPServiceTestSuite) TestValidateAttributeConfiguration_EmptyMappings()
 }
 
 func (s *IDPServiceTestSuite) TestValidateAttributeConfiguration_OneSourceToMultipleTargets() {
-	s.mockET.On("GetAttributes", mock.Anything, entitytype.TypeCategoryUser, "person", false, true, false).
+	s.mockET.On("GetAttributes", mock.Anything, entitytype.TypeCategoryUser, "person",
+		entitytype.AttributeFilter{AllowNonCredential: true}).
 		Return([]entitytype.AttributeInfo{{Attribute: "email"}, {Attribute: "contactEmail"}},
 			(*tidcommon.ServiceError)(nil))
 
@@ -1297,7 +1307,8 @@ func (s *IDPServiceTestSuite) TestValidateAttributeConfiguration_DuplicateTarget
 }
 
 func (s *IDPServiceTestSuite) TestValidateAttributeConfiguration_DuplicateEntityType() {
-	s.mockET.On("GetAttributes", mock.Anything, entitytype.TypeCategoryUser, "person", false, true, false).
+	s.mockET.On("GetAttributes", mock.Anything, entitytype.TypeCategoryUser, "person",
+		entitytype.AttributeFilter{AllowNonCredential: true}).
 		Return([]entitytype.AttributeInfo{{Attribute: "firstName"}}, (*tidcommon.ServiceError)(nil))
 	idp := &providers.IDPDTO{AttributeConfiguration: &providers.AttributeConfiguration{
 		UserTypeResolution: &providers.UserTypeResolution{Default: "person"},
@@ -1323,7 +1334,8 @@ func (s *IDPServiceTestSuite) TestValidateAttributeConfiguration_DuplicateEntity
 }
 
 func (s *IDPServiceTestSuite) TestValidateAttributeConfiguration_TargetNotInSchema() {
-	s.mockET.On("GetAttributes", mock.Anything, entitytype.TypeCategoryUser, "person", false, true, false).
+	s.mockET.On("GetAttributes", mock.Anything, entitytype.TypeCategoryUser, "person",
+		entitytype.AttributeFilter{AllowNonCredential: true}).
 		Return([]entitytype.AttributeInfo{{Attribute: "email"}}, (*tidcommon.ServiceError)(nil))
 
 	idp := &providers.IDPDTO{AttributeConfiguration: singleProfileMapping("person", []providers.AttributeMapping{
@@ -1336,7 +1348,8 @@ func (s *IDPServiceTestSuite) TestValidateAttributeConfiguration_TargetNotInSche
 }
 
 func (s *IDPServiceTestSuite) TestValidateAttributeConfiguration_UnknownEntityType() {
-	s.mockET.On("GetAttributes", mock.Anything, entitytype.TypeCategoryUser, "ghost", false, true, false).
+	s.mockET.On("GetAttributes", mock.Anything, entitytype.TypeCategoryUser, "ghost",
+		entitytype.AttributeFilter{AllowNonCredential: true}).
 		Return([]entitytype.AttributeInfo(nil), &tidcommon.ServiceError{
 			Type: tidcommon.ClientErrorType, Code: "ETS-1004",
 			ErrorDescription: tidcommon.I18nMessage{DefaultValue: "user type not found"},
@@ -1351,7 +1364,8 @@ func (s *IDPServiceTestSuite) TestValidateAttributeConfiguration_UnknownEntityTy
 }
 
 func (s *IDPServiceTestSuite) TestValidateAttributeConfiguration_DynamicResolutionValid() {
-	s.mockET.On("GetAttributes", mock.Anything, entitytype.TypeCategoryUser, "employee", false, true, false).
+	s.mockET.On("GetAttributes", mock.Anything, entitytype.TypeCategoryUser, "employee",
+		entitytype.AttributeFilter{AllowNonCredential: true}).
 		Return([]entitytype.AttributeInfo{{Attribute: "firstName"}}, (*tidcommon.ServiceError)(nil))
 
 	idp := &providers.IDPDTO{AttributeConfiguration: &providers.AttributeConfiguration{
@@ -1417,7 +1431,8 @@ func (s *IDPServiceTestSuite) TestValidateAttributeConfiguration_DynamicResoluti
 }
 
 func (s *IDPServiceTestSuite) TestValidateAttributeConfiguration_DynamicResolutionInvalidTarget() {
-	s.mockET.On("GetAttributes", mock.Anything, entitytype.TypeCategoryUser, "ghost", false, true, false).
+	s.mockET.On("GetAttributes", mock.Anything, entitytype.TypeCategoryUser, "ghost",
+		entitytype.AttributeFilter{AllowNonCredential: true}).
 		Return([]entitytype.AttributeInfo(nil), &tidcommon.ServiceError{
 			Type: tidcommon.ClientErrorType, Code: "ETS-1004",
 			ErrorDescription: tidcommon.I18nMessage{DefaultValue: "user type not found"},
@@ -1434,4 +1449,1251 @@ func (s *IDPServiceTestSuite) TestValidateAttributeConfiguration_DynamicResoluti
 	s.NotNil(svcErr)
 	s.Equal(ErrorInvalidAttributeConfiguration.Code, svcErr.Code)
 	s.Contains(svcErr.ErrorDescription.DefaultValue, "invalid user type")
+}
+
+// --- ApplySchemaAwareDefaults ---
+
+const seedUserType = "Person"
+
+// newSeedingService builds a service with a dedicated entity-type mock, bypassing the suite-level
+// catch-all so each case controls exactly what the schema looks like.
+func (s *IDPServiceTestSuite) newSeedingService() (
+	*idpService, *entitytypemock.EntityTypeServiceInterfaceMock) {
+	mockET := entitytypemock.NewEntityTypeServiceInterfaceMock(s.T())
+
+	return &idpService{
+		entityTypeService: mockET,
+		logger:            log.GetLogger().With(log.String(log.LoggerKeyComponentName, "IdPService")),
+	}, mockET
+}
+
+// seedTestIDP builds a connection carrying only the scopes, the one property seeding reads.
+func seedTestIDP(idpType providers.IDPType, scopes string) *providers.IDPDTO {
+	scopesProp, _ := cmodels.NewProperty(PropScopes, scopes, false)
+
+	return &providers.IDPDTO{
+		Name:       "Test " + string(idpType),
+		Type:       idpType,
+		Properties: []cmodels.Property{*scopesProp},
+	}
+}
+
+// expectUserTypes stubs the user-type listing seeding uses to find candidates.
+func expectUserTypes(mockET *entitytypemock.EntityTypeServiceInterfaceMock,
+	types ...entitytype.EntityTypeListItem) {
+	mockET.On("GetEntityTypeList", mock.Anything, entitytype.TypeCategoryUser,
+		mock.Anything, mock.Anything, mock.Anything).
+		Return(&entitytype.EntityTypeListResponse{Types: types}, nil)
+}
+
+// expectSchemaFor stubs one user type's schema. Optional, because seeding stops before reading the
+// schema whenever the connection or the candidate set already rules the defaults out.
+func expectSchemaFor(mockET *entitytypemock.EntityTypeServiceInterfaceMock,
+	userType string, unique []string, required []string) {
+	uniqueSet := make(map[string]bool, len(unique))
+	for _, name := range unique {
+		uniqueSet[name] = true
+	}
+	requiredSet := make(map[string]bool, len(required))
+	for _, name := range required {
+		requiredSet[name] = true
+	}
+
+	attrs := make([]entitytype.AttributeInfo, 0, len(unique)+len(required))
+	seen := make(map[string]bool, len(unique)+len(required))
+	add := func(names []string) {
+		for _, name := range names {
+			if seen[name] {
+				continue
+			}
+			seen[name] = true
+			attrs = append(attrs, entitytype.AttributeInfo{
+				Attribute: name,
+				Unique:    uniqueSet[name],
+				Required:  requiredSet[name],
+			})
+		}
+	}
+	add(unique)
+	add(required)
+
+	mockET.On("GetAttributes", mock.Anything, entitytype.TypeCategoryUser, userType,
+		entitytype.AttributeFilter{AllowNonCredential: true}).
+		Return(attrs, nil).Maybe()
+}
+
+// The whole point of the feature: a fresh Google, OIDC or GitHub connection links on email and maps
+// its provider-specific claim onto the required username without the administrator configuring either.
+func (s *IDPServiceTestSuite) TestApplySchemaAwareDefaults_SeedsLinkingAndMapping() {
+	testCases := []struct {
+		idpType        providers.IDPType
+		scopes         string
+		expectedSource string
+	}{
+		{idpType: providers.IDPTypeGoogle, scopes: "openid,email,profile", expectedSource: "email"},
+		{idpType: providers.IDPTypeOIDC, scopes: "openid,email,profile", expectedSource: "email"},
+		{idpType: providers.IDPTypeGitHub, scopes: "user:email", expectedSource: "login"},
+	}
+
+	for _, tc := range testCases {
+		s.Run(string(tc.idpType), func() {
+			service, mockET := s.newSeedingService()
+			expectUserTypes(mockET, entitytype.EntityTypeListItem{Name: seedUserType})
+			expectSchemaFor(mockET, seedUserType, []string{"username", "email"}, []string{"username", "email"})
+
+			idp := seedTestIDP(tc.idpType, tc.scopes)
+			service.ApplySchemaAwareDefaults(context.Background(), idp)
+
+			s.Require().NotNil(idp.AttributeConfiguration)
+			s.Require().NotNil(idp.AttributeConfiguration.AccountLinking)
+			s.Equal([]string{"email"}, idp.AttributeConfiguration.AccountLinking.Attributes)
+
+			s.Require().Len(idp.AttributeConfiguration.UserTypeAttributeMappings, 1)
+			entry := idp.AttributeConfiguration.UserTypeAttributeMappings[0]
+			s.Equal(seedUserType, entry.UserType)
+			s.Require().Len(entry.Attributes, 1)
+			s.Equal(tc.expectedSource, entry.Attributes[0].ExternalAttribute)
+			s.Equal("username", entry.Attributes[0].LocalAttribute)
+			// Mappings are rejected without a resolution default, so one is seeded alongside them.
+			s.Require().NotNil(idp.AttributeConfiguration.UserTypeResolution)
+			s.Equal(seedUserType, idp.AttributeConfiguration.UserTypeResolution.Default)
+		})
+	}
+}
+
+// The reported scenario: two self-registerable types, email unique on both, and only one requiring
+// a username. Linking is seeded from both, and the type requiring a username becomes the mapping
+// target, even though it is neither first nor the one with the fewest required attributes.
+func (s *IDPServiceTestSuite) TestApplySchemaAwareDefaults_ResolvesWhenOneTypeRequiresUsername() {
+	service, mockET := s.newSeedingService()
+	expectUserTypes(mockET,
+		entitytype.EntityTypeListItem{Name: "Guest", AllowSelfRegistration: true},
+		entitytype.EntityTypeListItem{Name: seedUserType, AllowSelfRegistration: true})
+	expectSchemaFor(mockET, "Guest", []string{"email"}, []string{"email"})
+	expectSchemaFor(mockET, seedUserType, []string{"email"}, []string{"username", "email"})
+
+	idp := seedTestIDP(providers.IDPTypeGoogle, "openid,email,profile")
+	service.ApplySchemaAwareDefaults(context.Background(), idp)
+
+	s.Require().NotNil(idp.AttributeConfiguration)
+	s.Require().NotNil(idp.AttributeConfiguration.AccountLinking)
+	s.Equal([]string{"email"}, idp.AttributeConfiguration.AccountLinking.Attributes)
+
+	s.Require().Len(idp.AttributeConfiguration.UserTypeAttributeMappings, 1)
+	s.Equal(seedUserType, idp.AttributeConfiguration.UserTypeAttributeMappings[0].UserType)
+	// The default must name a type that has a mapping, or GetAttributeMappings finds nothing.
+	s.Require().NotNil(idp.AttributeConfiguration.UserTypeResolution)
+	s.Equal(seedUserType, idp.AttributeConfiguration.UserTypeResolution.Default)
+}
+
+// Several types requiring a username all get a mapping, and the first is taken as the resolution
+// default. The listing is ordered by name, so the choice is stable rather than arbitrary.
+func (s *IDPServiceTestSuite) TestApplySchemaAwareDefaults_MapsEveryTypeRequiringUsername() {
+	service, mockET := s.newSeedingService()
+	expectUserTypes(mockET,
+		entitytype.EntityTypeListItem{Name: "Employee", AllowSelfRegistration: true},
+		entitytype.EntityTypeListItem{Name: "Guest", AllowSelfRegistration: true},
+		entitytype.EntityTypeListItem{Name: seedUserType, AllowSelfRegistration: true})
+	expectSchemaFor(mockET, "Employee", []string{"email"}, []string{"username", "email"})
+	expectSchemaFor(mockET, "Guest", []string{"email"}, []string{"email"})
+	expectSchemaFor(mockET, seedUserType, []string{"email"}, []string{"username", "email"})
+
+	idp := seedTestIDP(providers.IDPTypeGoogle, "openid,email,profile")
+	service.ApplySchemaAwareDefaults(context.Background(), idp)
+
+	s.Require().NotNil(idp.AttributeConfiguration)
+	s.NotNil(idp.AttributeConfiguration.AccountLinking)
+
+	mapped := make([]string, 0, 2)
+	for _, entry := range idp.AttributeConfiguration.UserTypeAttributeMappings {
+		mapped = append(mapped, entry.UserType)
+		s.Equal("email", entry.Attributes[0].ExternalAttribute)
+		s.Equal("username", entry.Attributes[0].LocalAttribute)
+	}
+	// Guest requires no username, so it is left out.
+	s.Equal([]string{"Employee", seedUserType}, mapped)
+
+	// The first requiring type becomes the default, and it must be one that has a mapping.
+	s.Require().NotNil(idp.AttributeConfiguration.UserTypeResolution)
+	s.Equal("Employee", idp.AttributeConfiguration.UserTypeResolution.Default)
+}
+
+// Email must be resolvable to a single user whichever type an identity provisions into.
+func (s *IDPServiceTestSuite) TestApplySchemaAwareDefaults_SkipsLinkingWhenACandidateLacksUniqueEmail() {
+	service, mockET := s.newSeedingService()
+	expectUserTypes(mockET,
+		entitytype.EntityTypeListItem{Name: seedUserType, AllowSelfRegistration: true},
+		entitytype.EntityTypeListItem{Name: "Guest", AllowSelfRegistration: true})
+	expectSchemaFor(mockET, seedUserType, []string{"email"}, []string{"username", "email"})
+	expectSchemaFor(mockET, "Guest", []string{"username"}, []string{"email"})
+
+	idp := seedTestIDP(providers.IDPTypeGoogle, "openid,email,profile")
+	service.ApplySchemaAwareDefaults(context.Background(), idp)
+
+	if idp.AttributeConfiguration != nil {
+		s.Nil(idp.AttributeConfiguration.AccountLinking)
+	}
+}
+
+// With nothing a federated user could be provisioned into, there is no schema to derive defaults from.
+func (s *IDPServiceTestSuite) TestApplySchemaAwareDefaults_SkipsWhenNothingQualifies() {
+	testCases := []struct {
+		name    string
+		types   []entitytype.EntityTypeListItem
+		schemas func(*entitytypemock.EntityTypeServiceInterfaceMock)
+	}{
+		{name: "no user types", types: nil},
+		{
+			name:  "no type offers a unique email or requires a username",
+			types: []entitytype.EntityTypeListItem{{Name: "Person"}, {Name: "Partner"}},
+			schemas: func(mockET *entitytypemock.EntityTypeServiceInterfaceMock) {
+				expectSchemaFor(mockET, "Person", []string{"username"}, nil)
+				expectSchemaFor(mockET, "Partner", []string{"username"}, nil)
+			},
+		},
+	}
+
+	for _, tc := range testCases {
+		s.Run(tc.name, func() {
+			service, mockET := s.newSeedingService()
+			expectUserTypes(mockET, tc.types...)
+			if tc.schemas != nil {
+				tc.schemas(mockET)
+			}
+
+			idp := seedTestIDP(providers.IDPTypeGoogle, "openid,email,profile")
+			service.ApplySchemaAwareDefaults(context.Background(), idp)
+
+			s.Nil(idp.AttributeConfiguration)
+		})
+	}
+}
+
+// Mappings are read on login as well as during provisioning, so a type that does not allow self
+// registration still gets one. Its users may be created manually and still sign in federated.
+func (s *IDPServiceTestSuite) TestApplySchemaAwareDefaults_SeedsTypeWithoutSelfRegistration() {
+	service, mockET := s.newSeedingService()
+	expectUserTypes(mockET, entitytype.EntityTypeListItem{Name: seedUserType, AllowSelfRegistration: false})
+	expectSchemaFor(mockET, seedUserType, []string{"username", "email"}, []string{"username", "email"})
+
+	idp := seedTestIDP(providers.IDPTypeGoogle, "openid,email,profile")
+	service.ApplySchemaAwareDefaults(context.Background(), idp)
+
+	s.Require().NotNil(idp.AttributeConfiguration)
+	s.Require().NotNil(idp.AttributeConfiguration.AccountLinking)
+	s.Equal([]string{"email"}, idp.AttributeConfiguration.AccountLinking.Attributes)
+	s.Require().Len(idp.AttributeConfiguration.UserTypeAttributeMappings, 1)
+	s.Equal(seedUserType, idp.AttributeConfiguration.UserTypeAttributeMappings[0].UserType)
+}
+
+// Linking on a non-unique attribute cannot resolve a single user, so it is not seeded.
+func (s *IDPServiceTestSuite) TestApplySchemaAwareDefaults_SkipsLinkingWhenEmailIsNotUnique() {
+	service, mockET := s.newSeedingService()
+	expectUserTypes(mockET, entitytype.EntityTypeListItem{Name: seedUserType})
+	expectSchemaFor(mockET, seedUserType, []string{"username"}, []string{"email"})
+
+	idp := seedTestIDP(providers.IDPTypeGoogle, "openid,email,profile")
+	service.ApplySchemaAwareDefaults(context.Background(), idp)
+
+	if idp.AttributeConfiguration != nil {
+		s.Nil(idp.AttributeConfiguration.AccountLinking)
+	}
+}
+
+// Linking on an attribute the connection never returns would match nothing, so it is worse than no default.
+func (s *IDPServiceTestSuite) TestApplySchemaAwareDefaults_SkipsLinkingWhenScopesCannotYieldEmail() {
+	service, mockET := s.newSeedingService()
+	expectUserTypes(mockET, entitytype.EntityTypeListItem{Name: seedUserType})
+	expectSchemaFor(mockET, seedUserType, []string{"email"}, []string{"email"})
+
+	idp := seedTestIDP(providers.IDPTypeGoogle, "openid,profile")
+	service.ApplySchemaAwareDefaults(context.Background(), idp)
+
+	if idp.AttributeConfiguration != nil {
+		s.Nil(idp.AttributeConfiguration.AccountLinking)
+	}
+}
+
+// No username requirement means no prompt to avoid, so nothing is mapped.
+// Nothing needs a derived username, so no mapping is seeded. The identity still has to resolve to
+// a user type, and that default is taken from the types email can match so it agrees with linking.
+func (s *IDPServiceTestSuite) TestApplySchemaAwareDefaults_DefaultsToEmailTypeWhenUsernameIsOptional() {
+	service, mockET := s.newSeedingService()
+	expectUserTypes(mockET, entitytype.EntityTypeListItem{Name: seedUserType})
+	expectSchemaFor(mockET, seedUserType, []string{"email"}, []string{"email"})
+
+	idp := seedTestIDP(providers.IDPTypeGoogle, "openid,email,profile")
+	service.ApplySchemaAwareDefaults(context.Background(), idp)
+
+	s.Require().NotNil(idp.AttributeConfiguration)
+	s.Empty(idp.AttributeConfiguration.UserTypeAttributeMappings)
+	s.Require().NotNil(idp.AttributeConfiguration.AccountLinking)
+	s.Equal([]string{"email"}, idp.AttributeConfiguration.AccountLinking.Attributes)
+	s.Require().NotNil(idp.AttributeConfiguration.UserTypeResolution)
+	s.Equal(seedUserType, idp.AttributeConfiguration.UserTypeResolution.Default)
+}
+
+// The default has to name a type email can actually identify a single user on, so a candidate without
+// a unique email is passed over rather than taken just for being first.
+func (s *IDPServiceTestSuite) TestApplySchemaAwareDefaults_DefaultSkipsTypeWithoutUniqueEmail() {
+	service, mockET := s.newSeedingService()
+	expectUserTypes(mockET,
+		entitytype.EntityTypeListItem{Name: "Guest", AllowSelfRegistration: true},
+		entitytype.EntityTypeListItem{Name: seedUserType, AllowSelfRegistration: true})
+	expectSchemaFor(mockET, "Guest", []string{"phone"}, []string{"phone"})
+	expectSchemaFor(mockET, seedUserType, []string{"email"}, []string{"email"})
+
+	idp := seedTestIDP(providers.IDPTypeGoogle, "openid,email,profile")
+	service.ApplySchemaAwareDefaults(context.Background(), idp)
+
+	s.Require().NotNil(idp.AttributeConfiguration)
+	s.Empty(idp.AttributeConfiguration.UserTypeAttributeMappings)
+	// Guest has no unique email, so linking stays unseeded, but the default can still name Person.
+	s.Nil(idp.AttributeConfiguration.AccountLinking)
+	s.Require().NotNil(idp.AttributeConfiguration.UserTypeResolution)
+	s.Equal(seedUserType, idp.AttributeConfiguration.UserTypeResolution.Default)
+}
+
+// No candidate can be matched on email and none needs a username, so there is nothing to derive.
+func (s *IDPServiceTestSuite) TestApplySchemaAwareDefaults_SeedsNothingWhenNoTypeHasEmail() {
+	service, mockET := s.newSeedingService()
+	expectUserTypes(mockET, entitytype.EntityTypeListItem{Name: seedUserType})
+	expectSchemaFor(mockET, seedUserType, []string{"phone"}, []string{"phone"})
+
+	idp := seedTestIDP(providers.IDPTypeGoogle, "openid,email,profile")
+	service.ApplySchemaAwareDefaults(context.Background(), idp)
+
+	s.Nil(idp.AttributeConfiguration)
+}
+
+// The mapping's source is the email claim, which arrives only when the scopes ask for it. Seeding it
+// anyway would leave an entry resolving to nothing while the connection looked configured.
+func (s *IDPServiceTestSuite) TestApplySchemaAwareDefaults_SkipsMappingWhenScopesCannotYieldEmail() {
+	service, mockET := s.newSeedingService()
+	expectUserTypes(mockET, entitytype.EntityTypeListItem{Name: seedUserType})
+	expectSchemaFor(mockET, seedUserType, []string{"email"}, []string{"username", "email"})
+
+	idp := seedTestIDP(providers.IDPTypeGoogle, "openid,profile")
+	service.ApplySchemaAwareDefaults(context.Background(), idp)
+
+	s.Nil(idp.AttributeConfiguration)
+}
+
+// GitHub takes its username from the login claim in the profile, so no email scope is involved.
+func (s *IDPServiceTestSuite) TestApplySchemaAwareDefaults_GitHubMapsLoginWithoutEmailScope() {
+	service, mockET := s.newSeedingService()
+	expectUserTypes(mockET, entitytype.EntityTypeListItem{Name: seedUserType})
+	expectSchemaFor(mockET, seedUserType, []string{"email"}, []string{"username", "email"})
+
+	idp := seedTestIDP(providers.IDPTypeGitHub, "read:user")
+	service.ApplySchemaAwareDefaults(context.Background(), idp)
+
+	s.Require().NotNil(idp.AttributeConfiguration)
+	s.Require().Len(idp.AttributeConfiguration.UserTypeAttributeMappings, 1)
+	s.Equal("login", idp.AttributeConfiguration.UserTypeAttributeMappings[0].Attributes[0].ExternalAttribute)
+	// read:user grants no email, so linking is withheld while the login mapping still applies.
+	s.Nil(idp.AttributeConfiguration.AccountLinking)
+}
+
+// A claim-driven resolution the administrator configured must survive the default being filled in.
+func (s *IDPServiceTestSuite) TestApplySchemaAwareDefaults_PreservesClaimDrivenResolution() {
+	service, mockET := s.newSeedingService()
+	expectUserTypes(mockET, entitytype.EntityTypeListItem{Name: seedUserType})
+	expectSchemaFor(mockET, seedUserType, []string{"email"}, []string{"username", "email"})
+
+	idp := seedTestIDP(providers.IDPTypeGoogle, "openid,email,profile")
+	idp.AttributeConfiguration = &providers.AttributeConfiguration{
+		UserTypeResolution: &providers.UserTypeResolution{
+			ExternalAttribute: "org",
+			ValueMapping:      map[string]string{"acme": seedUserType},
+		},
+	}
+
+	service.ApplySchemaAwareDefaults(context.Background(), idp)
+
+	resolution := idp.AttributeConfiguration.UserTypeResolution
+	s.Require().NotNil(resolution)
+	s.Equal("org", resolution.ExternalAttribute)
+	s.Equal(map[string]string{"acme": seedUserType}, resolution.ValueMapping)
+	s.Equal(seedUserType, resolution.Default)
+}
+
+// Generic OAuth carries no scope or claim semantics ThunderID can infer.
+func (s *IDPServiceTestSuite) TestApplySchemaAwareDefaults_LeavesGenericOAuthAlone() {
+	service, mockET := s.newSeedingService()
+	expectUserTypes(mockET, entitytype.EntityTypeListItem{Name: seedUserType})
+	expectSchemaFor(mockET, seedUserType, []string{"username", "email"}, []string{"username", "email"})
+
+	idp := seedTestIDP(providers.IDPTypeOAuth, "email")
+	service.ApplySchemaAwareDefaults(context.Background(), idp)
+
+	if idp.AttributeConfiguration != nil {
+		s.Nil(idp.AttributeConfiguration.AccountLinking)
+		s.Empty(idp.AttributeConfiguration.UserTypeAttributeMappings)
+	}
+}
+
+// Fully explicit configuration is left alone, and short-circuits before any schema is read: the
+// mock carries no expectations, so any call to it fails the test.
+func (s *IDPServiceTestSuite) TestApplySchemaAwareDefaults_PreservesExplicitConfiguration() {
+	service, _ := s.newSeedingService()
+
+	idp := seedTestIDP(providers.IDPTypeGoogle, "openid,email,profile")
+	idp.AttributeConfiguration = &providers.AttributeConfiguration{
+		AccountLinking:     &providers.AccountLinking{Attributes: []string{"phone_number"}},
+		UserTypeResolution: &providers.UserTypeResolution{Default: "Employee"},
+		UserTypeAttributeMappings: []providers.UserTypeAttributeMapping{{
+			UserType:   "Employee",
+			Attributes: []providers.AttributeMapping{{ExternalAttribute: "sub", LocalAttribute: "username"}},
+		}},
+	}
+
+	service.ApplySchemaAwareDefaults(context.Background(), idp)
+
+	s.Equal([]string{"phone_number"}, idp.AttributeConfiguration.AccountLinking.Attributes)
+	s.Len(idp.AttributeConfiguration.UserTypeAttributeMappings, 1)
+	s.Equal("Employee", idp.AttributeConfiguration.UserTypeResolution.Default)
+}
+
+// A transient read failure must not block creating a connection.
+func (s *IDPServiceTestSuite) TestApplySchemaAwareDefaults_SkipsWhenUserTypesCannotBeRead() {
+	service, mockET := s.newSeedingService()
+	mockET.On("GetEntityTypeList", mock.Anything, entitytype.TypeCategoryUser,
+		mock.Anything, mock.Anything, mock.Anything).
+		Return(nil, &tidcommon.InternalServerError)
+
+	idp := seedTestIDP(providers.IDPTypeGoogle, "openid,email,profile")
+	service.ApplySchemaAwareDefaults(context.Background(), idp)
+
+	s.Nil(idp.AttributeConfiguration)
+}
+
+// Seeding is best-effort and runs on paths that cannot handle a panic: a nil connection or a service
+// built without an entity-type dependency must leave the connection untouched rather than crash.
+func (s *IDPServiceTestSuite) TestApplySchemaAwareDefaults_ToleratesNilInputs() {
+	service, _ := s.newSeedingService()
+	service.ApplySchemaAwareDefaults(context.Background(), nil)
+
+	bare := &idpService{logger: log.GetLogger()}
+	idp := seedTestIDP(providers.IDPTypeGoogle, "openid,email,profile")
+	bare.ApplySchemaAwareDefaults(context.Background(), idp)
+	s.Nil(idp.AttributeConfiguration)
+}
+
+// An update replaces the whole connection, so a section the administrator removed is
+// indistinguishable from one that was never configured. Seeding on update would silently restore it,
+// making the removal appear to succeed and then revert.
+func (s *IDPServiceTestSuite) TestUpdateIdentityProvider_DoesNotReSeedRemovedDefaults() {
+	idpID := mutableIDPTestID
+	existing := &providers.IDPDTO{
+		ID:         idpID,
+		Name:       "Google",
+		Type:       providers.IDPTypeGoogle,
+		Properties: createOIDCProperties(),
+		AttributeConfiguration: &providers.AttributeConfiguration{
+			AccountLinking: &providers.AccountLinking{Attributes: []string{defaultAccountLinkingAttribute}},
+		},
+	}
+
+	// The name is unchanged, so the uniqueness lookup is not reached.
+	s.mockStore.On("GetIdentityProvider", mock.Anything, idpID).Return(existing, nil)
+	s.mockStore.On("UpdateIdentityProvider", mock.Anything, mock.MatchedBy(func(dto *providers.IDPDTO) bool {
+		return dto.AttributeConfiguration == nil
+	})).Return(nil)
+
+	// A schema that would seed both defaults if the update path applied them, so this test fails if
+	// seeding is ever reintroduced here rather than passing because there was nothing to seed.
+	// Permitted but not required: if the update path reads them, seeding would populate the section
+	// and the assertion below fails.
+	mockET := entitytypemock.NewEntityTypeServiceInterfaceMock(s.T())
+	mockET.On("GetEntityTypeList", mock.Anything, entitytype.TypeCategoryUser,
+		mock.Anything, mock.Anything, mock.Anything).
+		Return(&entitytype.EntityTypeListResponse{Types: []entitytype.EntityTypeListItem{
+			{Name: seedUserType, AllowSelfRegistration: true},
+		}}, nil).Maybe()
+	expectSchemaFor(mockET, seedUserType, []string{"email"}, []string{"username", "email"})
+	service := &idpService{
+		idpStore:           s.mockStore,
+		transactioner:      &mockTransactioner{},
+		dependencyRegistry: newNoBlockingDepsRegistry(),
+		entityTypeService:  mockET,
+		logger:             log.GetLogger().With(log.String(log.LoggerKeyComponentName, "IdPService")),
+		uuidGenerator:      utils.GenerateUUIDv7,
+	}
+
+	// The administrator saves the connection with the account-linking section removed.
+	cleared := &providers.IDPDTO{
+		Name:       "Google",
+		Type:       providers.IDPTypeGoogle,
+		Properties: createOIDCProperties(),
+	}
+
+	result, err := service.UpdateIdentityProvider(context.Background(), idpID, cleared)
+
+	s.Nil(err)
+	s.Require().NotNil(result)
+	s.Nil(result.AttributeConfiguration, "a removed section must stay removed after saving")
+}
+
+// authorizationRuleMappingIDP builds a minimal IDP carrying one authorization mapping value with a
+// single target, for the existence-check tests below.
+func authorizationRuleMappingIDP(target providers.AuthorizationTarget) *providers.IDPDTO {
+	return &providers.IDPDTO{
+		Name:       "Authz Mapping Test IDP",
+		Type:       providers.IDPTypeOIDC,
+		Properties: createOIDCProperties(),
+		AttributeConfiguration: &providers.AttributeConfiguration{
+			AuthorizationMapping: &providers.AuthorizationMapping{Rules: []providers.AuthorizationRuleMapping{
+				{
+					Claim: "groups",
+					Values: []providers.AuthorizationRule{
+						{
+							Operator: providers.AuthorizationOperatorEquals,
+							Value:    "platform-admins",
+							Targets:  []providers.AuthorizationTarget{target},
+						},
+					},
+				},
+			}},
+		},
+	}
+}
+
+// TestCreateIdentityProvider_AuthorizationRuleMapping_RoleNotFound rejects a mapping that names a role
+// that does not exist.
+func (s *IDPServiceTestSuite) TestCreateIdentityProvider_AuthorizationRuleMapping_RoleNotFound() {
+	s.mockRole.On("GetRoleWithPermissions", mock.Anything, "missing-role-id").
+		Return((*role.RoleWithPermissions)(nil), &role.ErrorRoleNotFound)
+
+	idp := authorizationRuleMappingIDP(providers.AuthorizationTarget{
+		Type: providers.AuthorizationTargetRole, ID: "missing-role-id",
+	})
+
+	result, err := s.idpService.CreateIdentityProvider(context.Background(), idp)
+
+	s.Nil(result)
+	s.Require().NotNil(err)
+	s.Equal(ErrorInvalidAttributeConfiguration.Code, err.Code)
+}
+
+// TestCreateIdentityProvider_AuthorizationRuleMapping_RoleServiceServerErrorPropagates ensures a genuine
+// server error from the role service is surfaced as-is, not folded into a client "not found" error.
+func (s *IDPServiceTestSuite) TestCreateIdentityProvider_AuthorizationRuleMapping_RoleServiceServerErrorPropagates() {
+	s.mockRole.On("GetRoleWithPermissions", mock.Anything, "role-id").
+		Return((*role.RoleWithPermissions)(nil), &tidcommon.InternalServerError)
+
+	idp := authorizationRuleMappingIDP(providers.AuthorizationTarget{
+		Type: providers.AuthorizationTargetRole, ID: "role-id",
+	})
+
+	result, err := s.idpService.CreateIdentityProvider(context.Background(), idp)
+
+	s.Nil(result)
+	s.Require().NotNil(err)
+	s.Equal(tidcommon.InternalServerError.Code, err.Code)
+}
+
+// TestCreateIdentityProvider_AuthorizationRuleMapping_GroupNotFound rejects a mapping that names a group
+// that does not exist.
+func (s *IDPServiceTestSuite) TestCreateIdentityProvider_AuthorizationRuleMapping_GroupNotFound() {
+	s.mockGroup.On("GetGroupsByIDs", mock.Anything, []string{"missing-group-id"}).
+		Return(map[string]*group.Group{}, nil)
+
+	idp := authorizationRuleMappingIDP(providers.AuthorizationTarget{
+		Type: providers.AuthorizationTargetGroup, ID: "missing-group-id",
+	})
+
+	result, err := s.idpService.CreateIdentityProvider(context.Background(), idp)
+
+	s.Nil(result)
+	s.Require().NotNil(err)
+	s.Equal(ErrorInvalidAttributeConfiguration.Code, err.Code)
+}
+
+// TestCreateIdentityProvider_AuthorizationRuleMapping_PermissionNotFound rejects a mapping that names a
+// permission that does not exist on the given resource server (which also covers a nonexistent
+// resource server, since ValidatePermissions reports every requested permission as invalid then).
+func (s *IDPServiceTestSuite) TestCreateIdentityProvider_AuthorizationRuleMapping_PermissionNotFound() {
+	s.mockResource.On("ValidatePermissions", mock.Anything, "rs-1", []string{"read"}).
+		Return([]string{"read"}, nil)
+
+	idp := authorizationRuleMappingIDP(providers.AuthorizationTarget{
+		Type: providers.AuthorizationTargetPermission, ResourceServerID: "rs-1", Permission: "read",
+	})
+
+	result, err := s.idpService.CreateIdentityProvider(context.Background(), idp)
+
+	s.Nil(result)
+	s.Require().NotNil(err)
+	s.Equal(ErrorInvalidAttributeConfiguration.Code, err.Code)
+}
+
+// TestCreateIdentityProvider_AuthorizationRuleMapping_ExistingTargetsAccepted accepts a mapping whose
+// role, group, and permission targets all exist.
+func (s *IDPServiceTestSuite) TestCreateIdentityProvider_AuthorizationRuleMapping_ExistingTargetsAccepted() {
+	s.mockStore.On("GetIdentityProviderByName", mock.Anything, mock.Anything).
+		Return((*providers.IDPDTO)(nil), ErrIDPNotFound)
+	s.mockStore.On("CreateIdentityProvider", mock.Anything, mock.Anything).Return(nil)
+
+	s.mockRole.On("GetRoleWithPermissions", mock.Anything, "role-id").
+		Return(&role.RoleWithPermissions{ID: "role-id"}, nil)
+	s.mockGroup.On("GetGroupsByIDs", mock.Anything, []string{"group-id"}).
+		Return(map[string]*group.Group{"group-id": {ID: "group-id"}}, nil)
+	s.mockResource.On("ValidatePermissions", mock.Anything, "rs-1", []string{"read"}).
+		Return([]string{}, nil)
+
+	idp := &providers.IDPDTO{
+		Name:       "Authz Mapping Test IDP",
+		Type:       providers.IDPTypeOIDC,
+		Properties: createOIDCProperties(),
+		AttributeConfiguration: &providers.AttributeConfiguration{
+			AuthorizationMapping: &providers.AuthorizationMapping{Rules: []providers.AuthorizationRuleMapping{
+				{
+					Claim: "groups",
+					Values: []providers.AuthorizationRule{
+						{
+							Operator: providers.AuthorizationOperatorEquals,
+							Value:    "platform-admins",
+							Targets: []providers.AuthorizationTarget{
+								{Type: providers.AuthorizationTargetRole, ID: "role-id"},
+								{Type: providers.AuthorizationTargetGroup, ID: "group-id"},
+							},
+						},
+						{
+							Operator: providers.AuthorizationOperatorEquals,
+							Value:    "platform-deleters",
+							Targets: []providers.AuthorizationTarget{
+								{
+									Type: providers.AuthorizationTargetPermission, ResourceServerID: "rs-1",
+									Permission: "read",
+								},
+							},
+						},
+					},
+				},
+			}},
+		},
+	}
+
+	result, err := s.idpService.CreateIdentityProvider(context.Background(), idp)
+
+	s.Nil(err)
+	s.Require().NotNil(result)
+}
+
+// ----- AuthorizationRuleMapping validation -----
+
+type AuthorizationRuleMappingTestSuite struct {
+	suite.Suite
+}
+
+func TestAuthorizationRuleMappingTestSuite(t *testing.T) {
+	suite.Run(t, new(AuthorizationRuleMappingTestSuite))
+}
+
+func roleTarget(id string) providers.AuthorizationTarget {
+	return providers.AuthorizationTarget{Type: providers.AuthorizationTargetRole, ID: id}
+}
+
+func groupTarget(id string) providers.AuthorizationTarget {
+	return providers.AuthorizationTarget{Type: providers.AuthorizationTargetGroup, ID: id}
+}
+
+// equalsRule builds an equals-operator rule.
+func equalsRule(value string, targets ...providers.AuthorizationTarget) providers.AuthorizationRule {
+	return providers.AuthorizationRule{Operator: providers.AuthorizationOperatorEquals, Value: value, Targets: targets}
+}
+
+func (suite *AuthorizationRuleMappingTestSuite) TestValidateAcceptsValidRoleAndGroupTargets() {
+	mappings := []providers.AuthorizationRuleMapping{
+		{
+			Claim: "groups",
+			Values: []providers.AuthorizationRule{
+				equalsRule("engineering", roleTarget("role-eng"), groupTarget("group-eng")),
+			},
+		},
+	}
+	suite.Nil(validateAuthorizationRuleMappings(mappings))
+}
+
+func (suite *AuthorizationRuleMappingTestSuite) TestValidateAcceptsValidPermissionTarget() {
+	mappings := []providers.AuthorizationRuleMapping{
+		{
+			Claim: "scope",
+			Values: []providers.AuthorizationRule{equalsRule("orders.write", providers.AuthorizationTarget{
+				Type:             providers.AuthorizationTargetPermission,
+				ResourceServerID: "rs-orders",
+				Permission:       "write",
+			})},
+		},
+	}
+	suite.Nil(validateAuthorizationRuleMappings(mappings))
+}
+
+func (suite *AuthorizationRuleMappingTestSuite) TestValidateAcceptsGreaterThanOnNumberType() {
+	mappings := []providers.AuthorizationRuleMapping{
+		{
+			Claim:     "level",
+			ValueType: providers.AuthorizationValueTypeNumber,
+			Values: []providers.AuthorizationRule{
+				{
+					Operator: providers.AuthorizationOperatorGreaterThan,
+					Value:    "5",
+					Targets:  []providers.AuthorizationTarget{roleTarget("role-1")},
+				},
+			},
+		},
+	}
+	suite.Nil(validateAuthorizationRuleMappings(mappings))
+}
+
+func (suite *AuthorizationRuleMappingTestSuite) TestValidateRejectsEmptyClaim() {
+	mappings := []providers.AuthorizationRuleMapping{
+		{Claim: "", Values: []providers.AuthorizationRule{equalsRule("x", roleTarget("role-1"))}},
+	}
+	suite.NotNil(validateAuthorizationRuleMappings(mappings))
+}
+
+func (suite *AuthorizationRuleMappingTestSuite) TestValidateRejectsNoValues() {
+	mappings := []providers.AuthorizationRuleMapping{
+		{Claim: "groups", Values: []providers.AuthorizationRule{}},
+	}
+	suite.NotNil(validateAuthorizationRuleMappings(mappings))
+}
+
+func (suite *AuthorizationRuleMappingTestSuite) TestValidateRejectsRoleTargetWithNoID() {
+	mappings := []providers.AuthorizationRuleMapping{
+		{
+			Claim: "groups",
+			Values: []providers.AuthorizationRule{
+				equalsRule("engineering", providers.AuthorizationTarget{Type: providers.AuthorizationTargetRole}),
+			},
+		},
+	}
+	suite.NotNil(validateAuthorizationRuleMappings(mappings))
+}
+
+func (suite *AuthorizationRuleMappingTestSuite) TestValidateRejectsIncompletePermissionTarget() {
+	mappings := []providers.AuthorizationRuleMapping{
+		{
+			Claim: "scope",
+			Values: []providers.AuthorizationRule{equalsRule("orders.write", providers.AuthorizationTarget{
+				Type: providers.AuthorizationTargetPermission, ResourceServerID: "rs-orders",
+			})},
+		},
+	}
+	suite.NotNil(validateAuthorizationRuleMappings(mappings))
+}
+
+func (suite *AuthorizationRuleMappingTestSuite) TestValidateRejectsUnknownTargetType() {
+	mappings := []providers.AuthorizationRuleMapping{
+		{
+			Claim: "groups",
+			Values: []providers.AuthorizationRule{
+				equalsRule("engineering", providers.AuthorizationTarget{Type: "not-a-real-type", ID: "x"}),
+			},
+		},
+	}
+	suite.NotNil(validateAuthorizationRuleMappings(mappings))
+}
+
+func (suite *AuthorizationRuleMappingTestSuite) TestValidateRejectsInvalidValueType() {
+	mappings := []providers.AuthorizationRuleMapping{
+		{
+			Claim:     "groups",
+			ValueType: "not-a-real-type",
+			Values:    []providers.AuthorizationRule{equalsRule("x", roleTarget("role-1"))},
+		},
+	}
+	suite.NotNil(validateAuthorizationRuleMappings(mappings))
+}
+
+func (suite *AuthorizationRuleMappingTestSuite) TestValidateRejectsInvalidOperator() {
+	mappings := []providers.AuthorizationRuleMapping{
+		{
+			Claim: "groups",
+			Values: []providers.AuthorizationRule{
+				{
+					Operator: "not-a-real-operator",
+					Value:    "x",
+					Targets:  []providers.AuthorizationTarget{roleTarget("role-1")},
+				},
+			},
+		},
+	}
+	suite.NotNil(validateAuthorizationRuleMappings(mappings))
+}
+
+func (suite *AuthorizationRuleMappingTestSuite) TestValidateRejectsOrderingOperatorOnStringType() {
+	mappings := []providers.AuthorizationRuleMapping{
+		{
+			Claim: "groups",
+			Values: []providers.AuthorizationRule{
+				{
+					Operator: providers.AuthorizationOperatorGreaterThan,
+					Value:    "5",
+					Targets:  []providers.AuthorizationTarget{roleTarget("role-1")},
+				},
+			},
+		},
+	}
+	suite.NotNil(validateAuthorizationRuleMappings(mappings))
+}
+
+func (suite *AuthorizationRuleMappingTestSuite) TestValidateRejectsNonNumericValueForNumberType() {
+	mappings := []providers.AuthorizationRuleMapping{
+		{
+			Claim:     "level",
+			ValueType: providers.AuthorizationValueTypeNumber,
+			Values:    []providers.AuthorizationRule{equalsRule("not-a-number", roleTarget("role-1"))},
+		},
+	}
+	suite.NotNil(validateAuthorizationRuleMappings(mappings))
+}
+
+func (suite *AuthorizationRuleMappingTestSuite) TestValidateRejectsNonBooleanValueForBooleanType() {
+	mappings := []providers.AuthorizationRuleMapping{
+		{
+			Claim:     "is_admin",
+			ValueType: providers.AuthorizationValueTypeBoolean,
+			Values:    []providers.AuthorizationRule{equalsRule("not-a-boolean", roleTarget("role-1"))},
+		},
+	}
+	suite.NotNil(validateAuthorizationRuleMappings(mappings))
+}
+
+// Validation must accept exactly what evaluation will use: whitespace around a number or boolean
+// value is never significant, so it is trimmed before the parseability check the same way it is
+// trimmed before comparison, rather than rejecting a value evaluation would have matched fine.
+func (suite *AuthorizationRuleMappingTestSuite) TestValidateAcceptsWhitespacePaddedNumberAndBoolean() {
+	mappings := []providers.AuthorizationRuleMapping{
+		{
+			Claim:     "level",
+			ValueType: providers.AuthorizationValueTypeNumber,
+			Values:    []providers.AuthorizationRule{equalsRule(" 5 ", roleTarget("role-1"))},
+		},
+		{
+			Claim:     "is_admin",
+			ValueType: providers.AuthorizationValueTypeBoolean,
+			Values:    []providers.AuthorizationRule{equalsRule(" true ", roleTarget("role-2"))},
+		},
+	}
+	suite.Nil(validateAuthorizationRuleMappings(mappings))
+}
+
+func (suite *AuthorizationRuleMappingTestSuite) TestValidateAcceptsIncludesOnArrayType() {
+	mappings := []providers.AuthorizationRuleMapping{
+		{
+			Claim:     "groups",
+			ValueType: providers.AuthorizationValueTypeArray,
+			Values: []providers.AuthorizationRule{
+				{
+					Operator: providers.AuthorizationOperatorIncludes,
+					Value:    "engineering",
+					Targets:  []providers.AuthorizationTarget{roleTarget("role-1")},
+				},
+			},
+		},
+	}
+	suite.Nil(validateAuthorizationRuleMappings(mappings))
+}
+
+func (suite *AuthorizationRuleMappingTestSuite) TestValidateAcceptsNotIncludesOnDelimitedString() {
+	mappings := []providers.AuthorizationRuleMapping{
+		{
+			Claim:     "scope",
+			ValueType: providers.AuthorizationValueTypeString,
+			Delimiter: " ",
+			Values: []providers.AuthorizationRule{
+				{
+					Operator: providers.AuthorizationOperatorNotIncludes,
+					Value:    "guest",
+					Targets:  []providers.AuthorizationTarget{roleTarget("role-1")},
+				},
+			},
+		},
+	}
+	suite.Nil(validateAuthorizationRuleMappings(mappings))
+}
+
+func (suite *AuthorizationRuleMappingTestSuite) TestValidateRejectsIncludesOnSingleValuedString() {
+	mappings := []providers.AuthorizationRuleMapping{
+		{
+			Claim: "department",
+			Values: []providers.AuthorizationRule{
+				{
+					Operator: providers.AuthorizationOperatorIncludes,
+					Value:    "platform",
+					Targets:  []providers.AuthorizationTarget{roleTarget("role-1")},
+				},
+			},
+		},
+	}
+	suite.NotNil(validateAuthorizationRuleMappings(mappings))
+}
+
+func (suite *AuthorizationRuleMappingTestSuite) TestValidateRejectsEqualsOnArrayType() {
+	mappings := []providers.AuthorizationRuleMapping{
+		{
+			Claim:     "groups",
+			ValueType: providers.AuthorizationValueTypeArray,
+			Values:    []providers.AuthorizationRule{equalsRule("engineering", roleTarget("role-1"))},
+		},
+	}
+	suite.NotNil(validateAuthorizationRuleMappings(mappings))
+}
+
+func (suite *AuthorizationRuleMappingTestSuite) TestValidateRejectsEqualsOnDelimitedString() {
+	mappings := []providers.AuthorizationRuleMapping{
+		{
+			Claim:     "scope",
+			ValueType: providers.AuthorizationValueTypeString,
+			Delimiter: " ",
+			Values:    []providers.AuthorizationRule{equalsRule("orders.write", roleTarget("role-1"))},
+		},
+	}
+	suite.NotNil(validateAuthorizationRuleMappings(mappings))
+}
+
+func (suite *AuthorizationRuleMappingTestSuite) TestValidateRejectsDelimiterOnNonStringType() {
+	numberWithDelimiter := []providers.AuthorizationRuleMapping{
+		{
+			Claim:     "levels",
+			ValueType: providers.AuthorizationValueTypeNumber,
+			Delimiter: ",",
+			Values:    []providers.AuthorizationRule{equalsRule("5", roleTarget("role-1"))},
+		},
+	}
+	suite.NotNil(validateAuthorizationRuleMappings(numberWithDelimiter), "delimiter is only meaningful for string")
+
+	arrayWithDelimiter := []providers.AuthorizationRuleMapping{
+		{
+			Claim:     "groups",
+			ValueType: providers.AuthorizationValueTypeArray,
+			Delimiter: ",",
+			Values: []providers.AuthorizationRule{
+				{
+					Operator: providers.AuthorizationOperatorIncludes,
+					Value:    "engineering",
+					Targets:  []providers.AuthorizationTarget{roleTarget("role-1")},
+				},
+			},
+		},
+	}
+	suite.NotNil(validateAuthorizationRuleMappings(arrayWithDelimiter),
+		"an array is already discrete, a delimiter is meaningless")
+}
+
+func (suite *AuthorizationRuleMappingTestSuite) TestValidateAcceptsDelimiterOnStringType() {
+	mappings := []providers.AuthorizationRuleMapping{
+		{
+			Claim:     "scope",
+			ValueType: providers.AuthorizationValueTypeString,
+			Delimiter: " ",
+			Values: []providers.AuthorizationRule{
+				{
+					Operator: providers.AuthorizationOperatorIncludes,
+					Value:    "orders.write",
+					Targets:  []providers.AuthorizationTarget{roleTarget("role-1")},
+				},
+			},
+		},
+	}
+	suite.Nil(validateAuthorizationRuleMappings(mappings))
+}
+
+func (suite *AuthorizationRuleMappingTestSuite) TestNoAuthorizationRuleMappingsConfiguredIsValid() {
+	suite.Nil(validateAuthorizationRuleMappings(nil))
+}
+
+// ----- AuthorizationDirectMapping validation -----
+
+// TestCreateIdentityProvider_AuthorizationDirectMapping_ClaimRequired rejects a direct mapping
+// with no claim.
+func (s *IDPServiceTestSuite) TestCreateIdentityProvider_AuthorizationDirectMapping_ClaimRequired() {
+	idp := directMappingIDP(providers.AuthorizationDirectMapping{
+		TargetType: providers.AuthorizationTargetRole,
+	})
+
+	result, err := s.idpService.CreateIdentityProvider(context.Background(), idp)
+
+	s.Nil(result)
+	s.Require().NotNil(err)
+	s.Equal(ErrorInvalidAttributeConfiguration.Code, err.Code)
+}
+
+// TestCreateIdentityProvider_AuthorizationDirectMapping_InvalidTargetType rejects an unsupported target
+// type.
+func (s *IDPServiceTestSuite) TestCreateIdentityProvider_AuthorizationDirectMapping_InvalidTargetType() {
+	idp := directMappingIDP(providers.AuthorizationDirectMapping{
+		Claim: "groups", TargetType: "not-a-real-type",
+	})
+
+	result, err := s.idpService.CreateIdentityProvider(context.Background(), idp)
+
+	s.Nil(result)
+	s.Require().NotNil(err)
+	s.Equal(ErrorInvalidAttributeConfiguration.Code, err.Code)
+}
+
+// TestCreateIdentityProvider_AuthorizationDirectMapping_PermissionRequiresResourceServer rejects a
+// permission target with no resource server.
+func (s *IDPServiceTestSuite) TestCreateIdentityProvider_AuthorizationDirectMapping_PermissionRequiresResourceServer() {
+	idp := directMappingIDP(providers.AuthorizationDirectMapping{
+		Claim: "scope", TargetType: providers.AuthorizationTargetPermission,
+	})
+
+	result, err := s.idpService.CreateIdentityProvider(context.Background(), idp)
+
+	s.Nil(result)
+	s.Require().NotNil(err)
+	s.Equal(ErrorInvalidAttributeConfiguration.Code, err.Code)
+}
+
+// TestCreateIdentityProvider_AuthorizationDirectMapping_RoleRejectsResourceServer rejects a role target
+// that also names a resource server, which is only meaningful for permission.
+func (s *IDPServiceTestSuite) TestCreateIdentityProvider_AuthorizationDirectMapping_RoleRejectsResourceServer() {
+	idp := directMappingIDP(providers.AuthorizationDirectMapping{
+		Claim: "groups", TargetType: providers.AuthorizationTargetRole, ResourceServerID: "rs-1",
+	})
+
+	result, err := s.idpService.CreateIdentityProvider(context.Background(), idp)
+
+	s.Nil(result)
+	s.Require().NotNil(err)
+	s.Equal(ErrorInvalidAttributeConfiguration.Code, err.Code)
+}
+
+// TestCreateIdentityProvider_AuthorizationDirectMapping_ResourceServerNotFound rejects a permission
+// target naming a resource server that does not exist.
+func (s *IDPServiceTestSuite) TestCreateIdentityProvider_AuthorizationDirectMapping_ResourceServerNotFound() {
+	s.mockResource.On("GetResourceServer", mock.Anything, "missing-rs").
+		Return((*providers.ResourceServer)(nil), &tidcommon.ServiceError{Type: tidcommon.ClientErrorType})
+
+	idp := directMappingIDP(providers.AuthorizationDirectMapping{
+		Claim: "scope", TargetType: providers.AuthorizationTargetPermission, ResourceServerID: "missing-rs",
+	})
+
+	result, err := s.idpService.CreateIdentityProvider(context.Background(), idp)
+
+	s.Nil(result)
+	s.Require().NotNil(err)
+	s.Equal(ErrorInvalidAttributeConfiguration.Code, err.Code)
+}
+
+// TestCreateIdentityProvider_AuthorizationDirectMapping_ResourceServerErrorPropagates ensures a
+// genuine server error from the resource service is surfaced as-is.
+func (s *IDPServiceTestSuite) TestCreateIdentityProvider_AuthorizationDirectMapping_ResourceServerErrorPropagates() {
+	s.mockResource.On("GetResourceServer", mock.Anything, "rs-1").
+		Return((*providers.ResourceServer)(nil), &tidcommon.InternalServerError)
+
+	idp := directMappingIDP(providers.AuthorizationDirectMapping{
+		Claim: "scope", TargetType: providers.AuthorizationTargetPermission, ResourceServerID: "rs-1",
+	})
+
+	result, err := s.idpService.CreateIdentityProvider(context.Background(), idp)
+
+	s.Nil(result)
+	s.Require().NotNil(err)
+	s.Equal(tidcommon.InternalServerError.Code, err.Code)
+}
+
+// TestCreateIdentityProvider_AuthorizationDirectMapping_ValidMappingsAccepted accepts role, group, and
+// permission direct mappings.
+func (s *IDPServiceTestSuite) TestCreateIdentityProvider_AuthorizationDirectMapping_ValidMappingsAccepted() {
+	s.mockStore.On("GetIdentityProviderByName", mock.Anything, mock.Anything).
+		Return((*providers.IDPDTO)(nil), ErrIDPNotFound)
+	s.mockStore.On("CreateIdentityProvider", mock.Anything, mock.Anything).Return(nil)
+	s.mockResource.On("GetResourceServer", mock.Anything, "rs-1").
+		Return(&providers.ResourceServer{ID: "rs-1"}, nil)
+
+	idp := &providers.IDPDTO{
+		Name:       "Direct Mapping Test IDP",
+		Type:       providers.IDPTypeOIDC,
+		Properties: createOIDCProperties(),
+		AttributeConfiguration: &providers.AttributeConfiguration{
+			AuthorizationMapping: &providers.AuthorizationMapping{Direct: []providers.AuthorizationDirectMapping{
+				{Claim: "groups", TargetType: providers.AuthorizationTargetGroup},
+				{Claim: "roles", TargetType: providers.AuthorizationTargetRole},
+				{Claim: "scope", TargetType: providers.AuthorizationTargetPermission, ResourceServerID: "rs-1"},
+			}},
+		},
+	}
+
+	result, err := s.idpService.CreateIdentityProvider(context.Background(), idp)
+
+	s.Nil(err)
+	s.Require().NotNil(result)
+}
+
+// directMappingIDP builds a minimal IDP carrying one direct mapping, for the validation
+// tests above.
+func directMappingIDP(mapping providers.AuthorizationDirectMapping) *providers.IDPDTO {
+	return &providers.IDPDTO{
+		Name:       "Direct Mapping Test IDP",
+		Type:       providers.IDPTypeOIDC,
+		Properties: createOIDCProperties(),
+		AttributeConfiguration: &providers.AttributeConfiguration{
+			AuthorizationMapping: &providers.AuthorizationMapping{
+				Direct: []providers.AuthorizationDirectMapping{mapping},
+			},
+		},
+	}
+}
+
+// ----- GetDirectAuthorizationTargets resolution -----
+
+func (s *IDPServiceTestSuite) TestGetDirectAuthorizationTargets_NilIDPReturnsNil() {
+	targets, err := s.idpService.GetDirectAuthorizationTargets(
+		context.Background(), nil, map[string]interface{}{"groups": "engineering"})
+	s.Nil(err)
+	s.Nil(targets)
+}
+
+func (s *IDPServiceTestSuite) TestGetDirectAuthorizationTargets_NoAttributeConfigurationReturnsNil() {
+	targets, err := s.idpService.GetDirectAuthorizationTargets(
+		context.Background(), &providers.IDPDTO{}, map[string]interface{}{"groups": "engineering"})
+	s.Nil(err)
+	s.Nil(targets)
+}
+
+func (s *IDPServiceTestSuite) TestGetDirectAuthorizationTargets_MissingClaimConfersNothing() {
+	idp := &providers.IDPDTO{
+		AttributeConfiguration: &providers.AttributeConfiguration{
+			AuthorizationMapping: &providers.AuthorizationMapping{Direct: []providers.AuthorizationDirectMapping{
+				{Claim: "groups", TargetType: providers.AuthorizationTargetGroup},
+			}},
+		},
+	}
+	targets, err := s.idpService.GetDirectAuthorizationTargets(
+		context.Background(), idp, map[string]interface{}{})
+	s.Nil(err)
+	s.Empty(targets)
+}
+
+// TestGetDirectAuthorizationTargets_RoleSingleMatchGrants resolves a claim value that names
+// exactly one role to that role's ID.
+func (s *IDPServiceTestSuite) TestGetDirectAuthorizationTargets_RoleSingleMatchGrants() {
+	s.mockRole.On("GetRolesByNames", mock.Anything, []string{"platform-admins"}).
+		Return(map[string][]*role.Role{"platform-admins": {{ID: "role-1", Name: "platform-admins"}}}, nil)
+
+	idp := &providers.IDPDTO{
+		AttributeConfiguration: &providers.AttributeConfiguration{
+			AuthorizationMapping: &providers.AuthorizationMapping{Direct: []providers.AuthorizationDirectMapping{
+				{Claim: "role", TargetType: providers.AuthorizationTargetRole},
+			}},
+		},
+	}
+	targets, err := s.idpService.GetDirectAuthorizationTargets(
+		context.Background(), idp, map[string]interface{}{"role": "platform-admins"})
+
+	s.Nil(err)
+	s.Equal([]providers.AuthorizationTarget{{Type: providers.AuthorizationTargetRole, ID: "role-1"}}, targets)
+}
+
+// TestGetDirectAuthorizationTargets_RoleNoMatchSkipped confers nothing when no role has that name.
+func (s *IDPServiceTestSuite) TestGetDirectAuthorizationTargets_RoleNoMatchSkipped() {
+	s.mockRole.On("GetRolesByNames", mock.Anything, []string{"ghost-role"}).
+		Return(map[string][]*role.Role{}, nil)
+
+	idp := &providers.IDPDTO{
+		AttributeConfiguration: &providers.AttributeConfiguration{
+			AuthorizationMapping: &providers.AuthorizationMapping{Direct: []providers.AuthorizationDirectMapping{
+				{Claim: "role", TargetType: providers.AuthorizationTargetRole},
+			}},
+		},
+	}
+	targets, err := s.idpService.GetDirectAuthorizationTargets(
+		context.Background(), idp, map[string]interface{}{"role": "ghost-role"})
+
+	s.Nil(err)
+	s.Empty(targets)
+}
+
+// TestGetDirectAuthorizationTargets_RoleAmbiguousMatchSkipped confers nothing when a name
+// matches more than one role across organization units, rather than picking one arbitrarily.
+func (s *IDPServiceTestSuite) TestGetDirectAuthorizationTargets_RoleAmbiguousMatchSkipped() {
+	s.mockRole.On("GetRolesByNames", mock.Anything, []string{"admins"}).
+		Return(map[string][]*role.Role{"admins": {
+			{ID: "role-1", Name: "admins", OUID: "ou-1"},
+			{ID: "role-2", Name: "admins", OUID: "ou-2"},
+		}}, nil)
+
+	idp := &providers.IDPDTO{
+		AttributeConfiguration: &providers.AttributeConfiguration{
+			AuthorizationMapping: &providers.AuthorizationMapping{Direct: []providers.AuthorizationDirectMapping{
+				{Claim: "role", TargetType: providers.AuthorizationTargetRole},
+			}},
+		},
+	}
+	targets, err := s.idpService.GetDirectAuthorizationTargets(
+		context.Background(), idp, map[string]interface{}{"role": "admins"})
+
+	s.Nil(err)
+	s.Empty(targets)
+}
+
+// TestGetDirectAuthorizationTargets_GroupSingleMatchGrants mirrors the role case for groups.
+func (s *IDPServiceTestSuite) TestGetDirectAuthorizationTargets_GroupSingleMatchGrants() {
+	s.mockGroup.On("GetGroupsByNames", mock.Anything, []string{"engineering"}).
+		Return(map[string][]*group.Group{"engineering": {{ID: "group-1", Name: "engineering"}}}, nil)
+
+	idp := &providers.IDPDTO{
+		AttributeConfiguration: &providers.AttributeConfiguration{
+			AuthorizationMapping: &providers.AuthorizationMapping{Direct: []providers.AuthorizationDirectMapping{
+				{Claim: "team", TargetType: providers.AuthorizationTargetGroup},
+			}},
+		},
+	}
+	targets, err := s.idpService.GetDirectAuthorizationTargets(
+		context.Background(), idp, map[string]interface{}{"team": "engineering"})
+
+	s.Nil(err)
+	s.Equal([]providers.AuthorizationTarget{{Type: providers.AuthorizationTargetGroup, ID: "group-1"}}, targets)
+}
+
+// TestGetDirectAuthorizationTargets_PermissionValidatedTokensGranted grants only the claim
+// values that ValidatePermissions confirms exist on the configured resource server.
+func (s *IDPServiceTestSuite) TestGetDirectAuthorizationTargets_PermissionValidatedTokensGranted() {
+	s.mockResource.On("ValidatePermissions", mock.Anything, "rs-1", []string{"orders:read", "orders:write"}).
+		Return([]string{"orders:write"}, nil)
+
+	idp := &providers.IDPDTO{
+		AttributeConfiguration: &providers.AttributeConfiguration{
+			AuthorizationMapping: &providers.AuthorizationMapping{Direct: []providers.AuthorizationDirectMapping{
+				{
+					Claim: "scope", Delimiter: " ",
+					TargetType: providers.AuthorizationTargetPermission, ResourceServerID: "rs-1",
+				},
+			}},
+		},
+	}
+	targets, err := s.idpService.GetDirectAuthorizationTargets(
+		context.Background(), idp, map[string]interface{}{"scope": "orders:read orders:write"})
+
+	s.Nil(err)
+	s.Equal([]providers.AuthorizationTarget{
+		{Type: providers.AuthorizationTargetPermission, ResourceServerID: "rs-1", Permission: "orders:read"},
+	}, targets)
+}
+
+// TestGetDirectAuthorizationTargets_RoleServiceErrorPropagates surfaces a role service error
+// rather than silently skipping.
+func (s *IDPServiceTestSuite) TestGetDirectAuthorizationTargets_RoleServiceErrorPropagates() {
+	s.mockRole.On("GetRolesByNames", mock.Anything, []string{"admins"}).
+		Return((map[string][]*role.Role)(nil), &tidcommon.InternalServerError)
+
+	idp := &providers.IDPDTO{
+		AttributeConfiguration: &providers.AttributeConfiguration{
+			AuthorizationMapping: &providers.AuthorizationMapping{Direct: []providers.AuthorizationDirectMapping{
+				{Claim: "role", TargetType: providers.AuthorizationTargetRole},
+			}},
+		},
+	}
+	targets, err := s.idpService.GetDirectAuthorizationTargets(
+		context.Background(), idp, map[string]interface{}{"role": "admins"})
+
+	s.Nil(targets)
+	s.Require().NotNil(err)
+	s.Equal(tidcommon.InternalServerError.Code, err.Code)
 }

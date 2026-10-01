@@ -1,20 +1,5 @@
-/**
- * Copyright (c) 2025, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied. See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2025 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 import {fireEvent, render, screen, within} from '@testing-library/react';
 import {useState} from 'react';
@@ -32,7 +17,6 @@ function Harness({initialConfig = undefined}: {initialConfig?: AttributeConfigur
 // The package's test setup renders real translations, so assert on the resolved English strings.
 const RESOLUTION_TITLE = 'User type resolution';
 const MAPPINGS_TITLE = 'Attribute Mappings';
-const LINKING_TITLE = 'Account Linking';
 const EXTERNAL_ATTRIBUTE = 'External Attribute';
 const EXTERNAL_VALUE = 'External Value';
 const LOCAL_ATTRIBUTE = 'Local Attribute';
@@ -58,7 +42,7 @@ describe('AttributeMappingSection', () => {
     userTypes = [{id: 'u1', name: 'Person'}];
   });
 
-  it('renders the three sections when more than one user type exists', () => {
+  it('renders both sections when more than one user type exists', () => {
     userTypes = [
       {id: 'u1', name: 'Person'},
       {id: 'u2', name: 'Employee'},
@@ -67,14 +51,12 @@ describe('AttributeMappingSection', () => {
     expect(screen.getByTestId('attribute-mapping-section')).toBeInTheDocument();
     expect(screen.getByLabelText(RESOLUTION_TITLE)).toBeInTheDocument();
     expect(screen.getByLabelText(MAPPINGS_TITLE)).toBeInTheDocument();
-    expect(screen.getByLabelText(LINKING_TITLE)).toBeInTheDocument();
   });
 
   it('hides the whole user type resolution section when only one user type exists', () => {
     render(<AttributeMappingSection onChange={onChange} />);
     expect(screen.queryByLabelText(RESOLUTION_TITLE)).not.toBeInTheDocument();
     expect(screen.getByLabelText(MAPPINGS_TITLE)).toBeInTheDocument();
-    expect(screen.getByLabelText(LINKING_TITLE)).toBeInTheDocument();
   });
 
   it('hides the per-group user type dropdown when only one user type exists', () => {
@@ -101,7 +83,6 @@ describe('AttributeMappingSection', () => {
       userTypeAttributeMappings: [
         {userType: 'Person', attributes: [{externalAttribute: 'given_name', localAttribute: 'firstName'}]},
       ],
-      accountLinking: {attributes: ['email']},
     };
     render(<AttributeMappingSection initialConfig={initial} onChange={onChange} />);
     expect(onChange).toHaveBeenLastCalledWith(initial, true);
@@ -227,24 +208,6 @@ describe('AttributeMappingSection', () => {
     expect(container.querySelector('.MuiSwitch-input')).toBeNull();
   });
 
-  it('renders a starter attribute input for account linking without needing to add one first', () => {
-    render(<AttributeMappingSection onChange={onChange} />);
-    const linking = within(screen.getByLabelText(LINKING_TITLE));
-    expect(linking.getAllByLabelText(EXTERNAL_ATTRIBUTE)).toHaveLength(1);
-  });
-
-  it('adds account-linking attributes', () => {
-    render(<AttributeMappingSection onChange={onChange} />);
-    fireEvent.click(screen.getByTestId('attribute-mapping-link-add'));
-    const linking = within(screen.getByLabelText(LINKING_TITLE));
-    const linkInputs = linking.getAllByLabelText(EXTERNAL_ATTRIBUTE);
-    fireEvent.change(linkInputs[linkInputs.length - 1], {target: {value: 'email'}});
-    expect(onChange).toHaveBeenLastCalledWith(
-      {accountLinking: {attributes: ['email']}, userTypeResolution: {default: 'Person'}},
-      true,
-    );
-  });
-
   it('hides delete for the default empty attribute-mapping row until it has content', () => {
     render(<AttributeMappingSection onChange={onChange} />);
     const mappings = within(screen.getByLabelText(MAPPINGS_TITLE));
@@ -275,24 +238,6 @@ describe('AttributeMappingSection', () => {
 
     fireEvent.change(mappings.getByLabelText(LOCAL_ATTRIBUTE), {target: {value: 'firstName'}});
     expect(addButton).not.toBeDisabled();
-  });
-
-  it('hides delete for the default empty account-linking row until it has content', () => {
-    render(<AttributeMappingSection onChange={onChange} />);
-    const linking = within(screen.getByLabelText(LINKING_TITLE));
-    expect(linking.queryByRole('button', {name: /remove account linking attribute/i})).not.toBeInTheDocument();
-
-    fireEvent.change(linking.getByLabelText(EXTERNAL_ATTRIBUTE), {target: {value: 'email'}});
-    expect(linking.getByRole('button', {name: /remove account linking attribute/i})).toBeInTheDocument();
-  });
-
-  it('shows delete for every account-linking row once an extra blank row is added', () => {
-    render(<AttributeMappingSection onChange={onChange} />);
-    const linking = within(screen.getByLabelText(LINKING_TITLE));
-    // "Add attribute" is disabled while the last row is empty, so fill the first row before adding.
-    fireEvent.change(linking.getByLabelText(EXTERNAL_ATTRIBUTE), {target: {value: 'email'}});
-    fireEvent.click(screen.getByTestId('attribute-mapping-link-add'));
-    expect(linking.getAllByRole('button', {name: /remove account linking attribute/i})).toHaveLength(2);
   });
 
   it('hides delete for an empty value-mapping row until it has content', () => {

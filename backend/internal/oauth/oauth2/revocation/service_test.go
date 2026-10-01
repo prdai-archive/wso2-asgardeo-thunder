@@ -1,20 +1,5 @@
-/*
- * Copyright (c) 2026, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2026 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 package revocation
 
@@ -92,7 +77,7 @@ func (s *RevocationServiceTestSuite) TestRevokeToken_RevokesTokenFamily() {
 	s.jwtServiceMock.On("VerifyJWTSignature", mock.Anything, token).Return(nil)
 	s.storeMock.On("InsertRevokedToken", mock.Anything, mock.Anything).Return(nil)
 	s.storeMock.On("insertCriterion", mock.Anything, mock.MatchedBy(func(c revocationCriterion) bool {
-		return c.Type == criterionTypeTokenFamily && c.Value == "tfid-77" &&
+		return c.Type == CriterionTypeTokenFamily && c.Value == "tfid-77" &&
 			c.Reason == RevocationReasonExplicitTokenFamily
 	})).Return(nil)
 	s.obsMock.On("IsEnabled").Return(false)
@@ -239,7 +224,7 @@ func TestRevokeTokenFamily_WritesTokenFamilyCriterion(t *testing.T) {
 	err := revoker.RevokeTokenFamily(context.Background(), "tfid-abc", RevocationReasonSessionLogout)
 
 	assert.NoError(t, err)
-	assert.Equal(t, criterionTypeTokenFamily, captured.Type)
+	assert.Equal(t, CriterionTypeTokenFamily, captured.Type)
 	assert.Equal(t, "tfid-abc", captured.Value)
 	assert.Equal(t, RevocationReasonSessionLogout, captured.Reason)
 	assert.WithinDuration(t, captured.RevokedAt.Add(time.Hour), captured.ExpiryTime, time.Second)
@@ -253,6 +238,27 @@ func TestRevokeTokenFamily_EmptyIDIsNoOp(t *testing.T) {
 	err := revoker.RevokeTokenFamily(context.Background(), "", RevocationReasonSessionLogout)
 	assert.NoError(t, err)
 	store.AssertNotCalled(t, "insertCriterion", mock.Anything, mock.Anything)
+}
+
+func TestRevokeByCriteria_UsesCutoffAsRevokedAt(t *testing.T) {
+	store := newRevocationStoreInterfaceMock(t)
+	cutoff := time.Now().UTC().Add(-time.Minute).Truncate(time.Second)
+	store.On("insertCriterion", mock.Anything, mock.MatchedBy(func(criterion revocationCriterion) bool {
+		return criterion.Type == CriterionTypeApplicationID &&
+			criterion.Value == "app-123" &&
+			criterion.Reason == RevocationReasonApplicationSecretRegenerated &&
+			criterion.RevokedAt.Equal(cutoff)
+	})).Return(nil)
+
+	revoker := newRevocationService(nil, store, time.Hour, false, nil)
+	err := revoker.RevokeByCriteria(context.Background(), CriteriaRevocation{
+		Criterion: Criterion{Type: CriterionTypeApplicationID, Value: "app-123"},
+		Mode:      RevocationModeBeforeAction,
+		Cutoff:    cutoff,
+		Reason:    RevocationReasonApplicationSecretRegenerated,
+	})
+
+	assert.NoError(t, err)
 }
 
 func TestRevokeTokenFamily_PropagatesStoreError(t *testing.T) {
@@ -278,4 +284,63 @@ func TestRevokeTokenFamily_NonPositiveTTLFallsBack(t *testing.T) {
 	err := revoker.RevokeTokenFamily(context.Background(), "tfid-abc", RevocationReasonCodeReplay)
 	assert.NoError(t, err)
 	assert.WithinDuration(t, captured.RevokedAt.Add(defaultTokenFamilyRevocationTTL), captured.ExpiryTime, time.Second)
+}
+
+func (s *RevocationServiceTestSuite) TestRevokeByCriteria_RequestedTTLExtendsTheRow() {
+	store := newRevocationStoreInterfaceMock(s.T())
+	requested := 30 * 24 * time.Hour
+	before := time.Now().UTC()
+	store.On("insertCriterion", mock.Anything, mock.MatchedBy(func(criterion revocationCriterion) bool {
+		return criterion.ExpiryTime.After(before.Add(requested-time.Minute)) &&
+			criterion.ExpiryTime.Before(before.Add(requested+time.Minute))
+	})).Return(nil)
+
+	revoker := newRevocationService(nil, store, time.Hour, false, nil)
+	err := revoker.RevokeByCriteria(context.Background(), CriteriaRevocation{
+		Criterion: Criterion{Type: CriterionTypeApplicationKey, Value: "client-long-lived"},
+		Mode:      RevocationModeAll,
+		Reason:    RevocationReasonApplicationDeleted,
+		TTL:       requested,
+	})
+
+	s.Require().NoError(err)
+}
+
+func (s *RevocationServiceTestSuite) TestRevokeByCriteria_ShorterRequestedTTLKeepsTheConfiguredLifetime() {
+	store := newRevocationStoreInterfaceMock(s.T())
+	configured := 24 * time.Hour
+	before := time.Now().UTC()
+	store.On("insertCriterion", mock.Anything, mock.MatchedBy(func(criterion revocationCriterion) bool {
+		return criterion.ExpiryTime.After(before.Add(configured - time.Minute))
+	})).Return(nil)
+
+	revoker := newRevocationService(nil, store, configured, false, nil)
+	err := revoker.RevokeByCriteria(context.Background(), CriteriaRevocation{
+		Criterion: Criterion{Type: CriterionTypeApplicationKey, Value: "client-short-lived"},
+		Mode:      RevocationModeAll,
+		Reason:    RevocationReasonApplicationDeleted,
+		TTL:       time.Minute,
+	})
+
+	s.Require().NoError(err)
+}
+
+func (s *RevocationServiceTestSuite) TestRevokeByCriteria_ZeroTTLUsesTheConfiguredLifetime() {
+	store := newRevocationStoreInterfaceMock(s.T())
+	configured := 2 * time.Hour
+	before := time.Now().UTC()
+	store.On("insertCriterion", mock.Anything, mock.MatchedBy(func(criterion revocationCriterion) bool {
+		return criterion.ExpiryTime.After(before.Add(configured-time.Minute)) &&
+			criterion.ExpiryTime.Before(before.Add(configured+time.Minute))
+	})).Return(nil)
+
+	revoker := newRevocationService(nil, store, configured, false, nil)
+	err := revoker.RevokeByCriteria(context.Background(), CriteriaRevocation{
+		Criterion: Criterion{Type: CriterionTypeSubject, Value: "user-1"},
+		Mode:      RevocationModeAll,
+		Reason:    RevocationReasonUserDeleted,
+		TTL:       0,
+	})
+
+	s.Require().NoError(err)
 }

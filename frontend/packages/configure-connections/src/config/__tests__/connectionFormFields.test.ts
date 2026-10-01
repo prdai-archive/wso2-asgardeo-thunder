@@ -1,20 +1,5 @@
-/**
- * Copyright (c) 2026, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied. See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2026 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 import {describe, expect, it} from 'vitest';
 import {ConnectionTypes} from '../../models/connection';
@@ -54,7 +39,6 @@ describe('fieldsForMode', () => {
       'issuer',
       'userInfoEndpoint',
       'jwksEndpoint',
-      'logoutEndpoint',
       'redirectUri',
       'scopes',
       'prompt',
@@ -63,7 +47,7 @@ describe('fieldsForMode', () => {
     ]);
   });
 
-  it('shows only the required fields for OAuth 2.0 on create, all fields on edit', () => {
+  it('shows only the required fields for OAuth 2 on create, all fields on edit', () => {
     expect(fieldNames(ConnectionTypes.OAUTH, 'create')).toEqual([
       'name',
       'clientId',
@@ -79,7 +63,6 @@ describe('fieldsForMode', () => {
       'authorizationEndpoint',
       'tokenEndpoint',
       'userInfoEndpoint',
-      'logoutEndpoint',
       'redirectUri',
       'scopes',
       'prompt',
@@ -89,5 +72,39 @@ describe('fieldsForMode', () => {
   it('does not hide any SMS vendor fields on create', () => {
     expect(fieldNames(ConnectionTypes.TWILIO, 'create')).toEqual(fieldNames(ConnectionTypes.TWILIO, 'edit'));
     expect(fieldNames(ConnectionTypes.VONAGE, 'create')).toEqual(fieldNames(ConnectionTypes.VONAGE, 'edit'));
+    expect(fieldNames(ConnectionTypes.SMS_GATEWAY, 'create')).toEqual([
+      'name',
+      'url',
+      'httpMethod',
+      'contentType',
+      'httpHeaders',
+    ]);
+    expect(fieldNames(ConnectionTypes.SMS_GATEWAY, 'create')).toEqual(fieldNames(ConnectionTypes.SMS_GATEWAY, 'edit'));
+  });
+
+  it('offers the SMS gateway method and content type as selects with the API-accepted values', () => {
+    const fields = fieldsForMode(ConnectionTypes.SMS_GATEWAY, 'create');
+    const httpMethod = fields.find((field) => field.name === 'httpMethod');
+    const contentType = fields.find((field) => field.name === 'contentType');
+
+    expect(httpMethod).toMatchObject({kind: 'select', defaultValue: 'POST'});
+    expect(httpMethod?.options?.map((option) => option.value)).toEqual(['POST', 'GET']);
+    expect(contentType).toMatchObject({kind: 'select', defaultValue: 'JSON'});
+    expect(contentType?.options?.map((option) => option.value)).toEqual(['JSON', 'FORM']);
+  });
+
+  it('marks only name and the gateway URL required, matching the API contract', () => {
+    const required: string[] = fieldsForMode(ConnectionTypes.SMS_GATEWAY, 'create')
+      .filter((field) => field.required)
+      .map((field) => field.name);
+
+    expect(required).toEqual(['name', 'url']);
+  });
+
+  it('edits SMS gateway headers as key-value rows rather than one packed string', () => {
+    const headers = fieldsForMode(ConnectionTypes.SMS_GATEWAY, 'create').find((field) => field.name === 'httpHeaders');
+
+    expect(headers).toMatchObject({kind: 'key-value', addLabelKey: 'connections:form.fields.httpHeaders.add'});
+    expect(headers?.required).toBeUndefined();
   });
 });

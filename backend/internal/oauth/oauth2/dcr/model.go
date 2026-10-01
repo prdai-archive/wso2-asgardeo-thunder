@@ -1,20 +1,5 @@
-/*
- * Copyright (c) 2025, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2025 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 package dcr
 
@@ -55,6 +40,7 @@ type DCRRegistrationRequest struct {
 	UserInfoSignedResponseAlg          string `json:"userinfo_signed_response_alg,omitempty"`
 	UserInfoEncryptedResponseAlg       string `json:"userinfo_encrypted_response_alg,omitempty"`
 	UserInfoEncryptedResponseEnc       string `json:"userinfo_encrypted_response_enc,omitempty"`
+	IDTokenSignedResponseAlg           string `json:"id_token_signed_response_alg,omitempty"`
 	IDTokenEncryptedResponseAlg        string `json:"id_token_encrypted_response_alg,omitempty"`
 	IDTokenEncryptedResponseEnc        string `json:"id_token_encrypted_response_enc,omitempty"`
 	// Localized variant maps — populated from #-keyed JSON fields (e.g. "client_name#fr").
@@ -153,6 +139,7 @@ type DCRRegistrationResponse struct {
 	UserInfoSignedResponseAlg          string `json:"userinfo_signed_response_alg,omitempty"`
 	UserInfoEncryptedResponseAlg       string `json:"userinfo_encrypted_response_alg,omitempty"`
 	UserInfoEncryptedResponseEnc       string `json:"userinfo_encrypted_response_enc,omitempty"`
+	IDTokenSignedResponseAlg           string `json:"id_token_signed_response_alg,omitempty"`
 	IDTokenEncryptedResponseAlg        string `json:"id_token_encrypted_response_alg,omitempty"`
 	IDTokenEncryptedResponseEnc        string `json:"id_token_encrypted_response_enc,omitempty"`
 	// Localized variant maps — injected as #-keyed top-level fields during serialization.

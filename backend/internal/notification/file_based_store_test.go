@@ -1,20 +1,5 @@
-/*
- * Copyright (c) 2025, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2025 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 package notification
 
@@ -89,7 +74,7 @@ func (suite *FileBasedStoreTestSuite) createTestSender(id, name string) *common.
 		Name:        name,
 		Description: "Test notification sender",
 		Type:        common.NotificationSenderTypeMessage,
-		Provider:    common.MessageProviderTypeTwilio,
+		Provider:    common.NotificationProviderTypeTwilio,
 		Properties:  properties,
 	}
 }
@@ -110,13 +95,13 @@ func (suite *FileBasedStoreTestSuite) TestCreateSender_Success() {
 	suite.NotNil(actualSender)
 	suite.Equal("sender-001", actualSender.ID)
 	suite.Equal("Twilio Test Sender", actualSender.Name)
-	suite.Equal(common.MessageProviderTypeTwilio, actualSender.Provider)
+	suite.Equal(common.NotificationProviderTypeTwilio, actualSender.Provider)
 }
 
 func (suite *FileBasedStoreTestSuite) TestGetSenderByID_Success() {
 	// Arrange
 	sender := suite.createTestSender("sender-002", "Vonage Test Sender")
-	sender.Provider = common.MessageProviderTypeVonage
+	sender.Provider = common.NotificationProviderTypeVonage
 	_ = suite.store.createSender(context.Background(), *sender)
 
 	// Act
@@ -127,7 +112,7 @@ func (suite *FileBasedStoreTestSuite) TestGetSenderByID_Success() {
 	suite.NotNil(retrieved)
 	suite.Equal("sender-002", retrieved.ID)
 	suite.Equal("Vonage Test Sender", retrieved.Name)
-	suite.Equal(common.MessageProviderTypeVonage, retrieved.Provider)
+	suite.Equal(common.NotificationProviderTypeVonage, retrieved.Provider)
 }
 
 func (suite *FileBasedStoreTestSuite) TestGetSenderByID_NotFound() {
@@ -142,7 +127,7 @@ func (suite *FileBasedStoreTestSuite) TestGetSenderByID_NotFound() {
 func (suite *FileBasedStoreTestSuite) TestGetSenderByName_Success() {
 	// Arrange
 	sender := suite.createTestSender("sender-003", "Custom SMS Sender")
-	sender.Provider = common.MessageProviderTypeCustom
+	sender.Provider = common.NotificationProviderTypeCustom
 	_ = suite.store.createSender(context.Background(), *sender)
 
 	// Act
@@ -153,7 +138,7 @@ func (suite *FileBasedStoreTestSuite) TestGetSenderByName_Success() {
 	suite.NotNil(retrieved)
 	suite.Equal("sender-003", retrieved.ID)
 	suite.Equal("Custom SMS Sender", retrieved.Name)
-	suite.Equal(common.MessageProviderTypeCustom, retrieved.Provider)
+	suite.Equal(common.NotificationProviderTypeCustom, retrieved.Provider)
 }
 
 func (suite *FileBasedStoreTestSuite) TestGetSenderByName_NotFound() {
@@ -268,7 +253,7 @@ func (suite *FileBasedStoreTestSuite) TestCreateMultipleSenders_WithProperties()
 		Name:        "Vonage Production",
 		Description: "Vonage notification sender",
 		Type:        common.NotificationSenderTypeMessage,
-		Provider:    common.MessageProviderTypeVonage,
+		Provider:    common.NotificationProviderTypeVonage,
 		Properties:  vonageProps,
 	}
 

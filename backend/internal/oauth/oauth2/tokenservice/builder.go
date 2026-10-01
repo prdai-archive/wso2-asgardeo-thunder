@@ -1,26 +1,13 @@
-/*
- * Copyright (c) 2025, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2025 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 package tokenservice
 
 import (
 	"context"
 	"fmt"
+	"slices"
+	"time"
 
 	oauthconfig "github.com/thunder-id/thunderid/internal/oauth/config"
 	"github.com/thunder-id/thunderid/internal/oauth/oauth2/constants"
@@ -47,6 +34,9 @@ type tokenBuilder struct {
 	jwtService   jwt.JWTServiceInterface
 	jweService   jwe.JWEServiceInterface
 	jwksResolver *jwksresolver.Resolver
+	// actorProvider resolves the token subject's entity so its category can be recorded on the token
+	// DTO. Optional: a nil provider leaves the category empty rather than failing issuance.
+	actorProvider providers.ActorProvider
 }
 
 // newTokenBuilder creates a new TokenBuilder instance.
@@ -55,12 +45,14 @@ func newTokenBuilder(
 	jwtService jwt.JWTServiceInterface,
 	jweService jwe.JWEServiceInterface,
 	resolver *jwksresolver.Resolver,
+	actorProvider providers.ActorProvider,
 ) TokenBuilderInterface {
 	return &tokenBuilder{
-		cfg:          cfg,
-		jwtService:   jwtService,
-		jweService:   jweService,
-		jwksResolver: resolver,
+		cfg:           cfg,
+		jwtService:    jwtService,
+		jweService:    jweService,
+		jwksResolver:  resolver,
+		actorProvider: actorProvider,
 	}
 }
 
@@ -98,6 +90,11 @@ func (tb *tokenBuilder) BuildAccessToken(
 		ClaimsLocales:    tokenCtx.ClaimsLocales,
 		TokenFamilyID:    tokenCtx.TokenFamilyID,
 	}
+	if tokenCtx.ActorClaims != nil {
+		tokenDTO.Delegated = true
+		tokenDTO.ActorSub = tb.resolveActorIdentity(tokenCtx, tokenCtx.ActorClaims.Sub)
+	}
+	tokenDTO.SubjectID, tokenDTO.SubjectCategory = tb.resolveSubjectIdentity(tokenCtx)
 
 	token, iat, err := tb.jwtService.GenerateJWT(
 		ctx,
@@ -117,6 +114,82 @@ func (tb *tokenBuilder) BuildAccessToken(
 	tokenDTO.IssuedAt = iat
 
 	return tokenDTO, nil
+}
+
+// resolveSubjectIdentity returns the resource ID and entity category of the token's subject, for
+// observability rather than for any token claim. Both are empty when the subject cannot be resolved
+// to an entity, so consumers omit the fields rather than being told something the server does not
+// know: an agent can be a token subject as much as a token requester, and guessing "user" would
+// misreport agent-for-agent delegation.
+//
+// Every grant reaches this function, so none can omit the fields by forgetting to set them, but a
+// grant whose upstream layer already knows the answer supplies it and skips the lookup entirely.
+func (tb *tokenBuilder) resolveSubjectIdentity(tokenCtx *AccessTokenBuildContext) (id, category string) {
+	// authorization_code: carried on the flow assertion, which resolved the entity during login.
+	if tokenCtx.SubjectEntityID != "" {
+		if tokenCtx.SubjectCategory != "" {
+			return tokenCtx.SubjectEntityID, tokenCtx.SubjectCategory
+		}
+		return tokenCtx.SubjectEntityID, tb.lookupCategory(tokenCtx.SubjectEntityID)
+	}
+
+	if tokenCtx.Subject == "" {
+		return "", ""
+	}
+
+	// client_credentials: the subject is the authenticated client, already loaded.
+	if tokenCtx.OAuthApp != nil && tokenCtx.Subject == tokenCtx.OAuthApp.ID {
+		return tokenCtx.OAuthApp.ID, string(tokenCtx.OAuthApp.EntityCategory)
+	}
+
+	// Exchange grants: the subject arrives on a presented token, whose sub is a resource ID on most
+	// deployments but the mapped subject attribute where the issuing application configures one.
+	// Resolving it decides which: a mapped attribute matches no entity, so an unresolvable subject is
+	// reported as no subject rather than published as-is. This is what keeps a mapped attribute, which
+	// may be an email address, off the events.
+	category = tb.lookupCategory(tokenCtx.Subject)
+	if category == "" {
+		return "", ""
+	}
+	return tokenCtx.Subject, category
+}
+
+// resolveActorIdentity returns the resource ID of the principal acting for the subject, for
+// observability rather than for any token claim, and an empty string when the actor's sub does not
+// name an entity this server knows. It applies the rule resolveSubjectIdentity applies to the
+// subject: an act.sub arriving on a presented actor_token is that token's own subject, which the
+// issuing application may have mapped to an attribute such as an email address, and reporting no
+// actor is preferable to publishing one that identifies a person. Delegation itself stays visible
+// regardless, because the token DTO records it separately from the actor's identifier.
+func (tb *tokenBuilder) resolveActorIdentity(tokenCtx *AccessTokenBuildContext, actorSub string) string {
+	if actorSub == "" {
+		return ""
+	}
+
+	// Grants that name the authenticated client as the actor (authorization_code, CIBA, refresh, and
+	// token exchange without an actor_token) already hold a resource ID, so no lookup is needed.
+	if tokenCtx.OAuthApp != nil && actorSub == tokenCtx.OAuthApp.ID {
+		return actorSub
+	}
+
+	if tb.lookupCategory(actorSub) == "" {
+		return ""
+	}
+	return actorSub
+}
+
+// lookupCategory returns the entity category of the given resource ID, or an empty string when the
+// provider is absent or the ID resolves to no entity. Reads are served by the cache-backed entity
+// store, so this is normally an in-memory hit.
+func (tb *tokenBuilder) lookupCategory(entityID string) string {
+	if tb.actorProvider == nil {
+		return ""
+	}
+	entity, svcErr := tb.actorProvider.GetActor(entityID)
+	if svcErr != nil || entity == nil {
+		return ""
+	}
+	return string(entity.Category)
 }
 
 // BuildIDJAG builds an Identity Assertion Authorization Grant (ID-JAG) JWT targeted at an external
@@ -194,14 +267,28 @@ func (tb *tokenBuilder) buildAccessTokenClaims(
 		claims["grant_type"] = ctx.GrantType
 	}
 
-	// Merge the subject's attributes (already resolved and filtered by the grant handler).
+	// Merge the subject's attributes (already resolved and filtered by the grant handler), skipping
+	// claims the builder writes itself so a configured attribute cannot supply one it is trusted for.
+	ownedClaims := builderOwnedClaimNames()
 	for key, value := range ctx.SubjectAttributes {
+		if ownedClaims[key] {
+			continue
+		}
 		claims[key] = value
 	}
 
 	// Set after merging subject attributes to prevent them from overwriting this system claim.
 	if ctx.AttributeCacheID != "" {
 		claims["aci"] = ctx.AttributeCacheID
+	}
+
+	// set sub_type claim to the token if conditions are met.
+	// This is used to distinguish between an agent and an M2M application.
+	if ctx.GrantType == string(providers.GrantTypeClientCredentials) &&
+		slices.Contains(clientConfigAttributeNames(ctx.OAuthApp), constants.ClaimSubType) {
+		if subType := clientSubjectType(ctx.OAuthApp); subType != "" {
+			claims[constants.ClaimSubType] = subType
+		}
 	}
 
 	// Set after merging user attributes so a federated principal's attributes cannot spoof the source
@@ -249,6 +336,23 @@ func (tb *tokenBuilder) buildAccessTokenClaims(
 	return claims, nil
 }
 
+// clientSubjectType maps an OAuth client's entity category to its sub_type claim value. Returns ""
+// for a category that is not a client identity class, so the claim is omitted rather than guessed.
+func clientSubjectType(oauthApp *providers.OAuthClient) string {
+	if oauthApp == nil {
+		return ""
+	}
+
+	switch oauthApp.EntityCategory {
+	case providers.EntityCategoryAgent:
+		return constants.SubTypeAgent
+	case providers.EntityCategoryApp:
+		return constants.SubTypeApp
+	default:
+		return ""
+	}
+}
+
 // buildActorClaim builds the actor claim for token exchange.
 func (tb *tokenBuilder) buildActorClaim(actorClaims *SubjectTokenClaims) map[string]interface{} {
 	actClaim := map[string]interface{}{
@@ -277,13 +381,23 @@ func (tb *tokenBuilder) BuildRefreshToken(
 
 	tokenConfig := ResolveTokenConfig(tb.cfg, tokenCtx.OAuthApp, TokenTypeRefresh, 0)
 
+	// A rotated token inherits the expiry of the token it replaces, so refreshing extends access
+	// but never the grant's lifetime. First issuance carries no expiry and starts a fresh period.
+	validityPeriod := tokenConfig.ValidityPeriod
+	if tokenCtx.ExpiresAt > 0 {
+		validityPeriod = tokenCtx.ExpiresAt - time.Now().Unix()
+		if validityPeriod <= 0 {
+			return nil, fmt.Errorf("refresh token grant has reached its expiry")
+		}
+	}
+
 	claims, claimsErr := tb.buildRefreshTokenClaims(tokenCtx)
 	if claimsErr != nil {
 		return nil, fmt.Errorf("failed to build refresh token claims: %w", claimsErr)
 	}
 
 	tokenDTO := &oauth2model.TokenDTO{
-		ExpiresIn:     tokenConfig.ValidityPeriod,
+		ExpiresIn:     validityPeriod,
 		Scopes:        tokenCtx.Scopes,
 		ClientID:      tokenCtx.ClientID,
 		Subject:       tokenCtx.AccessTokenSubject,
@@ -297,9 +411,9 @@ func (tb *tokenBuilder) BuildRefreshToken(
 		ctx,
 		tokenCtx.ClientID,
 		tokenConfig.Issuer,
-		tokenConfig.ValidityPeriod,
+		validityPeriod,
 		claims,
-		jwt.TokenTypeJWT,
+		jwt.TokenTypeRefreshToken,
 		"",
 	)
 	if err != nil {
@@ -357,6 +471,10 @@ func (tb *tokenBuilder) buildRefreshTokenClaims(ctx *RefreshTokenBuildContext) (
 		claims[constants.ClaimTokenFamilyID] = ctx.TokenFamilyID
 	}
 
+	if ctx.SessionID != "" {
+		claims[constants.ClaimSessionID] = ctx.SessionID
+	}
+
 	return claims, nil
 }
 
@@ -390,7 +508,7 @@ func (tb *tokenBuilder) BuildIDToken(
 		tokenConfig.ValidityPeriod,
 		jwtClaims,
 		jwt.TokenTypeJWT,
-		"",
+		tokenConfig.SigningAlg,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate ID token: %v", err.Error)
@@ -415,8 +533,8 @@ func (tb *tokenBuilder) BuildIDToken(
 			}
 			// cty="JWT" indicates a nested JWT (signed JWS payload encrypted as JWE per OIDC spec)
 			encrypted, svcErr := tb.jweService.Encrypt(ctx,
-				[]byte(token), rpKey,
-				jwe.KeyEncAlgorithm(idTokenCfg.EncryptionAlg),
+				[]byte(token), &providers.KeyRef{PublicKeyJWK: rpKey},
+				idTokenCfg.EncryptionAlg,
 				jwe.ContentEncAlgorithm(idTokenCfg.EncryptionEnc),
 				"JWT", rpKID,
 			)
@@ -439,7 +557,7 @@ func (tb *tokenBuilder) buildIDTokenClaims(ctx *IDTokenBuildContext) map[string]
 	claims := make(map[string]interface{})
 
 	if ctx.AuthTime > 0 {
-		claims["auth_time"] = ctx.AuthTime
+		claims[constants.ClaimAuthTime] = ctx.AuthTime
 	}
 
 	if ctx.Nonce != "" {
@@ -447,7 +565,11 @@ func (tb *tokenBuilder) buildIDTokenClaims(ctx *IDTokenBuildContext) map[string]
 	}
 
 	if ctx.CompletedACR != "" {
-		claims["acr"] = ctx.CompletedACR
+		claims[constants.ClaimACR] = ctx.CompletedACR
+	}
+
+	if ctx.SessionID != "" {
+		claims[constants.ClaimSessionID] = ctx.SessionID
 	}
 
 	userAttributes := ctx.UserAttributes
@@ -478,7 +600,13 @@ func (tb *tokenBuilder) buildIDTokenClaims(ctx *IDTokenBuildContext) map[string]
 		allowedUserAttributes,
 	)
 
+	// Merge the attribute claims, skipping the ones the builder writes itself so a configured
+	// attribute can neither replace them nor supply one that was not set.
+	ownedClaims := builderOwnedIDTokenClaimNames()
 	for key, value := range claimData {
+		if ownedClaims[key] {
+			continue
+		}
 		claims[key] = value
 	}
 

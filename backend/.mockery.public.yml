@@ -1,20 +1,5 @@
-# ------------------------------------------------------------------------------
-# Copyright (c) 2025, WSO2 LLC. (https://www.wso2.com).
-#
-# WSO2 LLC. licenses this file to you under the Apache License,
-# Version 2.0 (the "License"); you may not use this file except
-# in compliance with the License.
-# You may obtain a copy of the License at
-#
-# http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing,
-# software distributed under the License is distributed on an
-# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
-# KIND, either express or implied. See the License for the
-# specific language governing permissions and limitations
-# under the License.
-# ------------------------------------------------------------------------------
+# Copyright 2025 The ThunderID Authors
+# SPDX-License-Identifier: Apache-2.0
 
 # Mockery configuration file for generating public mocks
 template: testify
@@ -419,13 +404,16 @@ packages:
       pkgname: flowmgtmock
       filename: "{{.InterfaceName}}_mock.go"
   
+  # Only the registry is mocked outside this package. The rest of the executor interfaces are internal
+  # seams, and one of them names an unexported type, which a mock in another package cannot reference.
   github.com/thunder-id/thunderid/internal/flow/executor:
     config:
-      all: true
       dir: tests/mocks/flow/executormock
       structname: '{{.InterfaceName}}Mock'
       pkgname: executormock
       filename: "{{.InterfaceName}}_mock.go"
+    interfaces:
+      ExecutorRegistryInterface:
 
   github.com/thunder-id/thunderid/internal/flow/interceptor:
     config:
@@ -584,6 +572,18 @@ packages:
           structname: '{{.InterfaceName}}Mock'
           pkgname: actorprovidermock
           filename: "{{.InterfaceName}}_mock.go"
+      AgentMgtProvider:
+        config:
+          dir: tests/mocks/agentmgtprovidermock
+          structname: '{{.InterfaceName}}Mock'
+          pkgname: agentmgtprovidermock
+          filename: "{{.InterfaceName}}_mock.go"
+      UserMgtProvider:
+        config:
+          dir: tests/mocks/usermgtprovidermock
+          structname: '{{.InterfaceName}}Mock'
+          pkgname: usermgtprovidermock
+          filename: "{{.InterfaceName}}_mock.go"
       FlowProvider:
         config:
           dir: tests/mocks/flow/flowexecmock
@@ -664,13 +664,14 @@ packages:
           filename: "{{.InterfaceName}}_mock.go"
 
   github.com/thunder-id/thunderid/internal/system/sysauthz:
+    config:
+      dir: tests/mocks/sysauthzmock
+      structname: '{{.InterfaceName}}Mock'
+      pkgname: sysauthzmock
+      filename: "{{.InterfaceName}}_mock.go"
     interfaces:
       SystemAuthorizationServiceInterface:
-        config:
-          dir: tests/mocks/sysauthzmock
-          structname: '{{.InterfaceName}}Mock'
-          pkgname: sysauthzmock
-          filename: "{{.InterfaceName}}_mock.go"
+      OUHierarchyResolver:
 
   github.com/thunder-id/thunderid/internal/consent:
     interfaces:

@@ -1,20 +1,5 @@
-/*
- * Copyright (c) 2025, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2025 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 package ou
 
@@ -45,6 +30,20 @@ var ouTextColumns = map[string]bool{
 	"DESCRIPTION": true,
 }
 
+// likePrefix turns a filter operand into a LIKE pattern matching anything that starts with it.
+//
+// The operand is escaped first: % and _ are wildcards to LIKE, so a name containing either would
+// otherwise match more than the caller asked for. The backslash escape is declared by the ESCAPE
+// clause on the comparison, and has to be escaped first or it would escape the escapes.
+func likePrefix(value interface{}) interface{} {
+	text, ok := value.(string)
+	if !ok {
+		return value
+	}
+	replacer := strings.NewReplacer(`\`, `\\`, "%", `\%`, "_", `\_`)
+	return replacer.Replace(text) + "%"
+}
+
 // buildOUFilterGroup generates a SQL WHERE fragment for a FilterGroup and returns the bound args.
 // startParamIdx is the positional parameter index for the first filter value.
 // Returns an empty string and no args when g is nil.
@@ -64,6 +63,7 @@ func buildOUFilterGroup(g *tidcommon.FilterGroup, startParamIdx int) (cond strin
 		}
 
 		var clauseCond string
+		arg := clause.Expr.Value
 		switch clause.Expr.Operator {
 		case tidcommon.OperatorEq:
 			if ouTextColumns[col] {
@@ -75,6 +75,9 @@ func buildOUFilterGroup(g *tidcommon.FilterGroup, startParamIdx int) (cond strin
 			clauseCond = fmt.Sprintf("%s > $%d", col, idx)
 		case tidcommon.OperatorLt:
 			clauseCond = fmt.Sprintf("%s < $%d", col, idx)
+		case tidcommon.OperatorSw:
+			clauseCond = fmt.Sprintf("LOWER(%s) LIKE LOWER($%d) ESCAPE '\\'", col, idx)
+			arg = likePrefix(clause.Expr.Value)
 		default:
 			return "", nil, fmt.Errorf("unsupported operator %q", clause.Expr.Operator)
 		}
@@ -85,7 +88,7 @@ func buildOUFilterGroup(g *tidcommon.FilterGroup, startParamIdx int) (cond strin
 			sb.WriteString(" ")
 		}
 		sb.WriteString(clauseCond)
-		args = append(args, clause.Expr.Value)
+		args = append(args, arg)
 		idx++
 	}
 

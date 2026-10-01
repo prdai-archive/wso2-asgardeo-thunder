@@ -1,24 +1,12 @@
-/*
- * Copyright (c) 2026, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2026 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 package connection
 
-import "github.com/thunder-id/thunderid/pkg/thunderidengine/providers"
+import (
+	"github.com/thunder-id/thunderid/internal/connection/authzenpdp"
+	"github.com/thunder-id/thunderid/pkg/thunderidengine/providers"
+)
 
 // connectionExportModel is the unified declarative/export representation of a connection,
 // matching the /connections API's typed, vendor-scoped shape (as opposed to the legacy
@@ -43,13 +31,20 @@ type connectionExportModel struct {
 	TokenEndpoint         string   `yaml:"tokenEndpoint,omitempty"         json:"tokenEndpoint,omitempty"`
 	UserInfoEndpoint      string   `yaml:"userInfoEndpoint,omitempty"      json:"userInfoEndpoint,omitempty"`
 	JwksEndpoint          string   `yaml:"jwksEndpoint,omitempty"          json:"jwksEndpoint,omitempty"`
-	LogoutEndpoint        string   `yaml:"logoutEndpoint,omitempty"        json:"logoutEndpoint,omitempty"`
 	Issuer                string   `yaml:"issuer,omitempty"                json:"issuer,omitempty"`
 	TokenExchangeEnabled  *bool    `yaml:"tokenExchangeEnabled,omitempty"  json:"tokenExchangeEnabled,omitempty"`
 	TrustedTokenAudience  string   `yaml:"trustedTokenAudience,omitempty"  json:"trustedTokenAudience,omitempty"`
 
-	//nolint:lll // long struct tag: both yaml and json keys needed for declarative load/export and import
+	//nolint:lll
 	AttributeConfiguration *providers.AttributeConfiguration `yaml:"attributeConfiguration,omitempty" json:"attributeConfiguration,omitempty"`
+
+	// AuthZEN PDP connection fields.
+	AuthZENPDPEndpoint      string `yaml:"endpoint,omitempty"                 json:"endpoint,omitempty"`
+	AuthZENPDPBatchEndpoint string `yaml:"batchEndpoint,omitempty"            json:"batchEndpoint,omitempty"`
+	AuthZENPDPTimeoutMS     int    `yaml:"timeoutMs,omitempty"                json:"timeoutMs,omitempty"`
+	AuthZENPDPRetryCount    *int   `yaml:"retryCount,omitempty"               json:"retryCount,omitempty"`
+	//nolint:lll
+	SubjectAttributeMappings []authzenpdp.SubjectAttributeMapping `yaml:"subjectAttributeMappings,omitempty" json:"subjectAttributeMappings,omitempty"`
 
 	// SMS-backed vendor fields (twilio, vonage, sms-gateway).
 	AccountSID  string `yaml:"accountSid,omitempty"  json:"accountSid,omitempty"`

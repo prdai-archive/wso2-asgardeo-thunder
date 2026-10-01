@@ -1,0 +1,64 @@
+{
+  "id": "express",
+  "type": "fullstack",
+  "displayName": "Express",
+  "description": "Server-side Node.js application built with Express",
+  "quickstarts": [
+    {
+      "label": "Express",
+      "docsUrl": "{{applications.templates.express.docs}}"
+    }
+  ],
+  "playgrounds": [
+    {
+      "label": "Express",
+      "environment": "stackblitz",
+      "url": "{{applications.templates.express.playground}}"
+    }
+  ],
+  "creationFlow": {
+    "steps": ["ORGANIZATION_UNIT", "DETAILS", "SECURITY", "DESIGN", "CONFIGURE", "COMPLETE"],
+    "previewSteps": ["DETAILS", "SECURITY", "DESIGN"]
+  },
+  "defaults": {
+    "name": "Express Application",
+    "inboundAuthConfig": [
+      {
+        "type": "oauth2",
+        "config": {
+          "grantTypes": ["authorization_code", "refresh_token"],
+          "responseTypes": ["code"],
+          "redirectUris": ["http://localhost:3000/login"],
+          "pkceRequired": false,
+          "tokenEndpointAuthMethod": "client_secret_basic",
+          "publicClient": false
+        }
+      }
+    ],
+    "allowedUserTypes": []
+  },
+  "fieldConstraints": {
+    "oauth2": {
+      "publicClient": {
+        "readOnly": true,
+        "value": false
+      },
+      "tokenEndpointAuthMethod": {
+        "readOnly": true,
+        "value": "client_secret_basic"
+      }
+    }
+  },
+  "integrationGuides": {
+    "REDIRECT_BASED": {
+      "llm_prompt": {
+        "docsUrl": "{{applications.templates.express.llmPrompt.redirectBased}}"
+      }
+    },
+    "EMBEDDED": {
+      "llm_prompt": {
+        "docsUrl": "{{applications.templates.express.llmPrompt.embedded}}"
+      }
+    }
+  }
+}

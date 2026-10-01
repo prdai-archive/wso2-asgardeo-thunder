@@ -1,20 +1,5 @@
-/*
- * Copyright (c) 2025, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2025 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 package resource
 
@@ -218,6 +203,38 @@ func (suite *HandlerTestSuite) TestHandleResourceServerPutRequest_Success() {
 	}, nil)
 
 	body, _ := json.Marshal(reqBody)
+	req := httptest.NewRequest("PUT", "/resource-servers/rs-123", bytes.NewReader(body))
+	req.SetPathValue("id", "rs-123")
+	w := httptest.NewRecorder()
+
+	suite.handler.HandleResourceServerPutRequest(w, req)
+
+	suite.Equal(http.StatusOK, w.Code)
+}
+
+func (suite *HandlerTestSuite) TestHandleResourceServerPutRequestAuthZENPDP() {
+	reqBody := UpdateResourceServerRequest{
+		Name: "authzen-pdp",
+		OUID: "ou-123",
+		AuthorizationEngine: providers.AuthorizationEngineConfig{
+			Type: providers.AuthorizationEngineTypeAuthZENPDP,
+			Properties: providers.AuthorizationEngineProperties{
+				PDPConnectionID: "pdp-123",
+			},
+		},
+	}
+	suite.mockService.On(
+		"UpdateResourceServer",
+		mock.Anything,
+		"rs-123",
+		mock.MatchedBy(func(rs providers.ResourceServer) bool {
+			return rs.AuthorizationEngine.Type == providers.AuthorizationEngineTypeAuthZENPDP &&
+				rs.AuthorizationEngine.Properties.PDPConnectionID == "pdp-123"
+		}),
+	).Return(&providers.ResourceServer{ID: "rs-123", Name: reqBody.Name}, nil)
+
+	body, err := json.Marshal(reqBody)
+	suite.Require().NoError(err)
 	req := httptest.NewRequest("PUT", "/resource-servers/rs-123", bytes.NewReader(body))
 	req.SetPathValue("id", "rs-123")
 	w := httptest.NewRecorder()

@@ -1,20 +1,5 @@
-/*
- * Copyright (c) 2025, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2025 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 package ou
 
@@ -34,6 +19,9 @@ import (
 	dbmodel "github.com/thunder-id/thunderid/internal/system/database/model"
 	"github.com/thunder-id/thunderid/internal/system/database/provider"
 	"github.com/thunder-id/thunderid/tests/mocks/database/providermock"
+
+	"github.com/thunder-id/thunderid/internal/system/config"
+	engineconfig "github.com/thunder-id/thunderid/pkg/thunderidengine/config"
 )
 
 const testDeploymentID = "test-deployment-id"
@@ -50,11 +38,11 @@ func TestOrganizationUnitStoreTestSuite(t *testing.T) {
 }
 
 func (suite *OrganizationUnitStoreTestSuite) SetupTest() {
+	loadRuntimeForScope()
 	suite.providerMock = providermock.NewDBProviderInterfaceMock(suite.T())
 	suite.dbClientMock = providermock.NewDBClientInterfaceMock(suite.T())
 	suite.store = &organizationUnitStore{
-		dbProvider:   suite.providerMock,
-		deploymentID: testDeploymentID,
+		dbProvider: suite.providerMock,
 	}
 }
 
@@ -2250,6 +2238,22 @@ func TestBuildOUFilterGroup(t *testing.T) {
 			wantError: `unsupported operator "co"`,
 		},
 		{
+			name:     "starts with builds an escaped prefix LIKE",
+			g:        sg("name", tidcommon.OperatorSw, "Eng"),
+			startIdx: 2,
+			wantCond: ` AND LOWER(NAME) LIKE LOWER($2) ESCAPE '\'`,
+			wantArgs: []interface{}{"Eng%"},
+		},
+		{
+			// % and _ are LIKE wildcards, so an operand carrying either must be escaped or it
+			// would match more than the caller asked for.
+			name:     "starts with escapes wildcards in the operand",
+			g:        sg("name", tidcommon.OperatorSw, "100%_x"),
+			startIdx: 2,
+			wantCond: ` AND LOWER(NAME) LIKE LOWER($2) ESCAPE '\'`,
+			wantArgs: []interface{}{`100\%\_x%`},
+		},
+		{
 			name:     "nil group returns empty cond and nil args",
 			g:        nil,
 			startIdx: 2,
@@ -2444,5 +2448,15 @@ func TestBuildChildrenOUListQuery(t *testing.T) {
 
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "unsupported operator")
+	})
+}
+
+// loadRuntimeForScope loads a server runtime naming the deployment these tests assert on. The store
+// resolves its deployment from the runtime rather than holding one, and other suites in this package
+// reset the runtime, so it is loaded per test rather than once for the package.
+func loadRuntimeForScope() {
+	config.ResetServerRuntime()
+	_ = config.InitializeServerRuntime("", &config.Config{
+		Server: engineconfig.ServerConfig{Identifier: testDeploymentID},
 	})
 }

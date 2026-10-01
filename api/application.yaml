@@ -852,8 +852,14 @@ components:
           type: array
           items:
             type: string
-          description: Array of allowed user types for this application.
+          description: User types allowed to sign up through this application.
           example: ["employee", "customer", "partner"]
+        allowedAgentTypes:
+          type: array
+          items:
+            type: string
+          description: Agent types allowed to sign in to this application. An agent can authenticate only when its agent type is listed here; when the list is empty no agent can sign in.
+          example: ["default"]
         passkeyAllowedOrigins:
           type: array
           items:
@@ -998,8 +1004,14 @@ components:
           type: array
           items:
             type: string
-          description: Array of allowed user types for this application.
+          description: User types allowed to sign up through this application.
           example: ["employee", "customer", "partner"]
+        allowedAgentTypes:
+          type: array
+          items:
+            type: string
+          description: Agent types allowed to sign in to this application. An agent can authenticate only when its agent type is listed here; when the list is empty no agent can sign in.
+          example: ["default"]
         passkeyAllowedOrigins:
           type: array
           items:
@@ -1125,8 +1137,14 @@ components:
           type: array
           items:
             type: string
-          description: Array of allowed user types for this application.
+          description: User types allowed to sign up through this application.
           example: ["employee", "customer", "partner"]
+        allowedAgentTypes:
+          type: array
+          items:
+            type: string
+          description: Agent types allowed to sign in to this application. An agent can authenticate only when its agent type is listed here; when the list is empty no agent can sign in.
+          example: ["default"]
         passkeyAllowedOrigins:
           type: array
           items:
@@ -1315,6 +1333,14 @@ components:
             NESTED_JWT returns a sign-then-encrypt JWT — requires encryptionAlg, encryptionEnc, and a client certificate.
           enum: ["JWT", "JWE", "NESTED_JWT"]
           example: "JWE"
+        signingAlg:
+          type: string
+          description: |
+            JWS algorithm used to sign the ID token.
+            Must be one of the algorithms advertised in id_token_signing_alg_values_supported by the
+            server metadata endpoint, which are derived from the deployment's configured signing keys.
+            Omit to sign with the deployment's signing key.
+          example: "ES256"
         encryptionAlg:
           type: string
           description: JWE key-management algorithm for encrypted ID token responses (e.g. RSA-OAEP-256). Required when responseType is JWE or NESTED_JWT.
@@ -1435,15 +1461,22 @@ components:
       type: object
       description: >
         Platform attestation configuration used to verify the binary identity of a mobile client
-        when it initiates a flow directly over HTTP. Configure exactly one platform.
-      oneOf:
-        - required: [android]
-        - required: [apple]
+        when it initiates a flow directly over HTTP. Configure at most one platform; devMode is
+        independent of the platform fields and may be set with neither configured.
+      not:
+        required: [android, apple]
       properties:
         android:
           $ref: '#/components/schemas/AndroidAttestation'
         apple:
           $ref: '#/components/schemas/AppleAttestation'
+        devMode:
+          type: boolean
+          default: false
+          description: >
+            When true, skips the platform-attestation check for a mobile application during direct
+            flow initiation. Disabled by default; enable only for testing or trying out
+            sample/development mobile clients.
 
     AndroidAttestation:
       type: object
@@ -1569,8 +1602,9 @@ components:
         includeActClaim:
           type: boolean
           description: >-
-            When true, access tokens issued through this client's authorization_code flow include
-            an implicit on-behalf-of `act` claim identifying the application.
+            When true, access tokens this client obtains for a user through the authorization_code
+            or CIBA grant include an implicit on-behalf-of `act` claim identifying the application.
+            Agent clients always include the claim, regardless of this setting.
           example: false
           default: false
         scopes:
@@ -1682,8 +1716,9 @@ components:
         includeActClaim:
           type: boolean
           description: >-
-            When true, access tokens issued through this client's authorization_code flow include
-            an implicit on-behalf-of `act` claim identifying the application.
+            When true, access tokens this client obtains for a user through the authorization_code
+            or CIBA grant include an implicit on-behalf-of `act` claim identifying the application.
+            Agent clients always include the claim, regardless of this setting.
           example: false
           default: false
         scopes:

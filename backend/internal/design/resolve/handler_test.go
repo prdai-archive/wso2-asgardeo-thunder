@@ -1,20 +1,5 @@
-/*
- * Copyright (c) 2026, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2026 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 package resolve
 
@@ -175,27 +160,6 @@ func (suite *ResolveHandlerTestSuite) TestHandleResolveRequest_UnsupportedType()
 	assert.Equal(suite.T(), http.StatusBadRequest, w.Code)
 }
 
-// Test HandleResolveRequest - Application not found
-func (suite *ResolveHandlerTestSuite) TestHandleResolveRequest_ApplicationNotFound() {
-	mockService := &mockDesignResolveService{
-		resolveDesignFn: func(
-			ctx context.Context,
-			resolveType providers.DesignResolveType,
-			id string,
-		) (*providers.DesignResponse, *tidcommon.ServiceError) {
-			return nil, &common.ErrorApplicationNotFound
-		},
-	}
-
-	handler := newDesignResolveHandler(mockService)
-	req := httptest.NewRequest(http.MethodGet, "/design/resolve?type=APP&id=non-existent", nil)
-	w := httptest.NewRecorder()
-
-	handler.HandleResolveRequest(w, req)
-
-	assert.Equal(suite.T(), http.StatusNotFound, w.Code)
-}
-
 // Test HandleResolveRequest - Application has no design
 func (suite *ResolveHandlerTestSuite) TestHandleResolveRequest_ApplicationHasNoDesign() {
 	mockService := &mockDesignResolveService{
@@ -265,11 +229,6 @@ func (suite *ResolveHandlerTestSuite) TestHandleError_StatusCodeMapping() {
 		{
 			name:           "ApplicationHasNoDesign",
 			svcErr:         &common.ErrorApplicationHasNoDesign,
-			expectedStatus: http.StatusNotFound,
-		},
-		{
-			name:           "ApplicationNotFound",
-			svcErr:         &common.ErrorApplicationNotFound,
 			expectedStatus: http.StatusNotFound,
 		},
 		{

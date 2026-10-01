@@ -1,20 +1,5 @@
-/*
- * Copyright (c) 2025, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2025 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 // Package mgt provides internationalization functionality.
 package mgt
@@ -77,7 +62,7 @@ func newI18nService(store i18nStoreInterface) I18nServiceInterface {
 // ListLanguages retrieves all locale codes that have translations in the system.
 // The default locale is always included in the response, even if it has no translations in the DB.
 func (s *i18nService) ListLanguages(ctx context.Context) ([]string, *tidcommon.ServiceError) {
-	localeCodes, err := s.store.GetDistinctLanguages()
+	localeCodes, err := s.store.GetDistinctLanguages(ctx)
 	if err != nil {
 		s.logger.Error(ctx, "Failed to get locales from store", log.Error(err))
 		return nil, &tidcommon.InternalServerError
@@ -107,7 +92,7 @@ func (s *i18nService) ResolveTranslationsForKey(ctx context.Context,
 		return nil, err
 	}
 
-	trans, err := s.store.GetTranslationsByKey(key, namespace)
+	trans, err := s.store.GetTranslationsByKey(ctx, key, namespace)
 	if err != nil {
 		s.logger.Error(ctx, "Failed to get translation from store", log.Error(err))
 		return nil, &tidcommon.InternalServerError
@@ -148,8 +133,8 @@ func (s *i18nService) ResolveTranslationsForKey(ctx context.Context,
 func (s *i18nService) SetTranslationOverrideForKey(ctx context.Context,
 	language string, namespace string, key string, value string) (
 	*TranslationResponse, *tidcommon.ServiceError) {
-	if err := declarativeresource.CheckDeclarativeUpdate(); err != nil {
-		return nil, err
+	if isDeclarativeModeEnabled() {
+		return nil, &declarativeresource.ErrorDeclarativeResourceUpdateOperation
 	}
 	if err := validate(language, namespace, key); err != nil {
 		return nil, err
@@ -166,7 +151,7 @@ func (s *i18nService) SetTranslationOverrideForKey(ctx context.Context,
 	}
 
 	// Use upsert to create or update
-	if err := s.store.UpsertTranslation(trans); err != nil {
+	if err := s.store.UpsertTranslation(ctx, trans); err != nil {
 		s.logger.Error(ctx, "Failed to set translation override", log.Error(err))
 		return nil, &tidcommon.InternalServerError
 	}
@@ -184,8 +169,8 @@ func (s *i18nService) SetTranslationOverrideForKey(ctx context.Context,
 // entries is map[key]map[language]value.
 func (s *i18nService) SetTranslationOverridesForNamespace(
 	ctx context.Context, namespace string, entries map[string]map[string]string) *tidcommon.ServiceError {
-	if err := declarativeresource.CheckDeclarativeUpdate(); err != nil {
-		return err
+	if isDeclarativeModeEnabled() {
+		return &declarativeresource.ErrorDeclarativeResourceUpdateOperation
 	}
 	if !ValidateNamespace(namespace) {
 		return &ErrorInvalidNamespace
@@ -226,14 +211,14 @@ func (s *i18nService) SetTranslationOverridesForNamespace(
 // ClearTranslationOverrideForKey removes the custom override for a single translation.
 func (s *i18nService) ClearTranslationOverrideForKey(ctx context.Context,
 	language string, namespace string, key string) *tidcommon.ServiceError {
-	if err := declarativeresource.CheckDeclarativeDelete(); err != nil {
-		return err
+	if isDeclarativeModeEnabled() {
+		return &declarativeresource.ErrorDeclarativeResourceDeleteOperation
 	}
 	if err := validate(language, namespace, key); err != nil {
 		return err
 	}
 
-	if err := s.store.DeleteTranslation(language, key, namespace); err != nil {
+	if err := s.store.DeleteTranslation(ctx, language, key, namespace); err != nil {
 		s.logger.Error(ctx, "Failed to clear translation override", log.Error(err))
 		return &tidcommon.InternalServerError
 	}
@@ -264,13 +249,13 @@ func (s *i18nService) ResolveTranslations(ctx context.Context,
 
 	if namespace == "" {
 		// Get all namespaces
-		allTranslations, err = s.store.GetTranslations()
+		allTranslations, err = s.store.GetTranslations(ctx)
 		if err != nil {
 			s.logger.Error(ctx, "Failed to get translations from store", log.Error(err))
 			return nil, &tidcommon.InternalServerError
 		}
 	} else {
-		allTranslations, err = s.store.GetTranslationsByNamespace(namespace)
+		allTranslations, err = s.store.GetTranslationsByNamespace(ctx, namespace)
 		if err != nil {
 			s.logger.Error(ctx, "Failed to get translations from store", log.Error(err))
 			return nil, &tidcommon.InternalServerError
@@ -321,8 +306,8 @@ func (s *i18nService) ResolveTranslations(ctx context.Context,
 func (s *i18nService) SetTranslationOverrides(ctx context.Context,
 	language string, translations map[string]map[string]string) (
 	*providers.LanguageTranslationsResponse, *tidcommon.ServiceError) {
-	if err := declarativeresource.CheckDeclarativeUpdate(); err != nil {
-		return nil, err
+	if isDeclarativeModeEnabled() {
+		return nil, &declarativeresource.ErrorDeclarativeResourceUpdateOperation
 	}
 	if language == "" {
 		return nil, &ErrorMissingLanguage
@@ -361,7 +346,7 @@ func (s *i18nService) SetTranslationOverrides(ctx context.Context,
 		}
 	}
 
-	if err := s.store.UpsertTranslationsByLanguage(language, flattenedTranslations); err != nil {
+	if err := s.store.UpsertTranslationsByLanguage(ctx, language, flattenedTranslations); err != nil {
 		s.logger.Error(ctx, "Failed to upsert translations", log.Error(err))
 		return nil, &tidcommon.InternalServerError
 	}
@@ -376,8 +361,8 @@ func (s *i18nService) SetTranslationOverrides(ctx context.Context,
 
 // ClearTranslationOverrides removes all custom overrides for a language.
 func (s *i18nService) ClearTranslationOverrides(ctx context.Context, language string) *tidcommon.ServiceError {
-	if err := declarativeresource.CheckDeclarativeDelete(); err != nil {
-		return err
+	if isDeclarativeModeEnabled() {
+		return &declarativeresource.ErrorDeclarativeResourceDeleteOperation
 	}
 	if language == "" {
 		return &ErrorMissingLanguage
@@ -386,7 +371,7 @@ func (s *i18nService) ClearTranslationOverrides(ctx context.Context, language st
 		return &ErrorInvalidLanguage
 	}
 
-	if err := s.clearAllOverrides(language); err != nil {
+	if err := s.clearAllOverrides(ctx, language); err != nil {
 		s.logger.Error(ctx, "Failed to clear overrides", log.Error(err))
 		return &tidcommon.InternalServerError
 	}
@@ -432,7 +417,7 @@ func (s *i18nService) GetTranslationsByNamespace(ctx context.Context,
 	if !ValidateNamespace(namespace) {
 		return nil, &ErrorInvalidNamespace
 	}
-	byNs, err := s.store.GetTranslationsByNamespace(namespace)
+	byNs, err := s.store.GetTranslationsByNamespace(ctx, namespace)
 	if err != nil {
 		s.logger.Error(ctx, "Failed to get translations by namespace", log.Error(err))
 		return nil, &tidcommon.InternalServerError
@@ -455,8 +440,8 @@ func (s *i18nService) GetTranslationsByNamespace(ctx context.Context,
 	return result, nil
 }
 
-func (s *i18nService) clearAllOverrides(language string) error {
-	err := s.store.DeleteTranslationsByLanguage(language)
+func (s *i18nService) clearAllOverrides(ctx context.Context, language string) error {
+	err := s.store.DeleteTranslationsByLanguage(ctx, language)
 	if err != nil {
 		return err
 	}

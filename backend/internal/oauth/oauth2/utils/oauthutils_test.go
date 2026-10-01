@@ -1,20 +1,5 @@
-/*
- * Copyright (c) 2025, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2025 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 package utils
 
@@ -32,6 +17,7 @@ import (
 	"github.com/thunder-id/thunderid/internal/oauth/oauth2/constants"
 	"github.com/thunder-id/thunderid/internal/oauth/oauth2/model"
 	sysutils "github.com/thunder-id/thunderid/internal/system/utils"
+	"github.com/thunder-id/thunderid/pkg/thunderidengine/providers"
 )
 
 type OAuth2UtilsTestSuite struct {
@@ -618,6 +604,14 @@ func (suite *OAuth2UtilsTestSuite) TestGenerateOAuth2CredentialInvalidType() {
 }
 
 func (suite *OAuth2UtilsTestSuite) TestSeparateOIDCAndNonOIDCScopes() {
+	scopeClaimsMapping := map[string][]string{
+		"openid":  {"sub"},
+		"profile": {"name"},
+		"email":   {"email"},
+		"address": {"address"},
+		"phone":   {"phone_number"},
+	}
+
 	testCases := []struct {
 		name            string
 		scopes          string
@@ -677,7 +671,7 @@ func (suite *OAuth2UtilsTestSuite) TestSeparateOIDCAndNonOIDCScopes() {
 
 	for _, tc := range testCases {
 		suite.T().Run(tc.name, func(t *testing.T) {
-			oidcScopes, nonOidcScopes := SeparateOIDCAndNonOIDCScopes(tc.scopes, nil)
+			oidcScopes, nonOidcScopes := SeparateOIDCAndNonOIDCScopes(tc.scopes, scopeClaimsMapping)
 			// Compare lengths and contents, handling nil vs empty slice
 			if tc.expectedOIDC == nil {
 				assert.Nil(t, oidcScopes, "OIDC scopes should be nil")
@@ -701,23 +695,53 @@ func (suite *OAuth2UtilsTestSuite) TestSeparateOIDCAndNonOIDCScopes() {
 }
 
 func (suite *OAuth2UtilsTestSuite) TestSeparateOIDCAndNonOIDCScopes_StandardOIDCScopes() {
-	// Test all standard OIDC scopes are correctly identified
-	// Based on constants.StandardOIDCScopes, these are the standard scopes
+	// A standard OIDC scope is only OIDC when the app's scope-to-claims mapping defines it.
 	standardOIDCScopes := []string{"openid", "profile", "email", "address", "phone"}
 
 	for _, scope := range standardOIDCScopes {
 		suite.T().Run("OIDCScope_"+scope, func(t *testing.T) {
-			oidcScopes, nonOidcScopes := SeparateOIDCAndNonOIDCScopes(scope, nil)
+			oidcScopes, nonOidcScopes := SeparateOIDCAndNonOIDCScopes(
+				scope, map[string][]string{scope: {"sub"}})
 			if oidcScopes == nil {
-				assert.Fail(t, "OIDC scopes should not be nil for standard OIDC scope")
+				assert.Fail(t, "OIDC scopes should not be nil for a mapped standard OIDC scope")
 			} else {
-				assert.Contains(t, oidcScopes, scope, "Standard OIDC scope should be in OIDC list")
+				assert.Contains(t, oidcScopes, scope, "Mapped standard OIDC scope should be in OIDC list")
 			}
-			if nonOidcScopes != nil {
-				assert.NotContains(t, nonOidcScopes, scope, "Standard OIDC scope should not be in non-OIDC list")
-			}
+			assert.Nil(t, nonOidcScopes, "Standard OIDC scope should never be a permission scope")
 		})
 	}
+}
+
+func (suite *OAuth2UtilsTestSuite) TestSeparateOIDCAndNonOIDCScopes_UnmappedStandardScopesStayOIDC() {
+	// A standard OIDC scope the app does not map stays OIDC and falls back to its standard claims.
+	oidcScopes, nonOidcScopes := SeparateOIDCAndNonOIDCScopes(
+		"openid profile email read", map[string][]string{"profile": {"name"}})
+
+	assert.Equal(suite.T(), []string{"openid", "profile", "email"}, oidcScopes)
+	assert.Equal(suite.T(), []string{"read"}, nonOidcScopes)
+}
+
+func (suite *OAuth2UtilsTestSuite) TestSeparateOIDCAndNonOIDCScopes_OpenIDIsOIDCWithoutAMapping() {
+	// openid switches OIDC on and carries no user attributes, so it survives an empty mapping.
+	oidcScopes, nonOidcScopes := SeparateOIDCAndNonOIDCScopes("openid", nil)
+
+	assert.Equal(suite.T(), []string{"openid"}, oidcScopes)
+	assert.Nil(suite.T(), nonOidcScopes)
+}
+
+func (suite *OAuth2UtilsTestSuite) TestResolveScopeClaims() {
+	mapping := map[string][]string{"profile": {"name"}, "custom": {"organization"}}
+
+	// The app's mapping wins where it defines the scope, narrowing what profile releases.
+	assert.Equal(suite.T(), []string{"name"}, ResolveScopeClaims("profile", mapping))
+	// An unmapped standard scope falls back to its standard claims.
+	assert.Equal(suite.T(), []string{"email", "email_verified"}, ResolveScopeClaims("email", mapping))
+	// A mapped custom scope releases what it maps.
+	assert.Equal(suite.T(), []string{"organization"}, ResolveScopeClaims("custom", mapping))
+	// An unmapped custom scope has no claims to fall back to.
+	assert.Nil(suite.T(), ResolveScopeClaims("unknown", mapping))
+	// A scope mapped to an empty list releases nothing, rather than falling back.
+	assert.Empty(suite.T(), ResolveScopeClaims("phone", map[string][]string{"phone": {}}))
 }
 
 func (suite *OAuth2UtilsTestSuite) TestSeparateOIDCAndNonOIDCScopes_CustomScopes() {
@@ -740,6 +764,8 @@ func (suite *OAuth2UtilsTestSuite) TestSeparateOIDCAndNonOIDCScopes_CustomScopes
 
 func (suite *OAuth2UtilsTestSuite) TestSeparateOIDCAndNonOIDCScopes_WithCustomScopeClaimsMapping() {
 	scopeClaimsMapping := map[string][]string{
+		"openid":   {"sub"},
+		"profile":  {"name"},
 		"ou":       {"ouId", "ouName"},
 		"employee": {"emp_id", "department"},
 	}
@@ -785,33 +811,6 @@ func (suite *OAuth2UtilsTestSuite) TestSeparateOIDCAndNonOIDCScopes_WithCustomSc
 			}
 		})
 	}
-}
-
-func (suite *OAuth2UtilsTestSuite) TestFilterOIDCScopesByAllowedScopes() {
-	result := FilterOIDCScopesByAllowedScopes(
-		[]string{"openid", "email", "profile"},
-		[]string{"profile"},
-	)
-
-	assert.Equal(suite.T(), []string{"profile"}, result)
-}
-
-func (suite *OAuth2UtilsTestSuite) TestFilterOIDCScopesByAllowedScopes_NilAllowedScopes() {
-	result := FilterOIDCScopesByAllowedScopes(
-		[]string{"openid", "email", "profile"},
-		nil,
-	)
-
-	assert.Equal(suite.T(), []string{"openid", "email", "profile"}, result)
-}
-
-func (suite *OAuth2UtilsTestSuite) TestFilterOIDCScopesByAllowedScopes_EmptyAllowedScopes() {
-	result := FilterOIDCScopesByAllowedScopes(
-		[]string{"openid", "email", "profile"},
-		[]string{},
-	)
-
-	assert.Empty(suite.T(), result)
 }
 
 // Claims parameter parsing tests
@@ -1732,6 +1731,45 @@ func (suite *OAuth2UtilsTestSuite) TestDecodeFlowAssertionClaims_ValidWithAllCla
 	suite.Equal(int64(1700000002), claims.AuthTime.Unix())
 }
 
+// TestDecodeFlowAssertionClaims_AuthTimeWinsOverIat covers the SSO path, where the subject
+// authenticated before this assertion was issued. auth_time carries that earlier moment and must
+// win over iat, or the claim would advance on every authorization within one session.
+func (suite *OAuth2UtilsTestSuite) TestDecodeFlowAssertionClaims_AuthTimeWinsOverIat() {
+	assertion := buildTestAssertion(map[string]interface{}{
+		"sub":       "user-sso",
+		"iat":       float64(1700000000),
+		"auth_time": float64(1699990000),
+	})
+
+	claims, _, err := DecodeFlowAssertionClaims(assertion)
+	suite.NoError(err)
+	suite.Equal(int64(1699990000), claims.AuthTime.Unix())
+}
+
+// TestDecodeFlowAssertionClaims_NoAuthTimeFallsBackToIat covers an assertion minted without the
+// claim, where the fresh-authentication reading of iat remains correct.
+func (suite *OAuth2UtilsTestSuite) TestDecodeFlowAssertionClaims_NoAuthTimeFallsBackToIat() {
+	assertion := buildTestAssertion(map[string]interface{}{
+		"sub": "user-fresh",
+		"iat": float64(1700000000),
+	})
+
+	claims, _, err := DecodeFlowAssertionClaims(assertion)
+	suite.NoError(err)
+	suite.Equal(int64(1700000000), claims.AuthTime.Unix())
+}
+
+func (suite *OAuth2UtilsTestSuite) TestDecodeFlowAssertionClaims_AuthTimeUnexpectedType_ReturnsError() {
+	assertion := buildTestAssertion(map[string]interface{}{
+		"sub":       "user-bad",
+		"iat":       float64(1700000000),
+		"auth_time": "not-a-number",
+	})
+
+	_, _, err := DecodeFlowAssertionClaims(assertion)
+	suite.Error(err)
+}
+
 func (suite *OAuth2UtilsTestSuite) TestDecodeFlowAssertionClaims_IatUnexpectedType_ReturnsError() {
 	assertion := buildTestAssertion(map[string]interface{}{
 		"sub": "user-x",
@@ -1789,44 +1827,112 @@ func (suite *OAuth2UtilsTestSuite) TestDecodeFlowAssertionClaims_MissingOptional
 	suite.Empty(claims.CompletedACR)
 }
 
-func (suite *OAuth2UtilsTestSuite) TestResolveEffectiveScopeClaims_NilReturnsAllStandardDefaults() {
-	effective := ResolveEffectiveScopeClaims(nil)
+func (suite *OAuth2UtilsTestSuite) TestDefaultScopeClaims_ReturnsStandardDefaultsWithoutOpenID() {
+	defaults := DefaultScopeClaims()
 
-	suite.Len(effective, len(constants.StandardOIDCScopes))
-	suite.Equal([]string{"sub"}, effective["openid"])
-	suite.Equal([]string{"email", "email_verified"}, effective["email"])
-	suite.Contains(effective["profile"], "name")
-	suite.Contains(effective["profile"], "family_name")
+	suite.Len(defaults, len(constants.StandardOIDCScopes)-1)
+	suite.NotContains(defaults, "openid",
+		"openid is always granted and carries no user attributes, so it must not be seeded")
+	suite.Equal([]string{"email", "email_verified"}, defaults["email"])
+	suite.Contains(defaults["profile"], "name")
+	suite.Contains(defaults["profile"], "family_name")
 }
 
-func (suite *OAuth2UtilsTestSuite) TestResolveEffectiveScopeClaims_PartialOverrideMergesWithDefaults() {
-	effective := ResolveEffectiveScopeClaims(map[string][]string{
-		"profile":     {"name"},
-		"customScope": {"customClaim"},
-	})
-
-	// Overridden scope wins.
-	suite.Equal([]string{"name"}, effective["profile"])
-	// Custom scope is carried through.
-	suite.Equal([]string{"customClaim"}, effective["customScope"])
-	// Untouched standard scopes keep their defaults.
-	suite.Equal([]string{"email", "email_verified"}, effective["email"])
-}
-
-func (suite *OAuth2UtilsTestSuite) TestResolveEffectiveScopeClaims_EmptySliceOverrideIsPreserved() {
-	effective := ResolveEffectiveScopeClaims(map[string][]string{
-		"profile": {},
-	})
-
-	claims, ok := effective["profile"]
-	suite.True(ok, "profile key should be present")
-	suite.Empty(claims, "explicit empty override should suppress default claims")
-}
-
-func (suite *OAuth2UtilsTestSuite) TestResolveEffectiveScopeClaims_DoesNotMutateStandardDefaults() {
-	effective := ResolveEffectiveScopeClaims(nil)
-	effective["email"][0] = "mutated"
+func (suite *OAuth2UtilsTestSuite) TestDefaultScopeClaims_DoesNotMutateStandardDefaults() {
+	defaults := DefaultScopeClaims()
+	defaults["email"][0] = "mutated"
 
 	suite.Equal([]string{"email", "email_verified"}, constants.StandardOIDCScopes["email"].Claims,
 		"the shared StandardOIDCScopes constant must not be mutated via the returned map")
+}
+
+func (suite *OAuth2UtilsTestSuite) TestSanitizeErrorDescription() {
+	longDesc := strings.Repeat("a", maxErrorDescriptionLength+50)
+
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{"CleanDescriptionUnchanged", "User denied consent", "User denied consent"},
+		{"DropsDoubleQuote", `Denied "email"`, "Denied email"},
+		{"DropsBackslash", `back\slash`, "backslash"},
+		{"DropsControlCharacters", "line one\nline two\ttab", "line oneline twotab"},
+		{"DropsNonASCII", "café dénied", "caf dnied"},
+		{"TrimsSurroundingSpace", "  spaced  ", "spaced"},
+		{"EmptyStaysEmpty", "", ""},
+		{"OnlyDisallowedBecomesEmpty", "\n\t\"\\", ""},
+		{"TruncatesToLimit", longDesc, strings.Repeat("a", maxErrorDescriptionLength)},
+	}
+
+	for _, tt := range tests {
+		suite.Run(tt.name, func() {
+			assert.Equal(suite.T(), tt.expected, SanitizeErrorDescription(tt.input))
+		})
+	}
+}
+
+func (suite *OAuth2UtilsTestSuite) TestSanitizeErrorDescriptionKeepsRedirectBuildable() {
+	// Whatever the flow reports, the sanitized result must always pass the spec charset check so the
+	// client redirect can still be constructed.
+	dirty := "Denied \"email\"\né back\\slash"
+
+	uri, err := GetURIWithQueryParams("https://client.example.com/callback", map[string]string{
+		constants.RequestParamError:            constants.ErrorAccessDenied,
+		constants.RequestParamErrorDescription: SanitizeErrorDescription(dirty),
+	})
+
+	assert.NoError(suite.T(), err)
+	assert.Contains(suite.T(), uri, "error=access_denied")
+}
+
+// No token configuration is the common case, so the helper builds the nested config.
+func (suite *OAuth2UtilsTestSuite) TestEnsureClientSubTypeAttribute_BuildsMissingConfig() {
+	token := EnsureClientSubTypeAttribute(nil)
+
+	assert.NotNil(suite.T(), token)
+	assert.NotNil(suite.T(), token.AccessToken)
+	assert.NotNil(suite.T(), token.AccessToken.ClientConfig)
+	assert.Equal(suite.T(), []string{constants.ClaimSubType}, token.AccessToken.ClientConfig.Attributes)
+}
+
+// Seeding adds the claim without replacing a caller-supplied selection.
+func (suite *OAuth2UtilsTestSuite) TestEnsureClientSubTypeAttribute_KeepsExistingAttributes() {
+	token := EnsureClientSubTypeAttribute(&providers.OAuthTokenConfig{
+		AccessToken: &providers.AccessTokenConfig{
+			ClientConfig: &providers.AccessTokenSubConfig{
+				ValidityPeriod: 1800,
+				Attributes:     []string{constants.ClaimOUID},
+			},
+		},
+	})
+
+	clientConfig := token.AccessToken.ClientConfig
+	assert.Equal(suite.T(), []string{constants.ClaimOUID, constants.ClaimSubType}, clientConfig.Attributes)
+	assert.Equal(suite.T(), int64(1800), clientConfig.ValidityPeriod,
+		"seeding the claim must not disturb the rest of the client config")
+}
+
+// The caller may already have set the claim, so seeding must not duplicate it.
+func (suite *OAuth2UtilsTestSuite) TestEnsureClientSubTypeAttribute_IsIdempotent() {
+	token := EnsureClientSubTypeAttribute(&providers.OAuthTokenConfig{
+		AccessToken: &providers.AccessTokenConfig{
+			ClientConfig: &providers.AccessTokenSubConfig{Attributes: []string{constants.ClaimSubType}},
+		},
+	})
+	token = EnsureClientSubTypeAttribute(token)
+
+	assert.Equal(suite.T(), []string{constants.ClaimSubType}, token.AccessToken.ClientConfig.Attributes)
+}
+
+// sub_type never appears on a user-subject token, so the user sub-config is untouched.
+func (suite *OAuth2UtilsTestSuite) TestEnsureClientSubTypeAttribute_LeavesUserConfigAlone() {
+	token := EnsureClientSubTypeAttribute(&providers.OAuthTokenConfig{
+		AccessToken: &providers.AccessTokenConfig{
+			UserConfig: &providers.AccessTokenSubConfig{Attributes: []string{"email"}},
+		},
+	})
+
+	assert.Equal(suite.T(), []string{"email"}, token.AccessToken.UserConfig.Attributes)
+	assert.Equal(suite.T(), []string{constants.ClaimSubType}, token.AccessToken.ClientConfig.Attributes)
 }

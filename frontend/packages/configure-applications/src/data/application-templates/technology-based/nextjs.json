@@ -1,0 +1,73 @@
+{
+  "id": "nextjs",
+  "type": "fullstack",
+  "displayName": "Next.js",
+  "description": "Server-side rendered application built with Next.js",
+  "quickstarts": [
+    {
+      "label": "Next.js",
+      "docsUrl": "{{applications.templates.nextjs.docs}}"
+    }
+  ],
+  "playgrounds": [
+    {
+      "label": "Next.js",
+      "environment": "stackblitz",
+      "url": "{{applications.templates.nextjs.playground}}"
+    }
+  ],
+  "devServer": {
+    "id": "nextjs",
+    "label": "Create Next App",
+    "url": "http://localhost:3000"
+  },
+  "creationFlow": {
+    "steps": ["ORGANIZATION_UNIT", "DETAILS", "SECURITY", "DESIGN", "CONFIGURE", "COMPLETE"],
+    "previewSteps": ["DETAILS", "SECURITY", "DESIGN"]
+  },
+  "defaults": {
+    "name": "Next.js Application",
+    "signInApproach": "EMBEDDED",
+    "inboundAuthConfig": [
+      {
+        "type": "oauth2",
+        "config": {
+          "grantTypes": ["authorization_code", "refresh_token"],
+          "responseTypes": ["code"],
+          "redirectUris": ["http://localhost:3000"],
+          "pkceRequired": true,
+          "tokenEndpointAuthMethod": "client_secret_basic",
+          "publicClient": false
+        }
+      }
+    ],
+    "allowedUserTypes": []
+  },
+  "fieldConstraints": {
+    "oauth2": {
+      "publicClient": {
+        "readOnly": true,
+        "value": false
+      },
+      "pkceRequired": {
+        "readOnly": true,
+        "value": false
+      },
+      "tokenEndpointAuthMethod": {
+        "readOnly": false
+      }
+    }
+  },
+  "integrationGuides": {
+    "REDIRECT_BASED": {
+      "llm_prompt": {
+        "docsUrl": "{{applications.templates.nextjs.llmPrompt.redirectBased}}"
+      }
+    },
+    "EMBEDDED": {
+      "llm_prompt": {
+        "docsUrl": "{{applications.templates.nextjs.llmPrompt.embedded}}"
+      }
+    }
+  }
+}

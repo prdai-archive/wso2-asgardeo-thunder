@@ -1,20 +1,5 @@
-/**
- * Copyright (c) 2026, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied. See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2026 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 import Link from '@docusaurus/Link';
 import {Box, Typography, useTheme} from '@wso2/oxygen-ui';
@@ -22,6 +7,7 @@ import {JSX} from 'react';
 import DeveloperShortcut from './DeveloperShortcut';
 import UseCaseBranchCards from './UseCaseBranchCards';
 import useScrollAnimation from '../hooks/useScrollAnimation';
+import {useDocsUrl} from '@site/src/hooks/useDocsUrl';
 
 function QuickstartPanel({isVisible}: {isVisible: boolean}): JSX.Element {
   return (
@@ -108,7 +94,7 @@ const BROWSE_TOPICS = [
   {
     label: 'SDKs',
     description: 'Client libraries and integrations',
-    href: '/sdks',
+    href: '/sdks-and-tools',
     icon: (
       <svg
         width="18"
@@ -128,6 +114,7 @@ const BROWSE_TOPICS = [
 
 function BrowseTopics(): JSX.Element {
   const theme = useTheme();
+  const docsUrl = useDocsUrl();
   return (
     <Box>
       <Typography component="h2" variant="h5" sx={{fontWeight: 700, mb: 2, fontSize: '1.2rem', color: 'text.primary'}}>
@@ -138,7 +125,7 @@ function BrowseTopics(): JSX.Element {
           <Box
             key={topic.label}
             component={Link}
-            to={topic.href}
+            to={docsUrl(topic.href)}
             sx={{
               display: 'flex',
               flexDirection: 'column',

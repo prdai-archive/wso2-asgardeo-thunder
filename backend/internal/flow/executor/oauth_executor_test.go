@@ -1,20 +1,5 @@
-/*
- * Copyright (c) 2025-2026, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2025-2026 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 package executor
 
@@ -62,6 +47,15 @@ func (suite *OAuthExecutorTestSuite) SetupTest() {
 	suite.executor = newOAuthExecutor(ExecutorNameOAuth, defaultCodeOnlyInputs, []providers.Input{},
 		suite.mockFlowFactory, suite.mockIDPService, suite.mockOAuthService,
 		suite.mockAuthnProvider, providers.IDPTypeOAuth)
+}
+
+// expectIdentityProviderResolved stubs the AuthorizationRuleMapping resolution ProcessAuthFlowResponse
+// performs on every successful federated login. Returns an IDPDTO with no AttributeConfiguration, so
+// it resolves no mapped targets and leaves runtime data untouched.
+func expectIdentityProviderResolved(m *idpmock.IDPServiceInterfaceMock) {
+	m.On("GetIdentityProvider", mock.Anything, "idp-123").Return(&providers.IDPDTO{ID: "idp-123"}, nil).Maybe()
+	m.On("GetDirectAuthorizationTargets", mock.Anything, mock.Anything, mock.Anything).
+		Return(nil, (*tidcommon.ServiceError)(nil)).Maybe()
 }
 
 func newOAuthAuthenticatedUser() providers.AuthUser {
@@ -124,6 +118,7 @@ func (suite *OAuthExecutorTestSuite) TestExecute_CodeProvided_AuthenticatesUser(
 		}, (*tidcommon.ServiceError)(nil))
 	expectEntityReferenceResolved(suite.mockAuthnProvider, authenticatedAuthUser)
 
+	expectIdentityProviderResolved(suite.mockIDPService)
 	resp, err := suite.executor.Execute(ctx)
 
 	assert.NoError(suite.T(), err)
@@ -364,6 +359,7 @@ func (suite *OAuthExecutorTestSuite) TestProcessAuthFlowResponse_RegistrationFlo
 		}, (*tidcommon.ServiceError)(nil))
 	expectEntityReferenceNotFound(suite.mockAuthnProvider, providers.AuthUser{})
 
+	expectIdentityProviderResolved(suite.mockIDPService)
 	err := suite.executor.ProcessAuthFlowResponse(ctx, execResp)
 
 	assert.NoError(suite.T(), err)
@@ -395,6 +391,7 @@ func (suite *OAuthExecutorTestSuite) TestProcessAuthFlowResponse_AuthFlow_UserNo
 		Return(providers.AuthUser{}, providers.AuthenticatedClaims{}, (*tidcommon.ServiceError)(nil))
 	expectEntityReferenceNotFound(suite.mockAuthnProvider, providers.AuthUser{})
 
+	expectIdentityProviderResolved(suite.mockIDPService)
 	err := suite.executor.ProcessAuthFlowResponse(ctx, execResp)
 
 	assert.NoError(suite.T(), err)
@@ -428,6 +425,7 @@ func (suite *OAuthExecutorTestSuite) TestProcessAuthFlowResponse_NoLocalUser_Ent
 	// that did not resolve to an existing local user.
 	expectEntityReferenceNotFound(suite.mockAuthnProvider, newOAuthAuthenticatedUser())
 
+	expectIdentityProviderResolved(suite.mockIDPService)
 	err := suite.executor.ProcessAuthFlowResponse(ctx, execResp)
 
 	assert.NoError(suite.T(), err)
@@ -461,6 +459,7 @@ func (suite *OAuthExecutorTestSuite) TestProcessAuthFlowResponse_LocalUser_Entit
 	// A resolved EntityReference models account linking matching an existing local user.
 	expectEntityReferenceResolved(suite.mockAuthnProvider, newOAuthAuthenticatedUser())
 
+	expectIdentityProviderResolved(suite.mockIDPService)
 	err := suite.executor.ProcessAuthFlowResponse(ctx, execResp)
 
 	assert.NoError(suite.T(), err)
@@ -494,6 +493,7 @@ func (suite *OAuthExecutorTestSuite) TestProcessAuthFlowResponse_UserAlreadyExis
 		}, (*tidcommon.ServiceError)(nil))
 	expectEntityReferenceResolved(suite.mockAuthnProvider, authenticatedAuthUser)
 
+	expectIdentityProviderResolved(suite.mockIDPService)
 	err := suite.executor.ProcessAuthFlowResponse(ctx, execResp)
 
 	assert.NoError(suite.T(), err)
@@ -728,6 +728,7 @@ func (suite *OAuthExecutorTestSuite) TestProcessAuthFlowResponse_RegistrationFlo
 		}, (*tidcommon.ServiceError)(nil))
 	expectEntityReferenceNotFound(suite.mockAuthnProvider, providers.AuthUser{})
 
+	expectIdentityProviderResolved(suite.mockIDPService)
 	err := suite.executor.ProcessAuthFlowResponse(ctx, execResp)
 
 	assert.NoError(suite.T(), err)
@@ -788,6 +789,7 @@ func (suite *OAuthExecutorTestSuite) TestProcessAuthFlowResponse_AllowAuthWithou
 		}, (*tidcommon.ServiceError)(nil))
 	expectEntityReferenceNotFound(suite.mockAuthnProvider, providers.AuthUser{})
 
+	expectIdentityProviderResolved(suite.mockIDPService)
 	err := suite.executor.ProcessAuthFlowResponse(ctx, execResp)
 
 	assert.NoError(suite.T(), err)
@@ -821,6 +823,7 @@ func (suite *OAuthExecutorTestSuite) TestProcessAuthFlowResponse_PreventAuthWith
 		Return(providers.AuthUser{}, providers.AuthenticatedClaims{}, (*tidcommon.ServiceError)(nil))
 	expectEntityReferenceNotFound(suite.mockAuthnProvider, providers.AuthUser{})
 
+	expectIdentityProviderResolved(suite.mockIDPService)
 	err := suite.executor.ProcessAuthFlowResponse(ctx, execResp)
 
 	assert.NoError(suite.T(), err)
@@ -854,6 +857,7 @@ func (suite *OAuthExecutorTestSuite) TestProcessAuthFlowResponse_AllowRegistrati
 		}, (*tidcommon.ServiceError)(nil))
 	expectEntityReferenceResolved(suite.mockAuthnProvider, authenticatedAuthUser)
 
+	expectIdentityProviderResolved(suite.mockIDPService)
 	err := suite.executor.ProcessAuthFlowResponse(ctx, execResp)
 
 	assert.NoError(suite.T(), err)
@@ -889,6 +893,7 @@ func (suite *OAuthExecutorTestSuite) TestProcessAuthFlowResponse_PreventRegistra
 		}, (*tidcommon.ServiceError)(nil))
 	expectEntityReferenceResolved(suite.mockAuthnProvider, authenticatedAuthUser)
 
+	expectIdentityProviderResolved(suite.mockIDPService)
 	err := suite.executor.ProcessAuthFlowResponse(ctx, execResp)
 
 	assert.NoError(suite.T(), err)

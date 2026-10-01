@@ -1,20 +1,5 @@
-/*
- * Copyright (c) 2025, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2025 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 // Package role provides role management functionality.
 package role
@@ -22,6 +7,7 @@ package role
 import (
 	"context"
 	"errors"
+	"fmt"
 
 	tidcommon "github.com/thunder-id/thunderid/pkg/thunderidengine/common"
 	"github.com/thunder-id/thunderid/pkg/thunderidengine/providers"
@@ -32,7 +18,9 @@ import (
 	resourcepkg "github.com/thunder-id/thunderid/internal/resource"
 	serverconst "github.com/thunder-id/thunderid/internal/system/constants"
 	"github.com/thunder-id/thunderid/internal/system/log"
+	"github.com/thunder-id/thunderid/internal/system/resourcedependency"
 	"github.com/thunder-id/thunderid/internal/system/security"
+	"github.com/thunder-id/thunderid/internal/system/sysauthz"
 	"github.com/thunder-id/thunderid/internal/system/utils"
 )
 
@@ -44,17 +32,27 @@ type RoleServiceInterface interface {
 	CreateRole(ctx context.Context, role RoleCreationDetail) (
 		*RoleWithPermissionsAndAssignments, *tidcommon.ServiceError)
 	GetRoleWithPermissions(ctx context.Context, id string) (*RoleWithPermissions, *tidcommon.ServiceError)
+	GetRolesByNames(ctx context.Context, names []string) (map[string][]*Role, *tidcommon.ServiceError)
 	UpdateRoleWithPermissions(ctx context.Context, id string, role RoleUpdateDetail) (
 		*RoleWithPermissions, *tidcommon.ServiceError)
 	DeleteRole(ctx context.Context, id string) *tidcommon.ServiceError
 	IsRoleDeclarative(ctx context.Context, id string) (bool, *tidcommon.ServiceError)
 	GetAuthorizedPermissionsByResourceServer(
-		ctx context.Context, entityID string, groups []string, resourceServerID string, requestedPermissions []string,
+		ctx context.Context, entityID string, groups, roleIDs []string, resourceServerID string,
+		requestedPermissions []string,
 	) ([]string, *tidcommon.ServiceError)
+	// GetAllPermissions returns every permission the entity and/or groups hold, keyed by resource
+	// server. Unlike GetAuthorizedPermissionsByResourceServer it enumerates rather than checks.
+	GetAllPermissions(
+		ctx context.Context, entityID string, groupIDs []string,
+	) (security.PermissionSet, *tidcommon.ServiceError)
 	GetUserRoles(ctx context.Context, entityID string, groupIDs []string) ([]string, *tidcommon.ServiceError)
 	ResolveRoleOUHandle(
 		ctx context.Context, role *RoleWithPermissionsAndAssignments,
 	) *tidcommon.ServiceError
+	GetResourceDependencies(
+		ctx context.Context, resourceType, id string) ([]resourcedependency.ResourceDependency, error)
+	CascadeDeleteDependencies(ctx context.Context, resourceType, id string) (int, error)
 }
 
 // roleService is the default implementation of the RoleServiceInterface.
@@ -65,6 +63,7 @@ type roleService struct {
 	ouService       oupkg.OrganizationUnitServiceInterface
 	resourceService resourcepkg.ResourceServiceInterface
 	transactioner   providers.Transactioner
+	authzService    sysauthz.SystemAuthorizationServiceInterface
 }
 
 // newRoleService creates a new instance of RoleService with injected dependencies.
@@ -75,6 +74,7 @@ func newRoleService(
 	ouService oupkg.OrganizationUnitServiceInterface,
 	resourceService resourcepkg.ResourceServiceInterface,
 	transactioner providers.Transactioner,
+	authzService sysauthz.SystemAuthorizationServiceInterface,
 ) RoleServiceInterface {
 	return &roleService{
 		roleStore:       roleStore,
@@ -83,6 +83,7 @@ func newRoleService(
 		ouService:       ouService,
 		resourceService: resourceService,
 		transactioner:   transactioner,
+		authzService:    authzService,
 	}
 }
 
@@ -178,6 +179,14 @@ func (rs *roleService) CreateRole(
 	// Validate permissions exist in resource management system
 	if err := rs.validatePermissions(ctx, role.Permissions); err != nil {
 		return nil, err
+	}
+
+	// Defining a role conveys its permissions to future assignees. Inline assignments need no
+	// separate check: they assign this same role, already covered above.
+	if svcErr := rs.authzService.CanGrantPermissions(
+		ctx, toPermissionSet(role.Permissions),
+	); svcErr != nil {
+		return nil, svcErr
 	}
 
 	// Validate assignment IDs (existence + category check) before normalization.
@@ -279,6 +288,40 @@ func (rs *roleService) GetRoleWithPermissions(ctx context.Context, id string) (
 	return &role, nil
 }
 
+// GetRolesByNames retrieves roles by a list of names, keyed by name. A name may resolve to more than
+// one role across organization units; the caller decides how to handle that ambiguity.
+func (rs *roleService) GetRolesByNames(
+	ctx context.Context, names []string,
+) (map[string][]*Role, *tidcommon.ServiceError) {
+	logger := log.GetLogger().With(log.String(log.LoggerKeyComponentName, loggerComponentName))
+
+	if len(names) == 0 {
+		return map[string][]*Role{}, nil
+	}
+
+	seen := make(map[string]struct{}, len(names))
+	uniqueNames := make([]string, 0, len(names))
+	for _, name := range names {
+		if _, ok := seen[name]; !ok {
+			seen[name] = struct{}{}
+			uniqueNames = append(uniqueNames, name)
+		}
+	}
+
+	roles, err := rs.roleStore.GetRolesByNames(ctx, uniqueNames)
+	if err != nil {
+		logger.Error(ctx, "Failed to get roles by names", log.Error(err))
+		return nil, &tidcommon.InternalServerError
+	}
+
+	result := make(map[string][]*Role, len(roles))
+	for i := range roles {
+		result[roles[i].Name] = append(result[roles[i].Name], &roles[i])
+	}
+
+	return result, nil
+}
+
 // UpdateRole updates an existing role.
 func (rs *roleService) UpdateRoleWithPermissions(
 	ctx context.Context, id string, role RoleUpdateDetail) (*RoleWithPermissions, *tidcommon.ServiceError) {
@@ -296,6 +339,13 @@ func (rs *roleService) UpdateRoleWithPermissions(
 	// Validate permissions exist in resource management system
 	if err := rs.validatePermissions(ctx, role.Permissions); err != nil {
 		return nil, err
+	}
+
+	// An update replaces the permission list, so the incoming set is what the role will confer.
+	if svcErr := rs.authzService.CanGrantPermissions(
+		ctx, toPermissionSet(role.Permissions),
+	); svcErr != nil {
+		return nil, svcErr
 	}
 
 	exists, err := rs.roleStore.IsRoleExist(ctx, id)
@@ -404,21 +454,29 @@ func (rs *roleService) DeleteRole(ctx context.Context, id string) *tidcommon.Ser
 // GetAuthorizedPermissionsByResourceServer checks which requested permissions are authorized for the entity
 // based on roles, scoped to a resource server when provided.
 func (rs *roleService) GetAuthorizedPermissionsByResourceServer(
-	ctx context.Context, entityID string, groups []string, resourceServerID string, requestedPermissions []string,
+	ctx context.Context, entityID string, groups, roleIDs []string, resourceServerID string,
+	requestedPermissions []string,
 ) ([]string, *tidcommon.ServiceError) {
 	logger := log.GetLogger().With(log.String(log.LoggerKeyComponentName, loggerComponentName))
 	logger.Debug(ctx, "Authorizing permissions",
 		log.MaskedString(log.LoggerKeyUserID, entityID),
 		log.Int("groupCount", len(groups)),
+		log.Int("roleCount", len(roleIDs)),
 		log.String("resourceServerID", resourceServerID))
 
-	// Handle nil groups slice
+	// Handle nil groups/roleIDs slices
 	if groups == nil {
 		groups = []string{}
 	}
+	if roleIDs == nil {
+		roleIDs = []string{}
+	}
 
-	// Validate that at least entityID or groups is provided
-	if entityID == "" && len(groups) == 0 {
+	// Validate that at least an entity, a group, or a role is provided. Role IDs stand in for the
+	// entity/group assignment a locally managed subject would otherwise need: a federated subject
+	// mapped directly to roles has neither an entity nor groups, but still has something to
+	// evaluate.
+	if entityID == "" && len(groups) == 0 && len(roleIDs) == 0 {
 		return nil, &ErrorMissingEntityOrGroups
 	}
 
@@ -429,7 +487,7 @@ func (rs *roleService) GetAuthorizedPermissionsByResourceServer(
 
 	// Get authorized permissions from store
 	authorizedPermissions, err := rs.roleStore.GetAuthorizedPermissionsByResourceServer(
-		ctx, entityID, groups, resourceServerID, requestedPermissions)
+		ctx, entityID, groups, roleIDs, resourceServerID, requestedPermissions)
 	if err != nil {
 		logger.Error(ctx, "Failed to get authorized permissions",
 			log.MaskedString(log.LoggerKeyUserID, entityID),
@@ -447,6 +505,43 @@ func (rs *roleService) GetAuthorizedPermissionsByResourceServer(
 		log.Int("authorizedCount", len(authorizedPermissions)))
 
 	return authorizedPermissions, nil
+}
+
+// GetAllPermissions retrieves every permission the entity and/or groups hold through their assigned
+// roles, keyed by resource server. Unlike GetAuthorizedPermissionsByResourceServer, no entity and no
+// groups is not an error: callers legitimately ask what a set of groups confers.
+func (rs *roleService) GetAllPermissions(
+	ctx context.Context, entityID string, groupIDs []string,
+) (security.PermissionSet, *tidcommon.ServiceError) {
+	logger := log.GetLogger().With(log.String(log.LoggerKeyComponentName, loggerComponentName))
+
+	if groupIDs == nil {
+		groupIDs = []string{}
+	}
+	if entityID == "" && len(groupIDs) == 0 {
+		return security.PermissionSet{}, nil
+	}
+
+	resourcePermissions, err := rs.roleStore.GetAllPermissionsForAssignees(ctx, entityID, groupIDs)
+	if err != nil {
+		logger.Error(ctx, "Failed to enumerate permissions for assignees",
+			log.MaskedString(log.LoggerKeyUserID, entityID),
+			log.Int("groupCount", len(groupIDs)),
+			log.Error(err))
+		return nil, &tidcommon.InternalServerError
+	}
+
+	permissionSet := make(security.PermissionSet, len(resourcePermissions))
+	for _, rp := range resourcePermissions {
+		permissionSet[rp.ResourceServerID] = rp.Permissions
+	}
+
+	logger.Debug(ctx, "Enumerated permissions for assignees",
+		log.MaskedString(log.LoggerKeyUserID, entityID),
+		log.Int("groupCount", len(groupIDs)),
+		log.Int("resourceServerCount", len(permissionSet)))
+
+	return permissionSet, nil
 }
 
 // GetUserRoles retrieves the names of roles assigned to an entity directly and/or through group membership.
@@ -651,4 +746,54 @@ func (rs *roleService) isRoleDeclarative(ctx context.Context, roleID string) boo
 	}
 
 	return isDeclarative
+}
+
+// GetResourceDependencies implements resourcedependency.Provider. Role permissions are cleaned up
+// via cascade rather than surfaced as blocking usages, so no dependencies are reported here.
+func (rs *roleService) GetResourceDependencies(
+	_ context.Context, _, _ string) ([]resourcedependency.ResourceDependency, error) {
+	return []resourcedependency.ResourceDependency{}, nil
+}
+
+// CascadeDeleteDependencies implements resourcedependency.CascadeDeleter. When a resource server,
+// resource or action is deleted, the permissions it contributed can no longer be resolved, so they
+// are removed from every role holding them. Permissions are stored as opaque strings scoped to a
+// resource server rather than as references to the resource that defines them, so the orphans are
+// found by re-validating the referenced permissions against the resource service. This also clears
+// any permission orphaned by an earlier deletion. Must be called after the target has been deleted,
+// so the deleted permissions no longer validate.
+func (rs *roleService) CascadeDeleteDependencies(
+	ctx context.Context, resourceType, _ string) (int, error) {
+	switch resourceType {
+	case resourcedependency.ResourceTypeResourceServer,
+		resourcedependency.ResourceTypeResource,
+		resourcedependency.ResourceTypeAction:
+	default:
+		return 0, nil
+	}
+
+	referenced, err := rs.roleStore.GetReferencedPermissions(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("failed to get permissions referenced by roles: %w", err)
+	}
+
+	deleted := 0
+	for _, resPerm := range referenced {
+		invalid, svcErr := rs.resourceService.ValidatePermissions(
+			ctx, resPerm.ResourceServerID, resPerm.Permissions)
+		if svcErr != nil {
+			return deleted, fmt.Errorf("failed to validate permissions of resource server %s: %s",
+				resPerm.ResourceServerID, svcErr.Error.DefaultValue)
+		}
+
+		for _, permission := range invalid {
+			removed, err := rs.roleStore.DeleteRolePermission(ctx, resPerm.ResourceServerID, permission)
+			if err != nil {
+				return deleted, fmt.Errorf("failed to delete orphaned role permission: %w", err)
+			}
+			deleted += int(removed)
+		}
+	}
+
+	return deleted, nil
 }

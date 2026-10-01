@@ -1,20 +1,5 @@
-/**
- * Copyright (c) 2025, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied. See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2025 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 import {fireEvent, render, screen, waitFor} from '@thunderid/test-utils';
 import {type ReactNode, useEffect} from 'react';
@@ -22,9 +7,11 @@ import {beforeEach, describe, expect, it, vi} from 'vitest';
 import ConnectionDetailPage from '../ConnectionDetailPage';
 
 const updateMock = vi.fn().mockResolvedValue({});
+const updateResetMock = vi.fn();
 const refetchMock = vi.fn().mockResolvedValue({});
 const deleteMock = vi.fn((_id: string, opts: {onSuccess: () => void}) => opts.onSuccess());
 const navigateMock = vi.fn();
+const updateMutationState = {isPending: false, isError: false};
 
 const ATTR_CONFIG = {
   userTypeResolution: {default: 'employee'},
@@ -32,6 +19,14 @@ const ATTR_CONFIG = {
     {userType: 'employee', attributes: [{externalAttribute: 'email', localAttribute: 'mail'}]},
   ],
 };
+
+const AUTHZ_MAPPINGS = [
+  {claim: 'groups', values: [{operator: 'equals', value: 'engineering', targets: [{type: 'role', id: 'role-1'}]}]},
+];
+
+const DIRECT_MAPPINGS = [{claim: 'role_name', targetType: 'role'}];
+
+const LINKING = {attributes: ['email']};
 
 const CONNECTION = {
   id: 'g1',
@@ -41,7 +36,11 @@ const CONNECTION = {
   clientSecret: '******',
   redirectUri: 'https://id.acme.io/oauth/callback/google',
   scopes: ['openid'],
-  attributeConfiguration: ATTR_CONFIG,
+  attributeConfiguration: {
+    ...ATTR_CONFIG,
+    authorizationMapping: {rules: AUTHZ_MAPPINGS, direct: DIRECT_MAPPINGS},
+    accountLinking: LINKING,
+  },
 };
 
 const TWILIO_CONNECTION = {
@@ -77,7 +76,8 @@ vi.mock('@thunderid/contexts', async (importOriginal) => ({
   useConfig: () => ({getGateCallbackUrl: () => 'https://id.acme.io/gate/callback'}),
   useToast: () => ({showToast: vi.fn()}),
 }));
-vi.mock('@thunderid/components', () => ({
+vi.mock('@thunderid/components', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@thunderid/components')>()),
   SettingsCard: ({title, children}: {title: string; children: ReactNode}) => (
     <section aria-label={title}>{children}</section>
   ),
@@ -92,7 +92,9 @@ vi.mock('../../api/useConnection', () => ({
   default: () => ({data: mockConn.data, isLoading: false, isError: false, refetch: refetchMock}),
 }));
 vi.mock('../../api/useConnectionInstances', () => ({default: () => ({data: [], isLoading: false})}));
-vi.mock('../../api/useUpdateConnection', () => ({default: () => ({mutateAsync: updateMock, isPending: false})}));
+vi.mock('../../api/useUpdateConnection', () => ({
+  default: () => ({mutateAsync: updateMock, reset: updateResetMock, ...updateMutationState}),
+}));
 vi.mock('../../api/useDeleteConnection', () => ({default: () => ({mutate: deleteMock, isPending: false})}));
 vi.mock('../../api/useGetConnectionUsages', () => ({
   default: () => ({data: {totalResults: 0, count: 0, summary: {}, usages: []}, isLoading: false}),
@@ -129,20 +131,71 @@ vi.mock('../../components/AttributeMappingSection', () => ({
   },
 }));
 
+// Fires onChange only on an explicit click, so tests that never click it leave the section untouched
+// (editedAuthzMappings/editedLinking stay null, falling back to the baseline), matching how a real user
+// who never opens the section behaves.
+vi.mock('../../components/AuthorizationMappingSection', () => ({
+  default: function StubAuthorizationMappingSection({
+    onRuleChange,
+    onDirectChange,
+  }: {
+    onRuleChange: (c: unknown, v: boolean) => void;
+    onDirectChange: (c: unknown, v: boolean) => void;
+  }) {
+    return (
+      <>
+        <button type="button" data-testid="clear-authz-mappings" onClick={() => onRuleChange(undefined, true)}>
+          clear authorization mappings
+        </button>
+        <button type="button" data-testid="clear-direct-mappings" onClick={() => onDirectChange(undefined, true)}>
+          clear direct mappings
+        </button>
+        {/* Simulates an attempted-but-incomplete row: the serialized value is unchanged from baseline
+            (nothing to diff), but the section reports itself invalid, the same way an incomplete
+            AuthorizationMappingSection row does. */}
+        <button
+          type="button"
+          data-testid="report-incomplete-authz-row"
+          onClick={() => onRuleChange(AUTHZ_MAPPINGS, false)}
+        >
+          report incomplete row
+        </button>
+      </>
+    );
+  },
+}));
+
+vi.mock('../../components/AccountLinkingSection', () => ({
+  default: function StubAccountLinkingSection({onChange}: {onChange: (c: unknown) => void}) {
+    return (
+      <button type="button" data-testid="clear-linking" onClick={() => onChange(undefined)}>
+        clear account linking
+      </button>
+    );
+  },
+}));
+
 describe('ConnectionDetailPage', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockParams.type = 'google';
     mockParams.id = 'g1';
     mockConn.data = CONNECTION;
+    updateMutationState.isPending = false;
+    updateMutationState.isError = false;
   });
 
-  it('renders the general tab with quick-copy, the credentials form, and a danger-zone delete', () => {
+  it('renders the general tab with quick-copy and the credentials form', () => {
     render(<ConnectionDetailPage />);
     expect(screen.getByTestId('connection-id-copy')).toBeInTheDocument();
     expect(screen.getByDisplayValue('g1')).toBeInTheDocument();
     expect(screen.getByText('Unique identifier for this connection.')).toBeInTheDocument();
     expect(screen.getByTestId('stub-connection-form')).toBeInTheDocument();
+  });
+
+  it('renders the danger-zone delete on the advanced tab', () => {
+    render(<ConnectionDetailPage />);
+    fireEvent.click(screen.getByTestId('connection-tab-advanced'));
     expect(screen.getByTestId('connection-delete-button')).toBeInTheDocument();
   });
 
@@ -169,11 +222,63 @@ describe('ConnectionDetailPage', () => {
     expect(updateMock).toHaveBeenCalledTimes(1);
     const payload = updateMock.mock.calls[0][0] as {name: string; clientId: string; attributeConfiguration?: unknown};
     expect(payload).toMatchObject({name: 'Google', clientId: 'changed'});
-    // General-tab-only edit must not wipe the stored attribute configuration.
-    expect(payload.attributeConfiguration).toEqual(ATTR_CONFIG);
+    // General-tab-only edit must not wipe the stored attribute configuration, including both halves
+    // of the nested authorization mapping (rule-based and direct) and account linking, none of which
+    // this edit touched.
+    expect(payload.attributeConfiguration).toEqual({
+      ...ATTR_CONFIG,
+      authorizationMapping: {rules: AUTHZ_MAPPINGS, direct: DIRECT_MAPPINGS},
+      accountLinking: LINKING,
+    });
 
     await waitFor(() => expect(refetchMock).toHaveBeenCalledTimes(1));
     await waitFor(() => expect(screen.queryByTestId('save-bar')).not.toBeInTheDocument());
+  });
+
+  it('omits authorization mappings and account linking from the save payload once cleared, instead of reverting to the stored value', () => {
+    render(<ConnectionDetailPage />);
+    fireEvent.click(screen.getByTestId('connection-tab-attributes'));
+    fireEvent.click(screen.getByTestId('clear-authz-mappings'));
+    fireEvent.click(screen.getByTestId('clear-direct-mappings'));
+    fireEvent.click(screen.getByTestId('clear-linking'));
+    fireEvent.click(screen.getByTestId('save-bar'));
+
+    const payload = updateMock.mock.calls[0][0] as {
+      attributeConfiguration?: {
+        authorizationMapping?: unknown;
+        accountLinking?: unknown;
+      };
+    };
+    expect(payload.attributeConfiguration?.authorizationMapping).toBeUndefined();
+    expect(payload.attributeConfiguration?.accountLinking).toBeUndefined();
+  });
+
+  it('clearing only the rule-based half keeps the stored direct mappings nested alongside it', () => {
+    render(<ConnectionDetailPage />);
+    fireEvent.click(screen.getByTestId('connection-tab-attributes'));
+    fireEvent.click(screen.getByTestId('clear-authz-mappings'));
+    fireEvent.click(screen.getByTestId('save-bar'));
+
+    const payload = updateMock.mock.calls[0][0] as {
+      attributeConfiguration?: {authorizationMapping?: {rules?: unknown; direct?: unknown}};
+    };
+    expect(payload.attributeConfiguration?.authorizationMapping).toEqual({direct: DIRECT_MAPPINGS});
+  });
+
+  it('shows the save bar for an attempted-but-incomplete authorization mapping row, and still blocks the save', () => {
+    render(<ConnectionDetailPage />);
+    fireEvent.click(screen.getByTestId('connection-tab-attributes'));
+
+    expect(screen.queryByTestId('save-bar')).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId('report-incomplete-authz-row'));
+
+    // Nothing in the serialized payload changed (the incomplete row contributes nothing to it), so
+    // this only shows up as an invalid section, not a diff - the save bar must still appear for it.
+    expect(screen.getByTestId('save-bar')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId('save-bar'));
+    expect(updateMock).not.toHaveBeenCalled();
   });
 
   it('shows an inline name error on a 409 update conflict, and clears it when the name is edited', async () => {
@@ -193,8 +298,27 @@ describe('ConnectionDetailPage', () => {
     expect(screen.queryByTestId('stub-name-error')).not.toBeInTheDocument();
   });
 
+  it('resets a failed (settled) update mutation as soon as a field is edited', () => {
+    updateMutationState.isError = true;
+    render(<ConnectionDetailPage />);
+
+    fireEvent.click(screen.getByTestId('edit-client-id'));
+
+    expect(updateResetMock).toHaveBeenCalled();
+  });
+
+  it('does not reset a still-pending update mutation when a field is edited', () => {
+    updateMutationState.isPending = true;
+    render(<ConnectionDetailPage />);
+
+    fireEvent.click(screen.getByTestId('edit-client-id'));
+
+    expect(updateResetMock).not.toHaveBeenCalled();
+  });
+
   it('deletes the connection and returns to the list', () => {
     render(<ConnectionDetailPage />);
+    fireEvent.click(screen.getByTestId('connection-tab-advanced'));
     fireEvent.click(screen.getByTestId('connection-delete-button'));
     fireEvent.click(screen.getByTestId('connection-delete-confirm'));
     expect(deleteMock).toHaveBeenCalledWith('g1', expect.anything());

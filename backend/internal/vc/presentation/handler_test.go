@@ -1,20 +1,5 @@
-/*
- * Copyright (c) 2026, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2026 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 package presentation
 
@@ -78,11 +63,21 @@ func (s *DefinitionHandlerTestSuite) TestHandleCreateInvalidBody() {
 	s.Contains(rec.Body.String(), ErrorDefinitionInvalidRequest.Code)
 }
 
+func (s *DefinitionHandlerTestSuite) TestHandleCreateRequiresOUID() {
+	req := httptest.NewRequest(http.MethodPost, definitionsPath,
+		strings.NewReader(`{"handle":"eudi-pid","vct":"urn:eudi:pid:1","ouHandle":"default"}`))
+	rec := httptest.NewRecorder()
+	s.handler.HandleCreate(rec, req)
+
+	s.Equal(http.StatusBadRequest, rec.Code)
+}
+
 func (s *DefinitionHandlerTestSuite) TestHandleCreateServiceError() {
 	s.service.EXPECT().CreatePresentationDefinition(mock.Anything, mock.Anything).
 		Return(nil, &ErrorDefinitionAlreadyExists)
 
-	req := httptest.NewRequest(http.MethodPost, definitionsPath, strings.NewReader(`{"handle":"h","vct":"v"}`))
+	req := httptest.NewRequest(http.MethodPost, definitionsPath,
+		strings.NewReader(`{"handle":"h","vct":"v","ouId":"ou-1"}`))
 	rec := httptest.NewRecorder()
 	s.handler.HandleCreate(rec, req)
 
@@ -156,7 +151,7 @@ func (s *DefinitionHandlerTestSuite) TestHandleUpdateSuccess() {
 		})
 
 	req := httptest.NewRequest(http.MethodPut, definitionsPath+"/def-1",
-		strings.NewReader(`{"handle":"h","vct":"v"}`))
+		strings.NewReader(`{"handle":"h","vct":"v","ouId":"ou-1"}`))
 	req.SetPathValue("id", "def-1")
 	rec := httptest.NewRecorder()
 	s.handler.HandleUpdate(rec, req)
@@ -188,7 +183,7 @@ func (s *DefinitionHandlerTestSuite) TestHandleUpdateServiceError() {
 		Return(nil, &ErrorDefinitionImmutable)
 
 	req := httptest.NewRequest(http.MethodPut, definitionsPath+"/def-1",
-		strings.NewReader(`{"handle":"h","vct":"v"}`))
+		strings.NewReader(`{"handle":"h","vct":"v","ouId":"ou-1"}`))
 	req.SetPathValue("id", "def-1")
 	rec := httptest.NewRecorder()
 	s.handler.HandleUpdate(rec, req)

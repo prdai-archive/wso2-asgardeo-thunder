@@ -1,20 +1,5 @@
-/*
- * Copyright (c) 2025-2026, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2025-2026 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 package security
 
@@ -75,6 +60,8 @@ const (
 	ResourceTypeUser ResourceType = "user"
 	// ResourceTypeGroup identifies a group resource.
 	ResourceTypeGroup ResourceType = "group"
+	// ResourceTypeAgent identifies an agent resource.
+	ResourceTypeAgent ResourceType = "agent"
 	// ResourceTypeUserType identifies a user-category entity type resource.
 	ResourceTypeUserType ResourceType = "usertype"
 	// ResourceTypeAgentType identifies an agent-category entity type resource.
@@ -122,6 +109,17 @@ const (
 	// ActionListGroups lists groups.
 	ActionListGroups Action = "group:list"
 
+	// ActionCreateAgent creates a new agent.
+	ActionCreateAgent Action = "agent:create"
+	// ActionReadAgent reads an agent.
+	ActionReadAgent Action = "agent:read"
+	// ActionUpdateAgent updates an agent.
+	ActionUpdateAgent Action = "agent:update"
+	// ActionDeleteAgent deletes an agent.
+	ActionDeleteAgent Action = "agent:delete"
+	// ActionListAgents lists agents.
+	ActionListAgents Action = "agent:list"
+
 	// ActionCreateUserType creates a new user type.
 	ActionCreateUserType Action = "usertype:create"
 	// ActionReadUserType reads a user type.
@@ -157,6 +155,8 @@ type SystemPermissions struct {
 	UserView      string
 	Group         string
 	GroupView     string
+	Agent         string
+	AgentView     string
 	UserType      string
 	UserTypeView  string
 	AgentType     string
@@ -190,6 +190,8 @@ func InitSystemPermissions(handle string) {
 		UserView:      buildPermission(handle, "system", "user", "view"),
 		Group:         buildPermission(handle, "system", "group"),
 		GroupView:     buildPermission(handle, "system", "group", "view"),
+		Agent:         buildPermission(handle, "system", "agent"),
+		AgentView:     buildPermission(handle, "system", "agent", "view"),
 		UserType:      buildPermission(handle, "system", "usertype"),
 		UserTypeView:  buildPermission(handle, "system", "usertype", "view"),
 		AgentType:     buildPermission(handle, "system", "agenttype"),
@@ -219,6 +221,13 @@ func InitSystemPermissions(handle string) {
 		ActionUpdateGroup: p.Group,
 		ActionDeleteGroup: p.Group,
 		ActionListGroups:  p.GroupView,
+
+		// Agent actions.
+		ActionCreateAgent: p.Agent,
+		ActionReadAgent:   p.AgentView,
+		ActionUpdateAgent: p.Agent,
+		ActionDeleteAgent: p.Agent,
+		ActionListAgents:  p.AgentView,
 
 		// User type actions.
 		ActionCreateUserType: p.UserType,
@@ -263,6 +272,13 @@ func InitSystemPermissions(handle string) {
 		{"PUT /users/**", p.User},
 		{"DELETE /users/**", p.User},
 
+		// Agent APIs.
+		{"GET /agents", p.AgentView},
+		{"POST /agents", p.Agent},
+		{"GET /agents/**", p.AgentView},
+		{"PUT /agents/**", p.Agent},
+		{"DELETE /agents/**", p.Agent},
+
 		// Group APIs.
 		{"GET /groups", p.GroupView},
 		{"POST /groups", p.Group},
@@ -284,6 +300,20 @@ func InitSystemPermissions(handle string) {
 		{"GET /agent-types/**", p.AgentTypeView},
 		{"PUT /agent-types/**", p.AgentType},
 		{"DELETE /agent-types/**", p.AgentType},
+
+		// Variable store APIs. The whole surface requires root rather than a narrower permission:
+		// the store holds credentials, and even the list of names is sensitive. This matches the
+		// default for an unlisted path, and says so rather than relying on it.
+		{"GET /variables", p.Root},
+		{"POST /variables", p.Root},
+		{"GET /variables/**", p.Root},
+		{"PUT /variables/**", p.Root},
+		{"DELETE /variables/**", p.Root},
+		{"GET /secrets", p.Root},
+		{"POST /secrets", p.Root},
+		{"GET /secrets/**", p.Root},
+		{"PUT /secrets/**", p.Root},
+		{"DELETE /secrets/**", p.Root},
 
 		// Import APIs.
 		{"POST /import", p.Root},
@@ -365,6 +395,42 @@ func HasSufficientPermission(userPermissions []string, required string) bool {
 		}
 	}
 	return false
+}
+
+// ---- Permission set coverage ----
+
+// PermissionSet maps a resource server ID to the permissions granted on that resource server.
+type PermissionSet map[string][]string
+
+// Covers reports whether actor holds every permission in required, and answers "may this caller
+// confer these permissions on someone else?".
+//
+// Coverage is evaluated per resource server: a permission held on one never satisfies a
+// requirement on another. Within a resource server, matching is hierarchical, so "system:user"
+// covers "system:user:view" but not the reverse. Coverage is a partial order, not an ordering:
+// two sets can each hold what the other lacks.
+//
+// An empty required set is covered. A required permission that is empty, or keyed under an empty
+// resource server ID, is never covered, since approving a malformed grant would be unsafe.
+func Covers(actor, required PermissionSet) bool {
+	for resourceServerID, requiredPerms := range required {
+		if len(requiredPerms) == 0 {
+			continue
+		}
+		if resourceServerID == "" {
+			return false
+		}
+		heldPerms := actor[resourceServerID]
+		for _, requiredPerm := range requiredPerms {
+			if requiredPerm == "" {
+				return false
+			}
+			if !HasSufficientPermission(heldPerms, requiredPerm) {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 // ResolveActionPermission returns the minimum permission required to perform the given

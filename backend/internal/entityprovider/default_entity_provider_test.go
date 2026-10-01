@@ -1,20 +1,5 @@
-/*
- * Copyright (c) 2026, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2026 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 package entityprovider
 
@@ -101,78 +86,6 @@ func (suite *DefaultEntityProviderTestSuite) TestGetEntity() {
 	suite.Nil(e)
 	suite.NotNil(err)
 	suite.Equal(ErrorCodeEntityNotFound, err.Code)
-}
-
-func (suite *DefaultEntityProviderTestSuite) TestCreateEntity() {
-	providerEntity := &providers.Entity{
-		ID:       testEntityID,
-		Category: providers.EntityCategoryApp,
-		Type:     "application",
-	}
-	created := &providers.Entity{
-		ID:       testEntityID,
-		Category: providers.EntityCategoryApp,
-		Type:     "application",
-	}
-
-	// Test Success
-	suite.mockService.On("CreateEntity", mock.Anything, mock.Anything, mock.Anything).
-		Return(created, nil).Once()
-
-	e, err := suite.provider.CreateEntity(providerEntity, json.RawMessage(`{}`))
-	suite.Nil(err)
-	suite.Equal(testEntityID, e.ID)
-
-	// Test Nil Entity
-	e, err = suite.provider.CreateEntity(nil, nil)
-	suite.Nil(e)
-	suite.NotNil(err)
-	suite.Equal(ErrorCodeInvalidRequestFormat, err.Code)
-
-	// Test Attribute Conflict
-	suite.mockService.On("CreateEntity", mock.Anything, mock.Anything, mock.Anything).
-		Return(nil, entity.ErrAttributeConflict).Once()
-
-	e, err = suite.provider.CreateEntity(providerEntity, nil)
-	suite.Nil(e)
-	suite.NotNil(err)
-	suite.Equal(ErrorCodeAttributeConflict, err.Code)
-
-	// Test Schema Validation Failed
-	suite.mockService.On("CreateEntity", mock.Anything, mock.Anything, mock.Anything).
-		Return(nil, entity.ErrSchemaValidationFailed).Once()
-
-	e, err = suite.provider.CreateEntity(providerEntity, nil)
-	suite.Nil(e)
-	suite.NotNil(err)
-	suite.Equal(ErrorCodeSchemaValidationFailed, err.Code)
-
-	// Test Bad Attributes In Request
-	suite.mockService.On("CreateEntity", mock.Anything, mock.Anything, mock.Anything).
-		Return(nil, entity.ErrBadAttributesInRequest).Once()
-
-	e, err = suite.provider.CreateEntity(providerEntity, nil)
-	suite.Nil(e)
-	suite.NotNil(err)
-	suite.Equal(ErrorCodeInvalidRequestFormat, err.Code)
-
-	// Test Invalid Credential
-	suite.mockService.On("CreateEntity", mock.Anything, mock.Anything, mock.Anything).
-		Return(nil, entity.ErrInvalidCredential).Once()
-
-	e, err = suite.provider.CreateEntity(providerEntity, nil)
-	suite.Nil(e)
-	suite.NotNil(err)
-	suite.Equal(ErrorCodeInvalidRequestFormat, err.Code)
-
-	// Test System Error
-	suite.mockService.On("CreateEntity", mock.Anything, mock.Anything, mock.Anything).
-		Return(nil, errors.New("db error")).Once()
-
-	e, err = suite.provider.CreateEntity(providerEntity, nil)
-	suite.Nil(e)
-	suite.NotNil(err)
-	suite.Equal(ErrorCodeSystemError, err.Code)
 }
 
 func (suite *DefaultEntityProviderTestSuite) TestUpdateEntity() {

@@ -1,20 +1,5 @@
-/*
- * Copyright (c) 2025, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2025 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 package client
 
@@ -77,7 +62,7 @@ func (suite *ClientFactoryTestSuite) TestGetClient() {
 			name: "twilio",
 			sender: common.NotificationSenderDTO{
 				Name:     "Test Twilio",
-				Provider: common.MessageProviderTypeTwilio,
+				Provider: common.NotificationProviderTypeTwilio,
 				Properties: []cmodels.Property{
 					createTestProperty("account_sid", "AC00112233445566778899aabbccddeeff", true),
 					createTestProperty("auth_token", "test-token", true),
@@ -90,7 +75,7 @@ func (suite *ClientFactoryTestSuite) TestGetClient() {
 			name: "vonage",
 			sender: common.NotificationSenderDTO{
 				Name:     "Test Vonage",
-				Provider: common.MessageProviderTypeVonage,
+				Provider: common.NotificationProviderTypeVonage,
 				Properties: []cmodels.Property{
 					createTestProperty("api_key", "test-key", true),
 					createTestProperty("api_secret", "test-secret", true),
@@ -103,7 +88,7 @@ func (suite *ClientFactoryTestSuite) TestGetClient() {
 			name: "custom",
 			sender: common.NotificationSenderDTO{
 				Name:     "Test Custom",
-				Provider: common.MessageProviderTypeCustom,
+				Provider: common.NotificationProviderTypeCustom,
 				Properties: []cmodels.Property{
 					createTestProperty("url", "https://api.example.com/sms", false),
 					createTestProperty("http_method", "POST", false),
@@ -142,7 +127,7 @@ func (suite *ClientFactoryTestSuite) TestGetClientWithError() {
 			name: "twilio_decryption_error",
 			sender: common.NotificationSenderDTO{
 				Name:     "Bad Twilio",
-				Provider: common.MessageProviderTypeTwilio,
+				Provider: common.NotificationProviderTypeTwilio,
 				// account_sid is required and marked secret but value will fail decryption
 				Properties: append(makeInvalidSecretProps("account_sid"),
 					createTestProperty("auth_token", "test-token", true)),
@@ -152,7 +137,7 @@ func (suite *ClientFactoryTestSuite) TestGetClientWithError() {
 			name: "vonage_decryption_error",
 			sender: common.NotificationSenderDTO{
 				Name:     "Bad Vonage",
-				Provider: common.MessageProviderTypeVonage,
+				Provider: common.NotificationProviderTypeVonage,
 				Properties: append(makeInvalidSecretProps("api_key"),
 					createTestProperty("api_secret", "test-secret", true)),
 			},
@@ -161,7 +146,7 @@ func (suite *ClientFactoryTestSuite) TestGetClientWithError() {
 			name: "custom_decryption_error",
 			sender: common.NotificationSenderDTO{
 				Name:     "Bad Custom",
-				Provider: common.MessageProviderTypeCustom,
+				Provider: common.NotificationProviderTypeCustom,
 				// url is secret here and invalid ciphertext
 				Properties: makeInvalidSecretProps("url"),
 			},

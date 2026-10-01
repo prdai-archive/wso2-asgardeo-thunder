@@ -1,20 +1,5 @@
-/*
- * Copyright (c) 2026, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2026 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 package agent
 
@@ -26,6 +11,7 @@ import (
 	"testing"
 
 	tidcommon "github.com/thunder-id/thunderid/pkg/thunderidengine/common"
+	"github.com/thunder-id/thunderid/pkg/thunderidengine/providers"
 
 	"github.com/stretchr/testify/assert"
 
@@ -37,7 +23,7 @@ import (
 
 type InlineStubAgentService struct {
 	OnCreateAgent func(
-		ctx context.Context, agent *model.Agent,
+		ctx context.Context, agent *providers.Agent,
 	) (*model.AgentCompleteResponse, *tidcommon.ServiceError)
 	OnUpdateAgent func(
 		ctx context.Context, id string, req *model.UpdateAgentRequest,
@@ -58,7 +44,7 @@ type InlineStubAgentService struct {
 }
 
 func (s *InlineStubAgentService) CreateAgent(
-	ctx context.Context, agent *model.Agent) (*model.AgentCompleteResponse, *tidcommon.ServiceError) {
+	ctx context.Context, agent *providers.Agent) (*model.AgentCompleteResponse, *tidcommon.ServiceError) {
 	if s.OnCreateAgent != nil {
 		return s.OnCreateAgent(ctx, agent)
 	}
@@ -116,7 +102,7 @@ func (s *InlineStubAgentService) GetAgentRoles(
 }
 
 func (s *InlineStubAgentService) ValidateAgent(
-	ctx context.Context, agent *model.Agent, flowID string,
+	ctx context.Context, agent *providers.Agent, flowID string,
 ) (string, string, inboundmodel.InboundClient, *tidcommon.ServiceError) {
 	return "", "", inboundmodel.InboundClient{}, nil
 }
@@ -131,7 +117,7 @@ func (s *InlineStubAgentService) SetDependencyRegistry(resourcedependency.Regist
 func TestHandleAgentPostRequest_Success(t *testing.T) {
 	stubService := &InlineStubAgentService{
 		OnCreateAgent: func(
-			ctx context.Context, agent *model.Agent,
+			ctx context.Context, agent *providers.Agent,
 		) (*model.AgentCompleteResponse, *tidcommon.ServiceError) {
 			return &model.AgentCompleteResponse{ID: "agent-123"}, nil
 		},

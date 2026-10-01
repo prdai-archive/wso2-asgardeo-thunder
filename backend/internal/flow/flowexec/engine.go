@@ -1,20 +1,5 @@
-/*
- * Copyright (c) 2025-2026, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2025-2026 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 package flowexec
 
@@ -29,6 +14,7 @@ import (
 
 	tidcommon "github.com/thunder-id/thunderid/pkg/thunderidengine/common"
 
+	authnprovidercm "github.com/thunder-id/thunderid/internal/authnprovider/common"
 	"github.com/thunder-id/thunderid/internal/flow/common"
 	"github.com/thunder-id/thunderid/internal/flow/core"
 	"github.com/thunder-id/thunderid/internal/flow/executor"
@@ -179,21 +165,35 @@ func (fe *flowEngine) executeNodePackage(ctx *EngineContext,
 		FlowID:      ssoFlowID(ctx),
 		FlowVersion: ctx.SSOFlowVersion,
 	})
+	// The application's subject type constraints ride on the context for the same reason: the authn
+	// providers enforce them below the flow graph, so no node has to carry or check them. Only an
+	// authentication flow signs a subject in to the application; the other flow types resolve the
+	// eligible entity types through their own executors.
+	nodeCtxContext := ssoCtx
+	if ctx.FlowType == providers.FlowTypeAuthentication {
+		nodeCtxContext = authnprovidercm.WithSubjectTypeConstraints(ssoCtx, authnprovidercm.SubjectTypeConstraints{
+			AllowedUserTypes:  ctx.Application.AllowedUserTypes,
+			AllowedAgentTypes: ctx.Application.AllowedAgentTypes,
+		})
+	}
+	fe.replayPromptInputs(ctx)
+
 	nodeCtx := &providers.NodeContext{
-		Context:          ssoCtx,
-		ExecutionID:      ctx.ExecutionID,
-		FlowType:         ctx.FlowType,
-		EntityID:         ctx.AppID,
-		CurrentAction:    ctx.CurrentAction,
-		Verbose:          ctx.Verbose,
-		NodeInputs:       getNodeInputs(ctx.CurrentNode),
-		UserInputs:       ctx.UserInputs,
-		CurrentNodeID:    ctx.CurrentNode.GetID(),
-		RuntimeData:      ctx.RuntimeData,
-		ForwardedData:    ctx.ForwardedData,
-		Application:      ctx.Application,
-		AuthUser:         ctx.AuthUser,
-		ExecutionHistory: ctx.ExecutionHistory,
+		Context:           nodeCtxContext,
+		ExecutionID:       ctx.ExecutionID,
+		FlowType:          ctx.FlowType,
+		EntityID:          ctx.AppID,
+		CurrentAction:     ctx.CurrentAction,
+		Verbose:           ctx.Verbose,
+		NodeInputs:        getNodeInputs(ctx.CurrentNode),
+		UserInputs:        ctx.UserInputs,
+		CurrentNodeID:     ctx.CurrentNode.GetID(),
+		RuntimeData:       ctx.RuntimeData,
+		SharedRuntimeData: ctx.sharedRuntimeData,
+		ForwardedData:     ctx.ForwardedData,
+		Application:       ctx.Application,
+		AuthUser:          ctx.AuthUser,
+		ExecutionHistory:  ctx.ExecutionHistory,
 	}
 	nodeCtx.SetInitiatorRequest(ctx.GetInitiatorRequest())
 	if nodeCtx.NodeInputs == nil {
@@ -704,6 +704,13 @@ func (fe *flowEngine) updateContextWithNodeResponse(engineCtx *EngineContext, no
 		}
 		engineCtx.RuntimeData = sysutils.MergeStringMaps(engineCtx.RuntimeData, nodeResp.RuntimeData)
 	}
+	if len(nodeResp.SharedRuntimeData) > 0 {
+		if engineCtx.sharedRuntimeData == nil {
+			engineCtx.sharedRuntimeData = make(map[string]string)
+		}
+		engineCtx.sharedRuntimeData = sysutils.MergeStringMaps(
+			engineCtx.sharedRuntimeData, nodeResp.SharedRuntimeData)
+	}
 
 	// Handle additional data from the node response (e.g., passkeyCreationOptions, passkeyChallenge)
 	if len(nodeResp.AdditionalData) > 0 {
@@ -1033,6 +1040,7 @@ func (fe *flowEngine) switchContextToCallee(ctx *EngineContext,
 	ctx.CurrentNodeResponse = nil
 	ctx.CurrentSegmentID = ""
 	ctx.CurrentAction = ""
+	ctx.clearPausedPromptInputs()
 
 	// Set the current node to the start node of the callee graph
 	startNode, startErr := calleeGraph.GetStartNode()
@@ -1218,6 +1226,34 @@ func (fe *flowEngine) resolveStepForRedirection(ctx *EngineContext, nodeResp *co
 	return nil
 }
 
+// replayPromptInputs restores the inputs the paused prompt resolved to into ForwardedData before
+// that same node runs again. Dynamic inputs (schema attributes an executor found missing, resolver
+// options) reach a prompt through ForwardedData, which executeNodePackage clears after a single hop,
+// so a bare resume or a page refresh would otherwise render the prompt with only its static inputs.
+// Skipped when an action was selected, since the prompt then evaluates against that action's own
+// inputs, and when an executor already forwarded inputs in this traversal.
+func (fe *flowEngine) replayPromptInputs(ctx *EngineContext) {
+	if len(ctx.CurrentPromptInputs) == 0 || ctx.CurrentNode == nil {
+		return
+	}
+	if ctx.CurrentAction != "" {
+		return
+	}
+	if ctx.CurrentNode.GetID() != ctx.CurrentPromptNodeID {
+		return
+	}
+	if ctx.ForwardedData != nil {
+		if _, ok := ctx.ForwardedData[common.ForwardedDataKeyInputs]; ok {
+			return
+		}
+	}
+
+	if ctx.ForwardedData == nil {
+		ctx.ForwardedData = make(map[string]interface{})
+	}
+	ctx.ForwardedData[common.ForwardedDataKeyInputs] = ctx.CurrentPromptInputs
+}
+
 // resolveStepDetailsForPrompt resolves the step details for a user prompt response.
 func (fe *flowEngine) resolveStepDetailsForPrompt(ctx *EngineContext, nodeResp *common.NodeResponse,
 	flowStep *FlowStep) error {
@@ -1272,6 +1308,12 @@ func (fe *flowEngine) resolveStepDetailsForPrompt(ctx *EngineContext, nodeResp *
 
 	if len(nodeResp.FieldErrors) > 0 {
 		flowStep.Data.FieldErrors = nodeResp.FieldErrors
+	}
+
+	// Record how this prompt resolved so re-entering it renders the same step.
+	if ctx.CurrentNode != nil {
+		ctx.CurrentPromptInputs = flowStep.Data.Inputs
+		ctx.CurrentPromptNodeID = ctx.CurrentNode.GetID()
 	}
 
 	flowStep.Status = providers.FlowStatusIncomplete
@@ -1410,8 +1452,8 @@ func publishNodeExecutionStartedEvent(
 		WithData(event.DataKey.NodeID, node.GetID()).
 		WithData(event.DataKey.NodeType, string(node.GetType())).
 		WithData(event.DataKey.StepNumber, fmt.Sprintf("%d", stepNumber)).
-		WithData(event.DataKey.AttemptNumber, fmt.Sprintf("%d", attemptNumber)).
-		WithData(event.DataKey.EntityID, ctx.AppID)
+		WithData(event.DataKey.AttemptNumber, fmt.Sprintf("%d", attemptNumber))
+	addFlowEventContext(ctx, evt, ctx.AuthUser)
 
 	obsSvc.PublishEvent(ctx.Context, evt)
 }
@@ -1483,19 +1525,19 @@ func publishNodeExecutionCompletedEvent(ctx *EngineContext, node core.NodeInterf
 		WithData(event.DataKey.NodeStatus, nodeStatus).
 		WithData(event.DataKey.StepNumber, fmt.Sprintf("%d", stepNumber)).
 		WithData(event.DataKey.AttemptNumber, fmt.Sprintf("%d", attemptNumber)).
-		WithData(event.DataKey.DurationMs, fmt.Sprintf("%d", durationMs)).
-		WithData(event.DataKey.EntityID, ctx.AppID)
+		WithData(event.DataKey.DurationMs, fmt.Sprintf("%d", durationMs))
+
+	// The node that authenticates the subject reports it on its own response, and the engine merges
+	// that into the context only after this event is published. Prefer the response so the
+	// authenticating node's own event carries the subject it just resolved, rather than first
+	// reporting it one node later.
+	addFlowEventContext(ctx, evt, subjectAuthUser(ctx, nodeResp))
 
 	// Add error or failure details
 	if nodeErr != nil {
 		evt.WithData(event.DataKey.Error, processServiceErrorForEventPublish(nodeErr))
 	} else if nodeResp != nil && nodeResp.Error != nil {
 		evt.WithData(event.DataKey.Error, processNodeResponseErrorForEventPublish(nodeResp))
-	}
-
-	// Add user ID if authenticated
-	if ctx.AuthenticatedUser.IsAuthenticated && ctx.AuthenticatedUser.UserID != "" {
-		evt.WithData(event.DataKey.UserID, ctx.AuthenticatedUser.UserID)
 	}
 
 	obsSvc.PublishEvent(ctx.Context, evt)
@@ -1508,19 +1550,14 @@ func publishFlowStartedEvent(ctx *EngineContext, obsSvc providers.ObservabilityP
 	}
 
 	evt := event.NewEvent(
-		ctx.TraceID, // Use TraceID from context
+		ctx.ExecutionID, // Use ExecutionID as TraceID, so the whole flow shares one trace
 		string(event.EventTypeFlowStarted),
 		event.ComponentFlowEngine,
 	).
 		WithStatus(providers.StatusInProgress).
 		WithData(event.DataKey.ExecutionID, ctx.ExecutionID).
-		WithData(event.DataKey.FlowType, string(ctx.FlowType)).
-		WithData(event.DataKey.EntityID, ctx.AppID)
-
-	// Add user ID if already authenticated
-	if ctx.AuthenticatedUser.IsAuthenticated && ctx.AuthenticatedUser.UserID != "" {
-		evt.WithData(event.DataKey.UserID, ctx.AuthenticatedUser.UserID)
-	}
+		WithData(event.DataKey.FlowType, string(ctx.FlowType))
+	addFlowEventContext(ctx, evt, ctx.AuthUser)
 
 	obsSvc.PublishEvent(ctx.Context, evt)
 }
@@ -1547,13 +1584,8 @@ func publishFlowCompletedEvent(
 		WithStatus(providers.StatusSuccess).
 		WithData(event.DataKey.ExecutionID, ctx.ExecutionID).
 		WithData(event.DataKey.FlowType, string(ctx.FlowType)).
-		WithData(event.DataKey.EntityID, ctx.AppID).
 		WithData(event.DataKey.DurationMs, fmt.Sprintf("%d", durationMs))
-
-	// Add user ID if authenticated
-	if ctx.AuthenticatedUser.IsAuthenticated && ctx.AuthenticatedUser.UserID != "" {
-		evt.WithData(event.DataKey.UserID, ctx.AuthenticatedUser.UserID)
-	}
+	addFlowEventContext(ctx, evt, ctx.AuthUser)
 
 	obsSvc.PublishEvent(ctx.Context, evt)
 }
@@ -1569,27 +1601,79 @@ func publishFlowFailedEvent(ctx *EngineContext, svcErr *tidcommon.ServiceError,
 	durationMs := flowEndTime - flowStartTime
 
 	evt := event.NewEvent(
-		ctx.TraceID, // Use TraceID from context
+		ctx.ExecutionID, // Use ExecutionID as TraceID, so the whole flow shares one trace
 		string(event.EventTypeFlowFailed),
 		event.ComponentFlowEngine,
 	).
 		WithStatus(providers.StatusFailure).
 		WithData(event.DataKey.ExecutionID, ctx.ExecutionID).
 		WithData(event.DataKey.FlowType, string(ctx.FlowType)).
-		WithData(event.DataKey.EntityID, ctx.AppID).
 		WithData(event.DataKey.DurationMs, fmt.Sprintf("%d", durationMs))
+	addFlowEventContext(ctx, evt, ctx.AuthUser)
 
 	// Add error details if available
 	if svcErr != nil {
 		evt.WithData(event.DataKey.Error, processServiceErrorForEventPublish(svcErr))
 	}
 
-	// Add user ID if authenticated
-	if ctx.AuthenticatedUser.IsAuthenticated && ctx.AuthenticatedUser.UserID != "" {
-		evt.WithData(event.DataKey.UserID, ctx.AuthenticatedUser.UserID)
+	obsSvc.PublishEvent(ctx.Context, evt)
+}
+
+// addFlowEventContext stamps the shared context of a flow execution onto an observability event: the
+// execution id as the correlation identifier, the entity the flow runs for (its resource ID, its
+// OAuth client_id, and its principal type, so an agent-driven flow is distinguishable from an
+// application one without a registry lookup), and the authenticated subject once one is resolved.
+// The subject is reported as its entity resource ID rather than the subject the token will carry:
+// the latter is configurable per application through SubjectAttribute and may be a directly
+// identifying attribute, while the resource ID is opaque and joins with the token events.
+// authUser carries that subject: callers pass the engine context's copy, except the node-completed
+// publisher, which prefers the node response (see publishNodeExecutionCompletedEvent).
+func addFlowEventContext(ctx *EngineContext, evt *providers.Event, authUser providers.AuthUser) {
+	evt.WithData(event.DataKey.EntityID, ctx.AppID)
+	evt.WithData(event.DataKey.CorrelationID, ctx.ExecutionID)
+
+	if clientID := ctx.Application.OAuthClientID(); clientID != "" {
+		evt.WithData(event.DataKey.ClientID, clientID)
+	}
+	if actorType := event.PrincipalType(string(ctx.Application.EntityCategory)); actorType != "" {
+		evt.WithData(event.DataKey.ActorType, actorType)
 	}
 
-	obsSvc.PublishEvent(ctx.Context, evt)
+	subject, subjectCategory := authenticatedSubject(authUser)
+	if subject == "" {
+		return
+	}
+	evt.WithData(event.DataKey.Subject, subject)
+	if subjectType := event.PrincipalType(subjectCategory); subjectType != "" {
+		evt.WithData(event.DataKey.SubjectType, subjectType)
+	}
+}
+
+// subjectAuthUser picks the authentication state that describes the subject at the time a node
+// completes: the node response's when it has resolved one, otherwise the engine context's.
+func subjectAuthUser(ctx *EngineContext, nodeResp *common.NodeResponse) providers.AuthUser {
+	if nodeResp != nil {
+		if subject, _ := authenticatedSubject(nodeResp.AuthUser); subject != "" {
+			return nodeResp.AuthUser
+		}
+	}
+	return ctx.AuthUser
+}
+
+// authenticatedSubject returns the entity id and category of the subject an authentication resolved,
+// or empty strings when it has resolved none. Both are read from the entity reference the
+// authentication executors record on AuthUser, so an agent that authenticates through a flow is
+// reported as an agent subject rather than assumed to be a user. Providers are visited in the stable
+// order AuthUser.ProviderNames guarantees; the first resolved reference wins.
+func authenticatedSubject(authUser providers.AuthUser) (subject, category string) {
+	for _, provider := range authUser.ProviderNames() {
+		state, ok := authUser.StateFor(provider)
+		if !ok || state.EntityReference == nil || state.EntityReference.EntityID == "" {
+			continue
+		}
+		return state.EntityReference.EntityID, state.EntityReference.EntityCategory
+	}
+	return "", ""
 }
 
 // processServiceErrorForEventPublish processes a service error to extract relevant information

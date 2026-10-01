@@ -1,20 +1,5 @@
-/*
- * Copyright (c) 2025-2026, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2025-2026 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 package discovery
 
@@ -23,6 +8,7 @@ import (
 	"io"
 
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/suite"
@@ -33,6 +19,11 @@ const (
 	oauth2DiscoveryEndpoint = "/.well-known/oauth-authorization-server"
 	oidcDiscoveryEndpoint   = "/.well-known/openid-configuration"
 	testServerURL           = testutils.TestServerURL
+	// oidcCIBAGrantType is the OpenID Connect CIBA grant type identifier (providers.GrantTypeCIBA).
+	oidcCIBAGrantType = "urn:openid:params:grant-type:ciba"
+	// cibaBackchannelAuthEndpointPath is the backchannel authentication endpoint path
+	// (oauth2const.OAuth2BackchannelAuthEndpoint).
+	cibaBackchannelAuthEndpointPath = "/oauth2/bc-authorize"
 )
 
 // OAuth2AuthorizationServerMetadata represents OAuth2 Authorization Server Metadata (RFC 8414)
@@ -44,9 +35,13 @@ type OAuth2AuthorizationServerMetadata struct {
 	RevocationEndpoint                         string   `json:"revocation_endpoint,omitempty"`
 	IntrospectionEndpoint                      string   `json:"introspection_endpoint,omitempty"`
 	RegistrationEndpoint                       string   `json:"registration_endpoint,omitempty"`
+	BackchannelAuthenticationEndpoint          string   `json:"backchannel_authentication_endpoint,omitempty"`
+	BackchannelTokenDeliveryModesSupported     []string `json:"backchannel_token_delivery_modes_supported,omitempty"`
+	BackchannelUserCodeParameterSupported      bool     `json:"backchannel_user_code_parameter_supported"`
 	ResponseTypesSupported                     []string `json:"response_types_supported"`
 	GrantTypesSupported                        []string `json:"grant_types_supported"`
 	TokenEndpointAuthMethodsSupported          []string `json:"token_endpoint_auth_methods_supported"`
+	TokenEndpointAuthSigningAlgValuesSupported []string `json:"token_endpoint_auth_signing_alg_values_supported"`
 	CodeChallengeMethodsSupported              []string `json:"code_challenge_methods_supported,omitempty"`
 	AuthorizationResponseIssParameterSupported bool     `json:"authorization_response_iss_parameter_supported"`
 }
@@ -140,6 +135,13 @@ func (ts *DiscoveryTestSuite) TestOAuth2AuthorizationServerMetadata_GET_Success(
 	ts.Contains(metadata.TokenEndpointAuthMethodsSupported, "client_secret_post", "Should support client_secret_post")
 	ts.Contains(metadata.TokenEndpointAuthMethodsSupported, "none", "Should support none")
 
+	// Verify token endpoint auth signing algs are advertised with FAPI 2.0 permitted algorithms (RFC 8414)
+	ts.NotEmpty(metadata.TokenEndpointAuthSigningAlgValuesSupported,
+		"token_endpoint_auth_signing_alg_values_supported should be present (FAPI 2.0)")
+	ts.Contains(metadata.TokenEndpointAuthSigningAlgValuesSupported, "PS256", "Should advertise PS256")
+	ts.Contains(metadata.TokenEndpointAuthSigningAlgValuesSupported, "ES256", "Should advertise ES256")
+	ts.Contains(metadata.TokenEndpointAuthSigningAlgValuesSupported, "EdDSA", "Should advertise EdDSA")
+
 	// Verify only S256 code challenge method is supported (plain is prohibited per OAuth 2.0 Security BCP)
 	ts.Equal([]string{"S256"}, metadata.CodeChallengeMethodsSupported,
 		"CodeChallengeMethodsSupported should contain exactly S256")
@@ -219,6 +221,31 @@ func (ts *DiscoveryTestSuite) TestOIDCDiscovery_GET_Success() {
 		"authorization_response_iss_parameter_supported must be true (RFC 9207)")
 }
 
+func (ts *DiscoveryTestSuite) TestOIDCDiscovery_RequestObjectParametersNotSupported() {
+	req, err := http.NewRequest("GET", testServerURL+oidcDiscoveryEndpoint, nil)
+	ts.Require().NoError(err)
+
+	resp, err := ts.client.Do(req)
+	ts.Require().NoError(err)
+	defer resp.Body.Close()
+
+	ts.Equal(http.StatusOK, resp.StatusCode)
+
+	body, err := io.ReadAll(resp.Body)
+	ts.Require().NoError(err)
+
+	var doc map[string]any
+	ts.Require().NoError(json.Unmarshal(body, &doc))
+
+	value, present := doc["request_uri_parameter_supported"]
+	ts.True(present, "request_uri_parameter_supported must be present (its default when omitted is true)")
+	ts.Equal(false, value, "request_uri_parameter_supported must be false")
+
+	value, present = doc["request_parameter_supported"]
+	ts.True(present, "request_parameter_supported must be present")
+	ts.Equal(false, value, "request_parameter_supported must be false")
+}
+
 func (ts *DiscoveryTestSuite) TestOIDCDiscovery_AcrValuesSupported() {
 	req, err := http.NewRequest("GET", testServerURL+oidcDiscoveryEndpoint, nil)
 	ts.Require().NoError(err)
@@ -240,6 +267,34 @@ func (ts *DiscoveryTestSuite) TestOIDCDiscovery_AcrValuesSupported() {
 	}
 	ts.ElementsMatch(expectedACRs, metadata.AcrValuesSupported,
 		"acr_values_supported must contain exactly the ACR values from the ACR-AMR config")
+}
+
+// TestOIDCDiscovery_CIBAMetadata verifies the OIDC discovery document advertises CIBA support in
+// poll-only mode: the backchannel authentication endpoint, poll-only delivery mode, no user_code
+// parameter support, and the CIBA grant type in grant_types_supported. Ping/push delivery is not
+// implemented, so only "poll" must appear.
+func (ts *DiscoveryTestSuite) TestOIDCDiscovery_CIBAMetadata() {
+	req, err := http.NewRequest("GET", testServerURL+oidcDiscoveryEndpoint, nil)
+	ts.Require().NoError(err)
+
+	resp, err := ts.client.Do(req)
+	ts.Require().NoError(err)
+	defer resp.Body.Close()
+
+	ts.Equal(http.StatusOK, resp.StatusCode)
+
+	var metadata OIDCProviderMetadata
+	err = json.NewDecoder(resp.Body).Decode(&metadata)
+	ts.Require().NoError(err)
+
+	ts.Contains(metadata.GrantTypesSupported, oidcCIBAGrantType,
+		"grant_types_supported must include the CIBA grant type")
+	ts.NotEmpty(metadata.BackchannelAuthenticationEndpoint, "BackchannelAuthenticationEndpoint should be present")
+	ts.True(strings.HasSuffix(metadata.BackchannelAuthenticationEndpoint, cibaBackchannelAuthEndpointPath),
+		"BackchannelAuthenticationEndpoint should end with the bc-authorize path")
+	ts.Equal([]string{"poll"}, metadata.BackchannelTokenDeliveryModesSupported,
+		"only poll-mode delivery is implemented")
+	ts.False(metadata.BackchannelUserCodeParameterSupported, "user_code is not supported")
 }
 
 // TestOIDCDiscovery_OPTIONS_Success tests OPTIONS request for CORS

@@ -1,20 +1,5 @@
-/*
- * Copyright (c) 2025, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2025 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 package ou
 
@@ -41,10 +26,11 @@ func Initialize(
 	mcpServer *mcp.Server,
 	cacheManager cache.CacheManagerInterface,
 	authzService sysauthz.SystemAuthorizationServiceInterface,
-) (ConfigurableOUService, sysauthz.OUHierarchyResolver, declarativeresource.ResourceExporter, error) {
+) (ConfigurableOUService, sysauthz.OUHierarchyResolver, HierarchyEnumeratorInterface,
+	declarativeresource.ResourceExporter, error) {
 	ouStore, transactioner, err := initializeStore(cacheManager)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, err
 	}
 
 	ouService := newOrganizationUnitService(authzService, ouStore, transactioner)
@@ -60,9 +46,13 @@ func Initialize(
 	// the authz service can traverse the OU tree without recursive authorization calls.
 	hierarchyResolver := newOUHierarchyAdapter(ouStore)
 
+	// Downward traversal is a separate capability: it answers which units a change reaches, which
+	// is not an access decision and so does not belong on the resolver above.
+	hierarchyEnumerator := newOUHierarchyEnumerator(ouStore)
+
 	// Create and return exporter
 	exporter := newOUExporter(ouService)
-	return ouService, hierarchyResolver, exporter, nil
+	return ouService, hierarchyResolver, hierarchyEnumerator, exporter, nil
 }
 
 // Store Selection (based on organization_unit.store configuration):

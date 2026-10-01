@@ -1,20 +1,5 @@
-/*
- * Copyright (c) 2026, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2026 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 // Package sso holds end-to-end integration tests for the SSO session lifecycle:
 // establishing a per-flow SSO session and reusing it on a subsequent authorize
@@ -52,10 +37,11 @@ const (
 	postLogoutRedirectURI = "https://localhost:3000/logged-out"
 	resourceIdentifier    = "https://sso-logout.example.com"
 
-	testPassword     = "testpass123"
-	ssoReuseUsername = "sso_reuse_user"
-	logoutUsername   = "sso_logout_user"
-	ssoScopeUsername = "sso_scope_user"
+	testPassword      = "testpass123"
+	ssoReuseUsername  = "sso_reuse_user"
+	logoutUsername    = "sso_logout_user"
+	ssoScopeUsername  = "sso_scope_user"
+	ssoMaxAgeUsername = "sso_max_age_user"
 
 	// Two resource servers defining the same permission string, used by the cross-resource-server
 	// SSO regression: the scope user is granted "read" on rs-A only.
@@ -246,7 +232,7 @@ func (ts *SSOLogoutTestSuite) SetupSuite() {
 
 	ts.applicationID = ts.createApplication()
 
-	for _, username := range []string{ssoReuseUsername, logoutUsername} {
+	for _, username := range []string{ssoReuseUsername, logoutUsername, ssoMaxAgeUsername} {
 		ts.createUser(username)
 	}
 
@@ -453,12 +439,23 @@ func (ts *SSOLogoutTestSuite) ssoCookieNames(client *http.Client) []string {
 // authorize starts an authorization code flow and returns the authId and executionId issued at the
 // gate redirect.
 func (ts *SSOLogoutTestSuite) authorize(client *http.Client, scope, state string) (string, string) {
+	return ts.authorizeWithMaxAge(client, scope, state, "")
+}
+
+// authorizeWithMaxAge starts an authorization code flow, optionally carrying the OIDC max_age
+// request parameter, and returns the authId and executionId issued at the gate redirect. An empty
+// maxAge omits the parameter entirely.
+func (ts *SSOLogoutTestSuite) authorizeWithMaxAge(client *http.Client, scope, state, maxAge string) (
+	string, string) {
 	params := url.Values{}
 	params.Set("client_id", clientID)
 	params.Set("redirect_uri", redirectURI)
 	params.Set("response_type", "code")
 	params.Set("scope", scope)
 	params.Set("state", state)
+	if maxAge != "" {
+		params.Set("max_age", maxAge)
+	}
 
 	req, err := http.NewRequest("GET", testutils.TestServerURL+"/oauth2/authorize?"+params.Encode(), nil)
 	ts.Require().NoError(err)

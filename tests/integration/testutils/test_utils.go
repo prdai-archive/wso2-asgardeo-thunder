@@ -1,25 +1,11 @@
-/*
- * Copyright (c) 2025-2026, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2025-2026 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 package testutils
 
 import (
 	"archive/zip"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log"
@@ -87,6 +73,10 @@ func InitializeTestContext(port string, zipPattern string, databaseType string) 
 // Returning an absolute path ensures it resolves correctly regardless of the working
 // directory of the consumer (e.g. a test subprocess running from a sub-package directory).
 func GetExtractedProductHome() string {
+	// A test subprocess has the path in its environment but no initialized context until something
+	// asks for it, so resolve lazily rather than panicking on the un-set package variable.
+	ensureInitialized()
+
 	if extractedProductHome == "" {
 		panic("Extracted product home is not set")
 	}
@@ -396,6 +386,10 @@ func ReplaceResources(zipFilePattern string) error {
 		return fmt.Errorf("failed to replace default.json: %v", err)
 	}
 
+	if err := addExtraSigningKeys(defaultConfigDestPath); err != nil {
+		return fmt.Errorf("failed to add extra signing keys: %v", err)
+	}
+
 	return nil
 }
 
@@ -424,9 +418,13 @@ func CopyDeclarativeResources(zipFilePattern string) error {
 		"agents",
 		"applications",
 		"connections",
+		"credential_configurations",
 		"flows",
+		"gateways",
+		"groups",
 		"layouts",
 		"organization_units",
+		"presentation_definitions",
 		"resource_servers",
 		"roles",
 		"server_configs",
@@ -458,6 +456,67 @@ func CopyDeclarativeResources(zipFilePattern string) error {
 		log.Printf("Copied declarative resources for %s", dir)
 	}
 
+	return nil
+}
+
+// extraSigningKeys are JWT signing keys added to the test server on top of the
+// RSA and ECDSA keys the bundled default.json already configures. They give the
+// JWKS endpoint an EdDSA key and an ML-DSA (post-quantum) key so every branch of
+// the JWKS serialization runs during the integration suite. The cert/key
+// fixtures live in testutils/testdata; the RSA and ECDSA material is generated
+// by the distribution's setup.sh.
+var extraSigningKeys = []struct {
+	id      string
+	fixture string
+}{
+	{id: "ed25519-key", fixture: "ed25519-signing"},
+	{id: "mldsa-key", fixture: "mldsa-signing"},
+}
+
+// addExtraSigningKeys copies the EdDSA and ML-DSA signing fixtures into the
+// extracted product's config/certs directory and registers them in default.json.
+func addExtraSigningKeys(defaultConfigPath string) error {
+	certsDir := filepath.Join(extractedProductHome, "config", "certs")
+	if err := os.MkdirAll(certsDir, os.ModePerm); err != nil {
+		return fmt.Errorf("failed to create certs directory: %w", err)
+	}
+
+	data, err := os.ReadFile(defaultConfigPath)
+	if err != nil {
+		return fmt.Errorf("failed to read default.json: %w", err)
+	}
+	var cfg map[string]interface{}
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		return fmt.Errorf("failed to parse default.json: %w", err)
+	}
+	crypto, ok := cfg["crypto"].(map[string]interface{})
+	if !ok {
+		return fmt.Errorf("default.json has no crypto section")
+	}
+	keys, _ := crypto["keys"].([]interface{})
+
+	for _, k := range extraSigningKeys {
+		for _, ext := range []string{"cert", "key"} {
+			src := filepath.Join("testutils", "testdata", k.fixture+"."+ext)
+			if err := copyFile(src, filepath.Join(certsDir, k.fixture+"."+ext)); err != nil {
+				return fmt.Errorf("failed to copy signing fixture %s: %w", src, err)
+			}
+		}
+		keys = append(keys, map[string]interface{}{
+			"id":        k.id,
+			"cert_file": "config/certs/" + k.fixture + ".cert",
+			"key_file":  "config/certs/" + k.fixture + ".key",
+		})
+	}
+	crypto["keys"] = keys
+
+	out, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal default.json: %w", err)
+	}
+	if err := os.WriteFile(defaultConfigPath, out, 0644); err != nil {
+		return fmt.Errorf("failed to write default.json: %w", err)
+	}
 	return nil
 }
 
@@ -701,6 +760,7 @@ func startServerInternal(port string, extraArgs ...string) error {
 	// Preserve GOCOVERDIR environment variable for coverage collection
 	envVars := []string{
 		"PORT=" + port,
+		"GATEWAY_TOKEN=" + DeclaredGatewayToken,
 	}
 
 	if goCoverDir := os.Getenv("GOCOVERDIR"); goCoverDir != "" {
@@ -1065,6 +1125,7 @@ func RunSetupScript() error {
 		"DIRECT_AUTH_SECRET="+DirectAuthHeaderValue,
 		"ADMIN_USERNAME="+AdminUsername,
 		"ADMIN_PASSWORD="+AdminPassword,
+		"GATEWAY_TOKEN="+DeclaredGatewayToken,
 	)
 
 	log.Println("Setup script will start server, run bootstrap, and stop server automatically")

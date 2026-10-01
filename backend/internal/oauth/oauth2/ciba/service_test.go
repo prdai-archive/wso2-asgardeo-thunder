@@ -1,20 +1,5 @@
-/*
- * Copyright (c) 2026, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2026 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 package ciba
 
@@ -39,6 +24,7 @@ import (
 	"github.com/thunder-id/thunderid/internal/flow/flowexec"
 	oauth2const "github.com/thunder-id/thunderid/internal/oauth/oauth2/constants"
 	"github.com/thunder-id/thunderid/internal/system/config"
+	"github.com/thunder-id/thunderid/internal/system/jose/jwt"
 	"github.com/thunder-id/thunderid/tests/mocks/authnprovider/managermock"
 	"github.com/thunder-id/thunderid/tests/mocks/entityprovidermock"
 	"github.com/thunder-id/thunderid/tests/mocks/flow/flowexecmock"
@@ -83,6 +69,11 @@ func (suite *CIBAServiceTestSuite) SetupTest() {
 		ID:         "app-1",
 		ClientID:   "client-1",
 		GrantTypes: []providers.GrantType{providers.GrantTypeCIBA},
+		ScopeClaims: map[string][]string{
+			"openid":  {"sub"},
+			"profile": {"name", "given_name", "family_name", "picture"},
+			"email":   {"email", "email_verified"},
+		},
 	}
 }
 
@@ -557,7 +548,8 @@ func (suite *CIBAServiceTestSuite) TestInitiate_FlowInitiationFails() {
 func (suite *CIBAServiceTestSuite) TestInitiate_FlowErrorMapsToUnknownUser() {
 	suite.mockFlowExec.EXPECT().InitiateAndExecute(mock.Anything, mock.Anything).Return(
 		&flowexec.FlowStep{Status: providers.FlowStatusError, Error: &tidcommon.ServiceError{
-			Error: tidcommon.I18nMessage{DefaultValue: "User not found"},
+			Code:  flowErrCodeEntityNotFound,
+			Error: tidcommon.I18nMessage{DefaultValue: "The user could not be found"},
 		}}, nil)
 
 	resp, cibaErr := suite.service.InitiateBackchannelAuth(context.Background(), &BackchannelAuthRequest{
@@ -573,7 +565,8 @@ func (suite *CIBAServiceTestSuite) TestInitiate_FlowErrorMapsToUnknownUser() {
 func (suite *CIBAServiceTestSuite) TestInitiate_FlowErrorAmbiguousUserMapsToUnknownUser() {
 	suite.mockFlowExec.EXPECT().InitiateAndExecute(mock.Anything, mock.Anything).Return(
 		&flowexec.FlowStep{Status: providers.FlowStatusError, Error: &tidcommon.ServiceError{
-			Error: tidcommon.I18nMessage{DefaultValue: "User identity is ambiguous"},
+			Code:  flowErrCodeAmbiguousEntityIdentity,
+			Error: tidcommon.I18nMessage{DefaultValue: "Ambiguous user identity"},
 		}}, nil)
 
 	resp, cibaErr := suite.service.InitiateBackchannelAuth(context.Background(), &BackchannelAuthRequest{
@@ -683,7 +676,7 @@ func (suite *CIBAServiceTestSuite) TestResolveExpectedAudience_NilApp() {
 	suite.mockJWTService.EXPECT().VerifyJWT(mock.Anything, assertion, "", "").Return(nil)
 	suite.mockStore.EXPECT().MarkAuthenticated(
 		mock.Anything, "auth-req-1", testUserID,
-		mock.AnythingOfType("string"), "", "", mock.AnythingOfType("time.Time")).Return(nil)
+		mock.AnythingOfType("string"), "", "", "", mock.AnythingOfType("time.Time")).Return(nil)
 
 	cibaErr := suite.service.HandleCallback(context.Background(), "auth-req-1", assertion)
 	suite.Nil(cibaErr)
@@ -710,6 +703,11 @@ func (suite *CIBAServiceTestSuite) TestGetRequiredOptionalAttributes_AccessToken
 
 func (suite *CIBAServiceTestSuite) TestGetRequiredOptionalAttributes_ScopeDerivedFilteredByUserInfo() {
 	app := &providers.OAuthClient{
+		ScopeClaims: map[string][]string{
+			"openid":  {"sub"},
+			"email":   {"email", "email_verified"},
+			"profile": {"name", "picture"},
+		},
 		Token: &providers.OAuthTokenConfig{
 			AccessToken: &providers.AccessTokenConfig{
 				UserConfig: &providers.AccessTokenSubConfig{Attributes: []string{"user_id"}},
@@ -721,6 +719,21 @@ func (suite *CIBAServiceTestSuite) TestGetRequiredOptionalAttributes_ScopeDerive
 	}
 	optional := getRequiredOptionalAttributes([]string{"openid", "email", "profile"}, app)
 	suite.ElementsMatch([]string{"user_id", "email", "name"}, strings.Fields(optional))
+}
+
+func (suite *CIBAServiceTestSuite) TestGetRequiredOptionalAttributes_ScopeDerivedFromIDTokenAllowList() {
+	// Regression: a scope attribute allow-listed only for the ID token (and not for UserInfo) must
+	// still be resolved and cached so the CIBA-issued ID token can surface it.
+	app := &providers.OAuthClient{
+		ScopeClaims: map[string][]string{"openid": {"sub"}, "email": {"email", "email_verified"}},
+		Token: &providers.OAuthTokenConfig{
+			IDToken: &providers.IDTokenConfig{
+				UserAttributes: []string{"email", "email_verified"},
+			},
+		},
+	}
+	optional := getRequiredOptionalAttributes([]string{"openid", "email"}, app)
+	suite.ElementsMatch([]string{"email", "email_verified"}, strings.Fields(optional))
 }
 
 func (suite *CIBAServiceTestSuite) TestGetRequiredOptionalAttributes_ScopeDerivedSkippedWithoutOpenID() {
@@ -777,8 +790,27 @@ func (suite *CIBAServiceTestSuite) TestCallback_Success() {
 	suite.mockJWTService.EXPECT().VerifyJWT(mock.Anything, assertion, "app-1", "").Return(nil)
 	suite.mockStore.EXPECT().MarkAuthenticated(
 		mock.Anything, "auth-req-1", testUserID, mock.AnythingOfType("string"),
-		"cache-1", "urn:acr:pwd",
+		"cache-1", "urn:acr:pwd", "",
 		mock.MatchedBy(func(authTime time.Time) bool { return authTime.Unix() == iat })).Return(nil)
+
+	cibaErr := suite.service.HandleCallback(context.Background(), "auth-req-1", assertion)
+	suite.Nil(cibaErr)
+}
+
+// The SSO session id on the assertion is recorded so the ID token issued for this request can carry it.
+func (suite *CIBAServiceTestSuite) TestCallback_RecordsSessionID() {
+	assertion := buildTestAssertion(map[string]interface{}{
+		"sub":                      testUserID,
+		"aci":                      "cache-1",
+		"sid":                      "sess-1",
+		"authorization_request_id": "auth-req-1",
+	})
+	suite.mockStore.EXPECT().GetByID(mock.Anything, "auth-req-1").Return(suite.pendingRecord(), nil)
+	suite.expectAudienceResolution()
+	suite.mockJWTService.EXPECT().VerifyJWT(mock.Anything, assertion, "app-1", "").Return(nil)
+	suite.mockStore.EXPECT().MarkAuthenticated(
+		mock.Anything, "auth-req-1", testUserID, mock.AnythingOfType("string"),
+		"cache-1", "", "sess-1", mock.AnythingOfType("time.Time")).Return(nil)
 
 	cibaErr := suite.service.HandleCallback(context.Background(), "auth-req-1", assertion)
 	suite.Nil(cibaErr)
@@ -844,7 +876,7 @@ func (suite *CIBAServiceTestSuite) TestCallback_AudienceResolutionFailureStillBi
 	suite.mockJWTService.EXPECT().VerifyJWT(mock.Anything, assertion, "", "").Return(nil)
 	suite.mockStore.EXPECT().MarkAuthenticated(
 		mock.Anything, "auth-req-1", testUserID, mock.AnythingOfType("string"),
-		"cache-1", "", mock.AnythingOfType("time.Time")).Return(nil)
+		"cache-1", "", "", mock.AnythingOfType("time.Time")).Return(nil)
 
 	cibaErr := suite.service.HandleCallback(context.Background(), "auth-req-1", assertion)
 	suite.Nil(cibaErr)
@@ -939,7 +971,7 @@ func (suite *CIBAServiceTestSuite) TestCallback_MarkAuthenticatedError() {
 	suite.mockJWTService.EXPECT().VerifyJWT(mock.Anything, assertion, "app-1", "").Return(nil)
 	suite.mockStore.EXPECT().MarkAuthenticated(
 		mock.Anything, "auth-req-1", testUserID, mock.AnythingOfType("string"),
-		"cache-1", "", mock.AnythingOfType("time.Time")).Return(errors.New("db error"))
+		"cache-1", "", "", mock.AnythingOfType("time.Time")).Return(errors.New("db error"))
 
 	cibaErr := suite.service.HandleCallback(context.Background(), "auth-req-1", assertion)
 	suite.NotNil(cibaErr)
@@ -1165,4 +1197,237 @@ func (suite *CIBAServiceTestSuite) TestInitiate_WithIDTokenHint_ExpiredWithinThr
 // build a real actor provider but never exercise actor authentication.
 func noopAuthnMgr() *managermock.AuthnProviderManagerMock {
 	return &managermock.AuthnProviderManagerMock{}
+}
+
+// -------------------------------------------------------------------
+// HandleFailedCallback tests
+// -------------------------------------------------------------------
+
+// buildErrorAssertion builds a flow error assertion bound to authReqID.
+func buildErrorAssertion(authReqID, errorType, description string) string {
+	claims := map[string]interface{}{
+		flowcm.ClaimAuthorizationRequestID: authReqID,
+		flowcm.ClaimFlowErrorType:          errorType,
+	}
+	if description != "" {
+		claims[flowcm.ClaimFlowErrorDescription] = description
+	}
+	return buildTestAssertion(claims)
+}
+
+// TestHandleCallback_ClassifiesByFlowErrorTypeClaim is the core of the single-field callback
+// contract: success and failure assertions arrive in the same argument, and the flow error type claim
+// alone decides which branch runs. The claim is covered by the signature, which loadPendingRequestForCallback
+// verifies first, so a caller cannot steer an assertion into the other branch.
+func (suite *CIBAServiceTestSuite) TestHandleCallback_ClassifiesByFlowErrorTypeClaim() {
+	suite.Run("AssertionWithFlowErrorTypeIsAFailure", func() {
+		suite.SetupTest()
+		assertion := buildErrorAssertion("auth-req-1", flowcm.FlowErrorTypeEndUser, "user denied consent")
+		suite.mockStore.EXPECT().GetByID(mock.Anything, "auth-req-1").Return(suite.pendingRecord(), nil)
+		suite.expectAudienceResolution()
+		suite.mockJWTService.EXPECT().VerifyJWT(mock.Anything, assertion, "app-1", "").Return(nil)
+		suite.mockStore.EXPECT().UpdateState(mock.Anything, "auth-req-1", CIBAStateDenied).Return(nil)
+
+		suite.Nil(suite.service.HandleCallback(context.Background(), "auth-req-1", assertion))
+		// The failure branch never authenticates the request.
+		suite.mockStore.AssertNotCalled(suite.T(), "MarkAuthenticated")
+	})
+
+	suite.Run("AssertionWithoutFlowErrorTypeIsASuccess", func() {
+		suite.SetupTest()
+		assertion := buildTestAssertion(map[string]interface{}{
+			"sub":                      testUserID,
+			"authorization_request_id": "auth-req-1",
+			"iat":                      float64(time.Now().Unix()),
+		})
+		suite.mockStore.EXPECT().GetByID(mock.Anything, "auth-req-1").Return(suite.pendingRecord(), nil)
+		suite.expectAudienceResolution()
+		suite.mockJWTService.EXPECT().VerifyJWT(mock.Anything, assertion, "app-1", "").Return(nil)
+		suite.mockStore.EXPECT().MarkAuthenticated(
+			mock.Anything, "auth-req-1", testUserID,
+			mock.AnythingOfType("string"), "", "", "", mock.AnythingOfType("time.Time")).Return(nil)
+
+		suite.Nil(suite.service.HandleCallback(context.Background(), "auth-req-1", assertion))
+		// The success branch never transitions the request out of PENDING.
+		suite.mockStore.AssertNotCalled(suite.T(), "UpdateState")
+	})
+}
+
+func (suite *CIBAServiceTestSuite) TestHandleCallback_Failure_TransitionsStateByErrorType() {
+	tests := []struct {
+		name          string
+		errorType     string
+		expectedState CIBARequestState
+	}{
+		{"EndUserErrorDenies", flowcm.FlowErrorTypeEndUser, CIBAStateDenied},
+		{"ServerErrorFails", flowcm.FlowErrorTypeServer, CIBAStateFailed},
+		{"ClientErrorFails", flowcm.FlowErrorTypeClient, CIBAStateFailed},
+		{"UnknownTypeFails", "totally_unknown", CIBAStateFailed},
+	}
+
+	for _, tt := range tests {
+		suite.Run(tt.name, func() {
+			suite.SetupTest()
+			assertion := buildErrorAssertion("auth-req-1", tt.errorType, "flow failed")
+			suite.mockStore.EXPECT().GetByID(mock.Anything, "auth-req-1").Return(suite.pendingRecord(), nil)
+			suite.expectAudienceResolution()
+			suite.mockJWTService.EXPECT().VerifyJWT(mock.Anything, assertion, "app-1", "").Return(nil)
+			suite.mockStore.EXPECT().UpdateState(mock.Anything, "auth-req-1", tt.expectedState).Return(nil)
+
+			svc := suite.serviceWithServerErrorReporting(true)
+			cibaErr := svc.HandleCallback(context.Background(), "auth-req-1", assertion)
+
+			// A nil return means the callback op succeeded; the client's outcome comes from the state.
+			suite.Nil(cibaErr)
+		})
+	}
+}
+
+// serviceWithServerErrorReporting rebuilds the service under test with
+// oauth.send_server_errors_to_client set explicitly.
+func (suite *CIBAServiceTestSuite) serviceWithServerErrorReporting(enabled bool) CIBAServiceInterface {
+	cfg := testhelpers.OAuthConfig()
+	cfg.OAuth.SendServerErrorsToClient = &enabled
+	actorProv := actorprovider.Initialize(suite.mockInboundClient, suite.mockEntityProvider, noopAuthnMgr(), nil)
+	return newCIBAService(suite.mockStore, suite.mockFlowExec,
+		suite.mockJWTService, actorProv, suite.mockResourceSvc, cfg)
+}
+
+// TestHandleCallback_Failure_ServerErrorsNotReported verifies that with
+// oauth.send_server_errors_to_client disabled, a server-side flow failure leaves the request PENDING
+// so the polling client times out rather than being told the authorization server failed. There is
+// no error page to fall back to on this path, unlike the authorization code flow.
+func (suite *CIBAServiceTestSuite) TestHandleCallback_Failure_ServerErrorsNotReported() {
+	for _, errorType := range []string{flowcm.FlowErrorTypeServer, flowcm.FlowErrorTypeClient, "totally_unknown"} {
+		suite.Run(errorType, func() {
+			suite.SetupTest()
+			assertion := buildErrorAssertion("auth-req-1", errorType, "flow failed")
+			suite.mockStore.EXPECT().GetByID(mock.Anything, "auth-req-1").Return(suite.pendingRecord(), nil)
+			suite.expectAudienceResolution()
+			suite.mockJWTService.EXPECT().VerifyJWT(mock.Anything, assertion, "app-1", "").Return(nil)
+
+			svc := suite.serviceWithServerErrorReporting(false)
+			cibaErr := svc.HandleCallback(context.Background(), "auth-req-1", assertion)
+
+			suite.Nil(cibaErr)
+			suite.mockStore.AssertNotCalled(suite.T(), "UpdateState", mock.Anything, mock.Anything, mock.Anything)
+		})
+	}
+}
+
+// TestHandleCallback_Failure_DenialReportedRegardlessOfToggle verifies the toggle does not reach denials: an
+// end-user failure still transitions to DENIED so the client gets access_denied on the next poll.
+func (suite *CIBAServiceTestSuite) TestHandleCallback_Failure_DenialReportedRegardlessOfToggle() {
+	assertion := buildErrorAssertion("auth-req-1", flowcm.FlowErrorTypeEndUser, "user denied consent")
+	suite.mockStore.EXPECT().GetByID(mock.Anything, "auth-req-1").Return(suite.pendingRecord(), nil)
+	suite.expectAudienceResolution()
+	suite.mockJWTService.EXPECT().VerifyJWT(mock.Anything, assertion, "app-1", "").Return(nil)
+	suite.mockStore.EXPECT().UpdateState(mock.Anything, "auth-req-1", CIBAStateDenied).Return(nil)
+
+	svc := suite.serviceWithServerErrorReporting(false)
+	cibaErr := svc.HandleCallback(context.Background(), "auth-req-1", assertion)
+
+	suite.Nil(cibaErr)
+}
+
+// TestHandleCallback_Failure_UnsetToggleLeavesRequestPending verifies the default
+func (suite *CIBAServiceTestSuite) TestHandleCallback_Failure_UnsetToggleLeavesRequestPending() {
+	assertion := buildErrorAssertion("auth-req-1", flowcm.FlowErrorTypeServer, "flow failed")
+	suite.mockStore.EXPECT().GetByID(mock.Anything, "auth-req-1").Return(suite.pendingRecord(), nil)
+	suite.expectAudienceResolution()
+	suite.mockJWTService.EXPECT().VerifyJWT(mock.Anything, assertion, "app-1", "").Return(nil)
+
+	// testhelpers.OAuthConfig() leaves SendServerErrorsToClient nil, which must default to suppressing.
+	suite.Require().Nil(testhelpers.OAuthConfig().OAuth.SendServerErrorsToClient)
+	cibaErr := suite.service.HandleCallback(context.Background(), "auth-req-1", assertion)
+
+	suite.Nil(cibaErr)
+	suite.mockStore.AssertNotCalled(suite.T(), "UpdateState", mock.Anything, mock.Anything, mock.Anything)
+}
+
+func (suite *CIBAServiceTestSuite) TestHandleCallback_Failure_InvalidSignature_NoStateChange() {
+	assertion := buildErrorAssertion("auth-req-1", flowcm.FlowErrorTypeEndUser, "")
+	suite.mockStore.EXPECT().GetByID(mock.Anything, "auth-req-1").Return(suite.pendingRecord(), nil)
+	suite.expectAudienceResolution()
+	suite.mockJWTService.EXPECT().
+		VerifyJWT(mock.Anything, assertion, "app-1", "").Return(&jwt.ErrorInvalidTokenSignature)
+
+	cibaErr := suite.service.HandleCallback(context.Background(), "auth-req-1", assertion)
+
+	suite.NotNil(cibaErr)
+	suite.Equal(oauth2const.ErrorInvalidRequest, cibaErr.Code)
+	suite.mockStore.AssertNotCalled(suite.T(), "UpdateState", mock.Anything, mock.Anything, mock.Anything)
+}
+
+func (suite *CIBAServiceTestSuite) TestHandleCallback_Failure_BindingMismatch_NoStateChange() {
+	assertion := buildErrorAssertion("other-req", flowcm.FlowErrorTypeEndUser, "")
+	suite.mockStore.EXPECT().GetByID(mock.Anything, "auth-req-1").Return(suite.pendingRecord(), nil)
+	suite.expectAudienceResolution()
+	suite.mockJWTService.EXPECT().VerifyJWT(mock.Anything, assertion, "app-1", "").Return(nil)
+
+	cibaErr := suite.service.HandleCallback(context.Background(), "auth-req-1", assertion)
+
+	suite.NotNil(cibaErr)
+	suite.Equal(oauth2const.ErrorInvalidRequest, cibaErr.Code)
+	suite.mockStore.AssertNotCalled(suite.T(), "UpdateState", mock.Anything, mock.Anything, mock.Anything)
+}
+
+func (suite *CIBAServiceTestSuite) TestHandleCallback_Failure_NotPending_NoStateChange() {
+	assertion := buildErrorAssertion("auth-req-1", flowcm.FlowErrorTypeEndUser, "")
+	record := suite.pendingRecord()
+	record.State = CIBAStateDenied
+	suite.mockStore.EXPECT().GetByID(mock.Anything, "auth-req-1").Return(record, nil)
+
+	cibaErr := suite.service.HandleCallback(context.Background(), "auth-req-1", assertion)
+
+	suite.NotNil(cibaErr)
+	suite.Equal(oauth2const.ErrorInvalidRequest, cibaErr.Code)
+	suite.mockStore.AssertNotCalled(suite.T(), "UpdateState", mock.Anything, mock.Anything, mock.Anything)
+}
+
+func (suite *CIBAServiceTestSuite) TestHandleCallback_Failure_Expired_NoStateChange() {
+	assertion := buildErrorAssertion("auth-req-1", flowcm.FlowErrorTypeEndUser, "")
+	record := suite.pendingRecord()
+	record.ExpiryTime = time.Now().Add(-time.Minute)
+	suite.mockStore.EXPECT().GetByID(mock.Anything, "auth-req-1").Return(record, nil)
+
+	cibaErr := suite.service.HandleCallback(context.Background(), "auth-req-1", assertion)
+
+	suite.NotNil(cibaErr)
+	suite.Equal(oauth2const.ErrorExpiredToken, cibaErr.Code)
+	suite.mockStore.AssertNotCalled(suite.T(), "UpdateState", mock.Anything, mock.Anything, mock.Anything)
+}
+
+func (suite *CIBAServiceTestSuite) TestHandleCallback_Failure_MissingParams() {
+	cibaErr := suite.service.HandleCallback(context.Background(), "", "assertion")
+	suite.NotNil(cibaErr)
+	suite.Equal(oauth2const.ErrorInvalidRequest, cibaErr.Code)
+
+	cibaErr = suite.service.HandleCallback(context.Background(), "auth-req-1", "")
+	suite.NotNil(cibaErr)
+	suite.Equal(oauth2const.ErrorInvalidRequest, cibaErr.Code)
+}
+
+func (suite *CIBAServiceTestSuite) TestHandleCallback_Failure_RequestNotFound() {
+	assertion := buildErrorAssertion("missing", flowcm.FlowErrorTypeEndUser, "")
+	suite.mockStore.EXPECT().GetByID(mock.Anything, "missing").Return(nil, ErrCIBARequestNotFound)
+
+	cibaErr := suite.service.HandleCallback(context.Background(), "missing", assertion)
+
+	suite.NotNil(cibaErr)
+	suite.Equal(oauth2const.ErrorInvalidRequest, cibaErr.Code)
+}
+
+func (suite *CIBAServiceTestSuite) TestHandleCallback_Failure_UpdateStateFailure_ReturnsServerError() {
+	assertion := buildErrorAssertion("auth-req-1", flowcm.FlowErrorTypeEndUser, "")
+	suite.mockStore.EXPECT().GetByID(mock.Anything, "auth-req-1").Return(suite.pendingRecord(), nil)
+	suite.expectAudienceResolution()
+	suite.mockJWTService.EXPECT().VerifyJWT(mock.Anything, assertion, "app-1", "").Return(nil)
+	suite.mockStore.EXPECT().
+		UpdateState(mock.Anything, "auth-req-1", CIBAStateDenied).Return(errors.New("db down"))
+
+	cibaErr := suite.service.HandleCallback(context.Background(), "auth-req-1", assertion)
+
+	suite.NotNil(cibaErr)
+	suite.Equal(oauth2const.ErrorServerError, cibaErr.Code)
 }

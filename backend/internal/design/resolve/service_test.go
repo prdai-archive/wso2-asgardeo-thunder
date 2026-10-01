@@ -1,20 +1,5 @@
-/*
- * Copyright (c) 2026, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2026 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 package resolve
 
@@ -99,8 +84,10 @@ func (suite *ResolveServiceTestSuite) TestResolveDesign_NilApplicationService() 
 	assert.Equal(suite.T(), tidcommon.InternalServerError.Code, err.Code)
 }
 
-// Test ResolveDesign - Application not found
-func (suite *ResolveServiceTestSuite) TestResolveDesign_ApplicationNotFound() {
+// Test ResolveDesign - an unknown application reports the same error as a known one with no design
+// configured. The resolve endpoint is unauthenticated, so a distinct error here would let an
+// anonymous caller confirm which application IDs exist.
+func (suite *ResolveServiceTestSuite) TestResolveDesign_UnknownApplicationIsIndistinguishable() {
 	suite.mockAppService.On("GetApplication", mock.Anything, "00000000-0000-0000-0000-000000000099").
 		Return(nil, &application.ErrorApplicationNotFound)
 
@@ -109,7 +96,9 @@ func (suite *ResolveServiceTestSuite) TestResolveDesign_ApplicationNotFound() {
 
 	assert.Nil(suite.T(), result)
 	assert.NotNil(suite.T(), err)
-	assert.Equal(suite.T(), common.ErrorApplicationNotFound.Code, err.Code)
+	assert.Equal(suite.T(), common.ErrorApplicationHasNoDesign.Code, err.Code)
+	assert.Equal(suite.T(), common.ErrorApplicationHasNoDesign.Error, err.Error)
+	assert.Equal(suite.T(), common.ErrorApplicationHasNoDesign.ErrorDescription, err.ErrorDescription)
 }
 
 // Test ResolveDesign - Invalid application ID (passed through to app service)

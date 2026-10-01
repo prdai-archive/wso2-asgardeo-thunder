@@ -1,20 +1,5 @@
-/*
- * Copyright (c) 2026, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2026 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 package flowmgt
 
@@ -177,4 +162,115 @@ func (s *FlowConfigHandlerTestSuite) TestMergeFlowTypeConfig_WritableExpiryWins(
 	merged := mergeFlowTypeConfig(ro, wr)
 	s.Equal("ro", merged.DefaultHandle)
 	s.Equal(int64(900), merged.ExpirySeconds)
+}
+
+// ---------------------------------------------------------------------------
+// User deletion flow
+// ---------------------------------------------------------------------------
+
+// An unset handle is valid: it is how a deployment opts out of flow-based deletion and keeps the
+// native endpoint.
+func (s *FlowConfigHandlerTestSuite) TestValidate_UserDeletionHandleOptional() {
+	s.NoError(s.handler.Validate(flowconfig.FlowSectionConfig{}, nil, nil))
+}
+
+// The handle must name an administration flow, not merely exist.
+func (s *FlowConfigHandlerTestSuite) TestValidate_UserDeletionHandleCheckedAgainstAdministration() {
+	var gotType providers.FlowType
+	s.handler.SetHandleValidator(func(_ context.Context, _ string, flowType providers.FlowType) bool {
+		gotType = flowType
+		return true
+	})
+	cfg := flowconfig.FlowSectionConfig{
+		UserDeletionFlow: flowconfig.FlowTypeConfig{DefaultHandle: "default-user-deletion-flow"},
+	}
+
+	s.Require().NoError(s.handler.Validate(cfg, nil, nil))
+	s.Equal(providers.FlowTypeAdministration, gotType)
+}
+
+func (s *FlowConfigHandlerTestSuite) TestValidate_UserDeletionHandleRejectedWhenNotAdministration() {
+	s.handler.SetHandleValidator(func(_ context.Context, _ string, _ providers.FlowType) bool {
+		return false
+	})
+	cfg := flowconfig.FlowSectionConfig{
+		UserDeletionFlow: flowconfig.FlowTypeConfig{DefaultHandle: "not-an-admin-flow"},
+	}
+
+	err := s.handler.Validate(cfg, nil, nil)
+
+	s.Require().Error(err)
+	s.Contains(err.Error(), "userDeletionFlow.defaultHandle")
+}
+
+// An operator can repoint deletion at their own administration flow through the writable layer.
+func (s *FlowConfigHandlerTestSuite) TestMerge_WritableUserDeletionHandleWins() {
+	ro := flowconfig.FlowSectionConfig{
+		UserDeletionFlow: flowconfig.FlowTypeConfig{DefaultHandle: "default-user-deletion-flow"},
+	}
+	wr := flowconfig.FlowSectionConfig{
+		UserDeletionFlow: flowconfig.FlowTypeConfig{DefaultHandle: "acme-offboarding"},
+	}
+
+	merged, ok := s.handler.Merge(ro, wr).(flowconfig.FlowSectionConfig)
+
+	s.Require().True(ok)
+	s.Equal("acme-offboarding", merged.UserDeletionFlow.DefaultHandle)
+}
+
+func (s *FlowConfigHandlerTestSuite) TestMerge_EmptyWritableKeepsDeclarativeUserDeletionHandle() {
+	ro := flowconfig.FlowSectionConfig{
+		UserDeletionFlow: flowconfig.FlowTypeConfig{DefaultHandle: "default-user-deletion-flow"},
+	}
+
+	merged, _ := s.handler.Merge(ro, flowconfig.FlowSectionConfig{}).(flowconfig.FlowSectionConfig)
+
+	s.Equal("default-user-deletion-flow", merged.UserDeletionFlow.DefaultHandle)
+}
+
+// Agent onboarding is an administration flow like deletion, so its handle is checked against the
+// same flow type rather than against a registration or onboarding flow.
+func (s *FlowConfigHandlerTestSuite) TestValidate_AgentOnboardingHandleCheckedAgainstAdministration() {
+	var gotType providers.FlowType
+	s.handler.SetHandleValidator(func(_ context.Context, _ string, flowType providers.FlowType) bool {
+		gotType = flowType
+		return true
+	})
+	cfg := flowconfig.FlowSectionConfig{
+		AgentOnboardingFlow: flowconfig.FlowTypeConfig{DefaultHandle: "default-agent-onboarding-flow"},
+	}
+
+	s.Require().NoError(s.handler.Validate(cfg, nil, nil))
+	s.Equal(providers.FlowTypeAdministration, gotType)
+}
+
+func (s *FlowConfigHandlerTestSuite) TestValidate_AgentOnboardingHandleRejectedWhenNotAdministration() {
+	s.handler.SetHandleValidator(func(_ context.Context, _ string, _ providers.FlowType) bool {
+		return false
+	})
+	cfg := flowconfig.FlowSectionConfig{
+		AgentOnboardingFlow: flowconfig.FlowTypeConfig{DefaultHandle: "not-an-admin-flow"},
+	}
+
+	err := s.handler.Validate(cfg, nil, nil)
+
+	s.Require().Error(err)
+	s.Contains(err.Error(), "agentOnboardingFlow.defaultHandle")
+}
+
+// An operator can repoint agent onboarding at their own administration flow through the writable
+// layer, and an empty writable layer leaves the declarative default standing.
+func (s *FlowConfigHandlerTestSuite) TestMerge_AgentOnboardingHandleOverlays() {
+	ro := flowconfig.FlowSectionConfig{
+		AgentOnboardingFlow: flowconfig.FlowTypeConfig{DefaultHandle: "default-agent-onboarding-flow"},
+	}
+
+	overridden, ok := s.handler.Merge(ro, flowconfig.FlowSectionConfig{
+		AgentOnboardingFlow: flowconfig.FlowTypeConfig{DefaultHandle: "acme-agent-onboarding"},
+	}).(flowconfig.FlowSectionConfig)
+	s.Require().True(ok)
+	s.Equal("acme-agent-onboarding", overridden.AgentOnboardingFlow.DefaultHandle)
+
+	kept, _ := s.handler.Merge(ro, flowconfig.FlowSectionConfig{}).(flowconfig.FlowSectionConfig)
+	s.Equal("default-agent-onboarding-flow", kept.AgentOnboardingFlow.DefaultHandle)
 }

@@ -1,20 +1,5 @@
-/*
- * Copyright (c) 2025, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2025 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 package export
 
@@ -22,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"testing"
+	"text/template"
 
 	engineconfig "github.com/thunder-id/thunderid/pkg/thunderidengine/config"
 	"github.com/thunder-id/thunderid/pkg/thunderidengine/providers"
@@ -47,6 +33,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 )
 
@@ -102,8 +89,8 @@ func (suite *ExportServiceTestSuite) SetupTest() {
 	// Create exporters
 	exporters := []declarativeresource.ResourceExporter{
 		application.NewApplicationExporterForTest(suite.appServiceMock),
-		connection.NewConnectionExporterForTest(suite.idpServiceMock, suite.mockNotificationService),
-		entitytype.NewEntityTypeExporterForTest(suite.mockEntityTypeService),
+		connection.NewConnectionExporterForTest(suite.idpServiceMock, suite.mockNotificationService, nil),
+		entitytype.NewEntityTypeExporterForTest(suite.mockEntityTypeService, entitytype.TypeCategoryUser),
 		flowmgt.NewFlowGraphExporterForTest(suite.mockFlowService),
 	}
 
@@ -115,6 +102,12 @@ func (suite *ExportServiceTestSuite) SetupTest() {
 
 func (suite *ExportServiceTestSuite) TearDownTest() {
 	config.ResetServerRuntime()
+}
+
+// varNames returns a variable name allocator for tests that call
+// exportResourcesWithExporter directly instead of going through ExportResources.
+func (suite *ExportServiceTestSuite) varNames() *varNameAllocator {
+	return newVarNameAllocator(suite.exportService.(*exportService).parameterizer)
 }
 
 // TestExportServiceTestSuite runs the test suite.
@@ -274,19 +267,111 @@ func (suite *ExportServiceTestSuite) TestExportResources_CompleteOAuthApplicatio
 	assert.Equal(suite.T(), "OAuth_Test_App_oauth-app-id.yaml", file.FileName)
 	assert.Equal(suite.T(), "applications", file.FolderPath)
 	assert.Contains(suite.T(), file.Content, "name: OAuth Test App")
-	assert.Contains(suite.T(), file.Content, "clientId: {{.O_AUTH_TEST_APP_CLIENT_ID}}")
-	assert.Contains(suite.T(), file.Content, "clientSecret: {{.O_AUTH_TEST_APP_CLIENT_SECRET}}")
+	assert.Contains(suite.T(), file.Content, "clientId: {{.APPLICATION_O_AUTH_TEST_APP_CLIENT_ID}}")
+	assert.Contains(suite.T(), file.Content, "clientSecret: {{.APPLICATION_O_AUTH_TEST_APP_CLIENT_SECRET}}")
 	assert.Contains(suite.T(), file.Content, "redirectUris:")
-	assert.Contains(suite.T(), file.Content, "{{- range .O_AUTH_TEST_APP_REDIRECT_URIS}}")
+	assert.Contains(suite.T(), file.Content, "{{- range .APPLICATION_O_AUTH_TEST_APP_REDIRECT_URIS}}")
 	assert.NotNil(suite.T(), result.EnvFile)
 	assert.Equal(suite.T(), ".env", result.EnvFile.FileName)
-	assert.Contains(suite.T(), result.EnvFile.Content, "O_AUTH_TEST_APP_CLIENT_ID=client123\n")
-	assert.Contains(suite.T(), result.EnvFile.Content, "O_AUTH_TEST_APP_CLIENT_SECRET=\n")
-	expectedRedirectURIs := "O_AUTH_TEST_APP_REDIRECT_URIS=[\"http://localhost:3000/callback\"]\n"
+	assert.Contains(suite.T(), result.EnvFile.Content, "APPLICATION_O_AUTH_TEST_APP_CLIENT_ID=client123\n")
+	assert.Contains(suite.T(), result.EnvFile.Content, "APPLICATION_O_AUTH_TEST_APP_CLIENT_SECRET=\n")
+	expectedRedirectURIs := "APPLICATION_O_AUTH_TEST_APP_REDIRECT_URIS=[\"http://localhost:3000/callback\"]\n"
 	assert.Contains(suite.T(), result.EnvFile.Content, expectedRedirectURIs)
 
 	assert.Equal(suite.T(), 1, result.Summary.ResourceTypes["application"])
 	assert.Equal(suite.T(), int64(len(file.Content)), file.Size)
+}
+
+// TestExportResources_HyphenatedApplicationName tests that a resource name containing a hyphen
+// produces template variables that Go's text/template can parse and that are present in the
+// generated .env file.
+func (suite *ExportServiceTestSuite) TestExportResources_HyphenatedApplicationName() {
+	appID := "hyphen-app-id"
+	request := &ExportRequest{
+		Applications: []string{appID},
+		Options: &ExportOptions{
+			Format: "yaml",
+		},
+	}
+
+	mockApp := &providers.Application{
+		ID:   appID,
+		Name: "Wayfinder-Concierge",
+		InboundAuthConfig: []providers.InboundAuthConfigWithSecret{
+			{
+				Type: providers.OAuthInboundAuthType,
+				OAuthConfig: &providers.OAuthConfigWithSecret{
+					ClientID:     "client123",
+					RedirectURIs: []string{"http://localhost:3000/callback"},
+				},
+			},
+		},
+	}
+
+	suite.appServiceMock.EXPECT().GetApplication(mock.Anything, appID).Return(mockApp, nil)
+
+	result, err := suite.exportService.ExportResources(context.Background(), request)
+
+	assert.Nil(suite.T(), err)
+	assert.NotNil(suite.T(), result)
+	assert.Len(suite.T(), result.Files, 1)
+
+	file := result.Files[0]
+	assert.Contains(suite.T(), file.Content, "clientId: {{.APPLICATION_WAYFINDER_CONCIERGE_CLIENT_ID}}")
+	assert.NotContains(suite.T(), file.Content, "WAYFINDER-CONCIERGE")
+	assert.NotNil(suite.T(), result.EnvFile)
+	assert.Contains(suite.T(), result.EnvFile.Content, "APPLICATION_WAYFINDER_CONCIERGE_CLIENT_ID=client123\n")
+
+	_, parseErr := template.New("export").Parse(file.Content)
+	assert.NoError(suite.T(), parseErr)
+}
+
+// TestExportResources_CollidingNormalizedNames tests that resource names normalizing to the same
+// variable prefix get distinct template variables and .env entries. The third name ends with a
+// separator, which normalizes to the same prefix as the first two.
+func (suite *ExportServiceTestSuite) TestExportResources_CollidingNormalizedNames() {
+	request := &ExportRequest{
+		Applications: []string{testApp1ID, testApp2ID, testApp3ID},
+		Options: &ExportOptions{
+			Format: "yaml",
+		},
+	}
+
+	newApp := func(id, name, clientID string) *providers.Application {
+		return &providers.Application{
+			ID:   id,
+			Name: name,
+			InboundAuthConfig: []providers.InboundAuthConfigWithSecret{
+				{
+					Type: providers.OAuthInboundAuthType,
+					OAuthConfig: &providers.OAuthConfigWithSecret{
+						ClientID: clientID,
+					},
+				},
+			},
+		}
+	}
+
+	suite.appServiceMock.EXPECT().GetApplication(mock.Anything, testApp1ID).
+		Return(newApp(testApp1ID, "Wayfinder-Concierge", "client-one"), nil)
+	suite.appServiceMock.EXPECT().GetApplication(mock.Anything, testApp2ID).
+		Return(newApp(testApp2ID, "Wayfinder_Concierge", "client-two"), nil)
+	suite.appServiceMock.EXPECT().GetApplication(mock.Anything, testApp3ID).
+		Return(newApp(testApp3ID, "Wayfinder Concierge-", "client-three"), nil)
+
+	result, err := suite.exportService.ExportResources(context.Background(), request)
+
+	assert.Nil(suite.T(), err)
+	require.NotNil(suite.T(), result)
+	assert.Len(suite.T(), result.Files, 3)
+
+	assert.Contains(suite.T(), result.Files[0].Content, "clientId: {{.APPLICATION_WAYFINDER_CONCIERGE_CLIENT_ID}}")
+	assert.Contains(suite.T(), result.Files[1].Content, "clientId: {{.APPLICATION_WAYFINDER_CONCIERGE_2_CLIENT_ID}}")
+	assert.Contains(suite.T(), result.Files[2].Content, "clientId: {{.APPLICATION_WAYFINDER_CONCIERGE_3_CLIENT_ID}}")
+	require.NotNil(suite.T(), result.EnvFile)
+	assert.Contains(suite.T(), result.EnvFile.Content, "APPLICATION_WAYFINDER_CONCIERGE_CLIENT_ID=client-one\n")
+	assert.Contains(suite.T(), result.EnvFile.Content, "APPLICATION_WAYFINDER_CONCIERGE_2_CLIENT_ID=client-two\n")
+	assert.Contains(suite.T(), result.EnvFile.Content, "APPLICATION_WAYFINDER_CONCIERGE_3_CLIENT_ID=client-three\n")
 }
 
 // TestExportResources_MultipleApplications tests exporting multiple applications.
@@ -846,7 +931,7 @@ func (suite *ExportServiceTestSuite) TestExportResources_IdentityProvider_Proper
 
 	// Only the secret field is parameterized, with a context-aware variable name:
 	// IDP_NAME + FIELD_NAME in UPPER_SNAKE_CASE.
-	assert.Contains(suite.T(), yamlContent, "clientSecret: {{.EXPORT_TEST_IDP_CLIENT_SECRET}}")
+	assert.Contains(suite.T(), yamlContent, "clientSecret: {{.CONNECTION_EXPORT_TEST_IDP_CLIENT_SECRET}}")
 
 	// Non-secret typed fields are exported as plain values under their camelCase keys.
 	assert.Contains(suite.T(), yamlContent, "clientId: test-client-123")
@@ -857,7 +942,7 @@ func (suite *ExportServiceTestSuite) TestExportResources_IdentityProvider_Proper
 	assert.Contains(suite.T(), yamlContent, "type: google")
 
 	assert.NotNil(suite.T(), result.EnvFile)
-	assert.Contains(suite.T(), result.EnvFile.Content, "EXPORT_TEST_IDP_CLIENT_SECRET=super-secret")
+	assert.Contains(suite.T(), result.EnvFile.Content, "CONNECTION_EXPORT_TEST_IDP_CLIENT_SECRET=super-secret")
 }
 
 // TestExportResources_IdentityProvider_PropertyStructure verifies that a connection with
@@ -1152,6 +1237,10 @@ func (m *MockParameterizer) ToParameterizedYAML(_ context.Context, obj interface
 	return "id: test\nname: test\n", nil, nil
 }
 
+func (m *MockParameterizer) VarPrefix(resourceName string) string {
+	return newParameterizer(templatingRules{}).VarPrefix(resourceName)
+}
+
 // TestExportResources_TemplateGenerationError tests the error path in generateTemplateFromStruct.
 func (suite *ExportServiceTestSuite) TestExportResources_TemplateGenerationError() {
 	request := &ExportRequest{
@@ -1183,8 +1272,8 @@ func (suite *ExportServiceTestSuite) TestExportResources_TemplateGenerationError
 	// Create exporters with the test services
 	exporters := []declarativeresource.ResourceExporter{
 		application.NewApplicationExporterForTest(suite.appServiceMock),
-		connection.NewConnectionExporterForTest(suite.idpServiceMock, suite.mockNotificationService),
-		entitytype.NewEntityTypeExporterForTest(suite.mockEntityTypeService),
+		connection.NewConnectionExporterForTest(suite.idpServiceMock, suite.mockNotificationService, nil),
+		entitytype.NewEntityTypeExporterForTest(suite.mockEntityTypeService, entitytype.TypeCategoryUser),
 	}
 
 	// Create a new export service with the mock parameterizer
@@ -1303,7 +1392,7 @@ func (suite *ExportServiceTestSuite) TestExportNotificationSenders_Success() {
 		ID:          "sender1",
 		Name:        "Test Sender",
 		Description: "Test notification sender",
-		Provider:    common.MessageProviderTypeTwilio,
+		Provider:    common.NotificationProviderTypeTwilio,
 		Properties:  []cmodels.Property{*mockProperty},
 	}
 
@@ -1330,7 +1419,7 @@ func (suite *ExportServiceTestSuite) TestExportNotificationSenders_Multiple() {
 	mockSender1 := &common.NotificationSenderDTO{
 		ID:         "sender1",
 		Name:       "Twilio Sender",
-		Provider:   common.MessageProviderTypeTwilio,
+		Provider:   common.NotificationProviderTypeTwilio,
 		Properties: []cmodels.Property{*mockProperty1},
 	}
 
@@ -1338,7 +1427,7 @@ func (suite *ExportServiceTestSuite) TestExportNotificationSenders_Multiple() {
 	mockSender2 := &common.NotificationSenderDTO{
 		ID:         "sender2",
 		Name:       "Vonage Sender",
-		Provider:   common.MessageProviderTypeVonage,
+		Provider:   common.NotificationProviderTypeVonage,
 		Properties: []cmodels.Property{*mockProperty2},
 	}
 
@@ -1370,7 +1459,7 @@ func (suite *ExportServiceTestSuite) TestExportNotificationSenders_Wildcard() {
 		ID:         "sender1",
 		Name:       "Twilio Sender",
 		Type:       common.NotificationSenderTypeMessage,
-		Provider:   common.MessageProviderTypeTwilio,
+		Provider:   common.NotificationProviderTypeTwilio,
 		Properties: []cmodels.Property{*mockProperty1},
 	}
 
@@ -1379,7 +1468,7 @@ func (suite *ExportServiceTestSuite) TestExportNotificationSenders_Wildcard() {
 		ID:         "sender2",
 		Name:       "Vonage Sender",
 		Type:       common.NotificationSenderTypeMessage,
-		Provider:   common.MessageProviderTypeVonage,
+		Provider:   common.NotificationProviderTypeVonage,
 		Properties: []cmodels.Property{*mockProperty2},
 	}
 
@@ -1439,7 +1528,7 @@ func (suite *ExportServiceTestSuite) TestExportNotificationSenders_EmptyName() {
 	mockSender := &common.NotificationSenderDTO{
 		ID:         "sender-no-name",
 		Name:       "", // Empty name
-		Provider:   common.MessageProviderTypeTwilio,
+		Provider:   common.NotificationProviderTypeTwilio,
 		Properties: []cmodels.Property{*mockProperty},
 	}
 
@@ -1466,7 +1555,7 @@ func (suite *ExportServiceTestSuite) TestExportNotificationSenders_NoProperties(
 	mockSender := &common.NotificationSenderDTO{
 		ID:         "sender-no-props",
 		Name:       "Empty Sender",
-		Provider:   common.MessageProviderTypeTwilio,
+		Provider:   common.NotificationProviderTypeTwilio,
 		Properties: []cmodels.Property{}, // Empty properties
 	}
 
@@ -1499,7 +1588,7 @@ func (suite *ExportServiceTestSuite) TestExportNotificationSenders_WildcardParti
 		ID:         "sender1",
 		Name:       "Twilio Sender",
 		Type:       common.NotificationSenderTypeMessage,
-		Provider:   common.MessageProviderTypeTwilio,
+		Provider:   common.NotificationProviderTypeTwilio,
 		Properties: []cmodels.Property{*mockProperty1},
 	}
 
@@ -1507,7 +1596,7 @@ func (suite *ExportServiceTestSuite) TestExportNotificationSenders_WildcardParti
 		ID:       "sender2",
 		Name:     "Failing Sender",
 		Type:     common.NotificationSenderTypeMessage,
-		Provider: common.MessageProviderTypeVonage,
+		Provider: common.NotificationProviderTypeVonage,
 	}
 
 	mockProperty3, _ := cmodels.NewProperty("api_key", "key3", true)
@@ -1515,7 +1604,7 @@ func (suite *ExportServiceTestSuite) TestExportNotificationSenders_WildcardParti
 		ID:         "sender3",
 		Name:       "Vonage Sender",
 		Type:       common.NotificationSenderTypeMessage,
-		Provider:   common.MessageProviderTypeVonage,
+		Provider:   common.NotificationProviderTypeVonage,
 		Properties: []cmodels.Property{*mockProperty3},
 	}
 
@@ -1654,7 +1743,10 @@ func (suite *ExportServiceTestSuite) TestExportEntityTypes_Wildcard() {
 	}
 
 	suite.mockEntityTypeService.EXPECT().
-		GetEntityTypeList(mock.Anything, mock.Anything, 100, 0, mock.Anything).Return(mockSchemaList, nil)
+		GetEntityTypeList(mock.Anything, mock.Anything, 100, 0, mock.Anything).Return(mockSchemaList, nil).Once()
+	suite.mockEntityTypeService.EXPECT().
+		GetEntityTypeList(mock.Anything, mock.Anything, 100, 2, mock.Anything).
+		Return(&entitytype.EntityTypeListResponse{Types: []entitytype.EntityTypeListItem{}}, nil).Once()
 	suite.mockEntityTypeService.EXPECT().
 		GetEntityType(mock.Anything, mock.Anything, "schema1", mock.Anything).
 		Return(mockSchema1, nil)
@@ -1798,7 +1890,10 @@ func (suite *ExportServiceTestSuite) TestExportEntityTypes_WildcardPartialFailur
 	}
 
 	suite.mockEntityTypeService.EXPECT().
-		GetEntityTypeList(mock.Anything, mock.Anything, 100, 0, mock.Anything).Return(mockSchemaList, nil)
+		GetEntityTypeList(mock.Anything, mock.Anything, 100, 0, mock.Anything).Return(mockSchemaList, nil).Once()
+	suite.mockEntityTypeService.EXPECT().
+		GetEntityTypeList(mock.Anything, mock.Anything, 100, 3, mock.Anything).
+		Return(&entitytype.EntityTypeListResponse{Types: []entitytype.EntityTypeListItem{}}, nil).Once()
 	suite.mockEntityTypeService.EXPECT().
 		GetEntityType(mock.Anything, mock.Anything, "schema1", mock.Anything).
 		Return(mockSchema1, nil)
@@ -1858,8 +1953,9 @@ func (suite *ExportServiceTestSuite) TestExportResourcesWithExporter_Success() {
 		Format: formatYAML,
 	}
 
-	files, variables, errors := suite.exportService.(*exportService).exportResourcesWithExporter(context.Background(),
-		exporter, []string{appID}, options)
+	files, variables, errors, _ := suite.exportService.(*exportService).exportResourcesWithExporter(
+		context.Background(),
+		exporter, []string{appID}, options, suite.varNames(), map[string]string{})
 
 	assert.Len(suite.T(), files, 1)
 	assert.Len(suite.T(), errors, 0)
@@ -1901,8 +1997,9 @@ func (suite *ExportServiceTestSuite) TestExportResourcesWithExporter_MultipleRes
 	exporter, _ := suite.exportService.(*exportService).registry.Get(resourceTypeApplication)
 	options := &ExportOptions{Format: formatYAML}
 
-	files, variables, errors := suite.exportService.(*exportService).exportResourcesWithExporter(context.Background(),
-		exporter, []string{app1ID, app2ID, app3ID}, options)
+	files, variables, errors, _ := suite.exportService.(*exportService).exportResourcesWithExporter(
+		context.Background(),
+		exporter, []string{app1ID, app2ID, app3ID}, options, suite.varNames(), map[string]string{})
 
 	assert.Len(suite.T(), files, 3)
 	assert.Len(suite.T(), errors, 0)
@@ -1925,8 +2022,9 @@ func (suite *ExportServiceTestSuite) TestExportResourcesWithExporter_ResourceNot
 	exporter, _ := suite.exportService.(*exportService).registry.Get(resourceTypeApplication)
 	options := &ExportOptions{Format: formatYAML}
 
-	files, variables, errors := suite.exportService.(*exportService).exportResourcesWithExporter(context.Background(),
-		exporter, []string{appID}, options)
+	files, variables, errors, _ := suite.exportService.(*exportService).exportResourcesWithExporter(
+		context.Background(),
+		exporter, []string{appID}, options, suite.varNames(), map[string]string{})
 
 	assert.Len(suite.T(), files, 0)
 	assert.Len(suite.T(), errors, 1)
@@ -1959,8 +2057,9 @@ func (suite *ExportServiceTestSuite) TestExportResourcesWithExporter_PartialSucc
 	exporter, _ := suite.exportService.(*exportService).registry.Get(resourceTypeApplication)
 	options := &ExportOptions{Format: formatYAML}
 
-	files, variables, errors := suite.exportService.(*exportService).exportResourcesWithExporter(context.Background(),
-		exporter, []string{validAppID, invalidAppID}, options)
+	files, variables, errors, _ := suite.exportService.(*exportService).exportResourcesWithExporter(
+		context.Background(),
+		exporter, []string{validAppID, invalidAppID}, options, suite.varNames(), map[string]string{})
 
 	assert.Len(suite.T(), files, 1)
 	assert.Len(suite.T(), errors, 1)
@@ -2000,8 +2099,9 @@ func (suite *ExportServiceTestSuite) TestExportResourcesWithExporter_WildcardSuc
 	exporter, _ := suite.exportService.(*exportService).registry.Get(resourceTypeApplication)
 	options := &ExportOptions{Format: formatYAML}
 
-	files, variables, errors := suite.exportService.(*exportService).exportResourcesWithExporter(context.Background(),
-		exporter, []string{"*"}, options)
+	files, variables, errors, _ := suite.exportService.(*exportService).exportResourcesWithExporter(
+		context.Background(),
+		exporter, []string{"*"}, options, suite.varNames(), map[string]string{})
 
 	assert.Len(suite.T(), files, 2)
 	assert.Len(suite.T(), errors, 0)
@@ -2022,8 +2122,9 @@ func (suite *ExportServiceTestSuite) TestExportResourcesWithExporter_WildcardFai
 	exporter, _ := suite.exportService.(*exportService).registry.Get(resourceTypeApplication)
 	options := &ExportOptions{Format: formatYAML}
 
-	files, variables, errors := suite.exportService.(*exportService).exportResourcesWithExporter(context.Background(),
-		exporter, []string{"*"}, options)
+	files, variables, errors, _ := suite.exportService.(*exportService).exportResourcesWithExporter(
+		context.Background(),
+		exporter, []string{"*"}, options, suite.varNames(), map[string]string{})
 
 	assert.Len(suite.T(), files, 0)
 	assert.Len(suite.T(), errors, 0) // Returns empty slices on wildcard failure
@@ -2043,8 +2144,9 @@ func (suite *ExportServiceTestSuite) TestExportResourcesWithExporter_WildcardEmp
 	exporter, _ := suite.exportService.(*exportService).registry.Get(resourceTypeApplication)
 	options := &ExportOptions{Format: formatYAML}
 
-	files, variables, errors := suite.exportService.(*exportService).exportResourcesWithExporter(context.Background(),
-		exporter, []string{"*"}, options)
+	files, variables, errors, _ := suite.exportService.(*exportService).exportResourcesWithExporter(
+		context.Background(),
+		exporter, []string{"*"}, options, suite.varNames(), map[string]string{})
 
 	assert.Len(suite.T(), files, 0)
 	assert.Len(suite.T(), errors, 0)
@@ -2070,8 +2172,9 @@ func (suite *ExportServiceTestSuite) TestExportResourcesWithExporter_WithGroupBy
 		},
 	}
 
-	files, variables, errors := suite.exportService.(*exportService).exportResourcesWithExporter(context.Background(),
-		exporter, []string{appID}, options)
+	files, variables, errors, _ := suite.exportService.(*exportService).exportResourcesWithExporter(
+		context.Background(),
+		exporter, []string{appID}, options, suite.varNames(), map[string]string{})
 
 	assert.Len(suite.T(), files, 1)
 	assert.Len(suite.T(), errors, 0)
@@ -2098,8 +2201,9 @@ func (suite *ExportServiceTestSuite) TestExportResourcesWithExporter_WithCustomF
 		},
 	}
 
-	files, variables, errors := suite.exportService.(*exportService).exportResourcesWithExporter(context.Background(),
-		exporter, []string{appID}, options)
+	files, variables, errors, _ := suite.exportService.(*exportService).exportResourcesWithExporter(
+		context.Background(),
+		exporter, []string{appID}, options, suite.varNames(), map[string]string{})
 
 	assert.Len(suite.T(), files, 1)
 	assert.Len(suite.T(), errors, 0)
@@ -2124,8 +2228,9 @@ func (suite *ExportServiceTestSuite) TestExportResourcesWithExporter_IdentityPro
 
 	options := &ExportOptions{Format: formatYAML}
 
-	files, variables, errors := suite.exportService.(*exportService).exportResourcesWithExporter(context.Background(),
-		exporter, []string{idpID}, options)
+	files, variables, errors, _ := suite.exportService.(*exportService).exportResourcesWithExporter(
+		context.Background(),
+		exporter, []string{idpID}, options, suite.varNames(), map[string]string{})
 
 	assert.Len(suite.T(), files, 1)
 	assert.Len(suite.T(), errors, 0)
@@ -2142,7 +2247,7 @@ func (suite *ExportServiceTestSuite) TestExportResourcesWithExporter_Notificatio
 	mockSender := &common.NotificationSenderDTO{
 		ID:         senderID,
 		Name:       "Test Sender",
-		Provider:   common.MessageProviderTypeTwilio,
+		Provider:   common.NotificationProviderTypeTwilio,
 		Properties: []cmodels.Property{*mockProperty},
 	}
 
@@ -2154,8 +2259,9 @@ func (suite *ExportServiceTestSuite) TestExportResourcesWithExporter_Notificatio
 
 	options := &ExportOptions{Format: formatYAML}
 
-	files, variables, errors := suite.exportService.(*exportService).exportResourcesWithExporter(context.Background(),
-		exporter, []string{senderID}, options)
+	files, variables, errors, _ := suite.exportService.(*exportService).exportResourcesWithExporter(
+		context.Background(),
+		exporter, []string{senderID}, options, suite.varNames(), map[string]string{})
 
 	assert.Len(suite.T(), files, 1)
 	assert.Len(suite.T(), errors, 0)
@@ -2163,7 +2269,7 @@ func (suite *ExportServiceTestSuite) TestExportResourcesWithExporter_Notificatio
 	assert.Equal(suite.T(), resourceTypeConnection, files[0].ResourceType)
 	assert.Equal(suite.T(), senderID, files[0].ResourceID)
 	assert.NotEmpty(suite.T(), variables)
-	assert.Equal(suite.T(), "key1", variables["TEST_SENDER_AUTH_TOKEN"])
+	assert.Equal(suite.T(), "key1", variables["CONNECTION_TEST_SENDER_AUTH_TOKEN"])
 }
 
 // TestExportResourcesWithExporter_EntityType tests export with entity type exporter.
@@ -2186,8 +2292,9 @@ func (suite *ExportServiceTestSuite) TestExportResourcesWithExporter_EntityType(
 
 	options := &ExportOptions{Format: formatYAML}
 
-	files, variables, errors := suite.exportService.(*exportService).exportResourcesWithExporter(context.Background(),
-		exporter, []string{schemaID}, options)
+	files, variables, errors, _ := suite.exportService.(*exportService).exportResourcesWithExporter(
+		context.Background(),
+		exporter, []string{schemaID}, options, suite.varNames(), map[string]string{})
 
 	assert.Len(suite.T(), files, 1)
 	assert.Len(suite.T(), errors, 0)
@@ -2202,8 +2309,9 @@ func (suite *ExportServiceTestSuite) TestExportResourcesWithExporter_EmptyResour
 	exporter, _ := suite.exportService.(*exportService).registry.Get(resourceTypeApplication)
 	options := &ExportOptions{Format: formatYAML}
 
-	files, variables, errors := suite.exportService.(*exportService).exportResourcesWithExporter(context.Background(),
-		exporter, []string{}, options)
+	files, variables, errors, _ := suite.exportService.(*exportService).exportResourcesWithExporter(
+		context.Background(),
+		exporter, []string{}, options, suite.varNames(), map[string]string{})
 
 	assert.Len(suite.T(), files, 0)
 	assert.Len(suite.T(), errors, 0)
@@ -2226,8 +2334,9 @@ func (suite *ExportServiceTestSuite) TestExportResourcesWithExporter_JSONFormatF
 		Format: formatJSON, // JSON not yet implemented
 	}
 
-	files, variables, errors := suite.exportService.(*exportService).exportResourcesWithExporter(context.Background(),
-		exporter, []string{appID}, options)
+	files, variables, errors, _ := suite.exportService.(*exportService).exportResourcesWithExporter(
+		context.Background(),
+		exporter, []string{appID}, options, suite.varNames(), map[string]string{})
 
 	assert.Len(suite.T(), files, 1)
 	assert.Len(suite.T(), errors, 0)
@@ -2272,8 +2381,9 @@ func (suite *ExportServiceTestSuite) TestExportResourcesWithExporter_Flow() {
 
 	options := &ExportOptions{Format: formatYAML}
 
-	files, variables, errors := suite.exportService.(*exportService).exportResourcesWithExporter(context.Background(),
-		exporter, []string{flowID}, options)
+	files, variables, errors, _ := suite.exportService.(*exportService).exportResourcesWithExporter(
+		context.Background(),
+		exporter, []string{flowID}, options, suite.varNames(), map[string]string{})
 
 	assert.Len(suite.T(), files, 1)
 	assert.Len(suite.T(), errors, 0)
@@ -2367,8 +2477,9 @@ func (suite *ExportServiceTestSuite) TestExportResourcesWithExporter_FlowWithCom
 
 	options := &ExportOptions{Format: formatYAML}
 
-	files, variables, errors := suite.exportService.(*exportService).exportResourcesWithExporter(context.Background(),
-		exporter, []string{flowID}, options)
+	files, variables, errors, _ := suite.exportService.(*exportService).exportResourcesWithExporter(
+		context.Background(),
+		exporter, []string{flowID}, options, suite.varNames(), map[string]string{})
 
 	assert.Len(suite.T(), files, 1)
 	assert.Len(suite.T(), errors, 0)
@@ -2413,8 +2524,9 @@ func (suite *ExportServiceTestSuite) TestExportResourcesWithExporter_MultipleFlo
 	exporter, _ := suite.exportService.(*exportService).registry.Get("flow")
 	options := &ExportOptions{Format: formatYAML}
 
-	files, variables, errors := suite.exportService.(*exportService).exportResourcesWithExporter(context.Background(),
-		exporter, []string{testFlow1ID, testFlow2ID}, options)
+	files, variables, errors, _ := suite.exportService.(*exportService).exportResourcesWithExporter(
+		context.Background(),
+		exporter, []string{testFlow1ID, testFlow2ID}, options, suite.varNames(), map[string]string{})
 
 	assert.Len(suite.T(), files, 2)
 	assert.Len(suite.T(), errors, 0)
@@ -2435,8 +2547,9 @@ func (suite *ExportServiceTestSuite) TestExportResourcesWithExporter_FlowNotFoun
 	exporter, _ := suite.exportService.(*exportService).registry.Get("flow")
 	options := &ExportOptions{Format: formatYAML}
 
-	files, variables, errors := suite.exportService.(*exportService).exportResourcesWithExporter(context.Background(),
-		exporter, []string{flowID}, options)
+	files, variables, errors, _ := suite.exportService.(*exportService).exportResourcesWithExporter(
+		context.Background(),
+		exporter, []string{flowID}, options, suite.varNames(), map[string]string{})
 
 	assert.Len(suite.T(), files, 0)
 	assert.Len(suite.T(), errors, 1)
@@ -2501,8 +2614,9 @@ func (suite *ExportServiceTestSuite) TestExportResourcesWithExporter_WildcardFlo
 	exporter, _ := suite.exportService.(*exportService).registry.Get("flow")
 	options := &ExportOptions{Format: formatYAML}
 
-	files, variables, errors := suite.exportService.(*exportService).exportResourcesWithExporter(context.Background(),
-		exporter, []string{"*"}, options)
+	files, variables, errors, _ := suite.exportService.(*exportService).exportResourcesWithExporter(
+		context.Background(),
+		exporter, []string{"*"}, options, suite.varNames(), map[string]string{})
 
 	assert.Len(suite.T(), files, 2)
 	assert.Len(suite.T(), errors, 0)
@@ -2520,8 +2634,9 @@ func (suite *ExportServiceTestSuite) TestExportResourcesWithExporter_WildcardFlo
 	exporter, _ := suite.exportService.(*exportService).registry.Get("flow")
 	options := &ExportOptions{Format: formatYAML}
 
-	files, variables, errors := suite.exportService.(*exportService).exportResourcesWithExporter(context.Background(),
-		exporter, []string{"*"}, options)
+	files, variables, errors, _ := suite.exportService.(*exportService).exportResourcesWithExporter(
+		context.Background(),
+		exporter, []string{"*"}, options, suite.varNames(), map[string]string{})
 
 	assert.Len(suite.T(), files, 0)
 	assert.Len(suite.T(), errors, 0) // Empty list on error
@@ -2619,4 +2734,91 @@ func (suite *ExportServiceTestSuite) TestExportResources_MixedWithFlows() {
 	}
 	assert.True(suite.T(), hasApp, "Should have application export")
 	assert.True(suite.T(), hasFlow, "Should have flow export")
+}
+
+// firstUser and secondUser are the owner identities the variable-ownership tests claim names under.
+const (
+	firstUser  = "user/user-1"
+	secondUser = "user/user-2"
+)
+
+// A resource that writes a placeholder into itself bypasses the variable allocator, so two resources
+// can end up naming the same variable. Importing then gives both of them one value, which for a
+// credential means two accounts sharing a password. The export is refused instead.
+func TestExport_RefusesTwoResourcesClaimingOneVariable(t *testing.T) {
+	owners := map[string]string{}
+	first := `password: "{{.USER_ALICE_EXAMPLE_COM_PASSWORD}}"`
+	second := `password: "{{.USER_ALICE_EXAMPLE_COM_PASSWORD}}"`
+
+	if clash, _ := claimedElsewhere(first, owners, firstUser); clash != "" {
+		t.Fatalf("the first resource must be free to claim its variable, got a clash on %q", clash)
+	}
+	claimVariables(first, owners, firstUser)
+
+	clash, previous := claimedElsewhere(second, owners, secondUser)
+	if clash != "USER_ALICE_EXAMPLE_COM_PASSWORD" {
+		t.Fatalf("expected the duplicate variable to be reported, got %q", clash)
+	}
+	if previous != firstUser {
+		t.Fatalf("expected the report to name the resource that claimed it, got %q", previous)
+	}
+}
+
+// Re-exporting the same resource is not a clash with itself, which matters because a resource names
+// its own variables more than once.
+func TestExport_AResourceMayReclaimItsOwnVariables(t *testing.T) {
+	owners := map[string]string{}
+	content := `clientId: "{{.APPLICATION_APP_CLIENT_ID}}"`
+	claimVariables(content, owners, "application/app-1")
+
+	if clash, _ := claimedElsewhere(content, owners, "application/app-1"); clash != "" {
+		t.Fatalf("a resource must not clash with itself, got %q", clash)
+	}
+}
+
+// A template action is valid with surrounding spaces or a trimming marker, so a placeholder spelled
+// that way must still claim its name rather than slipping past the check.
+func TestExport_ClaimsVariablesWrittenWithSpacing(t *testing.T) {
+	for _, spelling := range []string{
+		`password: "{{.USER_ALICE_PASSWORD}}"`,
+		`password: "{{ .USER_ALICE_PASSWORD }}"`,
+		`password: "{{- .USER_ALICE_PASSWORD }}"`,
+		`password: "{{ .USER_ALICE_PASSWORD -}}"`,
+	} {
+		owners := map[string]string{}
+		claimVariables(`password: "{{.USER_ALICE_PASSWORD}}"`, owners, firstUser)
+
+		clash, previous := claimedElsewhere(spelling, owners, secondUser)
+		if clash != "USER_ALICE_PASSWORD" {
+			t.Errorf("%s: expected the duplicate to be reported, got %q", spelling, clash)
+		}
+		if previous != firstUser {
+			t.Errorf("%s: expected the first claimant to be named, got %q", spelling, previous)
+		}
+	}
+}
+
+// Ownership spans the whole export, so two resources of different types cannot claim one name either.
+func TestExport_OwnershipSpansResourceTypes(t *testing.T) {
+	owners := map[string]string{}
+	claimVariables(`value: "{{.SHARED_NAME}}"`, owners, firstUser)
+
+	clash, previous := claimedElsewhere(`value: "{{.SHARED_NAME}}"`, owners, "application/app-1")
+	if clash != "SHARED_NAME" {
+		t.Fatalf("expected a cross-type duplicate to be reported, got %q", clash)
+	}
+	if previous != firstUser {
+		t.Fatalf("expected the owner to carry its resource type, got %q", previous)
+	}
+}
+
+// Distinct variables are not reported, so an ordinary export is unaffected.
+func TestExport_DistinctVariablesDoNotClash(t *testing.T) {
+	owners := map[string]string{}
+	claimVariables(`clientId: "{{.APPLICATION_A_CLIENT_ID}}"`, owners, "application/app-a")
+
+	clash, _ := claimedElsewhere(`clientId: "{{.APPLICATION_B_CLIENT_ID}}"`, owners, "application/app-b")
+	if clash != "" {
+		t.Fatalf("expected no clash between distinct variables, got %q", clash)
+	}
 }

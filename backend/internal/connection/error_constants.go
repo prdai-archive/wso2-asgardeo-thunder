@@ -1,20 +1,5 @@
-/*
- * Copyright (c) 2026, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2026 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 package connection
 
@@ -35,7 +20,7 @@ var (
 		},
 		ErrorDescription: tidcommon.I18nMessage{
 			Key:          "error.connectionservice.invalid_category_description",
-			DefaultValue: "The category must be one of: identity-provider, sms-provider",
+			DefaultValue: "The category must be one of: identity-provider, sms-provider, authorization-pdp",
 		},
 	}
 	// ErrorInvalidLimit is the error returned when an invalid limit query parameter is provided.
@@ -62,6 +47,19 @@ var (
 		ErrorDescription: tidcommon.I18nMessage{
 			Key:          "error.connectionservice.invalid_offset_parameter_description",
 			DefaultValue: "The offset parameter must be a non-negative integer",
+		},
+	}
+	// ErrorInvalidRequestFormat is returned when an AuthZEN PDP request body is malformed.
+	ErrorInvalidRequestFormat = tidcommon.ServiceError{
+		Type: tidcommon.ClientErrorType,
+		Code: "CON-1007",
+		Error: tidcommon.I18nMessage{
+			Key:          "error.connectionservice.invalid_request_format",
+			DefaultValue: "Invalid request format",
+		},
+		ErrorDescription: tidcommon.I18nMessage{
+			Key:          "error.connectionservice.invalid_request_format_description",
+			DefaultValue: "The request body is malformed or contains invalid data",
 		},
 	}
 )

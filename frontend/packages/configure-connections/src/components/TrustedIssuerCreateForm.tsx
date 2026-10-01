@@ -1,23 +1,10 @@
-/**
- * Copyright (c) 2026, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied. See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2026 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 import {useConfig} from '@thunderid/contexts';
+import {getErrorMessage} from '@thunderid/utils';
 import {
+  Alert,
   Box,
   Button,
   Collapse,
@@ -32,7 +19,7 @@ import {
   Typography,
 } from '@wso2/oxygen-ui';
 import {ChevronLeft} from '@wso2/oxygen-ui-icons-react';
-import {useMemo, useState, type JSX} from 'react';
+import {useCallback, useMemo, useState, type JSX} from 'react';
 import {useTranslation} from 'react-i18next';
 import {useNavigate} from 'react-router';
 import useCreateTrustedIssuer from '../api/useCreateTrustedIssuer';
@@ -78,6 +65,7 @@ export default function TrustedIssuerCreateForm({
   const [tokenExchangeEnabled, setTokenExchangeEnabled] = useState(true);
   const [trustedTokenAudience, setTrustedTokenAudience] = useState('');
   const [touched, setTouched] = useState<Record<string, boolean>>({});
+  const [generalError, setGeneralError] = useState<string | null>(null);
 
   const errors: TrustedIssuerFormErrors = useMemo(
     () => validateTrustedIssuerForm({name, issuer, jwksEndpoint}),
@@ -97,9 +85,29 @@ export default function TrustedIssuerCreateForm({
 
   const setTouchedField = (field: string): void => setTouched((prev) => ({...prev, [field]: true}));
 
+  // Resolves an error through the `trustedIssuers` catalog. `t` defaults to the `common`
+  // namespace, so this forwards explicit `ns:` prefixes unchanged and prefixes bare keys with
+  // `trustedIssuers:`, per getErrorMessage's namespace-resolution contract.
+  const tForErrors = useCallback(
+    (key: string, options?: Record<string, unknown>): string =>
+      t(key.includes(':') ? key : `trustedIssuers:${key}`, options),
+    [t],
+  );
+
+  // A create failure is stale once the user edits any field. Only reset the mutation once it
+  // has actually failed: resetting while it's still pending would flip isPending back to false
+  // and re-enable the submit button before the in-flight request settles.
+  const clearCreateError = useCallback((): void => {
+    setGeneralError(null);
+    if (createTrustedIssuer.isError) {
+      createTrustedIssuer.reset();
+    }
+  }, [createTrustedIssuer]);
+
   const handleCreate = (): void => {
     if (!formValid) return;
 
+    setGeneralError(null);
     createTrustedIssuer.mutate(
       {
         name,
@@ -116,6 +124,10 @@ export default function TrustedIssuerCreateForm({
         onError: (error) => {
           if (isConflictError(error)) {
             onNameConflict();
+          } else {
+            setGeneralError(
+              getErrorMessage(error, tForErrors, 'create.error', 'Failed to create trusted issuer. Please try again.'),
+            );
           }
         },
       },
@@ -155,7 +167,10 @@ export default function TrustedIssuerCreateForm({
                   "The issuer URI from the external IdP's OpenID Connect discovery document.",
                 )
               }
-              onChange={(e) => setIssuer(e.target.value)}
+              onChange={(e) => {
+                clearCreateError();
+                setIssuer(e.target.value);
+              }}
               onBlur={() => setTouchedField('issuer')}
             />
           </FormControl>
@@ -177,7 +192,10 @@ export default function TrustedIssuerCreateForm({
                   'The JWKS endpoint used to validate the signature of incoming identity assertions.',
                 )
               }
-              onChange={(e) => setJwksEndpoint(e.target.value)}
+              onChange={(e) => {
+                clearCreateError();
+                setJwksEndpoint(e.target.value);
+              }}
               onBlur={() => setTouchedField('jwksEndpoint')}
             />
           </FormControl>
@@ -186,7 +204,13 @@ export default function TrustedIssuerCreateForm({
             <Divider sx={{mb: 2}} />
             <FormControlLabel
               control={
-                <Switch checked={tokenExchangeEnabled} onChange={(e) => setTokenExchangeEnabled(e.target.checked)} />
+                <Switch
+                  checked={tokenExchangeEnabled}
+                  onChange={(e) => {
+                    clearCreateError();
+                    setTokenExchangeEnabled(e.target.checked);
+                  }}
+                />
               }
               label={
                 <Typography variant="subtitle2">
@@ -216,7 +240,10 @@ export default function TrustedIssuerCreateForm({
                     "An additional audience value {{productName}} will accept in subject tokens from this issuer. Tokens whose audience is {{productName}}'s own issuer URL are always accepted.",
                     {productName},
                   )}
-                  onChange={(e) => setTrustedTokenAudience(e.target.value)}
+                  onChange={(e) => {
+                    clearCreateError();
+                    setTrustedTokenAudience(e.target.value);
+                  }}
                 />
               </FormControl>
             </Collapse>
@@ -225,7 +252,15 @@ export default function TrustedIssuerCreateForm({
           <Box>
             <Divider sx={{mb: 2}} />
             <FormControlLabel
-              control={<Switch checked={idJagEnabled} onChange={(e) => setIdJagEnabled(e.target.checked)} />}
+              control={
+                <Switch
+                  checked={idJagEnabled}
+                  onChange={(e) => {
+                    clearCreateError();
+                    setIdJagEnabled(e.target.checked);
+                  }}
+                />
+              }
               label={
                 <Typography variant="subtitle2">
                   {t(
@@ -244,6 +279,12 @@ export default function TrustedIssuerCreateForm({
           </Box>
         </Stack>
       </Paper>
+
+      {generalError && (
+        <Alert severity="error" onClose={clearCreateError}>
+          {generalError}
+        </Alert>
+      )}
 
       <Box sx={{display: 'flex', justifyContent: 'space-between', alignItems: 'center'}}>
         <Button variant="outlined" startIcon={<ChevronLeft size={16} />} onClick={onBack}>

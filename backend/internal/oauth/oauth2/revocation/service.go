@@ -1,20 +1,5 @@
-/*
- * Copyright (c) 2026, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2026 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 package revocation
 
@@ -24,6 +9,7 @@ import (
 	"time"
 
 	"github.com/thunder-id/thunderid/internal/oauth/oauth2/constants"
+	sharedrevocation "github.com/thunder-id/thunderid/internal/revocation"
 	syscontext "github.com/thunder-id/thunderid/internal/system/context"
 	"github.com/thunder-id/thunderid/internal/system/jose/jwt"
 	"github.com/thunder-id/thunderid/internal/system/log"
@@ -68,6 +54,9 @@ type RefreshTokenRevokerInterface interface {
 // consumed by the refresh grant (reuse), the RFC 7009 endpoint (explicit), the authorization service
 // (code replay), and session sign-out (logout).
 type CriteriaRevokerInterface interface {
+	// RevokeByCriteria records an idempotent many-token revocation.
+	RevokeByCriteria(ctx context.Context, revocation CriteriaRevocation) error
+
 	// RevokeTokenFamily records a terminal revocation of the token family identified by tokenFamilyID, so
 	// every access and refresh token carrying that tfid is rejected. An empty tokenFamilyID is a
 	// no-op. The write is idempotent.
@@ -213,23 +202,78 @@ func (s *revocationService) RevokeRefreshToken(ctx context.Context, jti string, 
 // idempotent.
 func (s *revocationService) RevokeTokenFamily(ctx context.Context, tokenFamilyID string,
 	reason RevocationReason) error {
-	if tokenFamilyID == "" {
+	return s.RevokeByCriteria(ctx, CriteriaRevocation{
+		Criterion: Criterion{Type: CriterionTypeTokenFamily, Value: tokenFamilyID},
+		Mode:      RevocationModeAll,
+		Reason:    reason,
+	})
+}
+
+// RevokeByCriteria records a validated many-token revocation in the criteria deny list.
+func (s *revocationService) RevokeByCriteria(ctx context.Context, revocation CriteriaRevocation) error {
+	if revocation.Criterion.Value == "" {
 		return nil
+	}
+	if !isSupportedCriterionType(revocation.Criterion.Type) {
+		return fmt.Errorf("unsupported revocation criterion type: %q", revocation.Criterion.Type)
+	}
+	if revocation.Mode != RevocationModeAll && revocation.Mode != RevocationModeBeforeAction {
+		return fmt.Errorf("unsupported revocation mode: %q", revocation.Mode)
+	}
+	if revocation.Mode == RevocationModeBeforeAction && revocation.Cutoff.IsZero() {
+		return fmt.Errorf("cutoff is required for %s", RevocationModeBeforeAction)
+	}
+	if (revocation.Mode == RevocationModeBeforeAction) != isBoundaryReason(revocation.Reason) {
+		return fmt.Errorf("revocation mode %q does not match reason %q", revocation.Mode, revocation.Reason)
+	}
+	if revocation.Mode == RevocationModeAll {
+		revocation.Cutoff = time.Time{}
 	}
 
 	now := time.Now().UTC()
+	revokedAt := now
+	if revocation.Mode == RevocationModeBeforeAction {
+		revokedAt = revocation.Cutoff.UTC()
+	}
 	if err := s.store.insertCriterion(ctx, revocationCriterion{
-		Type:       criterionTypeTokenFamily,
-		Value:      tokenFamilyID,
-		Reason:     reason,
-		RevokedAt:  now,
-		ExpiryTime: now.Add(s.tokenFamilyLifetime),
+		Type:       revocation.Criterion.Type,
+		Value:      revocation.Criterion.Value,
+		Reason:     revocation.Reason,
+		RevokedAt:  revokedAt,
+		ExpiryTime: now.Add(s.resolveCriterionLifetime(revocation.TTL)),
 	}); err != nil {
-		return fmt.Errorf("failed to revoke token family: %w", err)
+		return fmt.Errorf("failed to revoke tokens by criteria: %w", err)
 	}
 
-	s.logger.Debug(ctx, "Revoked token family", log.String("reason", string(reason)))
+	s.logger.Debug(ctx, "Revoked tokens by criteria",
+		log.String("criterionType", string(revocation.Criterion.Type)),
+		log.String("reason", string(revocation.Reason)))
 	return nil
+}
+
+// resolveCriterionLifetime returns how long a criteria deny-list row must survive. The configured
+// lifetime is only a default, so a caller that knows its artifacts live longer can ask for more: the
+// longer of the two wins, and a caller can never cut a row short.
+func (s *revocationService) resolveCriterionLifetime(requested time.Duration) time.Duration {
+	if requested > s.tokenFamilyLifetime {
+		return requested
+	}
+	return s.tokenFamilyLifetime
+}
+
+func isSupportedCriterionType(criterionType CriterionType) bool {
+	switch criterionType {
+	case CriterionTypeTokenFamily, CriterionTypeSubject, CriterionTypeApplicationID,
+		CriterionTypeApplicationKey, CriterionTypeOrganizationUnit, CriterionTypeRole,
+		CriterionTypeGroup, CriterionTypeConsent, CriterionTypeCredentialVersion:
+		return true
+	default:
+		return false
+	}
+}
+
+func isBoundaryReason(reason RevocationReason) bool {
+	return sharedrevocation.IsBoundaryReason(reason)
 }
 
 // extractExpiryTime returns the token's exp claim as a time, falling back to now when absent

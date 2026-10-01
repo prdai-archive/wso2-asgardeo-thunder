@@ -1,20 +1,5 @@
-/*
- * Copyright (c) 2026, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2026 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 package connection
 
@@ -58,7 +43,7 @@ func (s *SMSGatewayTestSuite) TestToSenderDTOMapsFields() {
 	})
 	s.Require().NoError(err)
 	s.Equal(ncommon.NotificationSenderTypeMessage, dto.Type)
-	s.Equal(ncommon.MessageProviderTypeCustom, dto.Provider)
+	s.Equal(ncommon.NotificationProviderTypeCustom, dto.Provider)
 	s.Equal("Custom webhook sender", dto.Description)
 
 	values, err := propertyValues(dto.Properties)
@@ -89,7 +74,7 @@ func (s *SMSGatewayTestSuite) TestCreateReturnsPlaintextNonSecretFields() {
 			ID:       "sg-1",
 			Name:     "Prod SMS",
 			Type:     ncommon.NotificationSenderTypeMessage,
-			Provider: ncommon.MessageProviderTypeCustom,
+			Provider: ncommon.NotificationProviderTypeCustom,
 			Properties: []cmodels.Property{
 				mustProperty(s.T(), ncommon.CustomPropKeyURL, "https://sms.example.com/send", false),
 				mustProperty(s.T(), ncommon.CustomPropKeyHTTPMethod, "POST", false),
@@ -123,7 +108,7 @@ func (s *SMSGatewayTestSuite) TestGetRoundTrip() {
 			ID:       "sg-1",
 			Name:     "Prod SMS",
 			Type:     ncommon.NotificationSenderTypeMessage,
-			Provider: ncommon.MessageProviderTypeCustom,
+			Provider: ncommon.NotificationProviderTypeCustom,
 			Properties: []cmodels.Property{
 				mustProperty(s.T(), ncommon.CustomPropKeyURL, "https://sms.example.com/send", false),
 			},
@@ -132,7 +117,7 @@ func (s *SMSGatewayTestSuite) TestGetRoundTrip() {
 	req := httptest.NewRequest(http.MethodGet, "/connections/sms-gateway/sg-1", nil)
 	req.SetPathValue("id", "sg-1")
 	rr := httptest.NewRecorder()
-	getSMSHandler(s.handler, ncommon.MessageProviderTypeCustom, smsGatewayFromSenderDTO)(rr, req)
+	getSMSHandler(s.handler, ncommon.NotificationProviderTypeCustom, smsGatewayFromSenderDTO)(rr, req)
 
 	s.Equal(http.StatusOK, rr.Code)
 	var resp smsGatewayConnectionResponse
@@ -144,13 +129,13 @@ func (s *SMSGatewayTestSuite) TestGetRoundTrip() {
 func (s *SMSGatewayTestSuite) TestGetProviderMismatchReturnsNotFound() {
 	s.mockNotif.On("GetSender", mock.Anything, "tw-1").
 		Return(&ncommon.NotificationSenderDTO{
-			ID: "tw-1", Type: ncommon.NotificationSenderTypeMessage, Provider: ncommon.MessageProviderTypeTwilio,
+			ID: "tw-1", Type: ncommon.NotificationSenderTypeMessage, Provider: ncommon.NotificationProviderTypeTwilio,
 		}, (*tidcommon.ServiceError)(nil))
 
 	req := httptest.NewRequest(http.MethodGet, "/connections/sms-gateway/tw-1", nil)
 	req.SetPathValue("id", "tw-1")
 	rr := httptest.NewRecorder()
-	getSMSHandler(s.handler, ncommon.MessageProviderTypeCustom, smsGatewayFromSenderDTO)(rr, req)
+	getSMSHandler(s.handler, ncommon.NotificationProviderTypeCustom, smsGatewayFromSenderDTO)(rr, req)
 
 	s.Equal(http.StatusNotFound, rr.Code)
 }

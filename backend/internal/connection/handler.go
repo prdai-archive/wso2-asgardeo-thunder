@@ -1,20 +1,5 @@
-/*
- * Copyright (c) 2026, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2026 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 package connection
 
@@ -24,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/thunder-id/thunderid/internal/connection/authzenpdp"
 	"github.com/thunder-id/thunderid/internal/idp"
 	"github.com/thunder-id/thunderid/internal/notification"
 	ncommon "github.com/thunder-id/thunderid/internal/notification/common"
@@ -259,6 +245,109 @@ func (h *handler) handleListConnections(w http.ResponseWriter, r *http.Request) 
 	sysutils.WriteSuccessResponse(ctx, w, http.StatusOK, resp)
 }
 
+// createAuthZENPDPConnection creates an AuthZEN PDP connection.
+func (h *handler) createAuthZENPDPConnection(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	req, err := sysutils.DecodeJSONBody[authzenpdp.ConnectionRequest](r)
+	if err != nil {
+		writeServiceError(ctx, w, &ErrorInvalidRequestFormat)
+		return
+	}
+	created, svcErr := h.svc.createAuthZENPDP(ctx, *req)
+	if svcErr != nil {
+		writeServiceError(ctx, w, svcErr)
+		return
+	}
+	sysutils.WriteSuccessResponse(ctx, w, http.StatusCreated, authzenpdp.ToResponse(*created))
+}
+
+// listAuthZENPDPConnections lists configured AuthZEN PDP connections.
+func (h *handler) listAuthZENPDPConnections(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	connections, svcErr := h.svc.listAuthZENPDP(ctx)
+	if svcErr != nil {
+		writeServiceError(ctx, w, svcErr)
+		return
+	}
+	summaries := make([]connectionInstanceSummary, 0, len(connections))
+	for _, connection := range connections {
+		summaries = append(summaries, connectionInstanceSummary{
+			ID:          connection.ID,
+			Name:        connection.Name,
+			Description: connection.Description,
+		})
+	}
+	sysutils.WriteSuccessResponse(ctx, w, http.StatusOK, summaries)
+}
+
+// getAuthZENPDPConnection returns an AuthZEN PDP connection by ID.
+func (h *handler) getAuthZENPDPConnection(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	id := r.PathValue("id")
+	if strings.TrimSpace(id) == "" {
+		writeServiceError(ctx, w, &authzenpdp.ErrorNotFound)
+		return
+	}
+	connection, svcErr := h.svc.getAuthZENPDP(ctx, id)
+	if svcErr != nil {
+		writeServiceError(ctx, w, svcErr)
+		return
+	}
+	sysutils.WriteSuccessResponse(ctx, w, http.StatusOK, authzenpdp.ToResponse(*connection))
+}
+
+// updateAuthZENPDPConnection updates an AuthZEN PDP connection by ID.
+func (h *handler) updateAuthZENPDPConnection(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	id := r.PathValue("id")
+	if strings.TrimSpace(id) == "" {
+		writeServiceError(ctx, w, &authzenpdp.ErrorNotFound)
+		return
+	}
+	req, err := sysutils.DecodeJSONBody[authzenpdp.ConnectionRequest](r)
+	if err != nil {
+		writeServiceError(ctx, w, &ErrorInvalidRequestFormat)
+		return
+	}
+	updated, svcErr := h.svc.updateAuthZENPDP(ctx, id, *req)
+	if svcErr != nil {
+		writeServiceError(ctx, w, svcErr)
+		return
+	}
+	sysutils.WriteSuccessResponse(ctx, w, http.StatusOK, authzenpdp.ToResponse(*updated))
+}
+
+// deleteAuthZENPDPConnection deletes an AuthZEN PDP connection by ID.
+func (h *handler) deleteAuthZENPDPConnection(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	id := r.PathValue("id")
+	if strings.TrimSpace(id) == "" {
+		writeServiceError(ctx, w, &authzenpdp.ErrorNotFound)
+		return
+	}
+	if svcErr := h.svc.deleteAuthZENPDP(ctx, id); svcErr != nil {
+		writeServiceError(ctx, w, svcErr)
+		return
+	}
+	sysutils.WriteSuccessResponse(ctx, w, http.StatusNoContent, nil)
+}
+
+// usagesAuthZENPDPConnection lists resources that reference an AuthZEN PDP connection.
+func (h *handler) usagesAuthZENPDPConnection(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	id := r.PathValue("id")
+	if strings.TrimSpace(id) == "" {
+		writeServiceError(ctx, w, &authzenpdp.ErrorNotFound)
+		return
+	}
+	usages, svcErr := h.svc.usagesAuthZENPDP(ctx, id)
+	if svcErr != nil {
+		writeServiceError(ctx, w, svcErr)
+		return
+	}
+	sysutils.WriteSuccessResponse(ctx, w, http.StatusOK, usages)
+}
+
 // createSMSConnection decodes a typed request, maps it to a notification-sender DTO via the
 // vendor's mapper, delegates creation, and writes the encoded response.
 func createSMSConnection[Req any, Resp any](h *handler, w http.ResponseWriter, r *http.Request,
@@ -290,7 +379,7 @@ func createSMSConnection[Req any, Resp any](h *handler, w http.ResponseWriter, r
 
 // getSMSConnection fetches a message sender of the given provider and writes the encoded response.
 func getSMSConnection[Resp any](h *handler, w http.ResponseWriter, r *http.Request,
-	provider ncommon.MessageProviderType, fromDTO func(ncommon.NotificationSenderDTO) (Resp, error)) {
+	provider ncommon.NotificationProviderType, fromDTO func(ncommon.NotificationSenderDTO) (Resp, error)) {
 	ctx := r.Context()
 	id := r.PathValue("id")
 	if strings.TrimSpace(id) == "" {
@@ -313,7 +402,7 @@ func getSMSConnection[Resp any](h *handler, w http.ResponseWriter, r *http.Reque
 // updateSMSConnection decodes a typed request, maps it, delegates the update (which preserves
 // any secret the request omits), and writes the encoded response.
 func updateSMSConnection[Req any, Resp any](h *handler, w http.ResponseWriter, r *http.Request,
-	provider ncommon.MessageProviderType, toDTO func(Req) (*ncommon.NotificationSenderDTO, error),
+	provider ncommon.NotificationProviderType, toDTO func(Req) (*ncommon.NotificationSenderDTO, error),
 	fromDTO func(ncommon.NotificationSenderDTO) (Resp, error)) {
 	ctx := r.Context()
 	id := r.PathValue("id")
@@ -354,7 +443,7 @@ func createSMSHandler[Req any, Resp any](h *handler,
 }
 
 // getSMSHandler binds a vendor's provider and mapper to getSMSConnection, yielding a handler.
-func getSMSHandler[Resp any](h *handler, provider ncommon.MessageProviderType,
+func getSMSHandler[Resp any](h *handler, provider ncommon.NotificationProviderType,
 	fromDTO func(ncommon.NotificationSenderDTO) (Resp, error)) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		getSMSConnection(h, w, r, provider, fromDTO)
@@ -362,7 +451,7 @@ func getSMSHandler[Resp any](h *handler, provider ncommon.MessageProviderType,
 }
 
 // updateSMSHandler binds a vendor's provider and mappers to updateSMSConnection.
-func updateSMSHandler[Req any, Resp any](h *handler, provider ncommon.MessageProviderType,
+func updateSMSHandler[Req any, Resp any](h *handler, provider ncommon.NotificationProviderType,
 	toDTO func(Req) (*ncommon.NotificationSenderDTO, error),
 	fromDTO func(ncommon.NotificationSenderDTO) (Resp, error)) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -371,7 +460,7 @@ func updateSMSHandler[Req any, Resp any](h *handler, provider ncommon.MessagePro
 }
 
 // listSMSInstances returns a handler that lists the configured senders of a message provider.
-func (h *handler) listSMSInstances(provider ncommon.MessageProviderType) http.HandlerFunc {
+func (h *handler) listSMSInstances(provider ncommon.NotificationProviderType) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		ctx := r.Context()
 		instances, svcErr := h.svc.listSMSByProvider(ctx, provider)
@@ -392,7 +481,7 @@ func (h *handler) listSMSInstances(provider ncommon.MessageProviderType) http.Ha
 }
 
 // deleteSMSInstance returns a handler that deletes a sender of a message provider.
-func (h *handler) deleteSMSInstance(provider ncommon.MessageProviderType) http.HandlerFunc {
+func (h *handler) deleteSMSInstance(provider ncommon.NotificationProviderType) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		ctx := r.Context()
 		id := r.PathValue("id")
@@ -405,5 +494,24 @@ func (h *handler) deleteSMSInstance(provider ncommon.MessageProviderType) http.H
 			return
 		}
 		sysutils.WriteSuccessResponse(ctx, w, http.StatusNoContent, nil)
+	}
+}
+
+// usagesSMSInstance returns a handler that lists the resources referencing a sender of a message
+// provider. Drives the pre-delete confirmation dialog.
+func (h *handler) usagesSMSInstance(provider ncommon.NotificationProviderType) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		ctx := r.Context()
+		id := r.PathValue("id")
+		if strings.TrimSpace(id) == "" {
+			writeServiceError(ctx, w, &notification.ErrorInvalidSenderID)
+			return
+		}
+		usages, svcErr := h.svc.usagesSMSByProvider(ctx, provider, id)
+		if svcErr != nil {
+			writeServiceError(ctx, w, svcErr)
+			return
+		}
+		sysutils.WriteSuccessResponse(ctx, w, http.StatusOK, usages)
 	}
 }

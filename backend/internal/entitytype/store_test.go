@@ -1,20 +1,5 @@
-/*
- * Copyright (c) 2026, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2026 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 package entitytype
 
@@ -28,6 +13,9 @@ import (
 	"github.com/stretchr/testify/suite"
 
 	dbMock "github.com/thunder-id/thunderid/tests/mocks/database/providermock"
+
+	"github.com/thunder-id/thunderid/internal/system/config"
+	engineconfig "github.com/thunder-id/thunderid/pkg/thunderidengine/config"
 )
 
 type StoreTestSuite struct {
@@ -38,12 +26,12 @@ type StoreTestSuite struct {
 }
 
 func (suite *StoreTestSuite) SetupTest() {
+	loadRuntimeForScope()
 	suite.mockProvider = dbMock.NewDBProviderInterfaceMock(suite.T())
 	suite.mockClient = dbMock.NewDBClientInterfaceMock(suite.T())
 
 	suite.store = &entityTypeStore{
-		dbProvider:   suite.mockProvider,
-		deploymentID: "test-node",
+		dbProvider: suite.mockProvider,
 	}
 }
 
@@ -289,4 +277,14 @@ func (suite *StoreTestSuite) TestGetEntityTypeListCountByOUIDs() {
 			suite.mockClient.AssertExpectations(suite.T())
 		})
 	}
+}
+
+// loadRuntimeForScope loads a server runtime naming the deployment these tests assert on. The store
+// resolves its deployment from the runtime rather than holding one, and other suites in this package
+// reset the runtime, so it is loaded per test rather than once for the package.
+func loadRuntimeForScope() {
+	config.ResetServerRuntime()
+	_ = config.InitializeServerRuntime("", &config.Config{
+		Server: engineconfig.ServerConfig{Identifier: "test-node"},
+	})
 }

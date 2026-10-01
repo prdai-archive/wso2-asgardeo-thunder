@@ -1,20 +1,5 @@
-/*
- * Copyright (c) 2025, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2025 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 package executor
 
@@ -25,6 +10,7 @@ import (
 	"github.com/stretchr/testify/suite"
 
 	authncm "github.com/thunder-id/thunderid/internal/authn/common"
+	entitytypemodel "github.com/thunder-id/thunderid/internal/entitytype/model"
 	"github.com/thunder-id/thunderid/internal/flow/common"
 	tidcommon "github.com/thunder-id/thunderid/pkg/thunderidengine/common"
 	"github.com/thunder-id/thunderid/pkg/thunderidengine/providers"
@@ -96,6 +82,70 @@ func (s *UtilsTestSuite) TestGetAuthnServiceName() {
 		s.Run(tt.name, func() {
 			result := getAuthnServiceName(tt.executorName)
 			s.Equal(tt.expectedName, result)
+		})
+	}
+}
+
+func (s *UtilsTestSuite) TestInputTypeForSchemaType() {
+	tests := []struct {
+		name         string
+		schemaType   string
+		expectedType string
+	}{
+		{"Boolean attribute is prompted as a checkbox", entitytypemodel.TypeBoolean, providers.InputTypeBoolean},
+		{"Number attribute is prompted as a number input", entitytypemodel.TypeNumber, providers.InputTypeNumber},
+		{"String attribute is prompted as text", entitytypemodel.TypeString, providers.InputTypeText},
+		{"Unknown type falls back to text", "geo", providers.InputTypeText},
+		{"Empty type falls back to text", "", providers.InputTypeText},
+	}
+
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			s.Equal(tt.expectedType, inputTypeForSchemaType(tt.schemaType))
+		})
+	}
+}
+
+func (s *UtilsTestSuite) TestSchemaTypeForInputType() {
+	tests := []struct {
+		name         string
+		inputType    string
+		expectedType string
+	}{
+		{"Checkbox maps to boolean", providers.InputTypeBoolean, entitytypemodel.TypeBoolean},
+		{"Number input maps to number", providers.InputTypeNumber, entitytypemodel.TypeNumber},
+		{"Text input needs no conversion", providers.InputTypeText, ""},
+		{"Unset input type needs no conversion", "", ""},
+	}
+
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			s.Equal(tt.expectedType, schemaTypeForInputType(tt.inputType))
+		})
+	}
+}
+
+func (s *UtilsTestSuite) TestConvertToSchemaType() {
+	tests := []struct {
+		name          string
+		value         string
+		schemaType    string
+		expectedValue interface{}
+	}{
+		{"Checked box becomes true", "true", entitytypemodel.TypeBoolean, true},
+		{"Unchecked box becomes false", "false", entitytypemodel.TypeBoolean, false},
+		{"Boolean accepts alternate spellings", "TRUE", entitytypemodel.TypeBoolean, true},
+		{"Unparseable boolean is left for schema validation to reject", "yes", entitytypemodel.TypeBoolean, "yes"},
+		{"Number becomes a float", "42", entitytypemodel.TypeNumber, float64(42)},
+		{"Fractional number becomes a float", "1.5", entitytypemodel.TypeNumber, 1.5},
+		{"Unparseable number is left for schema validation to reject", "many", entitytypemodel.TypeNumber, "many"},
+		{"String attribute is untouched", "true", entitytypemodel.TypeString, "true"},
+		{"Unknown schema type is untouched", "true", "", "true"},
+	}
+
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			s.Equal(tt.expectedValue, convertToSchemaType(tt.value, tt.schemaType))
 		})
 	}
 }

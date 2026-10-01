@@ -1,20 +1,5 @@
-/*
- * Copyright (c) 2026, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2026 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 package revocationcache
 
@@ -23,6 +8,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/thunder-id/thunderid/internal/revocation"
 	"github.com/thunder-id/thunderid/internal/system/config"
 	"github.com/thunder-id/thunderid/internal/system/database/provider"
 	"github.com/thunder-id/thunderid/internal/system/utils"
@@ -32,9 +18,13 @@ const (
 	columnNameJTI            = "jti"
 	columnNameCriterionValue = "criterion_value"
 	columnNameExpiryTime     = "expiry_time"
+	columnNameRevokedAt      = "revoked_at"
+	columnNameReason         = "reason"
 	// criterionTypeTokenFamily mirrors the revocation package's token_family criterion type. It is
 	// duplicated here (not imported) so this read-only RS package stays decoupled from the write path.
 	criterionTypeTokenFamily = "token_family"
+	criterionTypeSubject     = "subject"
+	criterionTypeAppKey      = "app.key"
 )
 
 // dbSource reads the deny-list snapshot from the runtime persistent database. It is the only source today; it
@@ -52,8 +42,7 @@ func newDBSource() syncSource {
 	}
 }
 
-// Snapshot returns all non-expired deny-list entries for this deployment: the revoked single-token
-// jtis and the revoked token-family ids.
+// Snapshot returns the non-expired deny-list entries enforced by the Resource Server.
 func (s *dbSource) Snapshot(ctx context.Context) (revokedSnapshot, error) {
 	dbClient, err := s.dbProvider.GetRuntimePersistentDBClient()
 	if err != nil {
@@ -81,7 +70,49 @@ func (s *dbSource) Snapshot(ctx context.Context) (revokedSnapshot, error) {
 		return revokedSnapshot{}, err
 	}
 
-	return revokedSnapshot{Tokens: tokens, Families: families}, nil
+	subjectRows, err := dbClient.QueryContext(ctx, querySnapshotBoundedCriteria,
+		criterionTypeSubject, now, s.deploymentID)
+	if err != nil {
+		return revokedSnapshot{}, fmt.Errorf("error reading revoked subject snapshot: %w", err)
+	}
+	subjects, err := parseBoundedEntries(subjectRows)
+	if err != nil {
+		return revokedSnapshot{}, err
+	}
+
+	appKeyRows, err := dbClient.QueryContext(ctx, querySnapshotBoundedCriteria,
+		criterionTypeAppKey, now, s.deploymentID)
+	if err != nil {
+		return revokedSnapshot{}, fmt.Errorf("error reading revoked application snapshot: %w", err)
+	}
+	appKeys, err := parseBoundedEntries(appKeyRows)
+	if err != nil {
+		return revokedSnapshot{}, err
+	}
+
+	return revokedSnapshot{Tokens: tokens, Families: families, Subjects: subjects, AppKeys: appKeys}, nil
+}
+
+// parseBoundedEntries maps criteria of one dimension and retains their establishment cutoff, so a
+// bounded reason rejects only artifacts established at or before it.
+func parseBoundedEntries(rows []map[string]interface{}) ([]revokedEntry, error) {
+	entries, err := parseEntries(rows, columnNameCriterionValue)
+	if err != nil {
+		return nil, err
+	}
+	for i, row := range rows {
+		revokedAt, parseErr := utils.ParseDBTimeField(row[columnNameRevokedAt], columnNameRevokedAt)
+		if parseErr != nil {
+			return nil, fmt.Errorf("error parsing revocation snapshot: %w", parseErr)
+		}
+		entries[i].RevokedAt = revokedAt
+		reason, ok := row[columnNameReason].(string)
+		if !ok || reason == "" {
+			return nil, fmt.Errorf("invalid or missing %s in revocation snapshot", columnNameReason)
+		}
+		entries[i].Boundary = revocation.IsBoundaryReason(revocation.Reason(reason))
+	}
+	return entries, nil
 }
 
 // parseEntries maps deny-list rows into revoked entries, reading the lookup value from valueColumn and

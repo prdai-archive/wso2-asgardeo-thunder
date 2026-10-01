@@ -1,20 +1,5 @@
-/*
- * Copyright (c) 2026, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2026 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 package layoutmgt
 
@@ -332,7 +317,7 @@ func (s *DeclarativeResourceTestSuite) TestLoadDeclarativeResources_WithDBStore(
 	store := &layoutFileBasedStore{GenericFileBasedStore: genericStore}
 
 	dbStore := newLayoutMgtStoreInterfaceMock(s.T())
-	dbStore.On("IsLayoutExist", "layout-dup").Return(false, nil)
+	dbStore.On("IsLayoutExist", context.Background(), "layout-dup").Return(false, nil)
 
 	err = loadDeclarativeResources(store, dbStore)
 	s.NoError(err)
@@ -398,7 +383,7 @@ func (s *DeclarativeResourceTestSuite) TestValidateLayoutWrapper_DBStoreDuplicat
 	}
 
 	dbStore := newLayoutMgtStoreInterfaceMock(s.T())
-	dbStore.On("IsLayoutExist", "layout1").Return(true, nil)
+	dbStore.On("IsLayoutExist", context.Background(), "layout1").Return(true, nil)
 
 	err := validateLayoutWrapper(layout, dbStore)
 	s.Error(err)
@@ -413,7 +398,7 @@ func (s *DeclarativeResourceTestSuite) TestValidateLayoutWrapper_DBStoreError() 
 	}
 
 	dbStore := newLayoutMgtStoreInterfaceMock(s.T())
-	dbStore.On("IsLayoutExist", "layout1").Return(false, errors.New("db error"))
+	dbStore.On("IsLayoutExist", context.Background(), "layout1").Return(false, errors.New("db error"))
 
 	err := validateLayoutWrapper(layout, dbStore)
 	s.Error(err)

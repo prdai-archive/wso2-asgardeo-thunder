@@ -1,24 +1,12 @@
-/*
- * Copyright (c) 2026, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2026 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 package session
 
-import "context"
+import (
+	"context"
+	"time"
+)
 
 // sessionStore is the package-private persistence contract covering SSO sessions, their
 // per-checkpoint session contexts, and their participants. A single runtime-persistent-DB-backed
@@ -33,10 +21,16 @@ type sessionStore interface {
 	// GetByExecutionID fetches the session established by the given flow execution, or (nil, nil)
 	// when that execution has not established one.
 	GetByExecutionID(ctx context.Context, flowExecutionID string) (*Session, error)
+	// ListBySubject returns every SSO session belonging to the subject.
+	ListBySubject(ctx context.Context, subjectID string) ([]Session, error)
 	// Update writes the mutable fields of an existing session under an optimistic-lock guard. It
 	// returns errVersionConflict when the stored version no longer matches, and bumps the in-memory
 	// Version on success.
 	Update(ctx context.Context, s *Session) error
+	// TouchAuthenticatedAt records a fresh authentication inside an existing session and slides the
+	// idle deadline with it. It carries no version guard, so it never loses to a concurrent slide.
+	TouchAuthenticatedAt(ctx context.Context, sessionID string, authenticatedAt,
+		idleExpiresAt time.Time) error
 
 	// CreateContext persists (or overwrites) one checkpoint's session context for a session.
 	CreateContext(ctx context.Context, c SessionContext) error
@@ -52,6 +46,13 @@ type sessionStore interface {
 	Record(ctx context.Context, p Participant) error
 	// ListBySessionID returns the applications that have joined the session, oldest first.
 	ListBySessionID(ctx context.Context, sessionID string) ([]Participant, error)
+	// ListBySessionIDs returns the participants of all the given sessions, each session's
+	// participants oldest first.
+	ListBySessionIDs(ctx context.Context, sessionIDs []string) ([]Participant, error)
 	// DeleteBySessionID removes all participants of a session.
 	DeleteBySessionID(ctx context.Context, sessionID string) error
+	// ListByAppID returns every participation of the application, across sessions, oldest first.
+	ListByAppID(ctx context.Context, appID string) ([]Participant, error)
+	// DeleteParticipant removes one application's participation in one session.
+	DeleteParticipant(ctx context.Context, sessionID, appID string) error
 }

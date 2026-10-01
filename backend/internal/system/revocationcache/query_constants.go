@@ -1,20 +1,5 @@
-/*
- * Copyright (c) 2026, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2026 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 package revocationcache
 
@@ -32,5 +17,13 @@ var querySnapshotRevokedTokens = dbmodel.DBQuery{
 var querySnapshotRevokedTokenFamilies = dbmodel.DBQuery{
 	ID: "RVC-SRC-02",
 	Query: `SELECT CRITERION_VALUE, EXPIRY_TIME FROM "REVOCATION_CRITERIA" ` +
+		`WHERE CRITERION_TYPE = $1 AND EXPIRY_TIME > $2 AND DEPLOYMENT_ID = $3`,
+}
+
+// querySnapshotBoundedCriteria reads one dimension's criteria with the reason and action boundary, so
+// permanent revocations can be told from time-bounded ones. The criterion type is a bind parameter.
+var querySnapshotBoundedCriteria = dbmodel.DBQuery{
+	ID: "RVC-SRC-03",
+	Query: `SELECT CRITERION_VALUE, REASON, REVOKED_AT, EXPIRY_TIME FROM "REVOCATION_CRITERIA" ` +
 		`WHERE CRITERION_TYPE = $1 AND EXPIRY_TIME > $2 AND DEPLOYMENT_ID = $3`,
 }

@@ -1,26 +1,12 @@
-/*
- * Copyright (c) 2025, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2025 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 package authz
 
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/url"
 	"strings"
 	"testing"
@@ -42,6 +28,7 @@ import (
 	oauth2const "github.com/thunder-id/thunderid/internal/oauth/oauth2/constants"
 	oauth2model "github.com/thunder-id/thunderid/internal/oauth/oauth2/model"
 	"github.com/thunder-id/thunderid/internal/oauth/oauth2/revocation"
+	oauth2utils "github.com/thunder-id/thunderid/internal/oauth/oauth2/utils"
 	"github.com/thunder-id/thunderid/internal/system/config"
 	"github.com/thunder-id/thunderid/internal/system/jose/jwt"
 	"github.com/thunder-id/thunderid/internal/system/log"
@@ -50,6 +37,7 @@ import (
 	"github.com/thunder-id/thunderid/tests/mocks/flow/flowexecmock"
 	"github.com/thunder-id/thunderid/tests/mocks/inboundclientmock"
 	"github.com/thunder-id/thunderid/tests/mocks/jose/jwtmock"
+	"github.com/thunder-id/thunderid/tests/mocks/oauth/oauth2/jtimock"
 	"github.com/thunder-id/thunderid/tests/mocks/oauth/oauth2/revocationmock"
 	"github.com/thunder-id/thunderid/tests/mocks/resourcemock"
 )
@@ -58,7 +46,7 @@ func authorizeServiceCfgFromRuntime() oauthconfig.Config {
 	runtime := config.GetServerRuntime()
 	return oauthconfig.Config{
 		JWT:        runtime.Config.JWT,
-		OAuth:      runtime.Config.OAuth,
+		OAuth:      runtime.Config.OAuth.ToEngineConfig(),
 		GateClient: runtime.Config.GateClient,
 	}
 }
@@ -78,13 +66,19 @@ func (s *stubTransactioner) Transact(ctx context.Context, txFunc func(context.Co
 // the authorization_request_id claim so they pass the assertion<->authorization request binding check.
 const (
 	// Header: {"alg":"none","typ":"JWT"}
-	// Payload: {"sub":"test-user","iat":1701421200,"authorization_request_id":"test-auth-id"}
+	// Payload: {"sub":"test-user","iat":1701421200,"authorization_request_id":"test-auth-id",
+	//           "jti":"svc-assertion-jti"}
+	// The jti is what makes the assertion single-use; every assertion this server mints carries one.
 	svcJWTWithIat = "eyJhbGciOiJub25lIiwidHlwIjoiSldUIn0." +
-		"eyJzdWIiOiJ0ZXN0LXVzZXIiLCJpYXQiOjE3MDE0MjEyMDAsImF1dGhvcml6YXRpb25fcmVxdWVzdF9pZCI6InRlc3QtYXV0aC1pZCJ9."
+		"eyJzdWIiOiJ0ZXN0LXVzZXIiLCJpYXQiOjE3MDE0MjEyMDAsImF1dGhvcml6YXRpb25fcmVxdWVzdF9pZCI6" +
+		"InRlc3QtYXV0aC1pZCIsImp0aSI6InN2Yy1hc3NlcnRpb24tanRpIn0."
+	// svcAssertionJTI is the jti claim carried by svcJWTWithIat.
+	svcAssertionJTI = "svc-assertion-jti"
 	// Header: {"alg":"none","typ":"JWT"}
-	// Payload: {"sub":"test-user","authorization_request_id":"test-auth-id"}
+	// Payload: {"sub":"test-user","authorization_request_id":"test-auth-id","jti":"svc-minimal-jti"}
 	svcJWTMinimal = "eyJhbGciOiJub25lIiwidHlwIjoiSldUIn0." +
-		"eyJzdWIiOiJ0ZXN0LXVzZXIiLCJhdXRob3JpemF0aW9uX3JlcXVlc3RfaWQiOiJ0ZXN0LWF1dGgtaWQifQ."
+		"eyJzdWIiOiJ0ZXN0LXVzZXIiLCJhdXRob3JpemF0aW9uX3JlcXVlc3RfaWQiOiJ0ZXN0LWF1dGgtaWQi" +
+		"LCJqdGkiOiJzdmMtbWluaW1hbC1qdGkifQ."
 	// Header: {"alg":"none","typ":"JWT"}
 	// Payload: {"sub":"test-user","iat":1701421200} — no authorization_request_id claim (unbound).
 	svcJWTUnbound = "eyJhbGciOiJub25lIiwidHlwIjoiSldUIn0.eyJzdWIiOiJ0ZXN0LXVzZXIiLCJpYXQiOjE3MDE0MjEyMDB9."
@@ -98,6 +92,8 @@ const (
 		"eyJzdWIiOiJ0ZXN0LXVzZXIiLCJpYXQiOjE3MDE0MjEyMDAsImF1dGhvcml6YXRpb25fcmVxdWVzdF9pZCI6NDJ9."
 )
 
+func boolPtr(b bool) *bool { return &b }
+
 type AuthorizeServiceTestSuite struct {
 	suite.Suite
 	mockInboundClient   *inboundclientmock.InboundClientServiceInterfaceMock
@@ -108,6 +104,7 @@ type AuthorizeServiceTestSuite struct {
 	mockFlowExecService *flowexecmock.FlowExecServiceInterfaceMock
 	mockValidator       *AuthorizationValidatorInterfaceMock
 	mockResourceService *resourcemock.ResourceServiceInterfaceMock
+	mockJTIStore        *jtimock.JTIStoreInterfaceMock
 }
 
 func TestAuthorizeServiceTestSuite(t *testing.T) {
@@ -131,7 +128,7 @@ func (suite *AuthorizeServiceTestSuite) BeforeTest(suiteName, testName string) {
 		JWT: engineconfig.JWTConfig{
 			Issuer: "https://localhost:8090",
 		},
-		OAuth: engineconfig.OAuthConfig{
+		OAuth: config.OAuthConfig{
 			AuthorizationCode: engineconfig.AuthorizationCodeConfig{ValidityPeriod: 600},
 		},
 	}
@@ -155,6 +152,12 @@ func (suite *AuthorizeServiceTestSuite) SetupTest() {
 		Return(&providers.ResourceServer{ID: "rs-default", Identifier: "https://rs-default.example.com"}, nil).Maybe()
 	suite.mockResourceService.EXPECT().ValidatePermissions(mock.Anything, "rs-default", mock.Anything).
 		Return([]string{}, nil).Maybe()
+
+	suite.mockJTIStore = jtimock.NewJTIStoreInterfaceMock(suite.T())
+	// Default: every assertion is being redeemed for the first time. Replay tests install their own
+	// mock rather than adding an expectation, since testify matches this catch-all first.
+	suite.mockJTIStore.On("RecordJTI", mock.Anything, mock.Anything, mock.Anything,
+		mock.Anything).Return(true, nil).Maybe()
 }
 
 // newService builds an authorizeService with all mocked dependencies.
@@ -170,6 +173,7 @@ func (suite *AuthorizeServiceTestSuite) newService() *authorizeService {
 		jwtService:      suite.mockJWTService,
 		flowExecService: suite.mockFlowExecService,
 		transactioner:   &stubTransactioner{},
+		jtiStore:        suite.mockJTIStore,
 		logger:          log.GetLogger().With(log.String(log.LoggerKeyComponentName, "AuthorizeServiceTest")),
 	}
 }
@@ -182,7 +186,11 @@ func (suite *AuthorizeServiceTestSuite) testApp() *providers.OAuthClient {
 		RedirectURIs: []string{"https://client.example.com/callback"},
 		GrantTypes:   []providers.GrantType{providers.GrantTypeAuthorizationCode},
 		PKCERequired: false,
-		Scopes:       []string{"openid", "profile", "email"},
+		ScopeClaims: map[string][]string{
+			"openid":  {"sub"},
+			"profile": {"name"},
+			"email":   {"email", "email_verified"},
+		},
 	}
 }
 
@@ -257,6 +265,67 @@ func (suite *AuthorizeServiceTestSuite) TestHandleInitialAuthorizationRequest_In
 	assert.Nil(suite.T(), result)
 	assert.NotNil(suite.T(), authErr)
 	assert.Equal(suite.T(), oauth2const.ErrorInvalidRequest, authErr.Code)
+}
+
+// A request_uri that is not a PAR handle is a client-supplied request object by reference
+// (RFC 9101), which is not supported. It must be rejected with request_uri_not_supported and
+// returned to the client's redirect_uri, rather than resolved as a PAR handle or ignored.
+func (suite *AuthorizeServiceTestSuite) TestHandleInitialAuthorizationRequest_RequestURINotSupported() {
+	app := suite.testApp()
+	suite.mockInboundClient.EXPECT().GetOAuthClientByClientID(mock.Anything, "test-client-id").Return(app, nil)
+
+	msg := suite.testMsg()
+	msg.RequestQueryParams["request_uri"] = []string{"https://client.example.org/request.jwt"}
+
+	svc := suite.newService()
+	result, authErr := svc.HandleInitialAuthorizationRequest(context.Background(), msg)
+
+	assert.Nil(suite.T(), result)
+	assert.NotNil(suite.T(), authErr)
+	assert.Equal(suite.T(), oauth2const.ErrorRequestURINotSupported, authErr.Code)
+	assert.True(suite.T(), authErr.SendErrorToClient)
+	assert.Equal(suite.T(), "https://client.example.com/callback", authErr.ClientRedirectURI)
+	assert.Equal(suite.T(), "test-state", authErr.State)
+}
+
+// An unregistered redirect_uri must not be used as a redirect target, so the rejection goes to
+// the error page instead.
+func (suite *AuthorizeServiceTestSuite) TestHandleInitialAuthorizationRequest_RequestURINotSupported_BadRedirectURI() {
+	app := suite.testApp()
+	suite.mockInboundClient.EXPECT().GetOAuthClientByClientID(mock.Anything, "test-client-id").Return(app, nil)
+
+	msg := suite.testMsg()
+	msg.RequestQueryParams["request_uri"] = []string{"https://client.example.org/request.jwt"}
+	msg.RequestQueryParams["redirect_uri"] = []string{"https://attacker.example.com/callback"}
+
+	svc := suite.newService()
+	result, authErr := svc.HandleInitialAuthorizationRequest(context.Background(), msg)
+
+	assert.Nil(suite.T(), result)
+	assert.NotNil(suite.T(), authErr)
+	assert.Equal(suite.T(), oauth2const.ErrorRequestURINotSupported, authErr.Code)
+	assert.False(suite.T(), authErr.SendErrorToClient)
+	assert.Empty(suite.T(), authErr.ClientRedirectURI)
+}
+
+// An omitted redirect_uri falls back to the single registered one, so the rejection still
+// reaches the client.
+func (suite *AuthorizeServiceTestSuite) TestHandleInitialAuthorizationRequest_RequestURINotSupported_NoRedirectURI() {
+	app := suite.testApp()
+	suite.mockInboundClient.EXPECT().GetOAuthClientByClientID(mock.Anything, "test-client-id").Return(app, nil)
+
+	msg := suite.testMsg()
+	msg.RequestQueryParams["request_uri"] = []string{"https://client.example.org/request.jwt"}
+	delete(msg.RequestQueryParams, "redirect_uri")
+
+	svc := suite.newService()
+	result, authErr := svc.HandleInitialAuthorizationRequest(context.Background(), msg)
+
+	assert.Nil(suite.T(), result)
+	assert.NotNil(suite.T(), authErr)
+	assert.Equal(suite.T(), oauth2const.ErrorRequestURINotSupported, authErr.Code)
+	assert.True(suite.T(), authErr.SendErrorToClient)
+	assert.Equal(suite.T(), "https://client.example.com/callback", authErr.ClientRedirectURI)
 }
 
 func (suite *AuthorizeServiceTestSuite) TestHandleInitialAuthorizationRequest_ValidationError_NoClientRedirect() {
@@ -355,6 +424,25 @@ func (suite *AuthorizeServiceTestSuite) TestHandleInitialAuthorizationRequest_Su
 	assert.Equal(suite.T(), "test-flow-id", result.QueryParams[oauth2const.ExecutionID])
 }
 
+func (suite *AuthorizeServiceTestSuite) TestHandleInitialAuthorizationRequest_Success_WithUILocales() {
+	app := suite.testApp()
+	suite.mockInboundClient.EXPECT().GetOAuthClientByClientID(mock.Anything, "test-client-id").Return(app, nil)
+	suite.mockValidator.On("validateInitialAuthorizationRequest", mock.Anything, mock.Anything, app).
+		Return(false, "", "")
+	suite.mockFlowExecService.EXPECT().InitiateFlow(mock.Anything, mock.Anything).Return("test-flow-id", nil)
+	suite.mockAuthReqStore.EXPECT().AddRequest(mock.Anything, mock.Anything).Return(testAuthID, nil)
+
+	msg := suite.testMsg()
+	msg.RequestQueryParams["ui_locales"] = []string{"hi"}
+
+	svc := suite.newService()
+	result, authErr := svc.HandleInitialAuthorizationRequest(context.Background(), msg)
+
+	assert.Nil(suite.T(), authErr)
+	assert.NotNil(suite.T(), result)
+	assert.Equal(suite.T(), "hi", result.QueryParams[oauth2const.RequestParamUILocales])
+}
+
 func (suite *AuthorizeServiceTestSuite) TestHandleInitialAuthorizationRequest_ExplicitResourceSetsRuntimeRSID() {
 	app := suite.testApp()
 	suite.mockInboundClient.EXPECT().GetOAuthClientByClientID(mock.Anything, "test-client-id").Return(app, nil)
@@ -448,9 +536,9 @@ func (suite *AuthorizeServiceTestSuite) TestHandleInitialAuthorizationRequest_OI
 	assert.Empty(suite.T(), captured.RuntimeData[flowcm.RuntimeKeyResourceServerIdentifier])
 }
 
-func (suite *AuthorizeServiceTestSuite) TestHandleInitialAuthorizationRequest_FiltersOIDCScopesByAppScopes() {
+func (suite *AuthorizeServiceTestSuite) TestHandleInitialAuthorizationRequest_NarrowsOIDCClaimsByScopeClaims() {
 	app := suite.testApp()
-	app.Scopes = []string{"profile"}
+	app.ScopeClaims = map[string][]string{"profile": {"name"}}
 	suite.mockInboundClient.EXPECT().GetOAuthClientByClientID(mock.Anything, "test-client-id").Return(app, nil)
 	suite.mockValidator.On("validateInitialAuthorizationRequest", mock.Anything, mock.Anything, app).
 		Return(false, "", "")
@@ -478,7 +566,8 @@ func (suite *AuthorizeServiceTestSuite) TestHandleInitialAuthorizationRequest_Fi
 
 	assert.Nil(suite.T(), authErr)
 	assert.NotNil(suite.T(), result)
-	assert.Equal(suite.T(), []string{"profile"}, captured.OAuthParameters.StandardScopes)
+	// email stays OIDC on its standard claims; the mapping only narrows profile.
+	assert.Equal(suite.T(), []string{"openid", "email", "profile"}, captured.OAuthParameters.StandardScopes)
 }
 
 func (suite *AuthorizeServiceTestSuite) TestHandleInitialAuthorizationRequest_InsecureRedirectURI() {
@@ -611,10 +700,11 @@ func (suite *AuthorizeServiceTestSuite) TestHandleInitialAuthorizationRequest_Se
 }
 
 func (suite *AuthorizeServiceTestSuite) TestHandleAuthorizationCallback_InvalidAuthID() {
+	suite.mockJWTService.EXPECT().VerifyJWT(mock.Anything, svcJWTWithIat, "", "").Return(nil)
 	suite.mockAuthReqStore.EXPECT().GetRequest(mock.Anything, "invalid-key").Return(false, authRequestContext{}, nil)
 
 	svc := suite.newService()
-	redirectURI, authErr := svc.HandleAuthorizationCallback(context.Background(), "invalid-key", "test-assertion")
+	redirectURI, authErr := svc.HandleAuthorizationCallback(context.Background(), "invalid-key", svcJWTWithIat)
 
 	assert.Empty(suite.T(), redirectURI)
 	assert.NotNil(suite.T(), authErr)
@@ -622,49 +712,37 @@ func (suite *AuthorizeServiceTestSuite) TestHandleAuthorizationCallback_InvalidA
 }
 
 func (suite *AuthorizeServiceTestSuite) TestHandleAuthorizationCallback_StoreError() {
+	suite.mockJWTService.EXPECT().VerifyJWT(mock.Anything, svcJWTWithIat, "", "").Return(nil)
 	suite.mockAuthReqStore.EXPECT().GetRequest(mock.Anything, "db-fail-key").
 		Return(false, authRequestContext{}, errors.New("db connection error"))
 
 	svc := suite.newService()
-	redirectURI, authErr := svc.HandleAuthorizationCallback(context.Background(), "db-fail-key", "test-assertion")
+	redirectURI, authErr := svc.HandleAuthorizationCallback(context.Background(), "db-fail-key", svcJWTWithIat)
 
 	assert.Empty(suite.T(), redirectURI)
 	assert.NotNil(suite.T(), authErr)
 	assert.Equal(suite.T(), oauth2const.ErrorServerError, authErr.Code)
 }
 
+// TestHandleAuthorizationCallback_MissingAssertion verifies that an empty assertion is rejected before
+// the authorization request is touched, so a caller holding only an authID cannot destroy it.
 func (suite *AuthorizeServiceTestSuite) TestHandleAuthorizationCallback_MissingAssertion() {
-	authCtx := authRequestContext{
-		OAuthParameters: oauth2model.OAuthParameters{
-			ClientID:    "test-client",
-			RedirectURI: "https://client.example.com/callback",
-			State:       "test-state",
-		},
-	}
-	suite.mockAuthReqStore.EXPECT().GetRequest(mock.Anything, testAuthID).Return(true, authCtx, nil)
-	suite.mockAuthReqStore.EXPECT().ClearRequest(mock.Anything, testAuthID).Return(nil)
-
 	svc := suite.newService()
 	redirectURI, authErr := svc.HandleAuthorizationCallback(context.Background(), testAuthID, "")
 
 	assert.Empty(suite.T(), redirectURI)
-	assert.NotNil(suite.T(), authErr)
+	suite.Require().NotNil(authErr)
 	assert.Equal(suite.T(), oauth2const.ErrorInvalidRequest, authErr.Code)
-	assert.Equal(suite.T(), "test-state", authErr.State)
-	assert.True(suite.T(), authErr.SendErrorToClient)
-	assert.Equal(suite.T(), "https://client.example.com/callback", authErr.ClientRedirectURI)
+	assert.False(suite.T(), authErr.SendErrorToClient)
+	suite.mockAuthReqStore.AssertNotCalled(suite.T(), "GetRequest", mock.Anything, mock.Anything)
+	suite.mockAuthReqStore.AssertNotCalled(suite.T(), "ClearRequest", mock.Anything, mock.Anything)
 }
 
+// TestHandleAuthorizationCallback_InvalidAssertionSignature verifies that verification runs before the
+// authorization request is loaded, since loading consumes it. An assertion whose signature does not
+// verify is not evidence that any flow ran, so the request survives and the error goes to the error
+// page rather than to the client, which is why no redirect URI is populated here.
 func (suite *AuthorizeServiceTestSuite) TestHandleAuthorizationCallback_InvalidAssertionSignature() {
-	authCtx := authRequestContext{
-		OAuthParameters: oauth2model.OAuthParameters{
-			ClientID:    "test-client",
-			RedirectURI: "https://client.example.com/callback",
-			State:       "test-state",
-		},
-	}
-	suite.mockAuthReqStore.EXPECT().GetRequest(mock.Anything, testAuthID).Return(true, authCtx, nil)
-	suite.mockAuthReqStore.EXPECT().ClearRequest(mock.Anything, testAuthID).Return(nil)
 	suite.mockJWTService.EXPECT().
 		VerifyJWT(mock.Anything, "invalid-assertion", "", "").Return(&jwt.ErrorInvalidTokenSignature)
 
@@ -672,23 +750,18 @@ func (suite *AuthorizeServiceTestSuite) TestHandleAuthorizationCallback_InvalidA
 	redirectURI, authErr := svc.HandleAuthorizationCallback(context.Background(), testAuthID, "invalid-assertion")
 
 	assert.Empty(suite.T(), redirectURI)
-	assert.NotNil(suite.T(), authErr)
+	suite.Require().NotNil(authErr)
 	assert.Equal(suite.T(), oauth2const.ErrorInvalidRequest, authErr.Code)
-	assert.Equal(suite.T(), "test-state", authErr.State)
-	assert.True(suite.T(), authErr.SendErrorToClient)
-	assert.Equal(suite.T(), "https://client.example.com/callback", authErr.ClientRedirectURI)
+	assert.False(suite.T(), authErr.SendErrorToClient)
+	suite.mockAuthReqStore.AssertNotCalled(suite.T(), "GetRequest", mock.Anything, mock.Anything)
+	suite.mockAuthReqStore.AssertNotCalled(suite.T(), "ClearRequest", mock.Anything, mock.Anything)
 }
 
+// TestHandleAuthorizationCallback_FailedToDecodeAssertion verifies that an assertion whose claims
+// cannot be read is rejected without touching the authorization request. Its claims cannot show it was
+// minted for this request, so consuming the request on it would let a caller holding one malformed
+// assertion destroy any live authID it can name.
 func (suite *AuthorizeServiceTestSuite) TestHandleAuthorizationCallback_FailedToDecodeAssertion() {
-	authCtx := authRequestContext{
-		OAuthParameters: oauth2model.OAuthParameters{
-			ClientID:    "test-client",
-			RedirectURI: "https://client.example.com/callback",
-			State:       "test-state",
-		},
-	}
-	suite.mockAuthReqStore.EXPECT().GetRequest(mock.Anything, testAuthID).Return(true, authCtx, nil)
-	suite.mockAuthReqStore.EXPECT().ClearRequest(mock.Anything, testAuthID).Return(nil)
 	// VerifyJWT succeeds but "not.valid.jwt" cannot be decoded as a valid JWT payload.
 	suite.mockJWTService.EXPECT().VerifyJWT(mock.Anything, "not.valid.jwt", "", "").Return(nil)
 
@@ -696,12 +769,12 @@ func (suite *AuthorizeServiceTestSuite) TestHandleAuthorizationCallback_FailedTo
 	redirectURI, authErr := svc.HandleAuthorizationCallback(context.Background(), testAuthID, "not.valid.jwt")
 
 	assert.Empty(suite.T(), redirectURI)
-	assert.NotNil(suite.T(), authErr)
-	assert.Equal(suite.T(), oauth2const.ErrorServerError, authErr.Code)
-	assert.Equal(suite.T(), "Failed to process authorization request", authErr.Message)
-	assert.Equal(suite.T(), "test-state", authErr.State)
-	assert.True(suite.T(), authErr.SendErrorToClient)
-	assert.Equal(suite.T(), "https://client.example.com/callback", authErr.ClientRedirectURI)
+	suite.Require().NotNil(authErr)
+	assert.Equal(suite.T(), oauth2const.ErrorInvalidRequest, authErr.Code)
+	assert.False(suite.T(), authErr.SendErrorToClient)
+	assert.Empty(suite.T(), authErr.ClientRedirectURI)
+	suite.mockAuthReqStore.AssertNotCalled(suite.T(), "GetRequest", mock.Anything, mock.Anything)
+	suite.mockAuthReqStore.AssertNotCalled(suite.T(), "ClearRequest", mock.Anything, mock.Anything)
 }
 
 func (suite *AuthorizeServiceTestSuite) TestHandleAuthorizationCallback_UnboundAssertion() {
@@ -752,28 +825,20 @@ func (suite *AuthorizeServiceTestSuite) TestHandleAuthorizationCallback_Mismatch
 }
 
 func (suite *AuthorizeServiceTestSuite) TestHandleAuthorizationCallback_NonStringAuthReqID() {
-	// Assertion's authorization_request_id claim is not a string → malformed client input,
-	// mapped to invalid_request rather than server_error.
-	authCtx := authRequestContext{
-		OAuthParameters: oauth2model.OAuthParameters{
-			ClientID:    "test-client",
-			RedirectURI: "https://client.example.com/callback",
-			State:       "test-state",
-		},
-	}
-	suite.mockAuthReqStore.EXPECT().GetRequest(mock.Anything, testAuthID).Return(true, authCtx, nil)
-	suite.mockAuthReqStore.EXPECT().ClearRequest(mock.Anything, testAuthID).Return(nil)
+	// The assertion's authorization_request_id claim is not a string, so it is malformed client input,
+	// mapped to invalid_request. The unreadable claim is the binding itself, so the assertion cannot be
+	// tied to this request and it is rejected without consuming it.
 	suite.mockJWTService.EXPECT().VerifyJWT(mock.Anything, svcJWTNonStringAuthReqID, "", "").Return(nil)
 
 	svc := suite.newService()
 	redirectURI, authErr := svc.HandleAuthorizationCallback(context.Background(), testAuthID, svcJWTNonStringAuthReqID)
 
 	assert.Empty(suite.T(), redirectURI)
-	assert.NotNil(suite.T(), authErr)
+	suite.Require().NotNil(authErr)
 	assert.Equal(suite.T(), oauth2const.ErrorInvalidRequest, authErr.Code)
-	assert.True(suite.T(), authErr.SendErrorToClient)
-	assert.Equal(suite.T(), "https://client.example.com/callback", authErr.ClientRedirectURI)
-	assert.Equal(suite.T(), "test-state", authErr.State)
+	assert.False(suite.T(), authErr.SendErrorToClient)
+	suite.mockAuthReqStore.AssertNotCalled(suite.T(), "GetRequest", mock.Anything, mock.Anything)
+	suite.mockAuthReqStore.AssertNotCalled(suite.T(), "ClearRequest", mock.Anything, mock.Anything)
 }
 
 func (suite *AuthorizeServiceTestSuite) TestHandleAuthorizationCallback_PersistAuthCodeError() {
@@ -822,6 +887,59 @@ func (suite *AuthorizeServiceTestSuite) TestHandleAuthorizationCallback_Success(
 	assert.Contains(suite.T(), redirectURI, "code=")
 	assert.Contains(suite.T(), redirectURI, "iss=https%3A%2F%2Flocalhost%3A8090")
 	assert.NotContains(suite.T(), redirectURI, "state=")
+}
+
+// An assertion redeemed here is spent, under the same replay namespace the token endpoint uses, so it
+// cannot afterwards be exchanged at /oauth2/token for a second credential.
+func (suite *AuthorizeServiceTestSuite) TestHandleAuthorizationCallback_ConsumesAssertion() {
+	authCtx := authRequestContext{
+		OAuthParameters: oauth2model.OAuthParameters{
+			ClientID:    "test-client",
+			RedirectURI: "https://client.example.com/callback",
+		},
+	}
+	suite.mockAuthReqStore.EXPECT().GetRequest(mock.Anything, testAuthID).Return(true, authCtx, nil)
+	suite.mockAuthReqStore.EXPECT().ClearRequest(mock.Anything, testAuthID).Return(nil)
+	suite.mockJWTService.EXPECT().VerifyJWT(mock.Anything, svcJWTWithIat, "", "").Return(nil)
+	suite.mockAuthzCodeStore.EXPECT().InsertAuthorizationCode(mock.Anything, mock.Anything).Return(nil)
+
+	svc := suite.newService()
+	suite.mockJTIStore = jtimock.NewJTIStoreInterfaceMock(suite.T())
+	svc.jtiStore = suite.mockJTIStore
+	suite.mockJTIStore.On("RecordJTI", mock.Anything, oauth2utils.NamespaceAuthAssertion, svcAssertionJTI,
+		mock.AnythingOfType("time.Time")).Return(true, nil).Once()
+
+	redirectURI, authErr := svc.HandleAuthorizationCallback(context.Background(), testAuthID, svcJWTWithIat)
+
+	assert.Nil(suite.T(), authErr)
+	assert.Contains(suite.T(), redirectURI, "code=")
+	suite.mockJTIStore.AssertExpectations(suite.T())
+}
+
+// A replayed assertion mints no second authorization code.
+func (suite *AuthorizeServiceTestSuite) TestHandleAuthorizationCallback_ReplayedAssertionIsRejected() {
+	authCtx := authRequestContext{
+		OAuthParameters: oauth2model.OAuthParameters{
+			ClientID:    "test-client",
+			RedirectURI: "https://client.example.com/callback",
+		},
+	}
+	suite.mockAuthReqStore.EXPECT().GetRequest(mock.Anything, testAuthID).Return(true, authCtx, nil)
+	suite.mockAuthReqStore.EXPECT().ClearRequest(mock.Anything, testAuthID).Return(nil)
+	suite.mockJWTService.EXPECT().VerifyJWT(mock.Anything, svcJWTWithIat, "", "").Return(nil)
+
+	svc := suite.newService()
+	suite.mockJTIStore = jtimock.NewJTIStoreInterfaceMock(suite.T())
+	svc.jtiStore = suite.mockJTIStore
+	suite.mockJTIStore.On("RecordJTI", mock.Anything, oauth2utils.NamespaceAuthAssertion, svcAssertionJTI,
+		mock.AnythingOfType("time.Time")).Return(false, nil).Once()
+
+	redirectURI, authErr := svc.HandleAuthorizationCallback(context.Background(), testAuthID, svcJWTWithIat)
+
+	assert.NotNil(suite.T(), authErr)
+	assert.Empty(suite.T(), redirectURI)
+	// The whole point: no authorization code is issued for a spent assertion.
+	suite.mockAuthzCodeStore.AssertNotCalled(suite.T(), "InsertAuthorizationCode")
 }
 
 func (suite *AuthorizeServiceTestSuite) TestHandleAuthorizationCallback_WithState() {
@@ -982,7 +1100,7 @@ func (suite *AuthorizeServiceTestSuite) TestGetAuthorizationCodeDetails_ReplayRe
 
 	svc := suite.newService()
 	svc.criteriaRevoker = revoker
-	svc.cfg.OAuth.Revocation.TokenFamily.OnCodeReplay = true
+	svc.cfg.OAuth.Revocation.TokenFamily.OnCodeReplay = boolPtr(true)
 
 	result, err := svc.GetAuthorizationCodeDetails(context.Background(), "client-id", "code")
 
@@ -1137,8 +1255,9 @@ func (suite *AuthorizeServiceTestSuite) TestDetermineClaimsForTokens_NoOpenIDSco
 
 func (suite *AuthorizeServiceTestSuite) TestDetermineClaimsForTokens_StandardOIDCScopes_CodeFlow() {
 	app := &providers.OAuthClient{
-		ID:       "test-app",
-		ClientID: "test-client",
+		ID:          "test-app",
+		ClientID:    "test-client",
+		ScopeClaims: map[string][]string{"openid": {"sub"}, "email": {"email", "email_verified"}},
 		Token: &providers.OAuthTokenConfig{
 			IDToken: &providers.IDTokenConfig{
 				UserAttributes: []string{"email", "email_verified", "name"},
@@ -1166,8 +1285,9 @@ func (suite *AuthorizeServiceTestSuite) TestDetermineClaimsForTokens_StandardOID
 
 func (suite *AuthorizeServiceTestSuite) TestDetermineClaimsForTokens_StandardOIDCScopes_ImplicitFlow() {
 	app := &providers.OAuthClient{
-		ID:       "test-app",
-		ClientID: "test-client",
+		ID:          "test-app",
+		ClientID:    "test-client",
+		ScopeClaims: map[string][]string{"openid": {"sub"}, "email": {"email", "email_verified"}},
 		Token: &providers.OAuthTokenConfig{
 			IDToken: &providers.IDTokenConfig{
 				UserAttributes: []string{"email", "email_verified", "name"},
@@ -1361,6 +1481,11 @@ func (suite *AuthorizeServiceTestSuite) TestDetermineClaimsForTokens_MultipleSco
 	app := &providers.OAuthClient{
 		ID:       "test-app",
 		ClientID: "test-client",
+		ScopeClaims: map[string][]string{
+			"openid":  {"sub"},
+			"email":   {"email", "email_verified"},
+			"profile": {"name", "picture"},
+		},
 		Token: &providers.OAuthTokenConfig{
 			AccessToken: &providers.AccessTokenConfig{
 				UserConfig: &providers.AccessTokenSubConfig{Attributes: []string{"user_id"}},
@@ -1478,7 +1603,6 @@ func (suite *AuthorizeServiceTestSuite) TestGetRequiredAttributes_NilApp() {
 	essential, optional := getRequiredAttributes(
 		[]string{"openid", "profile"},
 		nil,
-		string(providers.ResponseTypeCode),
 		nil,
 	)
 
@@ -1496,7 +1620,6 @@ func (suite *AuthorizeServiceTestSuite) TestGetRequiredAttributes_NilTokenConfig
 	essential, optional := getRequiredAttributes(
 		[]string{"openid", "profile"},
 		nil,
-		string(providers.ResponseTypeCode),
 		app,
 	)
 
@@ -1518,7 +1641,6 @@ func (suite *AuthorizeServiceTestSuite) TestGetRequiredAttributes_AccessTokenOnl
 	essential, optional := getRequiredAttributes(
 		[]string{},
 		nil,
-		string(providers.ResponseTypeCode),
 		app,
 	)
 
@@ -1533,8 +1655,9 @@ func (suite *AuthorizeServiceTestSuite) TestGetRequiredAttributes_AccessTokenOnl
 
 func (suite *AuthorizeServiceTestSuite) TestGetRequiredAttributes_CodeFlowWithScopes() {
 	app := &providers.OAuthClient{
-		ID:       "test-app",
-		ClientID: "test-client",
+		ID:          "test-app",
+		ClientID:    "test-client",
+		ScopeClaims: map[string][]string{"openid": {"sub"}, "email": {"email", "email_verified"}},
 		Token: &providers.OAuthTokenConfig{
 			AccessToken: &providers.AccessTokenConfig{
 				UserConfig: &providers.AccessTokenSubConfig{Attributes: []string{"user_id"}},
@@ -1551,7 +1674,6 @@ func (suite *AuthorizeServiceTestSuite) TestGetRequiredAttributes_CodeFlowWithSc
 	essential, optional := getRequiredAttributes(
 		[]string{"openid", "email"},
 		nil,
-		string(providers.ResponseTypeCode),
 		app,
 	)
 
@@ -1566,13 +1688,16 @@ func (suite *AuthorizeServiceTestSuite) TestGetRequiredAttributes_CodeFlowWithSc
 	assert.Len(suite.T(), parts, 3)
 }
 
-func (suite *AuthorizeServiceTestSuite) TestGetRequiredAttributes_ImplicitFlowWithScopes() {
+func (suite *AuthorizeServiceTestSuite) TestGetRequiredAttributes_CodeFlowIDTokenOnlyScopeAttribute() {
+	// Regression: in the code flow, a scope attribute allow-listed only for the ID token (and not for
+	// UserInfo) must still be resolved and cached so it can be surfaced in the ID token.
 	app := &providers.OAuthClient{
-		ID:       "test-app",
-		ClientID: "test-client",
+		ID:          "test-app",
+		ClientID:    "test-client",
+		ScopeClaims: map[string][]string{"openid": {"sub"}, "email": {"email", "email_verified"}},
 		Token: &providers.OAuthTokenConfig{
 			IDToken: &providers.IDTokenConfig{
-				UserAttributes: []string{"email", "email_verified", "name"},
+				UserAttributes: []string{"email", "email_verified"},
 			},
 		},
 	}
@@ -1580,13 +1705,10 @@ func (suite *AuthorizeServiceTestSuite) TestGetRequiredAttributes_ImplicitFlowWi
 	essential, optional := getRequiredAttributes(
 		[]string{"openid", "email"},
 		nil,
-		string(providers.ResponseTypeIDToken),
 		app,
 	)
 
 	assert.Empty(suite.T(), essential)
-	// In implicit flow, email scope claims go to id_token
-	assert.NotEmpty(suite.T(), optional)
 	assert.Contains(suite.T(), optional, "email")
 	assert.Contains(suite.T(), optional, "email_verified")
 
@@ -1623,7 +1745,6 @@ func (suite *AuthorizeServiceTestSuite) TestGetRequiredAttributes_WithClaimsPara
 	essential, optional := getRequiredAttributes(
 		[]string{"openid"},
 		claimsRequest,
-		string(providers.ResponseTypeCode),
 		app,
 	)
 
@@ -1668,7 +1789,6 @@ func (suite *AuthorizeServiceTestSuite) TestGetRequiredAttributes_ClaimsParamete
 	essential, optional := getRequiredAttributes(
 		[]string{"openid"},
 		claimsRequest,
-		string(providers.ResponseTypeCode),
 		app,
 	)
 
@@ -1710,7 +1830,6 @@ func (suite *AuthorizeServiceTestSuite) TestGetRequiredAttributes_DeduplicatesCl
 	essential, optional := getRequiredAttributes(
 		[]string{"openid"},
 		claimsRequest,
-		string(providers.ResponseTypeCode),
 		app,
 	)
 
@@ -1739,7 +1858,6 @@ func (suite *AuthorizeServiceTestSuite) TestGetRequiredAttributes_CustomScopeMap
 	essential, optional := getRequiredAttributes(
 		[]string{"openid", "organization"},
 		nil,
-		string(providers.ResponseTypeCode),
 		app,
 	)
 
@@ -1784,7 +1902,6 @@ func (suite *AuthorizeServiceTestSuite) TestGetRequiredAttributes_ComplexScenari
 	essential, optional := getRequiredAttributes(
 		[]string{"openid", "custom"},
 		claimsRequest,
-		string(providers.ResponseTypeCode),
 		app,
 	)
 
@@ -1822,7 +1939,6 @@ func (suite *AuthorizeServiceTestSuite) TestGetRequiredAttributes_NoOpenIDScope(
 	essential, optional := getRequiredAttributes(
 		[]string{"profile"}, // OIDC scope but no openid
 		nil,
-		string(providers.ResponseTypeCode),
 		app,
 	)
 
@@ -1831,19 +1947,11 @@ func (suite *AuthorizeServiceTestSuite) TestGetRequiredAttributes_NoOpenIDScope(
 	assert.Equal(suite.T(), "user_id", optional)
 }
 
-func (suite *AuthorizeServiceTestSuite) TestResolveScopeAttributes_UnknownScope() {
-	result := resolveScopeAttributes("unknown_scope", map[string][]string{
-		"custom": {"email"},
-	})
-
-	assert.Nil(suite.T(), result)
-}
-
 func (suite *AuthorizeServiceTestSuite) TestResolveAttrCacheTTL_RefreshAllowed_UsesMaxOfRefreshAndAccessValidity() {
 	config.ResetServerRuntime()
 	_ = config.InitializeServerRuntime("test", &config.Config{
 		JWT: engineconfig.JWTConfig{ValidityPeriod: 900},
-		OAuth: engineconfig.OAuthConfig{
+		OAuth: config.OAuthConfig{
 			RefreshToken:      engineconfig.RefreshTokenConfig{ValidityPeriod: 7200},
 			AuthorizationCode: engineconfig.AuthorizationCodeConfig{ValidityPeriod: 600},
 		},
@@ -1869,7 +1977,7 @@ func (suite *AuthorizeServiceTestSuite) TestResolveAttrCacheTTL_RefreshTokenAllo
 	config.ResetServerRuntime()
 	_ = config.InitializeServerRuntime("test", &config.Config{
 		JWT: engineconfig.JWTConfig{ValidityPeriod: 900},
-		OAuth: engineconfig.OAuthConfig{
+		OAuth: config.OAuthConfig{
 			RefreshToken:      engineconfig.RefreshTokenConfig{ValidityPeriod: 1800},
 			AuthorizationCode: engineconfig.AuthorizationCodeConfig{ValidityPeriod: 600},
 		},
@@ -1895,7 +2003,7 @@ func (suite *AuthorizeServiceTestSuite) TestResolveUserAttributesCacheTTL_Refres
 	config.ResetServerRuntime()
 	_ = config.InitializeServerRuntime("test", &config.Config{
 		JWT: engineconfig.JWTConfig{ValidityPeriod: 900},
-		OAuth: engineconfig.OAuthConfig{
+		OAuth: config.OAuthConfig{
 			// RefreshToken.ValidityPeriod is 0 → ResolveTokenConfig falls back to global JWT validity.
 			RefreshToken:      engineconfig.RefreshTokenConfig{ValidityPeriod: 0},
 			AuthorizationCode: engineconfig.AuthorizationCodeConfig{ValidityPeriod: 600},
@@ -1931,7 +2039,7 @@ func (suite *AuthorizeServiceTestSuite) TestResolveAttrCacheTTL_NoRefreshToken_Z
 	config.ResetServerRuntime()
 	_ = config.InitializeServerRuntime("test", &config.Config{
 		JWT: engineconfig.JWTConfig{ValidityPeriod: 900},
-		OAuth: engineconfig.OAuthConfig{
+		OAuth: config.OAuthConfig{
 			AuthorizationCode: engineconfig.AuthorizationCodeConfig{ValidityPeriod: 600},
 		},
 	})
@@ -1954,7 +2062,7 @@ func (suite *AuthorizeServiceTestSuite) TestResolveAttrCacheTTL_NoRefreshToken_N
 	config.ResetServerRuntime()
 	_ = config.InitializeServerRuntime("test", &config.Config{
 		JWT: engineconfig.JWTConfig{ValidityPeriod: 900},
-		OAuth: engineconfig.OAuthConfig{
+		OAuth: config.OAuthConfig{
 			AuthorizationCode: engineconfig.AuthorizationCodeConfig{ValidityPeriod: 600},
 		},
 	})
@@ -1972,7 +2080,7 @@ func (suite *AuthorizeServiceTestSuite) TestResolveAttrCacheTTL_NoRefreshToken_N
 	config.ResetServerRuntime()
 	_ = config.InitializeServerRuntime("test", &config.Config{
 		JWT: engineconfig.JWTConfig{ValidityPeriod: 900},
-		OAuth: engineconfig.OAuthConfig{
+		OAuth: config.OAuthConfig{
 			AuthorizationCode: engineconfig.AuthorizationCodeConfig{ValidityPeriod: 600},
 		},
 	})
@@ -2037,8 +2145,7 @@ func determineClaimsForTokens(oidcScopes []string, claimsRequest *oauth2model.Cl
 	}
 
 	for _, scope := range oidcScopes {
-		scopeAttributes := resolveScopeAttributes(scope, app.ScopeClaims)
-		for _, attribute := range scopeAttributes {
+		for _, attribute := range app.ScopeClaims[scope] {
 			if responseType == string(providers.ResponseTypeIDToken) {
 				if idTokenAllowedSet != nil && idTokenAllowedSet[attribute] {
 					idTokenClaims[attribute] = true
@@ -2267,4 +2374,354 @@ func (suite *AuthorizeServiceTestSuite) TestHandleInitialAuthorizationRequest_Mu
 	assert.Nil(suite.T(), result)
 	assert.NotNil(suite.T(), authErr)
 	assert.Equal(suite.T(), oauth2const.ErrorInvalidTarget, authErr.Code)
+}
+
+// Error assertion fixtures for HandleAuthorizationCallback failure branch. All use alg "none" since the
+// signature is checked by the mocked JWT service, not by decoding.
+const (
+	// Payload: authorization_request_id=test-auth-id, flow_error_type=end_user_error,
+	// flow_error_description="User denied consent"
+	errAssertionEndUser = "eyJhbGciOiJub25lIiwidHlwIjoiSldUIn0." +
+		"eyJhdXRob3JpemF0aW9uX3JlcXVlc3RfaWQiOiJ0ZXN0LWF1dGgtaWQiLCJmbG93X2Vycm9yX3R5cGUiOiJlbmRfdXNlcl9" +
+		"lcnJvciIsImZsb3dfZXJyb3JfZGVzY3JpcHRpb24iOiJVc2VyIGRlbmllZCBjb25zZW50In0."
+	// Payload: flow_error_type=server_error, flow_error_description="Flow engine failure"
+	errAssertionServerError = "eyJhbGciOiJub25lIiwidHlwIjoiSldUIn0." +
+		"eyJhdXRob3JpemF0aW9uX3JlcXVlc3RfaWQiOiJ0ZXN0LWF1dGgtaWQiLCJmbG93X2Vycm9yX3R5cGUiOiJzZXJ2ZXJfZXJ" +
+		"yb3IiLCJmbG93X2Vycm9yX2Rlc2NyaXB0aW9uIjoiRmxvdyBlbmdpbmUgZmFpbHVyZSJ9."
+	// Payload: flow_error_type=end_user_error, no flow_error_description
+	errAssertionNoDescription = "eyJhbGciOiJub25lIiwidHlwIjoiSldUIn0." +
+		"eyJhdXRob3JpemF0aW9uX3JlcXVlc3RfaWQiOiJ0ZXN0LWF1dGgtaWQiLCJmbG93X2Vycm9yX3R5cGUiOiJlbmRfdXNlcl9lcnJvciJ9."
+	// Payload: flow_error_description contains a quote, a newline, a non-ASCII rune and a backslash,
+	// all of which RFC 6749 disallows in error_description.
+	errAssertionDirtyDescription = "eyJhbGciOiJub25lIiwidHlwIjoiSldUIn0." +
+		"eyJhdXRob3JpemF0aW9uX3JlcXVlc3RfaWQiOiJ0ZXN0LWF1dGgtaWQiLCJmbG93X2Vycm9yX3R5cGUiOiJlbmRfdXNlcl9" +
+		"lcnJvciIsImZsb3dfZXJyb3JfZGVzY3JpcHRpb24iOiJEZW5pZWQgXCJlbWFpbFwiXG5cdTAwZTkgYmFja1xcc2xhc2gifQ."
+	// Payload: authorization_request_id=other-auth-id — not bound to testAuthID.
+	errAssertionMismatched = "eyJhbGciOiJub25lIiwidHlwIjoiSldUIn0." +
+		"eyJhdXRob3JpemF0aW9uX3JlcXVlc3RfaWQiOiJvdGhlci1hdXRoLWlkIiwiZmxvd19lcnJvcl90eXBlIjoiZW5kX3VzZXJfZXJyb3IifQ."
+	// Payload: flow_error_type is an unrecognized value.
+	errAssertionUnknownType = "eyJhbGciOiJub25lIiwidHlwIjoiSldUIn0." +
+		"eyJhdXRob3JpemF0aW9uX3JlcXVlc3RfaWQiOiJ0ZXN0LWF1dGgtaWQiLCJmbG93X2Vycm9yX3R5cGUiOiJ0b3RhbGx5X3Vua25vd24ifQ."
+	// Payload: flow_error_type=client_error, flow_error_description="Max call depth exceeded"
+	errAssertionClientError = "eyJhbGciOiJub25lIiwidHlwIjoiSldUIn0." +
+		"eyJhdXRob3JpemF0aW9uX3JlcXVlc3RfaWQiOiJ0ZXN0LWF1dGgtaWQiLCJmbG93X2Vycm9yX3R5cGUiOiJjbGllbnRfZXJyb3" +
+		"IiLCJmbG93X2Vycm9yX2Rlc2NyaXB0aW9uIjoiTWF4IGNhbGwgZGVwdGggZXhjZWVkZWQifQ."
+)
+
+// TestHandleAuthorizationCallback_ClassifiesByFlowErrorTypeClaim is the core of the single-field
+// callback contract: success and failure assertions arrive in the same argument, and the flow error
+// type claim alone decides which branch runs. The claim is covered by the signature, which is verified
+// first, so a caller cannot steer an assertion into the other branch.
+func (suite *AuthorizeServiceTestSuite) TestHandleAuthorizationCallback_ClassifiesByFlowErrorTypeClaim() {
+	suite.Run("AssertionWithFlowErrorTypeIsAFailure", func() {
+		suite.SetupTest()
+		suite.mockJWTService.EXPECT().VerifyJWT(mock.Anything, errAssertionEndUser, "", "").Return(nil)
+		suite.mockAuthReqStore.EXPECT().
+			GetRequest(mock.Anything, testAuthID).Return(true, failedCallbackAuthCtx(), nil)
+		suite.mockAuthReqStore.EXPECT().ClearRequest(mock.Anything, testAuthID).Return(nil)
+
+		svc := suite.newService()
+		redirectURI, authErr := svc.HandleAuthorizationCallback(context.Background(), testAuthID, errAssertionEndUser)
+
+		// The failure branch never mints a code; it only produces an error for the client.
+		assert.Empty(suite.T(), redirectURI)
+		suite.Require().NotNil(authErr)
+		assert.Equal(suite.T(), oauth2const.ErrorAccessDenied, authErr.Code)
+		assert.Equal(suite.T(), "User denied consent", authErr.Message)
+		suite.mockAuthzCodeStore.AssertNotCalled(suite.T(), "InsertAuthorizationCode",
+			mock.Anything, mock.Anything)
+	})
+
+	suite.Run("AssertionWithoutFlowErrorTypeIsASuccess", func() {
+		suite.SetupTest()
+		suite.mockJWTService.EXPECT().VerifyJWT(mock.Anything, svcJWTWithIat, "", "").Return(nil)
+		suite.mockAuthReqStore.EXPECT().
+			GetRequest(mock.Anything, testAuthID).Return(true, failedCallbackAuthCtx(), nil)
+		suite.mockAuthReqStore.EXPECT().ClearRequest(mock.Anything, testAuthID).Return(nil)
+		suite.mockAuthzCodeStore.EXPECT().InsertAuthorizationCode(mock.Anything, mock.Anything).Return(nil)
+
+		svc := suite.newService()
+		redirectURI, authErr := svc.HandleAuthorizationCallback(context.Background(), testAuthID, svcJWTWithIat)
+
+		assert.Nil(suite.T(), authErr)
+		assert.Contains(suite.T(), redirectURI, "code=")
+	})
+}
+
+// failedCallbackAuthCtx is the stored authorization request the failure callback resolves
+// redirect_uri and state from.
+func failedCallbackAuthCtx() authRequestContext {
+	return authRequestContext{
+		OAuthParameters: oauth2model.OAuthParameters{
+			ClientID:    "test-client",
+			RedirectURI: "https://client.example.com/callback",
+			State:       "test-state",
+		},
+	}
+}
+
+// TestHandleFailedCallback_MapsErrorTypeAndDescription pins the flow error type to OAuth code and
+// description mapping, so it enables oauth.send_server_errors_to_client to keep every row on the
+// client redirect path. Suppressing server errors is the default and is covered by
+// TestHandleFailedCallback_UnsetToggleSuppressesServerErrors.
+func (suite *AuthorizeServiceTestSuite) TestHandleFailedCallback_MapsErrorTypeAndDescription() {
+	tests := []struct {
+		name                string
+		assertion           string
+		expectedCode        string
+		expectedDescription string
+	}{
+		{
+			name:                "EndUserErrorBecomesAccessDenied",
+			assertion:           errAssertionEndUser,
+			expectedCode:        oauth2const.ErrorAccessDenied,
+			expectedDescription: "User denied consent",
+		},
+		{
+			name:                "ServerErrorBecomesServerError",
+			assertion:           errAssertionServerError,
+			expectedCode:        oauth2const.ErrorServerError,
+			expectedDescription: "Flow engine failure",
+		},
+		{
+			name:                "UnknownTypeFallsBackToServerError",
+			assertion:           errAssertionUnknownType,
+			expectedCode:        oauth2const.ErrorServerError,
+			expectedDescription: "Failed to process authorization request",
+		},
+		{
+			name:                "MissingDescriptionFallsBackToFixedMessage",
+			assertion:           errAssertionNoDescription,
+			expectedCode:        oauth2const.ErrorAccessDenied,
+			expectedDescription: "Access denied",
+		},
+	}
+
+	for _, tt := range tests {
+		suite.Run(tt.name, func() {
+			suite.SetupTest()
+			suite.mockJWTService.EXPECT().VerifyJWT(mock.Anything, tt.assertion, "", "").Return(nil)
+			suite.mockAuthReqStore.EXPECT().
+				GetRequest(mock.Anything, testAuthID).Return(true, failedCallbackAuthCtx(), nil)
+			suite.mockAuthReqStore.EXPECT().ClearRequest(mock.Anything, testAuthID).Return(nil)
+
+			svc := suite.newService()
+			svc.cfg.OAuth.SendServerErrorsToClient = new(true)
+			_, authErr := svc.HandleAuthorizationCallback(context.Background(), testAuthID, tt.assertion)
+
+			assert.NotNil(suite.T(), authErr)
+			assert.Equal(suite.T(), tt.expectedCode, authErr.Code)
+			assert.Equal(suite.T(), tt.expectedDescription, authErr.Message)
+			assert.True(suite.T(), authErr.SendErrorToClient)
+			assert.Equal(suite.T(), "https://client.example.com/callback", authErr.ClientRedirectURI)
+			assert.Equal(suite.T(), "test-state", authErr.State)
+		})
+	}
+}
+
+func (suite *AuthorizeServiceTestSuite) TestHandleFailedCallback_SanitizesDescription() {
+	suite.mockJWTService.EXPECT().VerifyJWT(mock.Anything, errAssertionDirtyDescription, "", "").Return(nil)
+	suite.mockAuthReqStore.EXPECT().
+		GetRequest(mock.Anything, testAuthID).Return(true, failedCallbackAuthCtx(), nil)
+	suite.mockAuthReqStore.EXPECT().ClearRequest(mock.Anything, testAuthID).Return(nil)
+
+	svc := suite.newService()
+	_, authErr := svc.HandleAuthorizationCallback(context.Background(), testAuthID, errAssertionDirtyDescription)
+
+	assert.Equal(suite.T(), oauth2const.ErrorAccessDenied, authErr.Code)
+	// The quote, newline, non-ASCII rune and backslash are all dropped.
+	assert.Equal(suite.T(), "Denied email backslash", authErr.Message)
+
+	// The sanitized description must still build a client redirect; an unsanitized one would fail
+	// validation and strand the user on the error page instead of notifying the client.
+	redirectURI, err := oauth2utils.GetURIWithQueryParams(authErr.ClientRedirectURI, map[string]string{
+		oauth2const.RequestParamError:            authErr.Code,
+		oauth2const.RequestParamErrorDescription: authErr.Message,
+		oauth2const.RequestParamState:            authErr.State,
+	})
+	assert.NoError(suite.T(), err)
+	assert.Contains(suite.T(), redirectURI, "error=access_denied")
+}
+
+func (suite *AuthorizeServiceTestSuite) TestHandleFailedCallback_InvalidSignature_PreservesRequest() {
+	// Verification runs before the request is loaded, so a bad assertion must not consume the authID.
+	suite.mockJWTService.EXPECT().
+		VerifyJWT(mock.Anything, "tampered-assertion", "", "").Return(&jwt.ErrorInvalidTokenSignature)
+
+	svc := suite.newService()
+	_, authErr := svc.HandleAuthorizationCallback(context.Background(), testAuthID, "tampered-assertion")
+
+	assert.NotNil(suite.T(), authErr)
+	assert.Equal(suite.T(), oauth2const.ErrorInvalidRequest, authErr.Code)
+	assert.False(suite.T(), authErr.SendErrorToClient)
+	suite.mockAuthReqStore.AssertNotCalled(suite.T(), "GetRequest", mock.Anything, mock.Anything)
+	suite.mockAuthReqStore.AssertNotCalled(suite.T(), "ClearRequest", mock.Anything, mock.Anything)
+}
+
+func (suite *AuthorizeServiceTestSuite) TestHandleFailedCallback_BindingMismatch_PreservesRequest() {
+	suite.mockJWTService.EXPECT().VerifyJWT(mock.Anything, errAssertionMismatched, "", "").Return(nil)
+
+	svc := suite.newService()
+	_, authErr := svc.HandleAuthorizationCallback(context.Background(), testAuthID, errAssertionMismatched)
+
+	assert.NotNil(suite.T(), authErr)
+	assert.Equal(suite.T(), oauth2const.ErrorInvalidRequest, authErr.Code)
+	assert.False(suite.T(), authErr.SendErrorToClient)
+	suite.mockAuthReqStore.AssertNotCalled(suite.T(), "GetRequest", mock.Anything, mock.Anything)
+	suite.mockAuthReqStore.AssertNotCalled(suite.T(), "ClearRequest", mock.Anything, mock.Anything)
+}
+
+func (suite *AuthorizeServiceTestSuite) TestHandleFailedCallback_UnknownAuthID_NotSentToClient() {
+	suite.mockJWTService.EXPECT().VerifyJWT(mock.Anything, errAssertionEndUser, "", "").Return(nil)
+	suite.mockAuthReqStore.EXPECT().
+		GetRequest(mock.Anything, testAuthID).Return(false, authRequestContext{}, nil)
+
+	svc := suite.newService()
+	_, authErr := svc.HandleAuthorizationCallback(context.Background(), testAuthID, errAssertionEndUser)
+
+	assert.NotNil(suite.T(), authErr)
+	assert.Equal(suite.T(), oauth2const.ErrorInvalidRequest, authErr.Code)
+	assert.False(suite.T(), authErr.SendErrorToClient)
+}
+
+func (suite *AuthorizeServiceTestSuite) TestHandleFailedCallback_StoreError_ReturnsServerError() {
+	suite.mockJWTService.EXPECT().VerifyJWT(mock.Anything, errAssertionEndUser, "", "").Return(nil)
+	suite.mockAuthReqStore.EXPECT().
+		GetRequest(mock.Anything, testAuthID).Return(false, authRequestContext{}, errors.New("db down"))
+
+	svc := suite.newService()
+	_, authErr := svc.HandleAuthorizationCallback(context.Background(), testAuthID, errAssertionEndUser)
+
+	assert.Equal(suite.T(), oauth2const.ErrorServerError, authErr.Code)
+	assert.False(suite.T(), authErr.SendErrorToClient)
+}
+
+func (suite *AuthorizeServiceTestSuite) TestHandleFailedCallback_ConsumesRequest() {
+	// The request is single-use: it is cleared on load, so a replay finds nothing.
+	suite.mockJWTService.EXPECT().VerifyJWT(mock.Anything, errAssertionEndUser, "", "").Return(nil).Twice()
+	suite.mockAuthReqStore.EXPECT().
+		GetRequest(mock.Anything, testAuthID).Return(true, failedCallbackAuthCtx(), nil).Once()
+	suite.mockAuthReqStore.EXPECT().ClearRequest(mock.Anything, testAuthID).Return(nil).Once()
+
+	svc := suite.newService()
+	_, first := svc.HandleAuthorizationCallback(context.Background(), testAuthID, errAssertionEndUser)
+	assert.True(suite.T(), first.SendErrorToClient)
+
+	suite.mockAuthReqStore.EXPECT().
+		GetRequest(mock.Anything, testAuthID).Return(false, authRequestContext{}, nil).Once()
+	_, replay := svc.HandleAuthorizationCallback(context.Background(), testAuthID, errAssertionEndUser)
+
+	assert.Equal(suite.T(), oauth2const.ErrorInvalidRequest, replay.Code)
+	assert.False(suite.T(), replay.SendErrorToClient)
+}
+
+// TestHandleFailedCallback_SendServerErrorsToClientToggle verifies that
+// oauth.send_server_errors_to_client gates only the server_error code. A denial is the client's
+// business and is always reported; every flow error type that maps to server_error is suppressed
+// together, so client_error and an unrecognized type follow server_error.
+func (suite *AuthorizeServiceTestSuite) TestHandleFailedCallback_SendServerErrorsToClientToggle() {
+	tests := []struct {
+		name      string
+		assertion string
+		code      string
+		// gated is true when the toggle decides whether this error reaches the client.
+		gated bool
+	}{
+		{name: "EndUserErrorAlwaysReported", assertion: errAssertionEndUser,
+			code: oauth2const.ErrorAccessDenied, gated: false},
+		{name: "ServerErrorIsGated", assertion: errAssertionServerError,
+			code: oauth2const.ErrorServerError, gated: true},
+		{name: "ClientErrorIsGated", assertion: errAssertionClientError,
+			code: oauth2const.ErrorServerError, gated: true},
+		{name: "UnknownTypeIsGated", assertion: errAssertionUnknownType,
+			code: oauth2const.ErrorServerError, gated: true},
+	}
+
+	for _, tt := range tests {
+		for _, enabled := range []bool{true, false} {
+			suite.Run(fmt.Sprintf("%s/enabled=%t", tt.name, enabled), func() {
+				suite.SetupTest()
+				suite.mockJWTService.EXPECT().VerifyJWT(mock.Anything, tt.assertion, "", "").Return(nil)
+				suite.mockAuthReqStore.EXPECT().
+					GetRequest(mock.Anything, testAuthID).Return(true, failedCallbackAuthCtx(), nil)
+				suite.mockAuthReqStore.EXPECT().ClearRequest(mock.Anything, testAuthID).Return(nil)
+
+				svc := suite.newService()
+				svc.cfg.OAuth.SendServerErrorsToClient = new(enabled)
+				_, authErr := svc.HandleAuthorizationCallback(context.Background(), testAuthID, tt.assertion)
+
+				suite.Require().NotNil(authErr)
+				assert.Equal(suite.T(), tt.code, authErr.Code)
+				assert.Equal(suite.T(), enabled || !tt.gated, authErr.SendErrorToClient)
+			})
+		}
+	}
+}
+
+// TestHandleFailedCallback_SuppressedServerErrorStillConsumesRequest verifies that
+// declining to report a server error does not resurrect the authorization request. The request is
+// dead either way; only the notification to the client is suppressed.
+func (suite *AuthorizeServiceTestSuite) TestHandleFailedCallback_SuppressedServerErrorStillConsumesRequest() {
+	suite.mockJWTService.EXPECT().VerifyJWT(mock.Anything, errAssertionServerError, "", "").Return(nil)
+	suite.mockAuthReqStore.EXPECT().
+		GetRequest(mock.Anything, testAuthID).Return(true, failedCallbackAuthCtx(), nil).Once()
+	suite.mockAuthReqStore.EXPECT().ClearRequest(mock.Anything, testAuthID).Return(nil).Once()
+
+	svc := suite.newService()
+	svc.cfg.OAuth.SendServerErrorsToClient = new(false)
+	_, authErr := svc.HandleAuthorizationCallback(context.Background(), testAuthID, errAssertionServerError)
+
+	assert.False(suite.T(), authErr.SendErrorToClient)
+	suite.mockAuthReqStore.AssertExpectations(suite.T())
+}
+
+// TestHandleFailedCallback_UnsetToggleSuppressesServerErrors verifies the default: a deployment that
+// never sets the key keeps the server error off the client redirect, so the error page handles it.
+func (suite *AuthorizeServiceTestSuite) TestHandleFailedCallback_UnsetToggleSuppressesServerErrors() {
+	suite.mockJWTService.EXPECT().VerifyJWT(mock.Anything, errAssertionServerError, "", "").Return(nil)
+	suite.mockAuthReqStore.EXPECT().
+		GetRequest(mock.Anything, testAuthID).Return(true, failedCallbackAuthCtx(), nil)
+	suite.mockAuthReqStore.EXPECT().ClearRequest(mock.Anything, testAuthID).Return(nil)
+
+	svc := suite.newService()
+	svc.cfg.OAuth.SendServerErrorsToClient = nil
+	_, authErr := svc.HandleAuthorizationCallback(context.Background(), testAuthID, errAssertionServerError)
+
+	assert.Equal(suite.T(), oauth2const.ErrorServerError, authErr.Code)
+	assert.False(suite.T(), authErr.SendErrorToClient)
+}
+
+func (suite *AuthorizeServiceTestSuite) TestCreateAuthorizationCode_PreservesIncomingSessionID() {
+	// The Session node published the SSO session id and the assertion carried it; the code must keep
+	// that exact value so the ID token's sid names the session the grant belongs to.
+	authCtx := &authRequestContext{
+		OAuthParameters: oauth2model.OAuthParameters{
+			ClientID:    "test-client",
+			RedirectURI: "https://client.example.com/callback",
+		},
+	}
+	claims := &assertionClaims{userID: "user-1", sessionID: "sess-from-sso"}
+
+	code, err := createAuthorizationCode(authorizeServiceCfgFromRuntime(), authCtx, claims, time.Now())
+
+	assert.NoError(suite.T(), err)
+	assert.Equal(suite.T(), "sess-from-sso", code.SessionID)
+}
+
+func (suite *AuthorizeServiceTestSuite) TestCreateAuthorizationCode_NoSessionIDWithoutSession() {
+	// Unlike the token family id, the session id is never minted here: a flow without a Session node
+	// has no session a logout could ever reference, so the code carries none.
+	authCtx := &authRequestContext{
+		OAuthParameters: oauth2model.OAuthParameters{
+			ClientID:    "test-client",
+			RedirectURI: "https://client.example.com/callback",
+		},
+	}
+	claims := &assertionClaims{userID: "user-1"}
+
+	code, err := createAuthorizationCode(authorizeServiceCfgFromRuntime(), authCtx, claims, time.Now())
+
+	assert.NoError(suite.T(), err)
+	assert.Empty(suite.T(), code.SessionID)
+	assert.NotEmpty(suite.T(), code.TokenFamilyID, "the tfid fallback is unaffected")
 }

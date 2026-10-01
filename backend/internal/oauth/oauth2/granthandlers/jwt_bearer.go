@@ -1,20 +1,5 @@
-/*
- * Copyright (c) 2026, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2026 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 package granthandlers
 
@@ -39,6 +24,8 @@ type jwtBearerGrantHandler struct {
 	tokenBuilder    tokenservice.TokenBuilderInterface
 	tokenValidator  tokenservice.TokenValidatorInterface
 	resourceService providers.ResourceServerProvider
+	authzService    providers.AuthorizationProvider
+	actorProvider   providers.ActorProvider
 }
 
 // newJWTBearerGrantHandler creates a new instance of jwtBearerGrantHandler.
@@ -46,11 +33,15 @@ func newJWTBearerGrantHandler(
 	tokenBuilder tokenservice.TokenBuilderInterface,
 	tokenValidator tokenservice.TokenValidatorInterface,
 	resourceService providers.ResourceServerProvider,
+	authzService providers.AuthorizationProvider,
+	actorProvider providers.ActorProvider,
 ) GrantHandlerInterface {
 	return &jwtBearerGrantHandler{
 		tokenBuilder:    tokenBuilder,
 		tokenValidator:  tokenValidator,
 		resourceService: resourceService,
+		authzService:    authzService,
+		actorProvider:   actorProvider,
 	}
 }
 
@@ -94,10 +85,15 @@ func (h *jwtBearerGrantHandler) HandleGrant(ctx context.Context, tokenRequest *m
 	logger := log.GetLogger().With(log.String(log.LoggerKeyComponentName, "JWTBearerGrantHandler"))
 
 	assertionClaims, err := h.tokenValidator.ValidateIDJAGAssertion(
-		ctx, tokenRequest.Assertion, tokenRequest.ClientID)
+		ctx, tokenRequest.Assertion)
 	if err != nil {
 		logger.Debug(ctx, "Failed to validate ID-JAG assertion", log.Error(err))
 		switch {
+		case errors.Is(err, tokenservice.ErrAuthorizationMappingUnavailable):
+			return nil, &model.ErrorResponse{
+				Error:            constants.ErrorServerError,
+				ErrorDescription: "Authorization mapping could not be resolved",
+			}
 		case errors.Is(err, tokenservice.ErrTokenExpired):
 			return nil, &model.ErrorResponse{
 				Error:            constants.ErrorInvalidGrant,
@@ -121,11 +117,10 @@ func (h *jwtBearerGrantHandler) HandleGrant(ctx context.Context, tokenRequest *m
 		}
 	}
 
-	// Granted scopes start from the assertion's scope claim, narrowed by the request scope parameter
-	// when present. The app's registered scopes are intentionally NOT intersected here: no other grant
-	// enforces oauthApp.Scopes (the scope validator is a passthrough), and resource-server-scoped
-	// narrowing below (when a resource claim is present) is the correct authorization boundary. Per-app
-	// resource authorization is expected to be handled by app-resource subscription once implemented.
+	// The granted scopes are always bounded by the ID-JAG's own scope claim (RFC-JAG 4.4.1: "granted
+	// scopes MAY be a subset of the scopes in the ID-JAG"), narrowed by the request when one is given.
+	// An omitted request keeps every assertion scope as the candidate (RFC 6749 3.3 default-scope
+	// convention); RS definition and, when configured, ApplyMappedAuthorization narrow it further below.
 	grantedScopes := assertionClaims.Scopes
 	if tokenRequest.Scope != "" {
 		grantedScopes = intersectScopes(grantedScopes, tokenservice.ParseScopes(tokenRequest.Scope))
@@ -175,6 +170,14 @@ func (h *jwtBearerGrantHandler) HandleGrant(ctx context.Context, tokenRequest *m
 		if errResp != nil {
 			return nil, errResp
 		}
+
+		permissionScopes, errResp = tokenservice.ApplyMappedAuthorization(
+			ctx, h.authzService, h.actorProvider, assertionClaims.Authorization.Targets, targetRS.ID,
+			permissionScopes, assertionClaims.Authorization.Configured, logger)
+		if errResp != nil {
+			return nil, errResp
+		}
+
 		grantedScopes = make([]string, 0, len(oidcScopes)+len(permissionScopes))
 		grantedScopes = append(grantedScopes, oidcScopes...)
 		grantedScopes = append(grantedScopes, permissionScopes...)
@@ -182,8 +185,8 @@ func (h *jwtBearerGrantHandler) HandleGrant(ctx context.Context, tokenRequest *m
 	}
 
 	// The subject is the external IdP's identifier carried in the assertion; no local user resolution
-	// or attribute mapping is performed in v1. The access token carries the source IdP as the `idp`
-	// claim so that this external `sub` is not mistaken for a local user id by downstream consumers.
+	// is performed. The access token carries the source IdP as the `idp` claim so that this external
+	// `sub` is not mistaken for a local user id by downstream consumers.
 	accessToken, err := h.tokenBuilder.BuildAccessToken(ctx, &tokenservice.AccessTokenBuildContext{
 		Subject:           assertionClaims.Sub,
 		Audiences:         audiences,

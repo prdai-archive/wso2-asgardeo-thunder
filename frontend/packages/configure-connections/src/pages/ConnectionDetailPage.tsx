@@ -1,25 +1,11 @@
-/**
- * Copyright (c) 2025, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied. See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2025 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
-import {SettingsCard, UnsavedChangesBar} from '@thunderid/components';
+import {QueryErrorNotice, SettingsCard, UnsavedChangesBar} from '@thunderid/components';
 import {useConfig} from '@thunderid/contexts';
-import {Alert, Box, Button, PageContent, Skeleton, Stack, Tab, Tabs, Typography} from '@wso2/oxygen-ui';
-import {ChevronLeft, Trash2} from '@wso2/oxygen-ui-icons-react';
+import {getErrorMessage} from '@thunderid/utils';
+import {Alert, Box, Button, ListingTable, PageContent, Skeleton, Stack, Tab, Tabs, Typography} from '@wso2/oxygen-ui';
+import {AlertCircle, ChevronLeft, Trash2} from '@wso2/oxygen-ui-icons-react';
 import {type JSX, type ReactNode, type SyntheticEvent, useEffect, useMemo, useState} from 'react';
 import {useTranslation} from 'react-i18next';
 import {useNavigate, useParams} from 'react-router';
@@ -27,14 +13,22 @@ import useConnection from '../api/useConnection';
 import useConnectionInstances from '../api/useConnectionInstances';
 import useDeleteConnection from '../api/useDeleteConnection';
 import useUpdateConnection from '../api/useUpdateConnection';
+import AccountLinkingSection from '../components/AccountLinkingSection';
 import AttributeMappingSection from '../components/AttributeMappingSection';
+import AuthorizationMappingSection from '../components/AuthorizationMappingSection';
 import ConnectionDeleteDialog from '../components/ConnectionDeleteDialog';
 import ConnectionForm from '../components/ConnectionForm';
 import ReadOnlyCopyField from '../components/ReadOnlyCopyField';
 import {CONNECTION_FORM_FIELDS} from '../config/connectionFormFields';
 import {VENDOR_META_BY_TYPE} from '../config/connectionVendorMeta';
 import useConnectionRoutes from '../hooks/useConnectionRoutes';
-import type {AttributeConfiguration, ConnectionType} from '../models/connection';
+import type {
+  AccountLinking,
+  AttributeConfiguration,
+  AuthorizationRuleMapping,
+  AuthorizationDirectMapping,
+  ConnectionType,
+} from '../models/connection';
 import {
   type ConnectionFormValues,
   formValuesToRequest,
@@ -74,7 +68,6 @@ function canonicalAttr(config: AttributeConfiguration | undefined): string {
     externalAttribute: resolution?.externalAttribute ?? '',
     valueMapping,
     groups,
-    linking: [...(config?.accountLinking?.attributes ?? [])].sort(),
   });
 }
 
@@ -101,8 +94,17 @@ export default function ConnectionDetailPage(): JSX.Element | null {
   const [editedAttr, setEditedAttr] = useState<AttributeConfiguration | undefined | null>(null);
   const [attrValid, setAttrValid] = useState(true);
   const [attrsKey, setAttrsKey] = useState(0);
+  const [editedAuthzMappings, setEditedAuthzMappings] = useState<AuthorizationRuleMapping[] | undefined | null>(null);
+  const [authzMappingsValid, setAuthzMappingsValid] = useState(true);
+  const [editedDirectMappings, setEditedDirectMappings] = useState<AuthorizationDirectMapping[] | undefined | null>(
+    null,
+  );
+  const [directMappingsValid, setDirectMappingsValid] = useState(true);
+  const [editedLinking, setEditedLinking] = useState<AccountLinking | undefined | null>(null);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [nameError, setNameError] = useState<string | null>(null);
+  const [generalError, setGeneralError] = useState<string | null>(null);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   const updateMutation = useUpdateConnection(connectionType, resolvedId ?? '');
   const deleteMutation = useDeleteConnection(connectionType);
@@ -122,6 +124,11 @@ export default function ConnectionDetailPage(): JSX.Element | null {
     [data, fields, redirectUri],
   );
   const baselineAttr: AttributeConfiguration | undefined = data?.attributeConfiguration;
+  const baselineAuthzMappings: AuthorizationRuleMapping[] | undefined =
+    data?.attributeConfiguration?.authorizationMapping?.rules;
+  const baselineDirectMappings: AuthorizationDirectMapping[] | undefined =
+    data?.attributeConfiguration?.authorizationMapping?.direct;
+  const baselineLinking: AccountLinking | undefined = data?.attributeConfiguration?.accountLinking;
 
   if (!meta) {
     return null;
@@ -138,22 +145,92 @@ export default function ConnectionDetailPage(): JSX.Element | null {
     setEditedAttr(null);
     setAttrValid(true);
     setAttrsKey((k) => k + 1);
+    setEditedAuthzMappings(null);
+    setAuthzMappingsValid(true);
+    setEditedDirectMappings(null);
+    setDirectMappingsValid(true);
+    setEditedLinking(null);
     setNameError(null);
+    setGeneralError(null);
   };
 
   const formDirty: boolean = JSON.stringify(values) !== JSON.stringify(baseline) || secretReplacing;
   const attrDirty: boolean = editedAttr !== null && canonicalAttr(editedAttr) !== canonicalAttr(baselineAttr);
-  const dirty: boolean = formDirty || attrDirty;
-  const valid: boolean = Object.keys(validateConnectionForm(values, fields, 'edit')).length === 0 && attrValid;
+  const authzMappingsDirty: boolean =
+    editedAuthzMappings !== null &&
+    JSON.stringify(editedAuthzMappings ?? []) !== JSON.stringify(baselineAuthzMappings ?? []);
+  const directMappingsDirty: boolean =
+    editedDirectMappings !== null &&
+    JSON.stringify(editedDirectMappings ?? []) !== JSON.stringify(baselineDirectMappings ?? []);
+  const linkingDirty: boolean =
+    editedLinking !== null &&
+    JSON.stringify(editedLinking?.attributes ?? []) !== JSON.stringify(baselineLinking?.attributes ?? []);
+  // An attempted-but-incomplete authorization mapping row (e.g. a target type picked with no claim
+  // named yet) is dropped from the serialized payload, so it never shows up in authzMappingsDirty or
+  // directMappingsDirty above - only authzMappingsValid/directMappingsValid flip false for it. Without
+  // this, the save bar (and the block on saving it enforces) would simply never appear.
+  const dirty: boolean =
+    formDirty ||
+    attrDirty ||
+    authzMappingsDirty ||
+    directMappingsDirty ||
+    linkingDirty ||
+    !authzMappingsValid ||
+    !directMappingsValid;
+  const valid: boolean =
+    Object.keys(validateConnectionForm(values, fields, 'edit')).length === 0 &&
+    attrValid &&
+    authzMappingsValid &&
+    directMappingsValid;
+
+  // A save failure is stale once the user edits any field. Only reset the mutation once it has
+  // actually failed: resetting while it's still pending would flip isPending back to false and
+  // re-enable save before the in-flight request settles.
+  const clearSaveError = (): void => {
+    setNameError(null);
+    setGeneralError(null);
+    if (updateMutation.isError) {
+      updateMutation.reset();
+    }
+  };
 
   const handleSave = (): void => {
     if (!valid || !resolvedId) {
       return;
     }
     setNameError(null);
+    setGeneralError(null);
+    // null means untouched (fall back to the server's last-fetched value); undefined means the user
+    // explicitly cleared the section, which must be respected rather than falling back too — `??`
+    // cannot tell those apart, since it treats undefined the same as null.
+    const effectiveAttr = editedAttr !== null ? editedAttr : baselineAttr;
+    const effectiveAuthzMappings = editedAuthzMappings !== null ? editedAuthzMappings : baselineAuthzMappings;
+    const effectiveDirectMappings = editedDirectMappings !== null ? editedDirectMappings : baselineDirectMappings;
+    const effectiveLinking = editedLinking !== null ? editedLinking : baselineLinking;
+    const hasAuthzMappings = Boolean(effectiveAuthzMappings && effectiveAuthzMappings.length > 0);
+    const hasDirectMappings = Boolean(effectiveDirectMappings && effectiveDirectMappings.length > 0);
+    const hasLinking = Boolean(effectiveLinking && effectiveLinking.attributes.length > 0);
+    // userTypeResolution is required by the wire type, but a connection may carry only authorization
+    // mappings or only account linking (e.g. a token-exchange-only connection with no attribute mapping
+    // configured at all). The empty default is inert: GetMappedUserType treats it identically to no
+    // userTypeResolution. authorizationMapping/accountLinking are set explicitly (not spread
+    // conditionally) so clearing either drops it from the payload instead of leaking effectiveAttr's
+    // stale value (baselineAttr, when unedited, still carries whatever the server last returned).
+    const mergedAttributeConfiguration: AttributeConfiguration | undefined =
+      effectiveAttr || hasAuthzMappings || hasDirectMappings || hasLinking
+        ? {
+            userTypeResolution: {default: ''},
+            ...effectiveAttr,
+            authorizationMapping:
+              hasAuthzMappings || hasDirectMappings
+                ? {rules: effectiveAuthzMappings, direct: effectiveDirectMappings}
+                : undefined,
+            accountLinking: hasLinking ? effectiveLinking : undefined,
+          }
+        : undefined;
     const payload = {
       ...formValuesToRequest(values, fields, {mode: 'edit', secretReplaced: secretReplacing}),
-      ...(supportsAttributes ? {attributeConfiguration: editedAttr ?? baselineAttr} : {}),
+      ...(supportsAttributes ? {attributeConfiguration: mergedAttributeConfiguration} : {}),
     };
     updateMutation
       .mutateAsync(payload)
@@ -162,6 +239,8 @@ export default function ConnectionDetailPage(): JSX.Element | null {
       .catch((error: unknown) => {
         if (isConflictError(error)) {
           setNameError(t('error.duplicateName', 'A connection with this name already exists.'));
+        } else {
+          setGeneralError(getErrorMessage(error as Error, t, 'update.error', 'Failed to update connection.'));
         }
       });
   };
@@ -174,6 +253,9 @@ export default function ConnectionDetailPage(): JSX.Element | null {
       onSuccess: () => {
         setDeleteOpen(false);
         void navigate(routes.connections.list());
+      },
+      onError: (error) => {
+        setDeleteError(getErrorMessage(error, t, 'delete.error', 'Failed to delete connection.'));
       },
     });
   };
@@ -191,8 +273,28 @@ export default function ConnectionDetailPage(): JSX.Element | null {
 
       {isResolving ? (
         <Skeleton variant="rounded" height={480} />
-      ) : notFound || connectionQuery.isError ? (
-        <Alert severity="error">{t('error.loadFailed')}</Alert>
+      ) : connectionQuery.error ? (
+        <QueryErrorNotice
+          error={connectionQuery.error}
+          t={t}
+          variant="block"
+          title={t('detail.loadError.title', 'Failed to load connection')}
+          onRetry={() => void connectionQuery.refetch()}
+        />
+      ) : notFound ? (
+        <ListingTable.EmptyState
+          illustration={<AlertCircle size={40} />}
+          title={t('detail.notFound.title', 'Connection not found')}
+          description={t(
+            'detail.notFound.description',
+            'This connection may have been deleted or the link is incorrect.',
+          )}
+          action={
+            <Button variant="outlined" onClick={() => void navigate(routes.connections.list())}>
+              {t('detail.backToConnections')}
+            </Button>
+          }
+        />
       ) : (
         <>
           <Stack direction="row" spacing={2} alignItems="flex-start" sx={{mb: 3}}>
@@ -223,6 +325,12 @@ export default function ConnectionDetailPage(): JSX.Element | null {
             </Stack>
           </Stack>
 
+          {generalError && (
+            <Alert severity="error" onClose={clearSaveError} sx={{mb: 3}}>
+              {generalError}
+            </Alert>
+          )}
+
           <Tabs
             value={activeTab}
             onChange={(_e: SyntheticEvent, v: number) => setActiveTab(v)}
@@ -236,6 +344,11 @@ export default function ConnectionDetailPage(): JSX.Element | null {
                 data-testid="connection-tab-attributes"
               />
             )}
+            <Tab
+              label={t('detail.tabs.advanced', 'Advanced')}
+              sx={{textTransform: 'none'}}
+              data-testid="connection-tab-advanced"
+            />
           </Tabs>
 
           <TabPanel value={activeTab} index={0}>
@@ -260,15 +373,50 @@ export default function ConnectionDetailPage(): JSX.Element | null {
                   nameError={nameError}
                   showNameField={isCustom}
                   onFieldChange={(name, value) => {
+                    clearSaveError();
                     setEditedValues((prev) => ({...prev, [name]: value}));
-                    if (name === 'name') {
-                      setNameError(null);
-                    }
                   }}
                   onSecretReplacingChange={setSecretReplacing}
                 />
               </SettingsCard>
+            </Stack>
+          </TabPanel>
 
+          {supportsAttributes && (
+            <TabPanel value={activeTab} index={1}>
+              <Stack direction="column" spacing={4}>
+                <AttributeMappingSection
+                  key={`attrs-${resolvedId}-${attrsKey}`}
+                  initialConfig={baselineAttr}
+                  onChange={(config, isValid) => {
+                    setEditedAttr(config);
+                    setAttrValid(isValid);
+                  }}
+                />
+                <AuthorizationMappingSection
+                  key={`authz-${resolvedId}-${attrsKey}`}
+                  initialRuleConfig={baselineAuthzMappings}
+                  initialDirectConfig={baselineDirectMappings}
+                  onRuleChange={(mappings, isValid) => {
+                    setEditedAuthzMappings(mappings);
+                    setAuthzMappingsValid(isValid);
+                  }}
+                  onDirectChange={(mappings, isValid) => {
+                    setEditedDirectMappings(mappings);
+                    setDirectMappingsValid(isValid);
+                  }}
+                />
+                <AccountLinkingSection
+                  key={`linking-${resolvedId}-${attrsKey}`}
+                  initialConfig={baselineLinking}
+                  onChange={(linking) => setEditedLinking(linking)}
+                />
+              </Stack>
+            </TabPanel>
+          )}
+
+          <TabPanel value={activeTab} index={supportsAttributes ? 2 : 1}>
+            <Stack direction="column" spacing={4}>
               <SettingsCard title={t('detail.dangerZone.title')} description={t('detail.dangerZone.description')}>
                 <Typography variant="h6" gutterBottom color="error">
                   {t('detail.dangerZone.delete.title')}
@@ -280,7 +428,10 @@ export default function ConnectionDetailPage(): JSX.Element | null {
                   variant="contained"
                   color="error"
                   startIcon={<Trash2 size={16} />}
-                  onClick={() => setDeleteOpen(true)}
+                  onClick={() => {
+                    setDeleteError(null);
+                    setDeleteOpen(true);
+                  }}
                   data-testid="connection-delete-button"
                 >
                   {t('form.actions.delete')}
@@ -288,19 +439,6 @@ export default function ConnectionDetailPage(): JSX.Element | null {
               </SettingsCard>
             </Stack>
           </TabPanel>
-
-          {supportsAttributes && (
-            <TabPanel value={activeTab} index={1}>
-              <AttributeMappingSection
-                key={`attrs-${resolvedId}-${attrsKey}`}
-                initialConfig={baselineAttr}
-                onChange={(config, isValid) => {
-                  setEditedAttr(config);
-                  setAttrValid(isValid);
-                }}
-              />
-            </TabPanel>
-          )}
 
           {dirty && (
             <UnsavedChangesBar
@@ -321,8 +459,12 @@ export default function ConnectionDetailPage(): JSX.Element | null {
             connectionId={resolvedId ?? ''}
             connectionName={data?.name ?? ''}
             isPending={deleteMutation.isPending}
+            error={deleteError}
             onConfirm={handleDelete}
-            onClose={() => setDeleteOpen(false)}
+            onClose={() => {
+              setDeleteOpen(false);
+              setDeleteError(null);
+            }}
           />
         </>
       )}

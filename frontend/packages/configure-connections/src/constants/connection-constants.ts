@@ -1,20 +1,5 @@
-/**
- * Copyright (c) 2026, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied. See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2026 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 /**
  * General connections constants.
@@ -23,7 +8,22 @@ const ConnectionConstants = {
   /**
    * Avatar rendered for trusted issuer connection cards.
    */
-  DEFAULT_TRUSTED_IDP_AVATAR: 'avatar:shape=rounded,variant=anonymous_entity,content=key,colors=0',
+  DEFAULT_TRUSTED_IDP_AVATAR: 'avatar:shape=rounded,variant=anonymous_entity,content=chevron,colors=0',
+
+  /**
+   * Fallback avatar rendered for the OpenID Connect vendor.
+   */
+  OIDC_AVATAR_FALLBACK: 'avatar:shape=rounded,variant=anonymous_entity,content=triangle_stack,colors=0',
+
+  /**
+   * Fallback avatar rendered for the OAuth 2 vendor.
+   */
+  OAUTH_AVATAR_FALLBACK: 'avatar:shape=rounded,variant=anonymous_entity,content=parallelogram,colors=0',
+
+  /**
+   * Fallback avatar rendered for the SMS Gateway vendor.
+   */
+  SMS_GATEWAY_AVATAR_FALLBACK: 'avatar:shape=rounded,variant=anonymous_entity,content=pentagon,colors=0',
 } as const;
 
 export default ConnectionConstants;

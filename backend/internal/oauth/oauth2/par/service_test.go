@@ -1,20 +1,5 @@
-/*
- * Copyright (c) 2026, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2026 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 package par
 
@@ -58,7 +43,7 @@ func TestServiceTestSuite(t *testing.T) {
 
 func (s *ServiceTestSuite) SetupTest() {
 	testConfig := &config.Config{
-		OAuth: engineconfig.OAuthConfig{
+		OAuth: config.OAuthConfig{
 			PAR: engineconfig.PARConfig{
 				ExpiresIn: 60,
 			},
@@ -81,7 +66,11 @@ func (s *ServiceTestSuite) newTestApp() *providers.OAuthClient {
 		GrantTypes:              []providers.GrantType{providers.GrantTypeAuthorizationCode},
 		ResponseTypes:           []providers.ResponseType{providers.ResponseTypeCode},
 		TokenEndpointAuthMethod: providers.TokenEndpointAuthMethodClientSecretBasic,
-		Scopes:                  []string{"openid", "profile", "email"},
+		ScopeClaims: map[string][]string{
+			"openid":  {"sub"},
+			"profile": {"name"},
+			"email":   {"email", "email_verified"},
+		},
 	}
 }
 
@@ -217,18 +206,21 @@ func (s *ServiceTestSuite) TestHandlePAR_StoreError() {
 	assert.Equal(s.T(), oauth2const.ErrorServerError, errCode)
 }
 
-func (s *ServiceTestSuite) TestHandlePAR_PromptNone_LoginRequired() {
+// TestHandlePAR_PromptNone_Stored covers PAR accepting prompt=none. PAR only stores the request;
+// whether "none" can be honored depends on an SSO session that only the later authorization
+// request, which resolves the request_uri, is able to consult.
+func (s *ServiceTestSuite) TestHandlePAR_PromptNone_Stored() {
 	store := newParStoreInterfaceMock(s.T())
+	store.EXPECT().Store(mock.Anything, mock.Anything, mock.Anything).Return("test-uri", nil)
 	svc := newPARService(store, s.newPermissiveResourceMock(), s.testCfg)
 	app := s.newTestApp()
 	params := s.newValidParams()
 	params[oauth2const.RequestParamPrompt] = "none"
 
-	resp, errCode, errDesc := svc.HandlePushedAuthorizationRequest(s.ctx, params, nil, app, "")
+	resp, errCode, _ := svc.HandlePushedAuthorizationRequest(s.ctx, params, nil, app, "")
 
-	assert.Nil(s.T(), resp)
-	assert.Equal(s.T(), oauth2const.ErrorLoginRequired, errCode)
-	assert.Equal(s.T(), "User authentication is required", errDesc)
+	assert.Empty(s.T(), errCode)
+	assert.NotNil(s.T(), resp)
 }
 
 func (s *ServiceTestSuite) TestHandlePAR_PromptInvalid() {
@@ -414,7 +406,7 @@ func (s *ServiceTestSuite) TestHandlePAR_NoResourceWithDefaultSucceedsAtPush() {
 	assert.Empty(s.T(), captured.OAuthParameters.Resources)
 }
 
-func (s *ServiceTestSuite) TestHandlePAR_FiltersOIDCScopesByAppScopes() {
+func (s *ServiceTestSuite) TestHandlePAR_NarrowsOIDCClaimsByScopeClaims() {
 	store := newParStoreInterfaceMock(s.T())
 	var captured pushedAuthorizationRequest
 	store.EXPECT().Store(mock.Anything, mock.Anything, mock.Anything).
@@ -424,7 +416,7 @@ func (s *ServiceTestSuite) TestHandlePAR_FiltersOIDCScopesByAppScopes() {
 
 	svc := newPARService(store, s.newPermissiveResourceMock(), s.testCfg)
 	app := s.newTestApp()
-	app.Scopes = []string{"profile"}
+	app.ScopeClaims = map[string][]string{"profile": {"name"}}
 	params := s.newValidParams()
 	params[oauth2const.RequestParamScope] = "openid email profile"
 
@@ -432,7 +424,8 @@ func (s *ServiceTestSuite) TestHandlePAR_FiltersOIDCScopesByAppScopes() {
 
 	assert.Empty(s.T(), errCode)
 	assert.NotNil(s.T(), resp)
-	assert.Equal(s.T(), []string{"profile"}, captured.OAuthParameters.StandardScopes)
+	// email stays OIDC on its standard claims; the mapping only narrows profile.
+	assert.Equal(s.T(), []string{"openid", "email", "profile"}, captured.OAuthParameters.StandardScopes)
 }
 
 func (s *ServiceTestSuite) TestHandlePAR_AcrValuesPropagated() {
@@ -455,6 +448,26 @@ func (s *ServiceTestSuite) TestHandlePAR_AcrValuesPropagated() {
 	assert.Equal(s.T(),
 		"urn:thunder:acr:password urn:thunder:acr:generated-code",
 		captured.OAuthParameters.AcrValues)
+}
+
+func (s *ServiceTestSuite) TestHandlePAR_MaxAgePropagated() {
+	store := newParStoreInterfaceMock(s.T())
+	var captured pushedAuthorizationRequest
+	store.EXPECT().Store(mock.Anything, mock.Anything, mock.Anything).
+		Run(func(_ context.Context, req pushedAuthorizationRequest, _ int64) {
+			captured = req
+		}).Return("test-uri", nil)
+
+	svc := newPARService(store, s.newPermissiveResourceMock(), s.testCfg)
+	app := s.newTestApp()
+	params := s.newValidParams()
+	params[oauth2const.RequestParamMaxAge] = "1"
+
+	resp, errCode, _ := svc.HandlePushedAuthorizationRequest(s.ctx, params, nil, app, "")
+
+	assert.Empty(s.T(), errCode)
+	assert.NotNil(s.T(), resp)
+	assert.Equal(s.T(), "1", captured.OAuthParameters.MaxAge)
 }
 
 func (s *ServiceTestSuite) TestHandlePAR_DPoPHeaderJkt_PersistedOnRequest() {
@@ -634,4 +647,13 @@ func (s *ServiceTestSuite) TestHandlePAR_MultipleResources_InvalidTarget() {
 
 	assert.Nil(s.T(), resp)
 	assert.Equal(s.T(), oauth2const.ErrorInvalidTarget, errCode)
+}
+
+// IsPARRequestURI distinguishes a PAR handle from a client-supplied request object by
+// reference (RFC 9101), which is not supported.
+func (suite *ServiceTestSuite) TestIsPARRequestURI() {
+	assert.True(suite.T(), IsPARRequestURI("urn:ietf:params:oauth:request_uri:abc123"))
+	assert.False(suite.T(), IsPARRequestURI("https://client.example.org/request.jwt"))
+	assert.False(suite.T(), IsPARRequestURI(""))
+	assert.False(suite.T(), IsPARRequestURI("urn:ietf:params:oauth:request-uri:abc123"))
 }

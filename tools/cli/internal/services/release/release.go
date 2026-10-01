@@ -1,19 +1,5 @@
-/*
- * Copyright (c) 2026, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License. You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2026 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 // Package release fetches release metadata and downloads product and sample binaries.
 package release
@@ -21,6 +7,7 @@ package release
 import (
 	"archive/zip"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -91,10 +78,21 @@ func fetchJSON(url string, dest any) error {
 	return json.NewDecoder(resp.Body).Decode(dest)
 }
 
-func fetchReleasesData() (*releasesData, error) {
+func (c *Client) fetchReleasesData() (*releasesData, error) {
+	return fetchReleasesDataFrom(c.ManifestURL, c.FallbackURL)
+}
+
+// fetchReleasesDataFrom reads releases metadata from primaryURL and falls back to the
+// GitHub release API at fallbackURL. An empty fallbackURL disables the fallback, which is what a
+// custom source implies. The URLs are parameters so tests can point both at a local server.
+func fetchReleasesDataFrom(primaryURL, fallbackURL string) (*releasesData, error) {
 	var data releasesData
-	if err := fetchJSON(product.ReleasesURL, &data); err == nil {
+	primaryErr := fetchJSON(primaryURL, &data)
+	if primaryErr == nil {
 		return &data, nil
+	}
+	if fallbackURL == "" {
+		return nil, primaryErr
 	}
 
 	// Fallback to GitHub API.
@@ -105,8 +103,10 @@ func fetchReleasesData() (*releasesData, error) {
 			BrowserDownloadURL string `json:"browser_download_url"`
 		} `json:"assets"`
 	}
-	if err := fetchJSON(product.GitHubAPI, &gh); err != nil {
-		return nil, err
+	if err := fetchJSON(fallbackURL, &gh); err != nil {
+		// Report both hosts: dropping the primary error blames the fallback for a
+		// failure that started somewhere else.
+		return nil, fmt.Errorf("%w; fallback %w", primaryErr, err)
 	}
 	if gh.TagName == "" {
 		return nil, fmt.Errorf("tag_name missing from GitHub release response")
@@ -119,9 +119,13 @@ func fetchReleasesData() (*releasesData, error) {
 	return &releasesData{LatestRelease: r, Releases: []releaseEntry{r}}, nil
 }
 
-// FetchLatestVersion queries releases metadata and returns the latest version string (no "v" prefix).
-func FetchLatestVersion() (string, error) {
-	data, err := fetchReleasesData()
+// FetchLatestVersion returns the latest version from the configured source.
+func FetchLatestVersion() (string, error) { return Default.LatestVersion() }
+
+// LatestVersion returns the newest version the manifest advertises, without a leading "v".
+// It ignores any pinned version: callers use it to tell the operator that an upgrade exists.
+func (c *Client) LatestVersion() (string, error) {
+	data, err := c.fetchReleasesData()
 	if err != nil {
 		return "", err
 	}
@@ -138,30 +142,35 @@ type ProgressFunc func(pct int, msg string)
 
 // Download downloads and extracts the product release for the current platform.
 func Download(version, destDir string, onProgress ProgressFunc) error {
+	return Default.Download(version, destDir, onProgress)
+}
+
+// Download downloads and extracts the product release for the current platform.
+func (c *Client) Download(version, destDir string, onProgress ProgressFunc) error {
 	assetName, err := PlatformAssetName(version)
 	if err != nil {
 		return err
 	}
 
-	data, err := fetchReleasesData()
+	data, err := c.fetchReleasesData()
 	if err != nil {
 		return err
 	}
 
 	found := findAsset(data, version, assetName)
 	if found == nil {
-		return fmt.Errorf("no release asset found for %s", assetName)
+		return fmt.Errorf("no release asset found for %s at %s%s", assetName, c.ManifestURL, availableVersions(data))
 	}
 
 	if onProgress != nil {
-		onProgress(-1, fmt.Sprintf("Downloading Thunder v%s for %s/%s", version, runtime.GOOS, runtime.GOARCH))
+		onProgress(-1, fmt.Sprintf("Downloading "+product.Name+" v%s for %s/%s", version, runtime.GOOS, runtime.GOARCH))
 	}
 
 	zipPath := filepath.Join(os.TempDir(), assetName)
 	if err := downloadFile(found.DownloadURL, zipPath, func(received, total int64) {
 		if total > 0 && onProgress != nil {
 			pct := int(float64(received) / float64(total) * 100)
-			onProgress(pct, fmt.Sprintf("Downloading Thunder v%s", version))
+			onProgress(pct, fmt.Sprintf("Downloading "+product.Name+" v%s", version))
 		}
 	}); err != nil {
 		return err
@@ -171,7 +180,34 @@ func Download(version, destDir string, onProgress ProgressFunc) error {
 	if onProgress != nil {
 		onProgress(-1, "Extracting...")
 	}
-	return extractZip(zipPath, destDir)
+	return extractInto(zipPath, destDir)
+}
+
+// extractInto extracts zipPath into destDir and removes a half-written destDir when the
+// extraction fails, so a failed install does not leave a broken tree behind. Ownership
+// comes from creating destDir here: anything that already exists at that path, including
+// a dangling symlink or a directory another process created first, is not this run's to
+// delete.
+func extractInto(zipPath, destDir string) error {
+	if err := os.MkdirAll(filepath.Dir(destDir), 0o755); err != nil {
+		return err
+	}
+	createdByThisRun := false
+	switch err := os.Mkdir(destDir, 0o755); {
+	case err == nil:
+		createdByThisRun = true
+	case errors.Is(err, os.ErrExist):
+		// Left in place; extractZip writes into it.
+	default:
+		return err
+	}
+	if err := extractZip(zipPath, destDir); err != nil {
+		if createdByThisRun {
+			_ = os.RemoveAll(destDir)
+		}
+		return err
+	}
+	return nil
 }
 
 // SampleAssetName returns the ZIP name for a sample app.
@@ -182,19 +218,24 @@ func SampleAssetName(sampleName, version string) (string, error) {
 
 // DownloadSample downloads and extracts the named sample to destDir.
 func DownloadSample(sampleName, version, destDir string, onProgress ProgressFunc) error {
+	return Default.DownloadSample(sampleName, version, destDir, onProgress)
+}
+
+// DownloadSample downloads and extracts the named sample to destDir.
+func (c *Client) DownloadSample(sampleName, version, destDir string, onProgress ProgressFunc) error {
 	assetName, err := SampleAssetName(sampleName, version)
 	if err != nil {
 		return err
 	}
 
-	data, err := fetchReleasesData()
+	data, err := c.fetchReleasesData()
 	if err != nil {
 		return err
 	}
 
 	found := findAsset(data, version, assetName)
 	if found == nil {
-		return fmt.Errorf("no release asset found for %s", assetName)
+		return fmt.Errorf("no release asset found for %s at %s%s", assetName, c.ManifestURL, availableVersions(data))
 	}
 
 	if onProgress != nil {
@@ -215,25 +256,44 @@ func DownloadSample(sampleName, version, destDir string, onProgress ProgressFunc
 	if onProgress != nil {
 		onProgress(-1, "Extracting...")
 	}
-	return extractZip(zipPath, destDir)
+	return extractInto(zipPath, destDir)
 }
 
+// findAsset returns the named asset belonging to the requested version, or nil.
+//
+// It matches on the version and never falls back to another release: returning the latest
+// release's asset for a version the manifest does not carry would install something other than
+// what was asked for, under the name that was asked for.
 func findAsset(data *releasesData, version, assetName string) *releaseAsset {
-	for _, r := range data.Releases {
-		if r.TagName == "v"+version {
-			for i := range r.Assets {
-				if r.Assets[i].Name == assetName {
-					return &r.Assets[i]
-				}
+	for _, r := range append([]releaseEntry{data.LatestRelease}, data.Releases...) {
+		if r.TagName != "v"+version {
+			continue
+		}
+		for i := range r.Assets {
+			if r.Assets[i].Name == assetName {
+				return &r.Assets[i]
 			}
 		}
 	}
-	for i := range data.LatestRelease.Assets {
-		if data.LatestRelease.Assets[i].Name == assetName {
-			return &data.LatestRelease.Assets[i]
-		}
-	}
 	return nil
+}
+
+// availableVersions renders the versions a manifest carries, for an error that would otherwise
+// only say the asset was missing.
+func availableVersions(data *releasesData) string {
+	seen := map[string]bool{}
+	var versions []string
+	for _, r := range append([]releaseEntry{data.LatestRelease}, data.Releases...) {
+		if r.TagName == "" || seen[r.TagName] {
+			continue
+		}
+		seen[r.TagName] = true
+		versions = append(versions, r.TagName)
+	}
+	if len(versions) == 0 {
+		return ""
+	}
+	return " (available: " + strings.Join(versions, ", ") + ")"
 }
 
 func downloadFile(url, destPath string, onProgress func(received, total int64)) error {
@@ -253,11 +313,14 @@ func downloadFile(url, destPath string, onProgress func(received, total int64)) 
 		return fmt.Errorf("HTTP %d downloading %s", resp.StatusCode, url)
 	}
 
-	f, err := os.Create(destPath)
+	f, err := os.CreateTemp(filepath.Dir(destPath), "."+filepath.Base(destPath)+"-*")
 	if err != nil {
 		return err
 	}
-	defer func() { _ = f.Close() }()
+	defer func() {
+		_ = f.Close()
+		_ = os.Remove(f.Name())
+	}()
 
 	total := resp.ContentLength
 	var received int64
@@ -280,7 +343,10 @@ func downloadFile(url, destPath string, onProgress func(received, total int64)) 
 			return err
 		}
 	}
-	return nil
+	if err := f.Close(); err != nil {
+		return err
+	}
+	return os.Rename(f.Name(), destPath)
 }
 
 func extractZip(zipPath, destDir string) error {

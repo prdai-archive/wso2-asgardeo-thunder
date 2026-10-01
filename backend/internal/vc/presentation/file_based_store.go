@@ -1,20 +1,5 @@
-/*
- * Copyright (c) 2026, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2026 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 package presentation
 
@@ -37,9 +22,9 @@ func newDefinitionFileBasedStore() *definitionFileBasedStore {
 	}
 }
 
-// Create stores a presentation definition in the file-based store. In declarative
-// and composite modes the loader writes resources through this method (resources
-// loaded from YAML are immutable; management writes route to the database store).
+// Create stores a presentation definition in the file-based store. Declarative resources
+// are loaded through definitionStorer; the management API cannot reach this method because
+// the service refuses creates while the store is in declarative-only mode.
 func (f *definitionFileBasedStore) CreatePresentationDefinition(
 	_ context.Context, dto PresentationDefinitionDTO,
 ) error {
@@ -77,7 +62,9 @@ func (f *definitionFileBasedStore) GetPresentationDefinitionByID(
 		declarativeresource.LogTypeAssertionError("presentation definition", id)
 		return nil, ErrDefinitionDataCorrupted
 	}
-	return dto, nil
+	// Hand out a copy so a caller cannot mutate the shared declarative entry.
+	stored := *dto
+	return &stored, nil
 }
 
 // GetByHandle retrieves a presentation definition by handle from the file-based store.
@@ -90,7 +77,8 @@ func (f *definitionFileBasedStore) GetPresentationDefinitionByHandle(
 	if err != nil {
 		return nil, ErrNotFound
 	}
-	return data.(*PresentationDefinitionDTO), nil
+	stored := *data.(*PresentationDefinitionDTO)
+	return &stored, nil
 }
 
 // ListSummaries retrieves minimal listing data from the file-based store.

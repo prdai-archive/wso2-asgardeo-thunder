@@ -1,20 +1,5 @@
-/**
- * Copyright (c) 2026, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied. See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2026 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 /* eslint-disable @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access */
 import userEvent from '@testing-library/user-event';
@@ -23,7 +8,8 @@ import type {NavigateFunction} from 'react-router';
 import {describe, it, expect, beforeEach, vi} from 'vitest';
 import TrustedIssuerCreateForm from '../TrustedIssuerCreateForm';
 
-const {mockMutate} = vi.hoisted(() => ({mockMutate: vi.fn()}));
+const {mockMutate, mockReset} = vi.hoisted(() => ({mockMutate: vi.fn(), mockReset: vi.fn()}));
+const mutationState = {isPending: false, isError: false};
 
 vi.mock('react-router', async () => {
   const actual = await vi.importActual('react-router');
@@ -34,7 +20,7 @@ vi.mock('react-router', async () => {
 });
 
 vi.mock('../../api/useCreateTrustedIssuer', () => ({
-  default: () => ({mutate: mockMutate, isPending: false}),
+  default: () => ({mutate: mockMutate, reset: mockReset, ...mutationState}),
 }));
 
 const {useNavigate} = await import('react-router');
@@ -49,6 +35,9 @@ describe('TrustedIssuerCreateForm', () => {
     onNameConflict = vi.fn<() => void>();
     onBack = vi.fn<() => void>();
     mockMutate.mockReset();
+    mockReset.mockReset();
+    mutationState.isPending = false;
+    mutationState.isError = false;
     vi.mocked(useNavigate).mockReturnValue(mockNavigate as unknown as NavigateFunction);
   });
 
@@ -162,6 +151,64 @@ describe('TrustedIssuerCreateForm', () => {
 
     await waitFor(() => expect(onNameConflict).toHaveBeenCalledTimes(1));
     expect(mockNavigate).not.toHaveBeenCalled();
+  });
+
+  it('should show a general inline error for a non-conflict create failure, without calling onNameConflict', async () => {
+    const user = userEvent.setup();
+    mockMutate.mockImplementation((_data, opts) => {
+      opts.onError({response: {status: 500}});
+    });
+
+    render(<TrustedIssuerCreateForm name="Acme Okta" onNameConflict={onNameConflict} onBack={onBack} />);
+
+    await user.type(screen.getByLabelText(/^Issuer URI/), 'https://acme.okta.com');
+    await user.type(screen.getByLabelText(/^JWKS endpoint/), 'https://acme.okta.com/keys');
+    await user.click(screen.getByTestId('trusted-issuer-create-submit'));
+
+    expect(await screen.findByText('Failed to create trusted issuer. Please try again.')).toBeInTheDocument();
+    expect(onNameConflict).not.toHaveBeenCalled();
+  });
+
+  it('should clear the general create error when a field is edited', async () => {
+    const user = userEvent.setup();
+    mockMutate.mockImplementation((_data, opts) => {
+      opts.onError({response: {status: 500}});
+    });
+
+    render(<TrustedIssuerCreateForm name="Acme Okta" onNameConflict={onNameConflict} onBack={onBack} />);
+
+    await user.type(screen.getByLabelText(/^Issuer URI/), 'https://acme.okta.com');
+    await user.type(screen.getByLabelText(/^JWKS endpoint/), 'https://acme.okta.com/keys');
+    await user.click(screen.getByTestId('trusted-issuer-create-submit'));
+    expect(await screen.findByText('Failed to create trusted issuer. Please try again.')).toBeInTheDocument();
+
+    await user.type(screen.getByLabelText(/^Issuer URI/), '2');
+
+    expect(screen.queryByText('Failed to create trusted issuer. Please try again.')).not.toBeInTheDocument();
+  });
+
+  it('should not reset a still-pending mutation when a field is edited', async () => {
+    const user = userEvent.setup();
+    mutationState.isPending = true;
+    mutationState.isError = false;
+
+    render(<TrustedIssuerCreateForm name="Acme Okta" onNameConflict={onNameConflict} onBack={onBack} />);
+
+    await user.type(screen.getByLabelText(/^Issuer URI/), 'https://acme.okta.com');
+
+    expect(mockReset).not.toHaveBeenCalled();
+  });
+
+  it('should reset a failed (settled) mutation when a field is edited', async () => {
+    const user = userEvent.setup();
+    mutationState.isPending = false;
+    mutationState.isError = true;
+
+    render(<TrustedIssuerCreateForm name="Acme Okta" onNameConflict={onNameConflict} onBack={onBack} />);
+
+    await user.type(screen.getByLabelText(/^Issuer URI/), 'https://acme.okta.com');
+
+    expect(mockReset).toHaveBeenCalled();
   });
 
   it('should turn on ID-JAG when the switch is toggled', async () => {

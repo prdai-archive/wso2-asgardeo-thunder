@@ -1,21 +1,6 @@
 #!/usr/bin/env pwsh
-# ----------------------------------------------------------------------------
-# Copyright (c) 2025-2026, WSO2 LLC. (https://www.wso2.com).
-#
-# WSO2 LLC. licenses this file to you under the Apache License,
-# Version 2.0 (the "License"); you may not use this file except
-# in compliance with the License.
-# You may obtain a copy of the License at
-#
-# http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing,
-# software distributed under the License is distributed on an
-# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
-# KIND, either express or implied. See the License for the
-# specific language governing permissions and limitations
-# under the License.
-# ----------------------------------------------------------------------------
+# Copyright 2025-2026 The ThunderID Authors
+# SPDX-License-Identifier: Apache-2.0
 
 
 [CmdletBinding()]
@@ -128,10 +113,10 @@ $PRODUCT_FOLDER = "${BINARY_NAME}-${PRODUCT_VERSION}-${GO_PACKAGE_OS}-${GO_PACKA
 
 # --- Sample App Distribution details ---
 
-# React Vanilla Sample
-$vanillaPackageJson = Get-Content "samples/apps/react-vanilla-sample/package.json" -Raw | ConvertFrom-Json
+# Vanilla Sample
+$vanillaPackageJson = Get-Content "samples/apps/vanilla-sample/package.json" -Raw | ConvertFrom-Json
 $VANILLA_SAMPLE_APP_VERSION = $vanillaPackageJson.version
-$VANILLA_SAMPLE_APP_FOLDER = "sample-app-react-vanilla-${VANILLA_SAMPLE_APP_VERSION}"
+$VANILLA_SAMPLE_APP_FOLDER = "sample-app-vanilla-${VANILLA_SAMPLE_APP_VERSION}"
 
 # React SDK Sample
 $reactSdkPackageJson = Get-Content "samples/apps/react-sdk-sample/package.json" -Raw | ConvertFrom-Json
@@ -170,8 +155,7 @@ $CONSOLE_APP_DIST_DIR = "apps/console"
 $FRONTEND_GATE_APP_SOURCE_DIR = Join-Path $FRONTEND_BASE_DIR "apps/gate"
 $FRONTEND_CONSOLE_APP_SOURCE_DIR = Join-Path $FRONTEND_BASE_DIR "apps/console"
 $SAMPLE_BASE_DIR = "samples"
-$VANILLA_SAMPLE_APP_DIR = Join-Path $SAMPLE_BASE_DIR "apps/react-vanilla-sample"
-$VANILLA_SAMPLE_APP_SERVER_DIR = Join-Path $VANILLA_SAMPLE_APP_DIR "server"
+$VANILLA_SAMPLE_APP_DIR = Join-Path $SAMPLE_BASE_DIR "apps/vanilla-sample"
 $REACT_SDK_SAMPLE_APP_DIR = Join-Path $SAMPLE_BASE_DIR "apps/react-sdk-sample"
 $REACT_API_SAMPLE_APP_DIR = Join-Path $SAMPLE_BASE_DIR "apps/react-api-based-sample"
 $WAYFINDER_SAMPLE_APP_DIR = Join-Path $SAMPLE_BASE_DIR "apps/wayfinder-sample"
@@ -182,7 +166,7 @@ $WAYFINDER_SAMPLE_APP_DIR = Join-Path $SAMPLE_BASE_DIR "apps/wayfinder-sample"
 $QUICKSTART_SAMPLE_BUNDLES = @(
     @{ Name = "wayfinder"; Source = (Join-Path $WAYFINDER_SAMPLE_APP_DIR "thunderid-config") }
 )
-$QUICKSTART_BUNDLE_STAGE_DIR = Join-Path $FRONTEND_CONSOLE_APP_SOURCE_DIR "src/features/welcome/data/sample-bundles"
+$QUICKSTART_BUNDLE_STAGE_DIR = Join-Path $FRONTEND_CONSOLE_APP_SOURCE_DIR "src/data/sample-bundles"
 
 # Default ports
 $GATE_APP_DEFAULT_PORT = 5190
@@ -318,14 +302,6 @@ function Clean {
     if (Test-Path (Join-Path $BACKEND_DIR "config/secrets")) {
         Remove-Item -Path (Join-Path $BACKEND_DIR "config/secrets") -Recurse -Force -ErrorAction SilentlyContinue
     }
-
-    Write-Host "Removing certificates in $VANILLA_SAMPLE_APP_DIR"
-    Remove-Item -Path (Join-Path $VANILLA_SAMPLE_APP_DIR "server.cert") -Force -ErrorAction SilentlyContinue
-    Remove-Item -Path (Join-Path $VANILLA_SAMPLE_APP_DIR "server.key") -Force -ErrorAction SilentlyContinue
-
-    Write-Host "Removing certificates in $VANILLA_SAMPLE_APP_SERVER_DIR"
-    Remove-Item -Path (Join-Path $VANILLA_SAMPLE_APP_SERVER_DIR "server.cert") -Force -ErrorAction SilentlyContinue
-    Remove-Item -Path (Join-Path $VANILLA_SAMPLE_APP_SERVER_DIR "server.key") -Force -ErrorAction SilentlyContinue
 
     Write-Host "Removing certificates in $REACT_SDK_SAMPLE_APP_DIR"
     Remove-Item -Path (Join-Path $REACT_SDK_SAMPLE_APP_DIR "server.cert") -Force -ErrorAction SilentlyContinue
@@ -497,7 +473,11 @@ function Test-I18n-Extractor {
 }
 
 function Lint-CLI {
-    $golangciLint = Join-Path $PSScriptRoot "backend/bin/tools/golangci-lint.exe"
+    # tools/cli is a separate Go module with its own Go directive, and golangci-lint refuses to
+    # run when the Go it was built with is older than the module it is linting. The CLI therefore
+    # uses a linter installed into its own bin directory with its own toolchain, rather than the
+    # backend's binary.
+    $golangciLint = Join-Path $PSScriptRoot "tools/cli/bin/tools/golangci-lint.exe"
     Write-Host "Linting CLI tool..."
     Push-Location "$PSScriptRoot/tools/cli"
     try {
@@ -509,7 +489,8 @@ function Lint-CLI {
 }
 
 function Lint-I18n-Extractor {
-    $golangciLint = Join-Path $PSScriptRoot "backend/bin/tools/golangci-lint.exe"
+    # Its own linter, not the backend's: see the note in Lint-CLI.
+    $golangciLint = Join-Path $PSScriptRoot "tools/i18n-extractor/bin/tools/golangci-lint.exe"
     Write-Host "Linting i18n-extractor..."
     Push-Location "$PSScriptRoot/tools/i18n-extractor"
     try {
@@ -762,12 +743,13 @@ function Package-Sample-App {
 
     # Samples are packaged from source; ship certificates for the samples that
     # expect them at the package root (react-api-based ignores them via .gitignore).
+    # vanilla-sample uses `next dev --experimental-https`, which manages its own
+    # self-signed cert, so it needs none of these.
     Write-Host "=== Ensuring sample app certificates exist ==="
-    Ensure-Certificates -cert_dir $VANILLA_SAMPLE_APP_DIR -cert_name_prefix "server"
     Ensure-Certificates -cert_dir $REACT_SDK_SAMPLE_APP_DIR -cert_name_prefix "server"
 
-    # Package React Vanilla sample
-    Write-Host "=== Packaging React Vanilla sample app ==="
+    # Package Vanilla Sample
+    Write-Host "=== Packaging Vanilla Sample app ==="
     Package-Vanilla-Sample
 
     # Package React SDK sample
@@ -786,19 +768,33 @@ function Package-Sample-App {
 }
 
 function Package-Vanilla-Sample {
+    Remove-Item -Path (Join-Path $DIST_DIR "thunderid-vanilla-sample-*.tgz") -Force -ErrorAction SilentlyContinue
+
     Push-Location $VANILLA_SAMPLE_APP_DIR
     & pnpm pack --pack-destination (Resolve-Path $DIST_DIR).Path
+    $packExitCode = $LASTEXITCODE
     Pop-Location
+    if ($packExitCode -ne 0) {
+        throw "pnpm pack failed for vanilla-sample with exit code $packExitCode"
+    }
 
-    $tgz = Get-ChildItem -Path $DIST_DIR -Filter "thunderid-react-vanilla-sample-*.tgz" | Select-Object -First 1
+    $tgz = Get-ChildItem -Path $DIST_DIR -Filter "thunderid-vanilla-sample-*.tgz" | Select-Object -First 1
     if (-not $tgz) {
-        throw "pnpm pack did not produce a tgz for react-vanilla-sample"
+        throw "pnpm pack did not produce a tgz for vanilla-sample"
     }
 
     tar xzf $tgz.FullName -C $DIST_DIR
     Rename-Item -Path (Join-Path $DIST_DIR "package") -NewName $VANILLA_SAMPLE_APP_FOLDER
 
-    Write-Host "Creating React Vanilla sample zip file..."
+    # Ship the bundled distribution's own server certificate so the sample trusts it out of the
+    # box. Only the public certificate is needed here (the sample only needs to trust the server,
+    # not serve as it), so the private key is not copied.
+    Ensure-Certificates -cert_dir (Join-Path $BACKEND_DIR $SECURITY_DIR) -cert_name_prefix "server"
+    $sampleCertDir = Join-Path (Join-Path $DIST_DIR $VANILLA_SAMPLE_APP_FOLDER) "certificates"
+    New-Item -Path $sampleCertDir -ItemType Directory -Force | Out-Null
+    Copy-Item -Path (Join-Path $BACKEND_DIR "$SECURITY_DIR/server.cert") -Destination (Join-Path $sampleCertDir "server.cert")
+
+    Write-Host "Creating Vanilla Sample zip file..."
     $distAbs = (Resolve-Path -Path $DIST_DIR).Path
     $zipFile = [System.IO.Path]::Combine($distAbs, "$VANILLA_SAMPLE_APP_FOLDER.zip")
     if (Test-Path $zipFile) {
@@ -810,7 +806,7 @@ function Package-Vanilla-Sample {
     Remove-Item -Path (Join-Path $DIST_DIR $VANILLA_SAMPLE_APP_FOLDER) -Recurse -Force
     Remove-Item -Path $tgz.FullName -Force
 
-    Write-Host "✅ React Vanilla sample app packaged successfully as $zipFile"
+    Write-Host "✅ Vanilla Sample app packaged successfully as $zipFile"
 }
 
 function Package-React-SDK-Sample {
@@ -1241,13 +1237,13 @@ function Ensure-Certificates {
                 if ($Algorithm -eq "ECDSA") {
                     & openssl ecparam -name prime256v1 -genkey -noout -param_enc named_curve -out $local_key_file 2>$null
                     if ($LASTEXITCODE -ne 0) { throw "Error generating EC key: OpenSSL failed with exit code $LASTEXITCODE" }
-                    & openssl req -new -x509 -nodes -key $local_key_file -out $local_cert_file -days 3650 -subj "/O=WSO2/OU=$PRODUCT_NAME/CN=localhost" -addext "subjectAltName=DNS:localhost,IP:127.0.0.1" 2>$null
+                    & openssl req -new -x509 -nodes -key $local_key_file -out $local_cert_file -days 3650 -subj "/O=ThunderID/OU=$PRODUCT_NAME/CN=localhost" -addext "subjectAltName=DNS:localhost,IP:127.0.0.1" 2>$null
                 }
                 else {
                     & openssl req -x509 -nodes -days 365 -newkey rsa:2048 `
                         -keyout $local_key_file `
                         -out $local_cert_file `
-                        -subj "/O=WSO2/OU=$PRODUCT_NAME/CN=localhost" `
+                        -subj "/O=ThunderID/OU=$PRODUCT_NAME/CN=localhost" `
                         -addext "subjectAltName=DNS:localhost,IP:127.0.0.1" 2>$null
                 }
                 if ($LASTEXITCODE -ne 0) {
@@ -1261,7 +1257,7 @@ function Ensure-Certificates {
                 try {
                     $keyAlg = $null
                     $certReq = $null
-                    $subjectName = New-Object System.Security.Cryptography.X509Certificates.X500DistinguishedName("CN=localhost, O=WSO2, OU=$PRODUCT_NAME")
+                    $subjectName = New-Object System.Security.Cryptography.X509Certificates.X500DistinguishedName("CN=localhost, O=ThunderID, OU=$PRODUCT_NAME")
 
                     if ($Algorithm -eq "ECDSA") {
                         $keyAlg = [System.Security.Cryptography.ECDsa]::Create([System.Security.Cryptography.ECCurve+NamedCurves]::nistP256)
@@ -1539,7 +1535,6 @@ function Run {
     Ensure-Certificates -cert_dir (Join-Path $BACKEND_DIR $SECURITY_DIR) -cert_name_prefix "server"
     Ensure-Certificates -cert_dir (Join-Path $BACKEND_DIR $SECURITY_DIR) -cert_name_prefix "signing"
     Ensure-Certificates -cert_dir (Join-Path $BACKEND_DIR $SECURITY_DIR) -cert_name_prefix "ecdsa-signing" -Algorithm "ECDSA"
-    Ensure-Certificates -cert_dir $VANILLA_SAMPLE_APP_DIR -cert_name_prefix "server"
     Ensure-Crypto-File -key_dir (Join-Path $BACKEND_DIR "config/certs")
     Ensure-DirectAuthSecret-File -secret_dir (Join-Path $BACKEND_DIR "config/secrets")
     Write-Host "Initializing databases..."
@@ -1621,9 +1616,6 @@ function Run-Backend {
     Ensure-Certificates -cert_dir (Join-Path $BACKEND_DIR $SECURITY_DIR) -cert_name_prefix "server"
     Ensure-Certificates -cert_dir (Join-Path $BACKEND_DIR $SECURITY_DIR) -cert_name_prefix "signing"
     Ensure-Certificates -cert_dir (Join-Path $BACKEND_DIR $SECURITY_DIR) -cert_name_prefix "ecdsa-signing" -Algorithm "ECDSA"
-
-    Write-Host "=== Ensuring React Vanilla sample app certificates exist ==="
-    Ensure-Certificates -cert_dir $VANILLA_SAMPLE_APP_DIR -cert_name_prefix "server"
 
     Write-Host "=== Ensuring crypto file exists for run ==="
     Ensure-Crypto-File -key_dir (Join-Path $BACKEND_DIR "config/certs")
@@ -1767,14 +1759,32 @@ switch ($Command) {
     'build_docs' {
         Build-Docs
     }
-    'build_tools' {
+    'tools_build' {
         Build-Tools
     }
-    'test_tools' {
+    'tools_test' {
         Test-Tools
     }
-    'lint_tools' {
+    'tools_lint' {
         Lint-Tools
+    }
+    'tools_build_cli' {
+        Build-CLI
+    }
+    'tools_test_cli' {
+        Test-CLI
+    }
+    'tools_lint_cli' {
+        Lint-CLI
+    }
+    'tools_build_i18n_extractor' {
+        Build-I18n-Extractor
+    }
+    'tools_test_i18n_extractor' {
+        Test-I18n-Extractor
+    }
+    'tools_lint_i18n_extractor' {
+        Lint-I18n-Extractor
     }
     'package_samples' {
         Package-Sample-App
@@ -1805,7 +1815,7 @@ switch ($Command) {
         Test-Integration
     }
     default {
-        Write-Host "Usage: $($MyInvocation.MyCommand.Name) {clean|build|build_backend|build_frontend|build_docs|build_tools|test_tools|lint_tools|package_samples|test_unit|test_integration|merge_coverage|run|run_backend|run_frontend|run_docs|test}"
+        Write-Host "Usage: $($MyInvocation.MyCommand.Name) {clean|build|build_backend|build_frontend|build_docs|tools_build|tools_test|tools_lint|tools_build_cli|tools_test_cli|tools_lint_cli|tools_build_i18n_extractor|tools_test_i18n_extractor|tools_lint_i18n_extractor|package_samples|test_unit|test_integration|merge_coverage|run|run_backend|run_frontend|run_docs|test}"
         exit 1
     }
 }

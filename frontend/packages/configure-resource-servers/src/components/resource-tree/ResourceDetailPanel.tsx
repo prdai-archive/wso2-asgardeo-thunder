@@ -1,23 +1,9 @@
-/**
- * Copyright (c) 2026, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied. See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2026 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 import {useToast} from '@thunderid/contexts';
 import {useLogger} from '@thunderid/logger/react';
+import {getErrorMessage} from '@thunderid/utils';
 import {
   Alert,
   Box,
@@ -80,6 +66,16 @@ function DetailForm({selectedNode, resourceServer, onRefresh}: DetailFormProps):
   // so typing a value back to its original clears the bar instead of a one-way "touched" flag.
   const [baseline, setBaseline] = useState(initial);
   const [copiedPermission, setCopiedPermission] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+
+  // Resolves an error through the `resourceServers` catalog. `t` defaults to the `common`
+  // namespace, so this forwards explicit `ns:` prefixes unchanged and prefixes bare keys with
+  // `resourceServers:`, per getErrorMessage's namespace-resolution contract.
+  const tForErrors = useCallback(
+    (key: string, options?: Record<string, unknown>): string =>
+      t(key.includes(':') ? key : `resourceServers:${key}`, options),
+    [t],
+  );
 
   const dirty = useMemo(() => {
     const norm = (v: string): string => v.trim();
@@ -99,6 +95,7 @@ function DetailForm({selectedNode, resourceServer, onRefresh}: DetailFormProps):
   );
 
   const resetForm = useCallback(() => {
+    setSaveError(null);
     setName(baseline.name);
     setDescription(baseline.description);
     setIdentifier(baseline.identifier);
@@ -119,13 +116,14 @@ function DetailForm({selectedNode, resourceServer, onRefresh}: DetailFormProps):
         },
         {
           onSuccess: () => {
+            setSaveError(null);
             showToast(t('resourceServers:detail.saved', 'Changes saved.'), 'success');
             setBaseline({name, description, identifier: nextIdentifier});
             onRefresh();
           },
           onError: (err: Error) => {
             logger.error('Failed to update resource server', {error: err});
-            showToast(t('resourceServers:detail.saveError', 'Failed to save.'), 'error');
+            setSaveError(getErrorMessage(err, tForErrors, 'detail.saveError', 'Failed to save.'));
           },
         },
       );
@@ -134,13 +132,14 @@ function DetailForm({selectedNode, resourceServer, onRefresh}: DetailFormProps):
         {resourceId: selectedNode.id, data: {name, description: description || null}},
         {
           onSuccess: () => {
+            setSaveError(null);
             showToast(t('resourceServers:detail.saved', 'Changes saved.'), 'success');
             setBaseline((prev) => ({...prev, name, description}));
             onRefresh();
           },
           onError: (err: Error) => {
             logger.error('Failed to update resource', {error: err});
-            showToast(t('resourceServers:detail.saveError', 'Failed to save.'), 'error');
+            setSaveError(getErrorMessage(err, tForErrors, 'detail.saveError', 'Failed to save.'));
           },
         },
       );
@@ -150,20 +149,21 @@ function DetailForm({selectedNode, resourceServer, onRefresh}: DetailFormProps):
         {actionId: selectedNode.id, data: {name, description: description || null}},
         {
           onSuccess: () => {
+            setSaveError(null);
             showToast(t('resourceServers:detail.saved', 'Changes saved.'), 'success');
             setBaseline((prev) => ({...prev, name, description}));
             onRefresh();
           },
           onError: (err: Error) => {
             logger.error('Failed to update action', {error: err});
-            showToast(t('resourceServers:detail.saveError', 'Failed to save.'), 'error');
+            setSaveError(getErrorMessage(err, tForErrors, 'detail.saveError', 'Failed to save.'));
           },
         },
       );
     }
   };
 
-  const isReadOnly = selectedNode.type === 'server' && selectedNode.data.isReadOnly;
+  const isReadOnly = Boolean(resourceServer.isReadOnly);
   const isPending =
     updateRs.isPending || updateResource.isPending || updateServerAction.isPending || updateResourceAction.isPending;
 
@@ -191,6 +191,7 @@ function DetailForm({selectedNode, resourceServer, onRefresh}: DetailFormProps):
   };
 
   const handleField = (setter: (v: string) => void) => (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (saveError) setSaveError(null);
     setter(e.target.value);
   };
 
@@ -223,11 +224,13 @@ function DetailForm({selectedNode, resourceServer, onRefresh}: DetailFormProps):
         </Typography>
       )}
 
-      {isReadOnly && (
+      {isReadOnly && selectedNode.type === 'server' && (
         <Alert severity="info">
           {t('resourceServers:detail.readOnlyWarning', 'This is a system resource server and cannot be modified.')}
         </Alert>
       )}
+
+      {saveError && <Alert severity="error">{saveError}</Alert>}
 
       <Stack spacing={2}>
         <FormControl fullWidth>

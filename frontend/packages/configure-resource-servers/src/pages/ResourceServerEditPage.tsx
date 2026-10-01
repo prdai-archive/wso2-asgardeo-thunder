@@ -1,25 +1,10 @@
-/**
- * Copyright (c) 2026, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied. See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2026 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
-import {PageLoadingAnimation, SettingsCard, UnsavedChangesBar} from '@thunderid/components';
+import {PageLoadingAnimation, QueryErrorNotice, SettingsCard, UnsavedChangesBar} from '@thunderid/components';
 import {useToast} from '@thunderid/contexts';
 import {useLogger} from '@thunderid/logger/react';
-import {isEqualIgnoringEmpty} from '@thunderid/utils';
+import {getErrorMessage, isEqualIgnoringEmpty} from '@thunderid/utils';
 import {
   Alert,
   Box,
@@ -36,7 +21,7 @@ import {
   Typography,
 } from '@wso2/oxygen-ui';
 import {ArrowLeft, Edit} from '@wso2/oxygen-ui-icons-react';
-import {useMemo, useState, type JSX, type SyntheticEvent} from 'react';
+import {useCallback, useMemo, useState, type JSX, type SyntheticEvent} from 'react';
 import {useTranslation} from 'react-i18next';
 import {Link, useNavigate, useParams, useSearchParams} from 'react-router';
 import useGetDefaultResourceServer from '../api/useGetDefaultResourceServer';
@@ -48,6 +33,7 @@ import ResourceServerDeleteDialog from '../components/ResourceServerDeleteDialog
 import SetDefaultResourceServerDialog from '../components/SetDefaultResourceServerDialog';
 import {getResourceServerTypeLabel} from '../config/resource-server-types';
 import useResourceServerRoutes from '../hooks/useResourceServerRoutes';
+import {isDefaultEligibleType} from '../models/resource-server';
 
 interface TabPanelProps {
   children?: React.ReactNode;
@@ -83,6 +69,15 @@ export default function ResourceServerEditPage(): JSX.Element {
   const {data: defaultConfig, isLoading: isDefaultLoading, error: defaultError} = useGetDefaultResourceServer();
   const updateRs = useUpdateResourceServer();
 
+  // Resolves an error through the `resourceServers` catalog. `t` defaults to the `common`
+  // namespace, so this forwards explicit `ns:` prefixes unchanged and prefixes bare keys with
+  // `resourceServers:`, per getErrorMessage's namespace-resolution contract.
+  const tForErrors = useCallback(
+    (key: string, options?: Record<string, unknown>): string =>
+      t(key.includes(':') ? key : `resourceServers:${key}`, options),
+    [t],
+  );
+
   const initialTab = searchParams.get('tab') === 'advanced' ? TAB_ADVANCED : TAB_RESOURCES;
   const [activeTab, setActiveTab] = useState(initialTab);
 
@@ -101,6 +96,9 @@ export default function ResourceServerEditPage(): JSX.Element {
   };
 
   const handleFieldChange = (field: 'name' | 'description' | 'identifier', value: string): void => {
+    if (updateRs.isError) {
+      updateRs.reset(); // a save error is stale once the form changes
+    }
     setEditedFields((prev) => ({...prev, [field]: value}));
   };
 
@@ -150,7 +148,6 @@ export default function ResourceServerEditPage(): JSX.Element {
         },
         onError: (err: Error) => {
           logger.error('Failed to update resource server', {error: err});
-          showToast(t('resourceServers:edit.saveError', 'Failed to save changes.'), 'error');
         },
       },
     );
@@ -162,11 +159,39 @@ export default function ResourceServerEditPage(): JSX.Element {
     return <PageLoadingAnimation />;
   }
 
-  if (error || !resourceServer) {
+  if (error) {
     return (
       <PageContent>
-        <Alert severity="error" sx={{mb: 2}}>
-          {error?.message ?? t('resourceServers:edit.notFound', 'Resource server not found.')}
+        <QueryErrorNotice
+          error={error}
+          t={tForErrors}
+          variant="block"
+          title={t('resourceServers:edit.errorTitle', 'Failed to load resource server')}
+          onRetry={() => void refetch()}
+          action={
+            <Button
+              onClick={() => {
+                (async (): Promise<void> => {
+                  await navigate(listUrl);
+                })().catch((err: unknown) => {
+                  logger.error('Failed to navigate back', {error: err});
+                });
+              }}
+              startIcon={<ArrowLeft size={16} />}
+            >
+              {t('resourceServers:edit.back', 'Back to resource servers')}
+            </Button>
+          }
+        />
+      </PageContent>
+    );
+  }
+
+  if (!resourceServer) {
+    return (
+      <PageContent>
+        <Alert severity="warning" sx={{mb: 2}}>
+          {t('resourceServers:edit.notFound', 'Resource server not found.')}
         </Alert>
         <Button
           startIcon={<ArrowLeft size={16} />}
@@ -191,6 +216,9 @@ export default function ResourceServerEditPage(): JSX.Element {
   // A declarative (read-only) default is locked; the backend rejects any write, so the
   // action can never succeed and must not be offered.
   const isDefaultLocked = isDefaultReady && Boolean(defaultConfig?.readOnly?.resourceServerId);
+  // Only API and custom servers are eligible, as in the list menu and the creation wizard. The badge
+  // above is deliberately not gated on this, so a default set outside the console still shows up.
+  const isDefaultEligible = isDefaultEligibleType(resourceServer.type);
 
   return (
     <PageContent>
@@ -261,7 +289,7 @@ export default function ResourceServerEditPage(): JSX.Element {
                 />
               </Tooltip>
             )}
-            {isDefaultReady && !isDefault && !isDefaultLocked && (
+            {isDefaultReady && !isDefault && !isDefaultLocked && isDefaultEligible && (
               <Button variant="contained" size="small" onClick={() => setDefaultDialogOpen(true)}>
                 {t('resourceServers:actions.setAsDefault', 'Set as default')}
               </Button>
@@ -346,7 +374,7 @@ export default function ResourceServerEditPage(): JSX.Element {
           sx={{textTransform: 'none'}}
         />
         <Tab
-          label={t('resourceServers:edit.tab.advanced', 'Advanced Settings')}
+          label={t('resourceServers:edit.tab.advanced', 'Advanced')}
           id="resource-server-tab-1"
           aria-controls="resource-server-tabpanel-1"
           sx={{textTransform: 'none'}}
@@ -362,6 +390,15 @@ export default function ResourceServerEditPage(): JSX.Element {
             }}
           />
         </Box>
+      </TabPanel>
+
+      <TabPanel value={activeTab} index={TAB_ADVANCED}>
+        <AdvancedTab
+          key={resourceServer.id}
+          resourceServer={resourceServer}
+          identifier={editedFields.identifier ?? resourceServer.identifier ?? ''}
+          onIdentifierChange={(v) => handleFieldChange('identifier', v)}
+        />
 
         {!resourceServer.isReadOnly && (
           <SettingsCard
@@ -411,15 +448,6 @@ export default function ResourceServerEditPage(): JSX.Element {
         />
       </TabPanel>
 
-      <TabPanel value={activeTab} index={TAB_ADVANCED}>
-        <AdvancedTab
-          key={resourceServer.id}
-          resourceServer={resourceServer}
-          identifier={editedFields.identifier ?? resourceServer.identifier ?? ''}
-          onIdentifierChange={(v) => handleFieldChange('identifier', v)}
-        />
-      </TabPanel>
-
       {hasChanges && (
         <UnsavedChangesBar
           message={t('resourceServers:edit.unsavedChanges', 'You have unsaved changes.')}
@@ -428,7 +456,17 @@ export default function ResourceServerEditPage(): JSX.Element {
           savingLabel={t('common:saving', 'Saving…')}
           isSaving={updateRs.isPending}
           saveDisabled={resourceServer.isReadOnly}
-          onReset={() => setEditedFields({})}
+          error={
+            updateRs.error
+              ? getErrorMessage(updateRs.error, tForErrors, 'edit.saveError', 'Failed to save changes.')
+              : undefined
+          }
+          onReset={() => {
+            if (updateRs.isError) {
+              updateRs.reset(); // a save error is stale once the form resets
+            }
+            setEditedFields({});
+          }}
           onSave={handleSave}
         />
       )}

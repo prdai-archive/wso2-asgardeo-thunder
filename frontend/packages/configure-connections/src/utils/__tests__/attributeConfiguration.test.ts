@@ -1,20 +1,5 @@
-/**
- * Copyright (c) 2025, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied. See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2025 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 import type {PropertyDefinition} from '@thunderid/configure-user-types';
 import {describe, expect, it} from 'vitest';
@@ -32,7 +17,6 @@ const emptyState: AttributeMappingFormState = {
   externalAttribute: '',
   valueMapping: [],
   groups: [],
-  linking: [],
 };
 
 describe('toAttributeConfiguration', () => {
@@ -106,11 +90,6 @@ describe('toAttributeConfiguration', () => {
     });
     expect(cfg).toEqual({userTypeResolution: {default: 'Person'}});
   });
-
-  it('includes account linking only for non-empty trimmed attributes', () => {
-    const cfg = toAttributeConfiguration({...emptyState, defaultUserType: 'Person', linking: [' email ', '', '  ']});
-    expect(cfg).toEqual({userTypeResolution: {default: 'Person'}, accountLinking: {attributes: ['email']}});
-  });
 });
 
 describe('fromAttributeConfiguration', () => {
@@ -128,7 +107,6 @@ describe('fromAttributeConfiguration', () => {
       userTypeAttributeMappings: [
         {userType: 'Person', attributes: [{externalAttribute: 'given_name', localAttribute: 'firstName'}]},
       ],
-      accountLinking: {attributes: ['email']},
     };
     expect(fromAttributeConfiguration(cfg)).toEqual({
       defaultUserType: 'Person',
@@ -136,7 +114,6 @@ describe('fromAttributeConfiguration', () => {
       externalAttribute: 'user_type',
       valueMapping: [{value: 'staff', userType: 'Employee'}],
       groups: [{userType: 'Person', rows: [{externalAttribute: 'given_name', localAttribute: 'firstName'}]}],
-      linking: ['email'],
     });
   });
 
@@ -150,7 +127,6 @@ describe('fromAttributeConfiguration', () => {
         {userType: 'Person', rows: [{externalAttribute: 'email', localAttribute: 'email'}]},
         {userType: 'Employee', rows: [{externalAttribute: 'emp_id', localAttribute: 'employeeNumber'}]},
       ],
-      linking: ['email'],
     };
     expect(fromAttributeConfiguration(toAttributeConfiguration(state))).toEqual(state);
   });

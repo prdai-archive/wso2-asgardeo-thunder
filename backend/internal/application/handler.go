@@ -1,20 +1,5 @@
-/*
- * Copyright (c) 2025-2026, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2025-2026 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 package application
 
@@ -80,9 +65,10 @@ func (ah *applicationHandler) HandleApplicationPostRequest(w http.ResponseWriter
 			ThemeID:                   appRequest.ThemeID,
 			LayoutID:                  appRequest.LayoutID,
 			Assertion:                 appRequest.Assertion,
-			AllowedUserTypes:          appRequest.AllowedUserTypes,
-			PasskeyAllowedOrigins:     appRequest.PasskeyAllowedOrigins,
 			LoginConsent:              appRequest.LoginConsent,
+			AllowedUserTypes:          appRequest.AllowedUserTypes,
+			AllowedAgentTypes:         appRequest.AllowedAgentTypes,
+			PasskeyAllowedOrigins:     appRequest.PasskeyAllowedOrigins,
 			Attestation:               appRequest.Attestation,
 		},
 		Type:       appRequest.Type,
@@ -109,7 +95,7 @@ func (ah *applicationHandler) HandleApplicationPostRequest(w http.ResponseWriter
 		OUID:        createdAppDTO.OUID,
 		Name:        createdAppDTO.Name,
 		Description: createdAppDTO.Description,
-		InboundAuthProfile: providers.InboundAuthProfile{
+		InboundAuthProfileReq: inboundmodel.InboundAuthProfileReq{
 			AuthFlowID:                createdAppDTO.AuthFlowID,
 			RegistrationFlowID:        createdAppDTO.RegistrationFlowID,
 			IsRegistrationFlowEnabled: createdAppDTO.IsRegistrationFlowEnabled,
@@ -119,9 +105,10 @@ func (ah *applicationHandler) HandleApplicationPostRequest(w http.ResponseWriter
 			ThemeID:                   createdAppDTO.ThemeID,
 			LayoutID:                  createdAppDTO.LayoutID,
 			Assertion:                 createdAppDTO.Assertion,
-			AllowedUserTypes:          createdAppDTO.AllowedUserTypes,
-			PasskeyAllowedOrigins:     createdAppDTO.PasskeyAllowedOrigins,
 			LoginConsent:              createdAppDTO.LoginConsent,
+			AllowedUserTypes:          createdAppDTO.AllowedUserTypes,
+			AllowedAgentTypes:         createdAppDTO.AllowedAgentTypes,
+			PasskeyAllowedOrigins:     createdAppDTO.PasskeyAllowedOrigins,
 			Attestation:               createdAppDTO.Attestation,
 		},
 		Type:       createdAppDTO.Type,
@@ -191,7 +178,7 @@ func (ah *applicationHandler) HandleApplicationGetRequest(w http.ResponseWriter,
 		OUID:        appDTO.OUID,
 		Name:        appDTO.Name,
 		Description: appDTO.Description,
-		InboundAuthProfile: providers.InboundAuthProfile{
+		InboundAuthProfileReq: inboundmodel.InboundAuthProfileReq{
 			AuthFlowID:                appDTO.AuthFlowID,
 			RegistrationFlowID:        appDTO.RegistrationFlowID,
 			IsRegistrationFlowEnabled: appDTO.IsRegistrationFlowEnabled,
@@ -201,9 +188,10 @@ func (ah *applicationHandler) HandleApplicationGetRequest(w http.ResponseWriter,
 			ThemeID:                   appDTO.ThemeID,
 			LayoutID:                  appDTO.LayoutID,
 			Assertion:                 appDTO.Assertion,
-			AllowedUserTypes:          appDTO.AllowedUserTypes,
-			PasskeyAllowedOrigins:     appDTO.PasskeyAllowedOrigins,
 			LoginConsent:              appDTO.LoginConsent,
+			AllowedUserTypes:          appDTO.AllowedUserTypes,
+			AllowedAgentTypes:         appDTO.AllowedAgentTypes,
+			PasskeyAllowedOrigins:     appDTO.PasskeyAllowedOrigins,
 			Attestation:               appDTO.Attestation,
 		},
 		Type:      model.ApplicationType(appDTO.Type),
@@ -345,9 +333,10 @@ func (ah *applicationHandler) HandleApplicationPutRequest(w http.ResponseWriter,
 			ThemeID:                   appRequest.ThemeID,
 			LayoutID:                  appRequest.LayoutID,
 			Assertion:                 appRequest.Assertion,
-			AllowedUserTypes:          appRequest.AllowedUserTypes,
-			PasskeyAllowedOrigins:     appRequest.PasskeyAllowedOrigins,
 			LoginConsent:              appRequest.LoginConsent,
+			AllowedUserTypes:          appRequest.AllowedUserTypes,
+			AllowedAgentTypes:         appRequest.AllowedAgentTypes,
+			PasskeyAllowedOrigins:     appRequest.PasskeyAllowedOrigins,
 			Attestation:               appRequest.Attestation,
 		},
 		Type:       appRequest.Type,
@@ -374,7 +363,7 @@ func (ah *applicationHandler) HandleApplicationPutRequest(w http.ResponseWriter,
 		OUID:        updatedAppDTO.OUID,
 		Name:        updatedAppDTO.Name,
 		Description: updatedAppDTO.Description,
-		InboundAuthProfile: providers.InboundAuthProfile{
+		InboundAuthProfileReq: inboundmodel.InboundAuthProfileReq{
 			AuthFlowID:                updatedAppDTO.AuthFlowID,
 			RegistrationFlowID:        updatedAppDTO.RegistrationFlowID,
 			IsRegistrationFlowEnabled: updatedAppDTO.IsRegistrationFlowEnabled,
@@ -384,9 +373,10 @@ func (ah *applicationHandler) HandleApplicationPutRequest(w http.ResponseWriter,
 			ThemeID:                   updatedAppDTO.ThemeID,
 			LayoutID:                  updatedAppDTO.LayoutID,
 			Assertion:                 updatedAppDTO.Assertion,
-			AllowedUserTypes:          updatedAppDTO.AllowedUserTypes,
-			PasskeyAllowedOrigins:     updatedAppDTO.PasskeyAllowedOrigins,
 			LoginConsent:              updatedAppDTO.LoginConsent,
+			AllowedUserTypes:          updatedAppDTO.AllowedUserTypes,
+			AllowedAgentTypes:         updatedAppDTO.AllowedAgentTypes,
+			PasskeyAllowedOrigins:     updatedAppDTO.PasskeyAllowedOrigins,
 			Attestation:               updatedAppDTO.Attestation,
 		},
 		Type:      updatedAppDTO.Type,

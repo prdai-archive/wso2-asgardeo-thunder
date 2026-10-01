@@ -1,26 +1,13 @@
-/*
- * Copyright (c) 2026, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2026 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 package credential
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"strings"
 
 	declarativeresource "github.com/thunder-id/thunderid/internal/system/declarative_resource"
 	"github.com/thunder-id/thunderid/internal/system/log"
@@ -113,6 +100,8 @@ func (e *configurationExporter) GetResourceRules() *declarativeresource.Resource
 type configurationRequestWithID struct {
 	ID              string             `yaml:"id"`
 	Handle          string             `yaml:"handle"`
+	OUID            string             `yaml:"ouId"`
+	OUHandle        string             `yaml:"ouHandle"`
 	Name            string             `yaml:"name"`
 	Description     string             `yaml:"description"`
 	Format          string             `yaml:"format"`
@@ -122,18 +111,25 @@ type configurationRequestWithID struct {
 	ValiditySeconds *int               `yaml:"validitySeconds"`
 }
 
-// loadDeclarativeResources loads declarative credential-configuration resources from files.
-func loadDeclarativeResources(store declarativeresource.Storer) error {
+// loadDeclarativeResources loads declarative credential-configuration resources from YAML files
+// into the file store. The dbStore parameter is optional and is used only for duplicate checking
+// in composite mode. The service parameter resolves ouHandle to ouId.
+func loadDeclarativeResources(
+	fileStore *credentialFileBasedStore, dbStore credentialStoreInterface,
+	service credentialConfigurationDeclarativeService,
+) error {
 	resourceConfig := declarativeresource.ResourceConfig{
 		ResourceType:  paramTypeCredentialConfiguration,
 		DirectoryName: "credential_configurations",
 		Parser:        parseToConfigurationDTOWrapper,
-		Validator:     validateConfigurationWrapper,
+		Validator: func(dto interface{}) error {
+			return validateConfigurationWrapper(dto, fileStore, dbStore, service)
+		},
 		IDExtractor: func(dto interface{}) string {
 			return dto.(*CredentialConfigurationDTO).ID
 		},
 	}
-	loader := declarativeresource.NewResourceLoader(resourceConfig, store)
+	loader := declarativeresource.NewResourceLoader(resourceConfig, &credentialStorer{store: fileStore})
 	if err := loader.LoadResources(); err != nil {
 		return fmt.Errorf("failed to load credential configuration resources: %w", err)
 	}
@@ -149,6 +145,8 @@ func parseToConfigurationDTOWrapper(data []byte) (interface{}, error) {
 	return &CredentialConfigurationDTO{
 		ID:              req.ID,
 		Handle:          req.Handle,
+		OUID:            req.OUID,
+		OUHandle:        req.OUHandle,
 		Name:            req.Name,
 		Description:     req.Description,
 		Format:          req.Format,
@@ -159,8 +157,13 @@ func parseToConfigurationDTOWrapper(data []byte) (interface{}, error) {
 	}, nil
 }
 
-// validateConfigurationWrapper validates a declarative credential configuration DTO, requiring an ID and valid fields.
-func validateConfigurationWrapper(dto interface{}) error {
+// validateConfigurationWrapper validates a declarative credential configuration: it must carry
+// an ID, pass the same field validation the management API applies, resolve to an existing
+// organization unit, and not reuse an ID or handle already claimed by another file.
+func validateConfigurationWrapper(
+	dto interface{}, fileStore *credentialFileBasedStore, dbStore credentialStoreInterface,
+	service credentialConfigurationDeclarativeService,
+) error {
 	cfg, ok := dto.(*CredentialConfigurationDTO)
 	if !ok {
 		return fmt.Errorf("invalid type: expected *CredentialConfigurationDTO")
@@ -170,6 +173,59 @@ func validateConfigurationWrapper(dto interface{}) error {
 	}
 	if svcErr := validateConfiguration(cfg); svcErr != nil {
 		return fmt.Errorf("validation failed: %s", svcErr.Error.DefaultValue)
+	}
+	if service != nil {
+		if svcErr := service.ResolveCredentialConfigurationOUHandle(context.Background(), cfg); svcErr != nil {
+			if cfg.OUID != "" {
+				return fmt.Errorf("organization unit '%s' does not exist for credential configuration '%s'",
+					cfg.OUID, cfg.Handle)
+			}
+			return fmt.Errorf("organization unit with handle %q not found for credential configuration '%s'",
+				cfg.OUHandle, cfg.Handle)
+		}
+	}
+	if strings.TrimSpace(cfg.OUID) == "" {
+		return fmt.Errorf("ouId or ouHandle is required for credential configuration '%s'", cfg.Handle)
+	}
+	return checkDuplicateConfiguration(context.Background(), cfg, fileStore, dbStore)
+}
+
+// checkDuplicateConfiguration rejects a configuration whose ID or handle another declarative file
+// already claimed, which would otherwise silently overwrite or shadow the earlier one.
+func checkDuplicateConfiguration(
+	ctx context.Context, cfg *CredentialConfigurationDTO,
+	fileStore *credentialFileBasedStore, dbStore credentialStoreInterface,
+) error {
+	if fileStore != nil {
+		if _, err := fileStore.GetCredentialConfigurationByID(ctx, cfg.ID); err == nil {
+			return fmt.Errorf(
+				"duplicate credential configuration ID '%s': configuration already exists in declarative resources",
+				cfg.ID)
+		}
+		if _, err := fileStore.GetCredentialConfigurationByHandle(ctx, cfg.Handle); err == nil {
+			return fmt.Errorf(
+				"duplicate credential configuration handle '%s': handle already used in declarative resources",
+				cfg.Handle)
+		}
+	}
+	if dbStore != nil {
+		_, err := dbStore.GetCredentialConfigurationByID(ctx, cfg.ID)
+		if err == nil {
+			return fmt.Errorf(
+				"duplicate credential configuration ID '%s': configuration already exists in the database store",
+				cfg.ID)
+		} else if !errors.Is(err, ErrNotFound) {
+			return fmt.Errorf("failed to check for duplicate credential configuration ID '%s': %w", cfg.ID, err)
+		}
+		_, err = dbStore.GetCredentialConfigurationByHandle(ctx, cfg.Handle)
+		if err == nil {
+			return fmt.Errorf(
+				"duplicate credential configuration handle '%s': handle already used in the database store",
+				cfg.Handle)
+		} else if !errors.Is(err, ErrNotFound) {
+			return fmt.Errorf(
+				"failed to check for duplicate credential configuration handle '%s': %w", cfg.Handle, err)
+		}
 	}
 	return nil
 }

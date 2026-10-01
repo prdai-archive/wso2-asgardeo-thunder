@@ -1,20 +1,5 @@
-/*
- * Copyright (c) 2025, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2025 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 // Package flowmgt provides flow definition management functionality.
 package flowmgt
@@ -31,7 +16,7 @@ import (
 	"github.com/thunder-id/thunderid/internal/flow/common"
 	flowconfig "github.com/thunder-id/thunderid/internal/flow/config"
 	"github.com/thunder-id/thunderid/internal/flow/core"
-	"github.com/thunder-id/thunderid/internal/flow/executor"
+	"github.com/thunder-id/thunderid/internal/flow/executormeta"
 	"github.com/thunder-id/thunderid/internal/flow/graphbuilder"
 	"github.com/thunder-id/thunderid/internal/flow/interceptor"
 	"github.com/thunder-id/thunderid/internal/system/config"
@@ -90,7 +75,7 @@ type flowMgtService struct {
 	store               flowStoreInterface
 	inferenceService    flowInferenceServiceInterface
 	graphBuilder        graphbuilder.GraphBuilderInterface
-	executorRegistry    executor.ExecutorRegistryInterface
+	executorRegistry    core.ExecutorMetadataProvider
 	interceptorRegistry interceptor.InterceptorRegistryInterface
 	flowValidator       FlowValidatorInterface
 	compositeStore      *compositeFlowStore
@@ -106,7 +91,7 @@ func newFlowMgtService(
 	store flowStoreInterface,
 	inferenceService flowInferenceServiceInterface,
 	graphBuilder graphbuilder.GraphBuilderInterface,
-	executorRegistry executor.ExecutorRegistryInterface,
+	executorRegistry core.ExecutorMetadataProvider,
 	interceptorRegistry interceptor.InterceptorRegistryInterface,
 	flowValidator FlowValidatorInterface,
 	compositeStore *compositeFlowStore,
@@ -873,7 +858,7 @@ func (s *flowMgtService) hasPasskeyRegistrationModes(flowDef *FlowDefinition) bo
 	hasRegFinish := false
 
 	for _, node := range flowDef.Nodes {
-		if node.Executor != nil && node.Executor.Name == executor.ExecutorNamePasskeyAuth {
+		if node.Executor != nil && node.Executor.Name == executormeta.ExecutorNamePasskeyAuth {
 			switch node.Executor.Mode {
 			case "register_start":
 				hasRegStart = true

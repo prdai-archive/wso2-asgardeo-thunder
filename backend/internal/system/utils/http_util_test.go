@@ -1,20 +1,5 @@
-/*
- * Copyright (c) 2025, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2025 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 package utils
 
@@ -454,7 +439,17 @@ func (suite *HTTPUtilTestSuite) TestSanitizeString() {
 		{
 			name:     "StringWithHTML",
 			input:    "String with <script>alert('XSS')</script> HTML",
-			expected: "String with &lt;script&gt;alert(&#39;XSS&#39;)&lt;/script&gt; HTML",
+			expected: "String with <script>alert('XSS')</script> HTML",
+		},
+		{
+			name:     "StringWithApostrophe",
+			input:    "  Dean's Sub team  ",
+			expected: "Dean's Sub team",
+		},
+		{
+			name:     "StringWithAmpersandAndQuotes",
+			input:    `R&D <team> "core"`,
+			expected: `R&D <team> "core"`,
 		},
 		{
 			name:     "StringWithControlChars",
@@ -522,7 +517,7 @@ func (suite *HTTPUtilTestSuite) TestSanitizeStringMap() {
 			},
 			expected: map[string]string{
 				"key1": "value with spaces",
-				"key2": "&lt;script&gt;alert(&#39;XSS&#39;)&lt;/script&gt;",
+				"key2": "<script>alert('XSS')</script>",
 				"key3": "ControlChar",
 			},
 		},
@@ -532,6 +527,25 @@ func (suite *HTTPUtilTestSuite) TestSanitizeStringMap() {
 		suite.T().Run(tc.name, func(t *testing.T) {
 			result := SanitizeStringMap(tc.input)
 			assert.Equal(t, tc.expected, result)
+		})
+	}
+}
+
+// Sanitizing an already sanitized value must be a no-op. Without this, values that survive a
+// read-modify-write cycle (e.g. a role name echoed back on update) accumulate encoding on every save.
+func (suite *HTTPUtilTestSuite) TestSanitizeStringIsIdempotent() {
+	inputs := []string{
+		"Dean's Sub team",
+		`R&D <team> "core"`,
+		"<script>alert('XSS')</script>",
+		"  padded  ",
+	}
+
+	for _, input := range inputs {
+		suite.T().Run(input, func(t *testing.T) {
+			once := SanitizeString(input)
+			assert.Equal(t, once, SanitizeString(once))
+			assert.Equal(t, once, SanitizeString(SanitizeString(once)))
 		})
 	}
 }

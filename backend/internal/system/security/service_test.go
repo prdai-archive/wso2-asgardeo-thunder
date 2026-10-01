@@ -1,20 +1,5 @@
-/*
- * Copyright (c) 2025-2026, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2025-2026 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 package security
 
@@ -65,7 +50,7 @@ func (suite *SecurityServiceTestSuite) SetupTest() {
 	suite.mockRevocation = &RevocationEnforcerInterfaceMock{}
 	// Default to "not revoked" so existing authentication paths pass; Maybe() keeps it optional for
 	// tests where authentication never yields a security context.
-	suite.mockRevocation.On("EnsureNotRevoked", mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
+	suite.mockRevocation.On("EnsureNotRevoked", mock.Anything, mock.Anything).Return(nil).Maybe()
 
 	var err error
 	suite.service, err = newSecurityService(
@@ -186,7 +171,7 @@ func (suite *SecurityServiceTestSuite) TestProcess_SuccessfulAuthentication_Seco
 
 // TestInitialize verifies the security middleware is constructed successfully.
 func (suite *SecurityServiceTestSuite) TestInitialize() {
-	mw, err := Initialize(nil, nil)
+	mw, err := Initialize(nil, nil, "", "")
 	suite.Require().NoError(err)
 	suite.Require().NotNil(mw)
 }
@@ -233,7 +218,9 @@ func (suite *SecurityServiceTestSuite) TestProcess_RevokedToken() {
 
 	mockRevocation := &RevocationEnforcerInterfaceMock{}
 	revokedErr := errors.New("token has been revoked")
-	mockRevocation.On("EnsureNotRevoked", mock.Anything, "jti-123", mock.Anything).Return(revokedErr)
+	mockRevocation.On("EnsureNotRevoked", mock.Anything, mock.MatchedBy(func(identity RevocationIdentity) bool {
+		return identity.JTI == "jti-123"
+	})).Return(revokedErr)
 
 	service, err := newSecurityService(
 		[]AuthenticatorInterface{suite.mockAuth1}, mockRevocation, testPublicPaths, apiPermissionEntries)
@@ -257,7 +244,9 @@ func (suite *SecurityServiceTestSuite) TestProcess_RevokedTokenFamily() {
 	suite.mockAuth1.On("Authenticate", req).Return(suite.testCtx, nil)
 
 	mockRevocation := &RevocationEnforcerInterfaceMock{}
-	mockRevocation.On("EnsureNotRevoked", mock.Anything, "jti-clean", "tfid-revoked").
+	mockRevocation.On("EnsureNotRevoked", mock.Anything, mock.MatchedBy(func(identity RevocationIdentity) bool {
+		return identity.JTI == "jti-clean" && identity.TokenFamilyID == "tfid-revoked"
+	})).
 		Return(errors.New("token family has been revoked"))
 
 	service, err := newSecurityService(
@@ -281,7 +270,9 @@ func (suite *SecurityServiceTestSuite) TestProcess_NotRevokedToken() {
 	suite.mockAuth1.On("Authenticate", req).Return(suite.testCtx, nil)
 
 	mockRevocation := &RevocationEnforcerInterfaceMock{}
-	mockRevocation.On("EnsureNotRevoked", mock.Anything, "jti-456", mock.Anything).Return(nil)
+	mockRevocation.On("EnsureNotRevoked", mock.Anything, mock.MatchedBy(func(identity RevocationIdentity) bool {
+		return identity.JTI == "jti-456"
+	})).Return(nil)
 
 	service, err := newSecurityService(
 		[]AuthenticatorInterface{suite.mockAuth1}, mockRevocation, testPublicPaths, apiPermissionEntries)
@@ -621,4 +612,24 @@ func (suite *SecurityServiceTestSuite) TestProcess_AuthorizationFailure_Insuffic
 
 	assert.Nil(suite.T(), ctx)
 	assert.ErrorIs(suite.T(), err, errInsufficientPermissions)
+}
+
+// Test that a path longer than the matcher limit is refused without being evaluated against the
+// API permission map.
+//
+// The path sits under "GET /users/me/**", which any authenticated subject may access, and the
+// subject here holds the root permission. Either of those would let the request through had the map
+// been consulted, so the rejection is what shows the scan was skipped and that skipping it fails
+// closed.
+func (suite *SecurityServiceTestSuite) TestProcess_OversizedPath_SkipsPermissionMap() {
+	req := httptest.NewRequest(http.MethodGet,
+		"/users/me/"+strings.Repeat("a", maxAPIPermissionPathLength), nil)
+
+	suite.mockAuth1.On("CanHandle", req).Return(true)
+	suite.mockAuth1.On("Authenticate", req).Return(suite.testCtx, nil)
+
+	ctx, err := suite.service.Process(req)
+
+	assert.Nil(suite.T(), ctx)
+	assert.ErrorIs(suite.T(), err, errForbidden)
 }

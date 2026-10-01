@@ -1,20 +1,5 @@
-/*
- * Copyright (c) 2026, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2026 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 // Package layoutmgt provides layout management functionality.
 package layoutmgt
@@ -66,19 +51,19 @@ func newLayoutMgtService(layoutMgtStore layoutMgtStoreInterface) LayoutMgtServic
 }
 
 // GetLayoutList retrieves a list of layout configurations.
-func (ls *layoutMgtService) GetLayoutList(
-	ctx context.Context, limit, offset int) (*LayoutList, *tidcommon.ServiceError) {
+func (ls *layoutMgtService) GetLayoutList(ctx context.Context, limit, offset int) (*LayoutList,
+	*tidcommon.ServiceError) {
 	if err := validatePaginationParams(limit, offset); err != nil {
 		return nil, err
 	}
 
-	totalCount, err := ls.layoutMgtStore.GetLayoutListCount()
+	totalCount, err := ls.layoutMgtStore.GetLayoutListCount(ctx)
 	if err != nil {
 		ls.logger.Error(ctx, "Failed to get layout count", log.Error(err))
 		return nil, &tidcommon.InternalServerError
 	}
 
-	layouts, err := ls.layoutMgtStore.GetLayoutList(limit, offset)
+	layouts, err := ls.layoutMgtStore.GetLayoutList(ctx, limit, offset)
 	if err != nil {
 		ls.logger.Error(ctx, "Failed to list layouts", log.Error(err))
 		return nil, &tidcommon.InternalServerError
@@ -96,8 +81,8 @@ func (ls *layoutMgtService) GetLayoutList(
 }
 
 // CreateLayout creates a new layout configuration.
-func (ls *layoutMgtService) CreateLayout(
-	ctx context.Context, layout CreateLayoutRequestWithID) (*Layout, *tidcommon.ServiceError) {
+func (ls *layoutMgtService) CreateLayout(ctx context.Context, layout CreateLayoutRequestWithID) (*Layout,
+	*tidcommon.ServiceError) {
 	ls.logger.Debug(ctx, "Creating layout configuration")
 
 	if layout.DisplayName == "" {
@@ -113,7 +98,7 @@ func (ls *layoutMgtService) CreateLayout(
 		return nil, &ErrorCannotModifyDeclarativeResource
 	}
 
-	conflict, err := ls.layoutMgtStore.IsLayoutHandleConflict(layout.Handle, "")
+	conflict, err := ls.layoutMgtStore.IsLayoutHandleConflict(ctx, layout.Handle, "")
 	if err != nil {
 		ls.logger.Error(ctx, "Failed to check layout handle conflict", log.Error(err))
 		return nil, &tidcommon.InternalServerError
@@ -143,7 +128,7 @@ func (ls *layoutMgtService) CreateLayout(
 		Layout:      layout.Layout,
 	}
 
-	if err := ls.layoutMgtStore.CreateLayout(id, storeReq); err != nil {
+	if err := ls.layoutMgtStore.CreateLayout(ctx, id, storeReq); err != nil {
 		ls.logger.Error(ctx, "Failed to create layout", log.Error(err))
 		return nil, &tidcommon.InternalServerError
 	}
@@ -168,7 +153,7 @@ func (ls *layoutMgtService) GetLayout(ctx context.Context, id string) (*Layout, 
 		return nil, &ErrorInvalidLayoutID
 	}
 
-	layout, err := ls.layoutMgtStore.GetLayout(id)
+	layout, err := ls.layoutMgtStore.GetLayout(ctx, id)
 	if err != nil {
 		if errors.Is(err, errLayoutNotFound) {
 			ls.logger.Debug(ctx, "Layout not found", log.String("id", id))
@@ -196,12 +181,12 @@ func (ls *layoutMgtService) UpdateLayout(ctx context.Context,
 	}
 
 	// Check if the layout is declarative (read-only)
-	if ls.layoutMgtStore.IsLayoutDeclarative(id) {
+	if ls.layoutMgtStore.IsLayoutDeclarative(ctx, id) {
 		return nil, &ErrorCannotModifyDeclarativeResource
 	}
 
 	// Fetch existing layout to enforce handle immutability
-	existingLayout, err := ls.layoutMgtStore.GetLayout(id)
+	existingLayout, err := ls.layoutMgtStore.GetLayout(ctx, id)
 	if err != nil {
 		if errors.Is(err, errLayoutNotFound) {
 			return nil, &ErrorLayoutNotFound
@@ -219,7 +204,7 @@ func (ls *layoutMgtService) UpdateLayout(ctx context.Context,
 		return nil, err
 	}
 
-	if err := ls.layoutMgtStore.UpdateLayout(id, layout); err != nil {
+	if err := ls.layoutMgtStore.UpdateLayout(ctx, id, layout); err != nil {
 		ls.logger.Error(ctx, "Failed to update layout", log.String("id", id), log.Error(err))
 		return nil, &tidcommon.InternalServerError
 	}
@@ -245,12 +230,12 @@ func (ls *layoutMgtService) DeleteLayout(ctx context.Context, id string) *tidcom
 	}
 
 	// Check if the layout is declarative (read-only)
-	if ls.layoutMgtStore.IsLayoutDeclarative(id) {
+	if ls.layoutMgtStore.IsLayoutDeclarative(ctx, id) {
 		return &ErrorCannotModifyDeclarativeResource
 	}
 
 	// Check if layout exists. Return success for non-existing layouts (idempotent delete).
-	exists, err := ls.layoutMgtStore.IsLayoutExist(id)
+	exists, err := ls.layoutMgtStore.IsLayoutExist(ctx, id)
 	if err != nil {
 		ls.logger.Error(ctx, "Failed to check layout existence", log.String("id", id), log.Error(err))
 		return &tidcommon.InternalServerError
@@ -264,7 +249,7 @@ func (ls *layoutMgtService) DeleteLayout(ctx context.Context, id string) *tidcom
 	// A layout can be deleted even while applications reference it: those applications keep their
 	// reference and fall back to the system default layout at read time (see the design resolve
 	// service). References are surfaced informationally through GetLayoutUsages.
-	if err := ls.layoutMgtStore.DeleteLayout(id); err != nil {
+	if err := ls.layoutMgtStore.DeleteLayout(ctx, id); err != nil {
 		ls.logger.Error(ctx, "Failed to delete layout", log.String("id", id), log.Error(err))
 		return &tidcommon.InternalServerError
 	}
@@ -279,7 +264,7 @@ func (ls *layoutMgtService) IsLayoutExist(ctx context.Context, id string) (bool,
 		return false, &ErrorInvalidLayoutID
 	}
 
-	exists, err := ls.layoutMgtStore.IsLayoutExist(id)
+	exists, err := ls.layoutMgtStore.IsLayoutExist(ctx, id)
 	if err != nil {
 		ls.logger.Error(ctx, "Failed to check layout existence", log.String("id", id), log.Error(err))
 		return false, &tidcommon.InternalServerError
@@ -306,7 +291,7 @@ func (ls *layoutMgtService) GetLayoutUsages(
 		return nil, err
 	}
 
-	exists, err := ls.layoutMgtStore.IsLayoutExist(id)
+	exists, err := ls.layoutMgtStore.IsLayoutExist(ctx, id)
 	if err != nil {
 		ls.logger.Error(ctx, "Failed to check layout existence", log.String("id", id), log.Error(err))
 		return nil, &tidcommon.InternalServerError

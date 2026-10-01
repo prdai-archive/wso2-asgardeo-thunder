@@ -1,20 +1,5 @@
-/*
- * Copyright (c) 2025-2026, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2025-2026 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 package discovery
 
@@ -24,11 +9,10 @@ import (
 	"slices"
 	"sort"
 
-	inboundmodel "github.com/thunder-id/thunderid/internal/inboundclient/model"
 	oauthconfig "github.com/thunder-id/thunderid/internal/oauth/config"
 	"github.com/thunder-id/thunderid/internal/oauth/oauth2/constants"
 	"github.com/thunder-id/thunderid/internal/oauth/oauth2/pkce"
-	kmprovider "github.com/thunder-id/thunderid/internal/system/kmprovider/common"
+	"github.com/thunder-id/thunderid/internal/system/jose/jwe"
 	"github.com/thunder-id/thunderid/internal/system/log"
 	"github.com/thunder-id/thunderid/pkg/thunderidengine/providers"
 )
@@ -42,16 +26,18 @@ type DiscoveryServiceInterface interface {
 // discoveryService implements DiscoveryServiceInterface
 type discoveryService struct {
 	cfg            oauthconfig.Config
-	cryptoProvider kmprovider.RuntimeCryptoProvider
+	cryptoProvider providers.RuntimeCryptoProvider
+	jweService     jwe.JWEServiceInterface
 }
 
 // newDiscoveryService creates a new discovery service instance
 func newDiscoveryService(
-	cryptoProvider kmprovider.RuntimeCryptoProvider, cfg oauthconfig.Config,
+	cryptoProvider providers.RuntimeCryptoProvider, jweService jwe.JWEServiceInterface, cfg oauthconfig.Config,
 ) DiscoveryServiceInterface {
 	return &discoveryService{
 		cfg:            cfg,
 		cryptoProvider: cryptoProvider,
+		jweService:     jweService,
 	}
 }
 
@@ -67,12 +53,14 @@ func (ds *discoveryService) GetOAuth2AuthorizationServerMetadata(
 		IntrospectionEndpoint:                      ds.getIntrospectionEndpoint(),
 		PushedAuthorizationRequestEndpoint:         ds.getPAREndpoint(),
 		RequirePushedAuthorizationRequests:         ds.isGlobalPARRequired(),
-		ResponseTypesSupported:                     ds.getSupportedResponseTypes(),
-		GrantTypesSupported:                        ds.getSupportedGrantTypes(),
-		TokenEndpointAuthMethodsSupported:          ds.getSupportedTokenEndpointAuthMethods(),
+		ResponseTypesSupported:                     ds.getAllowedResponseTypes(),
+		GrantTypesSupported:                        ds.getAllowedGrantTypes(),
+		TokenEndpointAuthMethodsSupported:          ds.getAllowedTokenEndpointAuthMethods(),
+		TokenEndpointAuthSigningAlgValuesSupported: ds.getSupportedTokenEndpointAuthSigningAlgs(),
 		CodeChallengeMethodsSupported:              ds.getSupportedCodeChallengeMethods(),
 		AuthorizationResponseIssParameterSupported: true,
 		DPoPSigningAlgValuesSupported:              ds.getSupportedDPoPSigningAlgs(),
+		AuthorizationGrantProfilesSupported:        ds.getSupportedAuthorizationGrantProfiles(),
 	}
 
 	if slices.Contains(metadata.GrantTypesSupported, string(providers.GrantTypeCIBA)) {
@@ -80,7 +68,7 @@ func (ds *discoveryService) GetOAuth2AuthorizationServerMetadata(
 		metadata.BackchannelTokenDeliveryModesSupported = []string{"poll"}
 		metadata.BackchannelUserCodeParameterSupported = false
 	}
-	if ds.cfg.OAuth.TokenRevocation.Enabled {
+	if ds.cfg.OAuth.TokenRevocation.IsEnabled() {
 		metadata.RevocationEndpoint = ds.getRevocationEndpoint()
 	}
 	if ds.cfg.OAuth.DCR.IsEnabled() {
@@ -97,23 +85,29 @@ func (ds *discoveryService) GetOIDCMetadata(ctx context.Context) (*OIDCProviderM
 	if err != nil {
 		return nil, err
 	}
+	encryptionAlgs := ds.jweService.SupportedKeyEncryptionAlgorithms()
+	encryptionEncs := ds.jweService.SupportedContentEncryptionAlgorithms()
+
 	oidcProviderMetadata := &OIDCProviderMetadata{
 		OAuth2AuthorizationServerMetadata:    *oauth2Meta,
 		UserInfoEndpoint:                     ds.getUserInfoEndpoint(),
-		ScopesSupported:                      ds.getSupportedOIDCScopes(),
-		SubjectTypesSupported:                ds.getSupportedSubjectTypes(),
+		ScopesSupported:                      ds.getAllowedScopes(),
+		SubjectTypesSupported:                ds.getAllowedSubjectTypes(),
 		IDTokenSigningAlgValuesSupported:     signingAlgs,
 		UserInfoSigningAlgValuesSupported:    signingAlgs,
-		UserInfoEncryptionAlgValuesSupported: inboundmodel.SupportedUserInfoEncryptionAlgs,
-		UserInfoEncryptionEncValuesSupported: inboundmodel.SupportedUserInfoEncryptionEncs,
-		IDTokenEncryptionAlgValuesSupported:  inboundmodel.SupportedIDTokenEncryptionAlgs,
-		IDTokenEncryptionEncValuesSupported:  inboundmodel.SupportedIDTokenEncryptionEncs,
-		ClaimsSupported:                      ds.getSupportedClaims(),
+		UserInfoEncryptionAlgValuesSupported: encryptionAlgs,
+		UserInfoEncryptionEncValuesSupported: encryptionEncs,
+		IDTokenEncryptionAlgValuesSupported:  encryptionAlgs,
+		IDTokenEncryptionEncValuesSupported:  encryptionEncs,
+		ClaimsSupported:                      ds.getAllowedClaims(),
 		ClaimsParameterSupported:             true,
-		AcrValuesSupported:                   ds.getSupportedAcrValues(),
+		// JAR (RFC 9101) is not implemented.
+		RequestParameterSupported:    false,
+		RequestURIParameterSupported: false,
+		AcrValuesSupported:           ds.getSupportedAcrValues(),
 	}
 
-	if ds.cfg.OAuth.Logout.Enabled {
+	if ds.cfg.OAuth.Logout.IsEnabled() {
 		oidcProviderMetadata.EndSessionEndpoint = ds.getEndSessionEndpoint()
 	}
 
@@ -156,24 +150,20 @@ func (ds *discoveryService) getRegistrationEndpoint() string {
 	return ds.cfg.BaseURL + constants.OAuth2DCREndpoint
 }
 
-func (ds *discoveryService) getSupportedOIDCScopes() []string {
-	scopes := make([]string, 0, len(constants.StandardOIDCScopes))
-	for scope := range constants.StandardOIDCScopes {
-		scopes = append(scopes, scope)
-	}
-	return scopes
+func (ds *discoveryService) getAllowedScopes() []string {
+	return ds.cfg.OAuth.AllowedScopes
 }
 
-func (ds *discoveryService) getSupportedResponseTypes() []string {
-	return constants.GetSupportedResponseTypes(ds.cfg)
+func (ds *discoveryService) getAllowedResponseTypes() []string {
+	return ds.cfg.OAuth.AllowedResponseTypes
 }
 
-func (ds *discoveryService) getSupportedGrantTypes() []string {
-	return constants.GetSupportedGrantTypes(ds.cfg)
+func (ds *discoveryService) getAllowedGrantTypes() []string {
+	return ds.cfg.OAuth.AllowedGrantTypes
 }
 
-func (ds *discoveryService) getSupportedTokenEndpointAuthMethods() []string {
-	return constants.GetSupportedTokenEndpointAuthMethods(ds.cfg)
+func (ds *discoveryService) getAllowedTokenEndpointAuthMethods() []string {
+	return ds.cfg.OAuth.AllowedAuthMethods
 }
 
 func (ds *discoveryService) getSupportedCodeChallengeMethods() []string {
@@ -193,21 +183,19 @@ func (ds *discoveryService) isGlobalPARRequired() bool {
 }
 
 func (ds *discoveryService) getSupportedDPoPSigningAlgs() []string {
-	algs := ds.cfg.OAuth.DPoP.AllowedAlgs
-	if len(algs) == 0 {
-		return nil
-	}
-	out := make([]string, len(algs))
-	copy(out, algs)
-	return out
+	return ds.cryptoProvider.GetSupportedSigningAlgorithms()
 }
 
-func (ds *discoveryService) getSupportedSubjectTypes() []string {
-	return constants.GetSupportedSubjectTypes()
+func (ds *discoveryService) getSupportedTokenEndpointAuthSigningAlgs() []string {
+	return ds.cryptoProvider.GetSupportedSigningAlgorithms()
+}
+
+func (ds *discoveryService) getAllowedSubjectTypes() []string {
+	return ds.cfg.OAuth.AllowedSubjectTypes
 }
 
 func (ds *discoveryService) getSupportedSigningAlgorithms(ctx context.Context) ([]string, error) {
-	keys, err := ds.cryptoProvider.GetPublicKeys(ctx, kmprovider.PublicKeyFilter{})
+	keys, err := ds.cryptoProvider.GetPublicKeys(ctx, providers.PublicKeyFilter{})
 	if err != nil {
 		log.GetLogger().Error(ctx,
 			"Failed to retrieve public keys for signing algorithm discovery", log.Error(err))
@@ -215,7 +203,7 @@ func (ds *discoveryService) getSupportedSigningAlgorithms(ctx context.Context) (
 	}
 	result := make([]string, 0, len(keys))
 	for _, k := range keys {
-		alg := string(k.Algorithm)
+		alg := k.Algorithm
 		if alg == "" || slices.Contains(result, alg) {
 			continue
 		}
@@ -240,24 +228,16 @@ func (ds *discoveryService) getSupportedAcrValues() []string {
 	return acrs
 }
 
-func (ds *discoveryService) getSupportedClaims() []string {
-	// Extract claims from OIDC scopes
-	var claims []string
-	claims = append(claims, constants.GetStandardClaims()...)
+func (ds *discoveryService) getAllowedClaims() []string {
+	return ds.cfg.OAuth.AllowedClaims
+}
 
-	for _, scope := range constants.StandardOIDCScopes {
-		claims = append(claims, scope.Claims...)
+func (ds *discoveryService) getSupportedAuthorizationGrantProfiles() []string {
+	supportedProfiles := make([]string, 0)
+	// support Identity Assertion JWT Authorization Grant profile if the JWT Bearer grant type is supported
+	if slices.Contains(ds.getAllowedGrantTypes(), string(providers.GrantTypeJWTBearer)) {
+		supportedProfiles = append(supportedProfiles, string(constants.SupportedAuthorizationGrantProfileIDJAG))
 	}
 
-	// Remove duplicates
-	claimMap := make(map[string]bool)
-	var uniqueClaims []string
-	for _, claim := range claims {
-		if !claimMap[claim] {
-			claimMap[claim] = true
-			uniqueClaims = append(uniqueClaims, claim)
-		}
-	}
-
-	return uniqueClaims
+	return supportedProfiles
 }

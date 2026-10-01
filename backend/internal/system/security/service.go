@@ -1,20 +1,5 @@
-/*
- * Copyright (c) 2025-2026, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2025-2026 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 // Package security provides authentication and authorization for server APIs.
 package security
@@ -23,6 +8,7 @@ import (
 	"context"
 	"net/http"
 	"regexp"
+	"time"
 
 	"github.com/thunder-id/thunderid/internal/system/log"
 )
@@ -34,13 +20,18 @@ type SecurityServiceInterface interface {
 	Process(r *http.Request) (context.Context, error)
 }
 
-// RevocationEnforcerInterface rejects tokens whose jti or token family id is on the deny list. It is
-// the read-only seam the security layer uses to consult the Resource Server's revocation cache
-// without depending on its implementation.
+// RevocationIdentity contains the trusted token attributes used by native API enforcement.
+type RevocationIdentity struct {
+	JTI           string
+	TokenFamilyID string
+	Subject       string
+	AppKey        string
+	EstablishedAt time.Time
+}
+
+// RevocationEnforcerInterface rejects identities matching the Resource Server's revocation cache.
 type RevocationEnforcerInterface interface {
-	// EnsureNotRevoked returns a non-nil error when the token's jti or its token family id has been
-	// revoked. Empty identifiers are each a no-op.
-	EnsureNotRevoked(ctx context.Context, jti, tokenFamilyID string) error
+	EnsureNotRevoked(ctx context.Context, identity RevocationIdentity) error
 }
 
 // securityService orchestrates authentication and authorization for HTTP requests.
@@ -125,8 +116,13 @@ func (s *securityService) Process(r *http.Request) (context.Context, error) {
 		// authentication and is format-agnostic: it enforces on the token's jti and its token family
 		// id. A revoked token is surfaced as an invalid token (RFC 6750 §3.1) so the response does not
 		// disclose that the token was specifically revoked.
-		if err := s.revocationEnforcer.EnsureNotRevoked(ctx, securityCtx.revocationID,
-			securityCtx.tokenFamilyID); err != nil {
+		if err := s.revocationEnforcer.EnsureNotRevoked(ctx, RevocationIdentity{
+			JTI:           securityCtx.revocationID,
+			TokenFamilyID: securityCtx.tokenFamilyID,
+			Subject:       securityCtx.revocationSubject,
+			AppKey:        securityCtx.revocationAppKey,
+			EstablishedAt: securityCtx.establishedAt,
+		}); err != nil {
 			return s.handleAuthError(ctx, isPublic, errInvalidToken)
 		}
 	}
@@ -142,6 +138,17 @@ func (s *securityService) Process(r *http.Request) (context.Context, error) {
 // authorize checks whether the permissions stored in the request context satisfy
 // the requirements for the requested path using hierarchical scope matching.
 func (s *securityService) authorize(r *http.Request) error {
+	// The permission map evaluates the path against every entry it holds, at a cost linear in the
+	// path length. A path beyond the limit cannot match a route, so it is refused without being
+	// scanned. Nothing is compared, so this is a refusal rather than a permission decision.
+	if len(r.URL.Path) > maxAPIPermissionPathLength {
+		s.logger.Warn(r.Context(), "Request path exceeds the maximum length matched against the "+
+			"API permission map",
+			log.Int("limit", maxAPIPermissionPathLength),
+			log.Int("length", len(r.URL.Path)))
+		return errForbidden
+	}
+
 	required := s.getRequiredPermissionForAPI(r.Method, r.URL.Path)
 	// Empty required means any authenticated user may access the path.
 	if required == "" {

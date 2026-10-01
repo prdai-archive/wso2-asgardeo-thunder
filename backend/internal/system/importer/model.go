@@ -1,20 +1,5 @@
-/*
- * Copyright (c) 2026, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied. See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2026 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 package importer
 
@@ -26,14 +11,26 @@ const (
 
 	statusSuccess = "success"
 	statusFailed  = "failed"
+
+	operationDelete = "delete"
 )
 
-// ImportRequest carries the YAML payload and variable values used to resolve templates.
+// ImportRequest carries the YAML payload and variable values used to resolve templates, plus any
+// resources to remove.
 type ImportRequest struct {
 	Content   string                 `json:"content"`
 	Variables map[string]interface{} `json:"variables,omitempty"`
 	DryRun    bool                   `json:"dryRun,omitempty"`
 	Options   *ImportOptions         `json:"options,omitempty"`
+	// Deletions removes runtime resources that are no longer part of the desired configuration. It
+	// complements the declarative upsert in Content, which can create and update but never remove.
+	Deletions []ResourceDeletion `json:"deletions,omitempty"`
+}
+
+// ResourceDeletion identifies a runtime resource to remove during an import.
+type ResourceDeletion struct {
+	ResourceType string `json:"resourceType"`
+	ID           string `json:"id"`
 }
 
 // ImportOptions controls runtime import behavior.
@@ -84,10 +81,12 @@ type DeleteResourceResponse struct {
 
 // ImportSummary aggregates import metrics.
 type ImportSummary struct {
-	TotalDocuments int       `json:"totalDocuments"`
-	Imported       int       `json:"imported"`
-	Failed         int       `json:"failed"`
-	ImportedAt     time.Time `json:"importedAt"`
+	TotalDocuments int `json:"totalDocuments"`
+	Imported       int `json:"imported"`
+	// Deleted counts the resources removed via the request's deletions.
+	Deleted    int       `json:"deleted,omitempty"`
+	Failed     int       `json:"failed"`
+	ImportedAt time.Time `json:"importedAt"`
 }
 
 // ImportItemOutcome reports the result of one resource document.

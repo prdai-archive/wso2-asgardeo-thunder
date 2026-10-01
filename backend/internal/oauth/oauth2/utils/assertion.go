@@ -1,28 +1,15 @@
-/*
- * Copyright (c) 2026, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2026 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 package utils
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"time"
 
+	flowcm "github.com/thunder-id/thunderid/internal/flow/common"
 	oauth2const "github.com/thunder-id/thunderid/internal/oauth/oauth2/constants"
 	"github.com/thunder-id/thunderid/internal/system/jose/jwt"
 	sysutils "github.com/thunder-id/thunderid/internal/system/utils"
@@ -36,6 +23,31 @@ type FlowAssertionClaims struct {
 	AttributeCacheID string
 	CompletedACR     string
 	AuthTime         time.Time
+}
+
+// FlowErrorAssertionClaims holds the claims of a flow error assertion, minted by the flow service
+// when an OAuth-initiated flow terminates in failure.
+type FlowErrorAssertionClaims struct {
+	AuthorizationRequestID string
+	ErrorType              string
+	Description            string
+}
+
+// DecodeFlowErrorAssertionClaims decodes a flow error assertion JWT. Callers must verify the
+// signature and the authorization request binding before acting on the claims.
+func DecodeFlowErrorAssertionClaims(assertion string) (FlowErrorAssertionClaims, error) {
+	claims := FlowErrorAssertionClaims{}
+
+	_, jwtPayload, err := jwt.DecodeJWT(assertion)
+	if err != nil {
+		return claims, fmt.Errorf("failed to decode the JWT token: %w", err)
+	}
+
+	claims.AuthorizationRequestID, _ = jwtPayload[flowcm.ClaimAuthorizationRequestID].(string)
+	claims.ErrorType, _ = jwtPayload[flowcm.ClaimFlowErrorType].(string)
+	claims.Description, _ = jwtPayload[flowcm.ClaimFlowErrorDescription].(string)
+
+	return claims, nil
 }
 
 // DecodeFlowAssertionClaims decodes the common flow assertion claims from a JWT string.
@@ -56,6 +68,16 @@ func DecodeFlowAssertionClaims(assertion string) (FlowAssertionClaims, map[strin
 			return claims, nil, errors.New("JWT 'iat' claim has unexpected type")
 		}
 		claims.AuthTime = time.Unix(iat, 0)
+	}
+
+	// auth_time, when the flow supplies it, is when the subject authenticated, which on the SSO
+	// path predates this assertion. It therefore wins over the iat fallback above.
+	if authTimeValue, ok := jwtPayload[oauth2const.ClaimAuthTime]; ok {
+		authTime, ok := sysutils.ToInt64(authTimeValue)
+		if !ok {
+			return claims, nil, errors.New("JWT 'auth_time' claim has unexpected type")
+		}
+		claims.AuthTime = time.Unix(authTime, 0)
 	}
 
 	if subValue, ok := jwtPayload[oauth2const.ClaimSub]; ok {
@@ -83,4 +105,55 @@ func DecodeFlowAssertionClaims(assertion string) (FlowAssertionClaims, map[strin
 	}
 
 	return claims, jwtPayload, nil
+}
+
+// NamespaceAuthAssertion identifies a completed flow's authentication assertion in the shared JTI
+// replay store. Both redemption paths — the token endpoint and the authorization callback — record
+// under this one namespace, and that is what makes an assertion redeemable exactly once across both.
+const NamespaceAuthAssertion = "auth_assertion"
+
+var (
+	// ErrAssertionReplayed indicates the assertion has already been redeemed, by either path.
+	ErrAssertionReplayed = errors.New("assertion has already been used")
+
+	// ErrAssertionMissingJTI indicates the assertion carries no jti, so it cannot be tracked for
+	// replay and is not redeemable.
+	ErrAssertionMissingJTI = errors.New("assertion is missing the jti claim")
+)
+
+// jtiRecorder is the one-method view of the JTI replay store that ConsumeAuthAssertion uses.
+// Declaring it here rather than importing the store keeps this package free of the runtime
+// replay cache, so a management build that only needs the credential helpers below does not
+// link it. The real jti.JTIStoreInterface satisfies this.
+type jtiRecorder interface {
+	RecordJTI(ctx context.Context, namespace, jti string, expiry time.Time) (bool, error)
+}
+
+// ConsumeAuthAssertion records an authentication assertion's jti, making it redeemable exactly once
+// across every redemption path. It returns ErrAssertionReplayed when the assertion has already been
+// redeemed — by this caller's path or by any other, since they share NamespaceAuthAssertion.
+//
+// The record outlives the assertion by leeway seconds, matching the window in which the assertion is
+// still accepted. A store failure rejects the assertion rather than admitting it: an unavailable
+// replay store must not degrade into unlimited replay.
+//
+// Redemption paths call this rather than recording the jti themselves, so they cannot drift apart on
+// the namespace, the expiry rule or the fail-closed behavior — their agreement is the whole guarantee.
+func ConsumeAuthAssertion(
+	ctx context.Context, store jtiRecorder, assertionJTI string, exp time.Time, leeway int64,
+) error {
+	if assertionJTI == "" {
+		return ErrAssertionMissingJTI
+	}
+
+	expiry := exp.Add(time.Duration(leeway) * time.Second)
+
+	inserted, err := store.RecordJTI(ctx, NamespaceAuthAssertion, assertionJTI, expiry)
+	if err != nil {
+		return fmt.Errorf("failed to record assertion jti: %w", err)
+	}
+	if !inserted {
+		return ErrAssertionReplayed
+	}
+	return nil
 }

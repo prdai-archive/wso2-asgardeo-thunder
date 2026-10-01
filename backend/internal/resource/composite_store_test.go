@@ -1,20 +1,5 @@
-/*
- * Copyright (c) 2026, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2026 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 package resource
 
@@ -233,9 +218,10 @@ func (s *CompositeResourceStoreTestSuite) TestGetResourceServerList_VerifiesIsRe
 
 	// Verify all resource servers have correct IsReadOnly flags
 	for _, rs := range result {
-		if rs.ID == "rs-db1" || rs.ID == "rs-db2" {
+		switch rs.ID {
+		case "rs-db1", "rs-db2":
 			assert.False(s.T(), rs.IsReadOnly, "DB resource server %s should have IsReadOnly=false", rs.ID)
-		} else if rs.ID == "rs-file1" {
+		case "rs-file1":
 			assert.True(s.T(), rs.IsReadOnly, "File resource server %s should have IsReadOnly=true", rs.ID)
 		}
 	}
@@ -267,9 +253,10 @@ func (s *CompositeResourceStoreTestSuite) TestGetResourceServerList_Deduplicates
 
 	// Verify IsReadOnly flags are correct
 	for _, rs := range result {
-		if rs.ID == testRS1ID || rs.ID == "rs2" {
+		switch rs.ID {
+		case testRS1ID, "rs2":
 			assert.False(s.T(), rs.IsReadOnly, "DB resource server %s should have IsReadOnly=false", rs.ID)
-		} else if rs.ID == "rs3" {
+		case "rs3":
 			assert.True(s.T(), rs.IsReadOnly, "File resource server %s should have IsReadOnly=true", rs.ID)
 		}
 	}
@@ -1159,9 +1146,10 @@ func (s *CompositeResourceStoreTestSuite) TestMergeAndDeduplicateResourceServers
 
 	// Verify IsReadOnly flags are correct
 	for _, rs := range result {
-		if rs.ID == "rs-db1" || rs.ID == "rs-db2" {
+		switch rs.ID {
+		case "rs-db1", "rs-db2":
 			assert.False(s.T(), rs.IsReadOnly, "DB resource server %s should have IsReadOnly=false", rs.ID)
-		} else if rs.ID == "rs-file1" || rs.ID == "rs-file2" {
+		case "rs-file1", "rs-file2":
 			assert.True(s.T(), rs.IsReadOnly, "File resource server %s should have IsReadOnly=true", rs.ID)
 		}
 	}

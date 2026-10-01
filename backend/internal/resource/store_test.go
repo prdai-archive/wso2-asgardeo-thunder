@@ -1,20 +1,5 @@
-/*
- * Copyright (c) 2025, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2025 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 package resource
 
@@ -29,6 +14,9 @@ import (
 	"github.com/thunder-id/thunderid/pkg/thunderidengine/providers"
 
 	"github.com/thunder-id/thunderid/tests/mocks/database/providermock"
+
+	"github.com/thunder-id/thunderid/internal/system/config"
+	engineconfig "github.com/thunder-id/thunderid/pkg/thunderidengine/config"
 )
 
 var (
@@ -57,11 +45,11 @@ func TestResourceStoreTestSuite(t *testing.T) {
 
 // SetupTest sets up the test suite.
 func (suite *ResourceStoreTestSuite) SetupTest() {
+	loadRuntimeForScope()
 	suite.mockDBProvider = providermock.NewDBProviderInterfaceMock(suite.T())
 	suite.mockDBClient = providermock.NewDBClientInterfaceMock(suite.T())
 	suite.store = &resourceStore{
-		dbProvider:   suite.mockDBProvider,
-		deploymentID: "test-deployment",
+		dbProvider: suite.mockDBProvider,
 	}
 }
 
@@ -167,8 +155,7 @@ func (suite *ResourceStoreTestSuite) TestCreateResourceServer() {
 			suite.mockDBProvider = providermock.NewDBProviderInterfaceMock(suite.T())
 			suite.mockDBClient = providermock.NewDBClientInterfaceMock(suite.T())
 			suite.store = &resourceStore{
-				dbProvider:   suite.mockDBProvider,
-				deploymentID: "test-deployment",
+				dbProvider: suite.mockDBProvider,
 			}
 
 			tc.setupMocks()
@@ -268,8 +255,7 @@ func (suite *ResourceStoreTestSuite) TestGetResourceServer() {
 			suite.mockDBProvider = providermock.NewDBProviderInterfaceMock(suite.T())
 			suite.mockDBClient = providermock.NewDBClientInterfaceMock(suite.T())
 			suite.store = &resourceStore{
-				dbProvider:   suite.mockDBProvider,
-				deploymentID: "test-deployment",
+				dbProvider: suite.mockDBProvider,
 			}
 
 			tc.setupMocks()
@@ -386,8 +372,7 @@ func (suite *ResourceStoreTestSuite) TestGetResourceServerList() {
 			suite.mockDBProvider = providermock.NewDBProviderInterfaceMock(suite.T())
 			suite.mockDBClient = providermock.NewDBClientInterfaceMock(suite.T())
 			suite.store = &resourceStore{
-				dbProvider:   suite.mockDBProvider,
-				deploymentID: "test-deployment",
+				dbProvider: suite.mockDBProvider,
 			}
 
 			tc.setupMocks()
@@ -452,8 +437,7 @@ func (suite *ResourceStoreTestSuite) TestGetResourceServerListCount() {
 			suite.mockDBProvider = providermock.NewDBProviderInterfaceMock(suite.T())
 			suite.mockDBClient = providermock.NewDBClientInterfaceMock(suite.T())
 			suite.store = &resourceStore{
-				dbProvider:   suite.mockDBProvider,
-				deploymentID: "test-deployment",
+				dbProvider: suite.mockDBProvider,
 			}
 
 			tc.setupMocks()
@@ -533,8 +517,7 @@ func (suite *ResourceStoreTestSuite) TestUpdateResourceServer() {
 			suite.mockDBProvider = providermock.NewDBProviderInterfaceMock(suite.T())
 			suite.mockDBClient = providermock.NewDBClientInterfaceMock(suite.T())
 			suite.store = &resourceStore{
-				dbProvider:   suite.mockDBProvider,
-				deploymentID: "test-deployment",
+				dbProvider: suite.mockDBProvider,
 			}
 
 			tc.setupMocks()
@@ -596,8 +579,7 @@ func (suite *ResourceStoreTestSuite) TestDeleteResourceServer() {
 			suite.mockDBProvider = providermock.NewDBProviderInterfaceMock(suite.T())
 			suite.mockDBClient = providermock.NewDBClientInterfaceMock(suite.T())
 			suite.store = &resourceStore{
-				dbProvider:   suite.mockDBProvider,
-				deploymentID: "test-deployment",
+				dbProvider: suite.mockDBProvider,
 			}
 
 			tc.setupMocks()
@@ -678,8 +660,7 @@ func (suite *ResourceStoreTestSuite) TestCheckResourceServerNameExists() {
 			suite.mockDBProvider = providermock.NewDBProviderInterfaceMock(suite.T())
 			suite.mockDBClient = providermock.NewDBClientInterfaceMock(suite.T())
 			suite.store = &resourceStore{
-				dbProvider:   suite.mockDBProvider,
-				deploymentID: "test-deployment",
+				dbProvider: suite.mockDBProvider,
 			}
 
 			tc.setupMocks()
@@ -712,8 +693,7 @@ func (suite *ResourceStoreTestSuite) runBoolCheckTest(
 		suite.mockDBProvider = providermock.NewDBProviderInterfaceMock(suite.T())
 		suite.mockDBClient = providermock.NewDBClientInterfaceMock(suite.T())
 		suite.store = &resourceStore{
-			dbProvider:   suite.mockDBProvider,
-			deploymentID: "test-deployment",
+			dbProvider: suite.mockDBProvider,
 		}
 
 		setupMocks()
@@ -936,8 +916,7 @@ func (suite *ResourceStoreTestSuite) TestCreateResource() {
 			suite.mockDBProvider = providermock.NewDBProviderInterfaceMock(suite.T())
 			suite.mockDBClient = providermock.NewDBClientInterfaceMock(suite.T())
 			suite.store = &resourceStore{
-				dbProvider:   suite.mockDBProvider,
-				deploymentID: "test-deployment",
+				dbProvider: suite.mockDBProvider,
 			}
 
 			tc.setupMocks(tc.parentID)
@@ -1023,8 +1002,7 @@ func (suite *ResourceStoreTestSuite) TestGetResource() {
 			suite.mockDBProvider = providermock.NewDBProviderInterfaceMock(suite.T())
 			suite.mockDBClient = providermock.NewDBClientInterfaceMock(suite.T())
 			suite.store = &resourceStore{
-				dbProvider:   suite.mockDBProvider,
-				deploymentID: "test-deployment",
+				dbProvider: suite.mockDBProvider,
 			}
 
 			tc.setupMocks()
@@ -1153,8 +1131,7 @@ func (suite *ResourceStoreTestSuite) TestGetResourceList() {
 			suite.mockDBProvider = providermock.NewDBProviderInterfaceMock(suite.T())
 			suite.mockDBClient = providermock.NewDBClientInterfaceMock(suite.T())
 			suite.store = &resourceStore{
-				dbProvider:   suite.mockDBProvider,
-				deploymentID: "test-deployment",
+				dbProvider: suite.mockDBProvider,
 			}
 
 			tc.setupMocks()
@@ -1267,8 +1244,7 @@ func (suite *ResourceStoreTestSuite) TestGetResourceListByParent() {
 			suite.mockDBProvider = providermock.NewDBProviderInterfaceMock(suite.T())
 			suite.mockDBClient = providermock.NewDBClientInterfaceMock(suite.T())
 			suite.store = &resourceStore{
-				dbProvider:   suite.mockDBProvider,
-				deploymentID: "test-deployment",
+				dbProvider: suite.mockDBProvider,
 			}
 
 			tc.setupMocks(tc.parentID)
@@ -1336,8 +1312,7 @@ func (suite *ResourceStoreTestSuite) TestGetResourceListCount() {
 			suite.mockDBProvider = providermock.NewDBProviderInterfaceMock(suite.T())
 			suite.mockDBClient = providermock.NewDBClientInterfaceMock(suite.T())
 			suite.store = &resourceStore{
-				dbProvider:   suite.mockDBProvider,
-				deploymentID: "test-deployment",
+				dbProvider: suite.mockDBProvider,
 			}
 
 			tc.setupMocks()
@@ -1415,8 +1390,7 @@ func (suite *ResourceStoreTestSuite) TestGetResourceListCountByParent() {
 			suite.mockDBProvider = providermock.NewDBProviderInterfaceMock(suite.T())
 			suite.mockDBClient = providermock.NewDBClientInterfaceMock(suite.T())
 			suite.store = &resourceStore{
-				dbProvider:   suite.mockDBProvider,
-				deploymentID: "test-deployment",
+				dbProvider: suite.mockDBProvider,
 			}
 
 			tc.setupMocks(tc.parentID)
@@ -1504,8 +1478,7 @@ func (suite *ResourceStoreTestSuite) TestUpdateResource() {
 			suite.mockDBProvider = providermock.NewDBProviderInterfaceMock(suite.T())
 			suite.mockDBClient = providermock.NewDBClientInterfaceMock(suite.T())
 			suite.store = &resourceStore{
-				dbProvider:   suite.mockDBProvider,
-				deploymentID: "test-deployment",
+				dbProvider: suite.mockDBProvider,
 			}
 
 			tc.setupMocks()
@@ -1570,8 +1543,7 @@ func (suite *ResourceStoreTestSuite) TestDeleteResource() {
 			suite.mockDBProvider = providermock.NewDBProviderInterfaceMock(suite.T())
 			suite.mockDBClient = providermock.NewDBClientInterfaceMock(suite.T())
 			suite.store = &resourceStore{
-				dbProvider:   suite.mockDBProvider,
-				deploymentID: "test-deployment",
+				dbProvider: suite.mockDBProvider,
 			}
 
 			tc.setupMocks()
@@ -1671,8 +1643,7 @@ func (suite *ResourceStoreTestSuite) TestCheckResourceHandleExists() {
 			suite.mockDBProvider = providermock.NewDBProviderInterfaceMock(suite.T())
 			suite.mockDBClient = providermock.NewDBClientInterfaceMock(suite.T())
 			suite.store = &resourceStore{
-				dbProvider:   suite.mockDBProvider,
-				deploymentID: "test-deployment",
+				dbProvider: suite.mockDBProvider,
 			}
 
 			tc.setupMocks(tc.parentID)
@@ -1748,8 +1719,7 @@ func (suite *ResourceStoreTestSuite) TestCheckResourceHasDependencies() {
 			suite.mockDBProvider = providermock.NewDBProviderInterfaceMock(suite.T())
 			suite.mockDBClient = providermock.NewDBClientInterfaceMock(suite.T())
 			suite.store = &resourceStore{
-				dbProvider:   suite.mockDBProvider,
-				deploymentID: "test-deployment",
+				dbProvider: suite.mockDBProvider,
 			}
 
 			tc.setupMocks()
@@ -1827,8 +1797,7 @@ func (suite *ResourceStoreTestSuite) TestCheckCircularDependency() {
 			suite.mockDBProvider = providermock.NewDBProviderInterfaceMock(suite.T())
 			suite.mockDBClient = providermock.NewDBClientInterfaceMock(suite.T())
 			suite.store = &resourceStore{
-				dbProvider:   suite.mockDBProvider,
-				deploymentID: "test-deployment",
+				dbProvider: suite.mockDBProvider,
 			}
 
 			tc.setupMocks()
@@ -1953,8 +1922,7 @@ func (suite *ResourceStoreTestSuite) TestCreateAction() {
 			suite.mockDBProvider = providermock.NewDBProviderInterfaceMock(suite.T())
 			suite.mockDBClient = providermock.NewDBClientInterfaceMock(suite.T())
 			suite.store = &resourceStore{
-				dbProvider:   suite.mockDBProvider,
-				deploymentID: "test-deployment",
+				dbProvider: suite.mockDBProvider,
 			}
 
 			tc.setupMocks(tc.resourceID)
@@ -2075,8 +2043,7 @@ func (suite *ResourceStoreTestSuite) TestGetAction() {
 			suite.mockDBProvider = providermock.NewDBProviderInterfaceMock(suite.T())
 			suite.mockDBClient = providermock.NewDBClientInterfaceMock(suite.T())
 			suite.store = &resourceStore{
-				dbProvider:   suite.mockDBProvider,
-				deploymentID: "test-deployment",
+				dbProvider: suite.mockDBProvider,
 			}
 
 			tc.setupMocks(tc.resourceID)
@@ -2274,8 +2241,7 @@ func (suite *ResourceStoreTestSuite) TestGetActionList() {
 			suite.mockDBProvider = providermock.NewDBProviderInterfaceMock(suite.T())
 			suite.mockDBClient = providermock.NewDBClientInterfaceMock(suite.T())
 			suite.store = &resourceStore{
-				dbProvider:   suite.mockDBProvider,
-				deploymentID: "test-deployment",
+				dbProvider: suite.mockDBProvider,
 			}
 
 			tc.setupMocks(tc.resourceID, tc.limit, tc.offset)
@@ -2412,8 +2378,7 @@ func (suite *ResourceStoreTestSuite) TestGetActionListCount() {
 			suite.mockDBProvider = providermock.NewDBProviderInterfaceMock(suite.T())
 			suite.mockDBClient = providermock.NewDBClientInterfaceMock(suite.T())
 			suite.store = &resourceStore{
-				dbProvider:   suite.mockDBProvider,
-				deploymentID: "test-deployment",
+				dbProvider: suite.mockDBProvider,
 			}
 
 			tc.setupMocks(tc.resourceID)
@@ -2531,8 +2496,7 @@ func (suite *ResourceStoreTestSuite) TestUpdateAction() {
 			suite.mockDBProvider = providermock.NewDBProviderInterfaceMock(suite.T())
 			suite.mockDBClient = providermock.NewDBClientInterfaceMock(suite.T())
 			suite.store = &resourceStore{
-				dbProvider:   suite.mockDBProvider,
-				deploymentID: "test-deployment",
+				dbProvider: suite.mockDBProvider,
 			}
 
 			tc.setupMocks(tc.resourceID)
@@ -2644,8 +2608,7 @@ func (suite *ResourceStoreTestSuite) TestDeleteAction() {
 			suite.mockDBProvider = providermock.NewDBProviderInterfaceMock(suite.T())
 			suite.mockDBClient = providermock.NewDBClientInterfaceMock(suite.T())
 			suite.store = &resourceStore{
-				dbProvider:   suite.mockDBProvider,
-				deploymentID: "test-deployment",
+				dbProvider: suite.mockDBProvider,
 			}
 
 			tc.setupMocks(tc.resourceID)
@@ -2753,8 +2716,7 @@ func (suite *ResourceStoreTestSuite) TestIsActionExist() {
 			suite.mockDBProvider = providermock.NewDBProviderInterfaceMock(suite.T())
 			suite.mockDBClient = providermock.NewDBClientInterfaceMock(suite.T())
 			suite.store = &resourceStore{
-				dbProvider:   suite.mockDBProvider,
-				deploymentID: "test-deployment",
+				dbProvider: suite.mockDBProvider,
 			}
 
 			tc.setupMocks(tc.resourceID)
@@ -2863,8 +2825,7 @@ func (suite *ResourceStoreTestSuite) TestCheckActionHandleExists() {
 			suite.mockDBProvider = providermock.NewDBProviderInterfaceMock(suite.T())
 			suite.mockDBClient = providermock.NewDBClientInterfaceMock(suite.T())
 			suite.store = &resourceStore{
-				dbProvider:   suite.mockDBProvider,
-				deploymentID: "test-deployment",
+				dbProvider: suite.mockDBProvider,
 			}
 
 			tc.setupMocks(tc.resourceID)
@@ -3787,8 +3748,7 @@ func (suite *ResourceStoreTestSuite) TestValidatePermissions() {
 			suite.mockDBProvider = providermock.NewDBProviderInterfaceMock(suite.T())
 			suite.mockDBClient = providermock.NewDBClientInterfaceMock(suite.T())
 			suite.store = &resourceStore{
-				dbProvider:   suite.mockDBProvider,
-				deploymentID: "test-deployment",
+				dbProvider: suite.mockDBProvider,
 			}
 
 			tc.setupMocks()
@@ -3886,4 +3846,14 @@ func (suite *ResourceStoreTestSuite) TestBuildPropertiesJSONFunction() {
 			suite.NotNil(result)
 		})
 	}
+}
+
+// loadRuntimeForScope loads a server runtime naming the deployment these tests assert on. The store
+// resolves its deployment from the runtime rather than holding one, and other suites in this package
+// reset the runtime, so it is loaded per test rather than once for the package.
+func loadRuntimeForScope() {
+	config.ResetServerRuntime()
+	_ = config.InitializeServerRuntime("", &config.Config{
+		Server: engineconfig.ServerConfig{Identifier: "test-deployment"},
+	})
 }

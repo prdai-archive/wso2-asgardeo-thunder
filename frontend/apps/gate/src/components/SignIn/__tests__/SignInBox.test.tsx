@@ -1,20 +1,5 @@
-/**
- * Copyright (c) 2026, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied. See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2026 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 import {act} from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
@@ -194,6 +179,20 @@ describe('SignInBox', () => {
     expect(screen.getByText('Invalid credentials')).toBeInTheDocument();
   });
 
+  // An expired consent prompt auto-submits, and the expiry error is raised against that in-flight
+  // request. Rendering it would flash an error over a submission that goes on to succeed.
+  it('holds back the error alert while a submission is in flight', () => {
+    mockSignInRenderProps = createMockSignInRenderProps({
+      components: [{id: 'text-1', type: 'TEXT', label: 'Consent', variant: 'H1'}],
+      error: {message: 'Time allowed to complete the step has expired.'},
+      isLoading: true,
+    });
+    render(<SignInBox />);
+
+    expect(screen.queryByText('Time allowed to complete the step has expired.')).not.toBeInTheDocument();
+    expect(screen.getByText('Consent')).toBeInTheDocument();
+  });
+
   it('renders TEXT component as heading', () => {
     mockSignInRenderProps = createMockSignInRenderProps({
       components: [
@@ -338,6 +337,36 @@ describe('SignInBox', () => {
     expect(screen.getByText('Enter OTP')).toBeInTheDocument();
     // OTP input has 6 digit fields
     expect(screen.getAllByRole('textbox')).toHaveLength(6);
+  });
+
+  it('renders OTP_INPUT with the digit count reported by the step', () => {
+    mockSignInRenderProps = createMockSignInRenderProps({
+      additionalData: {otpLength: '8'},
+      components: [
+        {
+          id: 'block-1',
+          type: 'BLOCK',
+          components: [
+            {
+              id: 'otp-input',
+              type: 'OTP_INPUT',
+              ref: 'otp',
+              label: 'Enter OTP',
+              required: true,
+            },
+            {
+              id: 'submit-btn',
+              type: 'ACTION',
+              eventType: 'SUBMIT',
+              label: 'Verify',
+              variant: 'PRIMARY',
+            },
+          ],
+        },
+      ],
+    });
+    render(<SignInBox />);
+    expect(screen.getAllByRole('textbox')).toHaveLength(8);
   });
 
   it('renders TRIGGER action buttons for social login', () => {
@@ -1993,6 +2022,90 @@ describe('SignInBox', () => {
     });
     render(<SignInBox />);
     expect(screen.getByTestId('thunderid-signin')).toBeInTheDocument();
+  });
+
+  it('shows the error alert without a spinner when the flow fails with no components', () => {
+    mockSignInRenderProps = createMockSignInRenderProps({
+      components: [],
+      error: {message: 'Session expired'},
+      isLoading: false,
+    });
+    const {container} = render(<SignInBox />);
+
+    expect(screen.getByText('Session expired')).toBeInTheDocument();
+    expect(container.querySelector('.MuiCircularProgress-root')).not.toBeInTheDocument();
+  });
+
+  it('renders a return to application action when flow metadata carries the application URL', () => {
+    mockSignInRenderProps = createMockSignInRenderProps({
+      components: [],
+      error: {message: 'Session expired'},
+      isLoading: false,
+      meta: {application: {url: 'https://app.example.com'}},
+    });
+    render(<SignInBox />);
+
+    expect(screen.getByRole('link', {name: 'Return to application'})).toHaveAttribute(
+      'href',
+      'https://app.example.com',
+    );
+  });
+
+  it('guides the user back to the application when the application URL is unavailable', () => {
+    mockSignInRenderProps = createMockSignInRenderProps({
+      components: [],
+      error: {message: 'Session expired'},
+      isLoading: false,
+      meta: {},
+    });
+    const {container} = render(<SignInBox />);
+
+    expect(screen.getByText('Session expired')).toBeInTheDocument();
+    expect(screen.getByText('Please return to the application and try again.')).toBeInTheDocument();
+    expect(screen.queryByRole('link')).not.toBeInTheDocument();
+    expect(container.querySelector('.MuiCircularProgress-root')).not.toBeInTheDocument();
+  });
+
+  it('shows the spinner while loading with no components and no error', () => {
+    mockSignInRenderProps = createMockSignInRenderProps({
+      components: [],
+      error: null,
+      isLoading: true,
+    });
+    const {container} = render(<SignInBox />);
+
+    expect(container.querySelector('.MuiCircularProgress-root')).toBeInTheDocument();
+  });
+
+  it('keeps the form rendered while a submission is in flight', () => {
+    mockSignInRenderProps = createMockSignInRenderProps({
+      isLoading: true,
+      components: [
+        {
+          id: 'block-1',
+          type: 'BLOCK',
+          components: [
+            {
+              id: 'username-input',
+              type: 'TEXT_INPUT',
+              ref: 'username',
+              label: 'Username',
+              required: true,
+            },
+            {
+              id: 'submit-btn',
+              type: 'ACTION',
+              eventType: 'SUBMIT',
+              label: 'Continue',
+              variant: 'PRIMARY',
+            },
+          ],
+        },
+      ],
+    });
+    render(<SignInBox />);
+
+    expect(screen.getByLabelText(/Username/)).toBeInTheDocument();
   });
 
   it('renders block without components property', () => {

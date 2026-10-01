@@ -1,20 +1,5 @@
-/*
- * Copyright (c) 2025, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2025 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 package group
 
@@ -66,6 +51,8 @@ func newAllowAllAuthz(t *testing.T) sysauthz.SystemAuthorizationServiceInterface
 		Return(true, (*tidcommon.ServiceError)(nil)).Maybe()
 	mockAuthz.On("GetAccessibleResources", mock.Anything, mock.Anything, security.ResourceTypeOU).
 		Return(&sysauthz.AccessibleResources{AllAllowed: true}, (*tidcommon.ServiceError)(nil)).Maybe()
+	mockAuthz.On("CanGrantMembership", mock.Anything, mock.Anything, mock.Anything).
+		Return((*tidcommon.ServiceError)(nil)).Maybe()
 	return mockAuthz
 }
 
@@ -76,6 +63,8 @@ func newAuthzError(t *testing.T) sysauthz.SystemAuthorizationServiceInterface {
 		Return(false, &tidcommon.InternalServerError).Maybe()
 	mockAuthz.On("GetAccessibleResources", mock.Anything, mock.Anything, security.ResourceTypeOU).
 		Return((*sysauthz.AccessibleResources)(nil), &tidcommon.InternalServerError).Maybe()
+	mockAuthz.On("CanGrantMembership", mock.Anything, mock.Anything, mock.Anything).
+		Return(&tidcommon.InternalServerError).Maybe()
 	return mockAuthz
 }
 
@@ -2644,6 +2633,9 @@ func TestUpdateGroupMembers_OUValidationFailure(t *testing.T) {
 	authzSvcMock.On("IsActionAllowed", mock.Anything, security.ActionUpdateGroup, mock.Anything).
 		Return(true, (*tidcommon.ServiceError)(nil)).Once()
 
+	authzSvcMock.On("CanGrantMembership", mock.Anything, sysauthz.PrincipalTypeGroup, "group1").
+		Return((*tidcommon.ServiceError)(nil)).Once()
+
 	entitySvcMock.On("GetEntitiesByIDs", mock.Anything, []string{"user-1"}).
 		Return([]providers.Entity{
 			{
@@ -2870,6 +2862,45 @@ func TestGetGroupsByIDs_StoreError(t *testing.T) {
 	}
 
 	result, err := service.GetGroupsByIDs(context.Background(), []string{"grp-001"})
+	require.Nil(t, result)
+	require.NotNil(t, err)
+	require.Equal(t, tidcommon.InternalServerError.Code, err.Code)
+}
+
+// TestGetGroupsByNames_DedupesInputAndGroupsAmbiguousMatches confirms duplicate input names are
+// deduped before the store call, and that more than one group sharing a name are both returned under
+// that name rather than one silently overwriting the other.
+func TestGetGroupsByNames_DedupesInputAndGroupsAmbiguousMatches(t *testing.T) {
+	storeMock := newGroupStoreInterfaceMock(t)
+	storeMock.On("GetGroupsByNames", mock.Anything, []string{"engineering"}).
+		Return([]GroupBasicDAO{
+			{ID: "grp-1", Name: "engineering", OUID: "ou-1"},
+			{ID: "grp-2", Name: "engineering", OUID: "ou-2"},
+		}, nil).Once()
+
+	service := &groupService{groupStore: storeMock}
+
+	result, err := service.GetGroupsByNames(context.Background(), []string{"engineering", "engineering"})
+	require.Nil(t, err)
+	require.Len(t, result["engineering"], 2)
+}
+
+func TestGetGroupsByNames_EmptyInputReturnsEmptyMap(t *testing.T) {
+	service := &groupService{groupStore: newGroupStoreInterfaceMock(t)}
+
+	result, err := service.GetGroupsByNames(context.Background(), nil)
+	require.Nil(t, err)
+	require.Empty(t, result)
+}
+
+func TestGetGroupsByNames_StoreError(t *testing.T) {
+	storeMock := newGroupStoreInterfaceMock(t)
+	storeMock.On("GetGroupsByNames", mock.Anything, []string{"engineering"}).
+		Return(nil, errors.New("store fail")).Once()
+
+	service := &groupService{groupStore: storeMock}
+
+	result, err := service.GetGroupsByNames(context.Background(), []string{"engineering"})
 	require.Nil(t, result)
 	require.NotNil(t, err)
 	require.Equal(t, tidcommon.InternalServerError.Code, err.Code)

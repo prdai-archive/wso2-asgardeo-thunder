@@ -1,20 +1,5 @@
-/*
- * Copyright (c) 2026, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2026 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 package flowexec
 
@@ -30,8 +15,10 @@ import (
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/suite"
 
+	authnprovidercm "github.com/thunder-id/thunderid/internal/authnprovider/common"
 	"github.com/thunder-id/thunderid/internal/flow/common"
 	"github.com/thunder-id/thunderid/internal/flow/core"
+	"github.com/thunder-id/thunderid/internal/system/config"
 	"github.com/thunder-id/thunderid/internal/system/log"
 	"github.com/thunder-id/thunderid/internal/system/observability/event"
 	"github.com/thunder-id/thunderid/tests/mocks/flow/coremock"
@@ -624,6 +611,150 @@ func (s *EngineTestSuite) TestResolveStepForRedirection_AppendsInputs() {
 
 	s.NoError(err)
 	s.Len(flowStep.Data.Inputs, 2)
+}
+
+func (s *EngineTestSuite) TestReplayPromptInputs_RestoresInputsForPausedPrompt() {
+	t := s.T()
+	mockCurrentNode := coremock.NewNodeInterfaceMock(t)
+	mockCurrentNode.On("GetID").Return("prompt-attrs").Maybe()
+
+	fe := &flowEngine{logger: log.GetLogger()}
+	ctx := &EngineContext{
+		Context:             context.Background(),
+		CurrentNode:         mockCurrentNode,
+		CurrentPromptNodeID: "prompt-attrs",
+		CurrentPromptInputs: []providers.Input{{Identifier: "given_name", Required: true}},
+	}
+
+	fe.replayPromptInputs(ctx)
+
+	replayed, ok := ctx.ForwardedData[common.ForwardedDataKeyInputs].([]providers.Input)
+	s.True(ok)
+	s.Len(replayed, 1)
+	s.Equal("given_name", replayed[0].Identifier)
+}
+
+func (s *EngineTestSuite) TestReplayPromptInputs_SkipsDifferentNode() {
+	t := s.T()
+	mockCurrentNode := coremock.NewNodeInterfaceMock(t)
+	mockCurrentNode.On("GetID").Return("some-other-node").Maybe()
+
+	fe := &flowEngine{logger: log.GetLogger()}
+	ctx := &EngineContext{
+		Context:             context.Background(),
+		CurrentNode:         mockCurrentNode,
+		CurrentPromptNodeID: "prompt-attrs",
+		CurrentPromptInputs: []providers.Input{{Identifier: "given_name", Required: true}},
+	}
+
+	fe.replayPromptInputs(ctx)
+
+	s.Nil(ctx.ForwardedData)
+}
+
+func (s *EngineTestSuite) TestReplayPromptInputs_SkipsWhenActionSelected() {
+	t := s.T()
+	mockCurrentNode := coremock.NewNodeInterfaceMock(t)
+	mockCurrentNode.On("GetID").Return("prompt-attrs").Maybe()
+
+	fe := &flowEngine{logger: log.GetLogger()}
+	ctx := &EngineContext{
+		Context:             context.Background(),
+		CurrentNode:         mockCurrentNode,
+		CurrentAction:       "action_google",
+		CurrentPromptNodeID: "prompt-attrs",
+		CurrentPromptInputs: []providers.Input{{Identifier: "username", Required: true}},
+	}
+
+	fe.replayPromptInputs(ctx)
+
+	// Selecting an action advances the flow: the prompt must evaluate against that action's own
+	// inputs, so an action declaring none must not be blocked by the previous rendering.
+	s.Nil(ctx.ForwardedData)
+}
+
+func (s *EngineTestSuite) TestReplayPromptInputs_KeepsFreshForwardedInputs() {
+	t := s.T()
+	mockCurrentNode := coremock.NewNodeInterfaceMock(t)
+	mockCurrentNode.On("GetID").Return("prompt-attrs").Maybe()
+
+	fe := &flowEngine{logger: log.GetLogger()}
+	fresh := []providers.Input{{Identifier: "family_name", Required: true}}
+	ctx := &EngineContext{
+		Context:             context.Background(),
+		CurrentNode:         mockCurrentNode,
+		CurrentPromptNodeID: "prompt-attrs",
+		CurrentPromptInputs: []providers.Input{{Identifier: "given_name", Required: true}},
+		ForwardedData:       map[string]interface{}{common.ForwardedDataKeyInputs: fresh},
+	}
+
+	fe.replayPromptInputs(ctx)
+
+	// An upstream executor ran in this traversal, so its inputs win over the recorded ones.
+	replayed, ok := ctx.ForwardedData[common.ForwardedDataKeyInputs].([]providers.Input)
+	s.True(ok)
+	s.Len(replayed, 1)
+	s.Equal("family_name", replayed[0].Identifier)
+}
+
+func (s *EngineTestSuite) TestSwitchContextToCallee_DropsCallerPausedPrompt() {
+	t := s.T()
+	mockCallNode := coremock.NewNodeInterfaceMock(t)
+	mockCallNode.On("GetID").Return("call_mfa").Maybe()
+
+	// The callee's first prompt reuses the caller's prompt ID: node IDs are graph-local, so
+	// conventional names collide across flows.
+	mockStartNode := coremock.NewNodeInterfaceMock(t)
+	mockStartNode.On("GetID").Return("prompt_credentials").Maybe()
+
+	mockCalleeGraph := coremock.NewGraphInterfaceMock(t)
+	mockCalleeGraph.On("GetType").Return(providers.FlowTypeAuthentication).Maybe()
+	mockCalleeGraph.On("GetStartNode").Return(mockStartNode, nil).Maybe()
+
+	fe := &flowEngine{logger: log.GetLogger()}
+	ctx := &EngineContext{
+		Context:             context.Background(),
+		CurrentNode:         mockCallNode,
+		CurrentPromptNodeID: "prompt_credentials",
+		CurrentPromptInputs: []providers.Input{{Identifier: "given_name", Required: true}},
+	}
+
+	_, svcErr := fe.switchContextToCallee(ctx, &common.NodeResponse{}, mockCalleeGraph, log.GetLogger())
+	s.Nil(svcErr)
+
+	s.Empty(ctx.CurrentPromptNodeID)
+	s.Nil(ctx.CurrentPromptInputs)
+
+	// The callee's colliding prompt must not inherit the caller's inputs.
+	ctx.CurrentNode = mockStartNode
+	fe.replayPromptInputs(ctx)
+	s.Nil(ctx.ForwardedData)
+}
+
+func (s *EngineTestSuite) TestPopFrame_DropsCalleePausedPrompt() {
+	t := s.T()
+	mockCallerNode := coremock.NewNodeInterfaceMock(t)
+	mockCallerNode.On("GetID").Return("prompt_credentials").Maybe()
+
+	fe := &flowEngine{logger: log.GetLogger()}
+	ctx := &EngineContext{
+		Context:     context.Background(),
+		CurrentNode: mockCallerNode,
+	}
+	ctx.pushFrame("call_mfa")
+
+	// The callee paused on a prompt whose ID collides with a node in the caller graph.
+	ctx.CurrentPromptNodeID = "prompt_credentials"
+	ctx.CurrentPromptInputs = []providers.Input{{Identifier: "given_name", Required: true}}
+
+	s.NotNil(ctx.popFrame())
+
+	s.Empty(ctx.CurrentPromptNodeID)
+	s.Nil(ctx.CurrentPromptInputs)
+
+	// Back in the caller, the callee's record must not replay into the colliding node.
+	fe.replayPromptInputs(ctx)
+	s.Nil(ctx.ForwardedData)
 }
 
 func (s *EngineTestSuite) TestResolveStepDetailsForPrompt_WithMeta() {
@@ -2300,9 +2431,13 @@ func (s *EngineTestSuite) TestHandleIncompleteResponse_ViewType() {
 		Type:   common.NodeResponseTypeView,
 		Inputs: []providers.Input{{Identifier: "username", Required: true}},
 	}
+	mockCurrentNode.On("GetID").Return("prompt-node").Maybe()
+
 	err := fe.handleIncompleteResponse(ctx, nodeResp, flowStep, log.GetLogger())
 	s.Nil(err)
 	s.Equal(providers.FlowStatusIncomplete, flowStep.Status)
+	s.Equal("prompt-node", ctx.CurrentPromptNodeID)
+	s.Len(ctx.CurrentPromptInputs, 1)
 }
 
 func (s *EngineTestSuite) TestHandleIncompleteResponse_RedirectionError() {
@@ -2513,6 +2648,63 @@ func (s *EngineTestSuite) TestExecuteNodePackage_SkipsNodeWhenShouldExecuteFalse
 	s.Nil(nextNode)
 	s.False(exit)
 	s.NotNil(err, "missing OnSkip target should surface an internal server error")
+}
+
+// executeNodePackageCapturingContext runs one node and returns the context the engine handed it.
+func (s *EngineTestSuite) executeNodePackageCapturingContext(flowType providers.FlowType,
+	app providers.Application) context.Context {
+	t := s.T()
+	var captured context.Context
+	mockNode := coremock.NewNodeInterfaceMock(t)
+	mockNode.On("GetID").Return("n1").Maybe()
+	mockNode.On("GetType").Return(common.NodeTypeStart).Maybe()
+	mockNode.On("ShouldExecute", mock.Anything).Return(true)
+	mockNode.On("GetProperties").Return(map[string]interface{}(nil)).Maybe()
+	mockNode.On("Execute", mock.Anything).Run(func(args mock.Arguments) {
+		captured = args.Get(0).(*providers.NodeContext).Context
+	}).Return(&common.NodeResponse{Status: common.NodeStatusComplete}, nil)
+
+	fe := &flowEngine{
+		logger:           log.GetLogger(),
+		observabilitySvc: setupNodePackageMockObs(t),
+	}
+	ctx := &EngineContext{
+		Context:          context.Background(),
+		ExecutionID:      "exec-constraints",
+		FlowType:         flowType,
+		Application:      app,
+		CurrentNode:      mockNode,
+		UserInputs:       map[string]string{},
+		ExecutionHistory: map[string]*providers.NodeExecutionRecord{},
+	}
+
+	_, _, err := fe.executeNodePackage(ctx, mockNode, &FlowStep{}, 0)
+	s.Nil(err)
+	s.Require().NotNil(captured)
+	return captured
+}
+
+func (s *EngineTestSuite) TestExecuteNodePackage_CarriesSubjectTypeConstraintsOnAuthenticationFlow() {
+	app := providers.Application{}
+	app.AllowedUserTypes = []string{"customer"}
+	app.AllowedAgentTypes = []string{"default"}
+
+	nodeCtx := s.executeNodePackageCapturingContext(providers.FlowTypeAuthentication, app)
+
+	constraints, ok := authnprovidercm.SubjectTypeConstraintsFrom(nodeCtx)
+	s.True(ok)
+	s.Equal([]string{"customer"}, constraints.AllowedUserTypes)
+	s.Equal([]string{"default"}, constraints.AllowedAgentTypes)
+}
+
+func (s *EngineTestSuite) TestExecuteNodePackage_OmitsSubjectTypeConstraintsOnOtherFlowTypes() {
+	app := providers.Application{}
+	app.AllowedAgentTypes = []string{"default"}
+
+	nodeCtx := s.executeNodePackageCapturingContext(providers.FlowTypeRegistration, app)
+
+	_, ok := authnprovidercm.SubjectTypeConstraintsFrom(nodeCtx)
+	s.False(ok)
 }
 
 func (s *EngineTestSuite) TestExecuteNodePackage_CompletesAndReturnsNilNextNode() {
@@ -3946,6 +4138,52 @@ func (s *EngineTestSuite) TestHandleCallResponse_Success() {
 	s.Equal(mockStartNode, ctx.CurrentNode)
 }
 
+func (s *EngineTestSuite) TestSharedRuntimeDataSurvivesAdministrationFlowCallAndReturn() {
+	t := s.T()
+	callerGraph := coremock.NewGraphInterfaceMock(t)
+	callNode := coremock.NewCallNodeInterfaceMock(t)
+	deleteNode := coremock.NewNodeInterfaceMock(t)
+	calleeGraph := coremock.NewGraphInterfaceMock(t)
+	calleeStart := coremock.NewNodeInterfaceMock(t)
+	flowProvider := NewFlowProviderMock(t)
+	graphBuilder := NewGraphBuilderInterfaceMock(t)
+
+	callNode.On("GetID").Return("revoke-call")
+	callerGraph.On("GetNode", "revoke-call").Return(callNode, true)
+	callNode.On("GetOnSuccess").Return("delete-user")
+	callerGraph.On("GetNode", "delete-user").Return(deleteNode, true)
+	flow := &providers.CompleteFlowDefinition{ID: "revocation-flow", FlowType: providers.FlowTypeAdministration}
+	flowProvider.On("GetFlow", mock.Anything, "revocation-flow").Return(flow, nil)
+	graphBuilder.On("GetGraph", mock.Anything, flow).Return(calleeGraph, nil)
+	calleeGraph.On("GetType").Return(providers.FlowTypeAdministration)
+	calleeGraph.On("GetStartNode").Return(calleeStart, nil)
+
+	engine := &flowEngine{
+		logger: log.GetLogger(), flowProvider: flowProvider, graphBuilder: graphBuilder,
+	}
+	ctx := &EngineContext{
+		Context: context.Background(), Graph: callerGraph, CurrentNode: callNode,
+		FlowType: providers.FlowTypeAdministration,
+	}
+	engine.updateContextWithNodeResponse(ctx, &common.NodeResponse{
+		SharedRuntimeData: map[string]string{"revocation.plan": `{"criteria":[{"type":"subject","value":"user-123"}]}`},
+	})
+
+	_, svcErr := engine.handleCallResponse(ctx, &common.NodeResponse{
+		Status: common.NodeStatusCall, CallTargetFlowID: "revocation-flow",
+	}, log.GetLogger())
+	s.Nil(svcErr)
+	s.Equal(`{"criteria":[{"type":"subject","value":"user-123"}]}`,
+		ctx.sharedRuntimeData["revocation.plan"])
+
+	ctx.CurrentNode = calleeStart
+	next, svcErr := engine.handleCalleeReturn(ctx, log.GetLogger())
+	s.Nil(svcErr)
+	s.Equal(deleteNode, next)
+	s.Equal(`{"criteria":[{"type":"subject","value":"user-123"}]}`,
+		ctx.sharedRuntimeData["revocation.plan"])
+}
+
 // --- handleCalleeReturn ---
 
 func (s *EngineTestSuite) TestHandleCalleeReturn_Success() {
@@ -4307,4 +4545,293 @@ func (s *EngineTestSuite) TestHandleCompletedResponse_EndNodeWithFrameStack() {
 	s.Nil(svcErr)
 	s.Equal(mockNextNode, next)
 	s.Equal(0, ctx.frameDepth())
+}
+
+// setupCapturingObservability returns a mock observability service that records every published
+// event, so tests can assert on the data an event carries rather than only that it was published.
+func setupCapturingObservability(t *testing.T) (
+	*observabilitymock.ObservabilityServiceInterfaceMock, *[]*providers.Event) {
+	t.Helper()
+
+	// setupMockObservability is called for its side effect of initializing the server runtime with
+	// observability enabled; its mock registers a catch-all PublishEvent that would shadow the
+	// capturing expectation below, so a dedicated mock is used here.
+	setupMockObservability(t)
+
+	captured := &[]*providers.Event{}
+	mockObs := &observabilitymock.ObservabilityServiceInterfaceMock{}
+	mockObs.On("IsEnabled").Return(true).Maybe()
+	mockObs.
+		On("PublishEvent", mock.Anything, mock.Anything).
+		Run(func(args mock.Arguments) {
+			*captured = append(*captured, args.Get(1).(*providers.Event))
+		}).
+		Return().Maybe()
+
+	return mockObs, captured
+}
+
+// agentFlowContext returns an engine context for an authentication flow driven by an agent that has
+// authenticated a user. The subject is recorded on AuthUser, which is where the authentication
+// executors put it — EngineContext.AuthenticatedUser is never written during execution, so a test
+// that seeds it would assert against a path production never takes.
+func agentFlowContext() *EngineContext {
+	ctx := &EngineContext{
+		ExecutionID: "flow-exec-1",
+		TraceID:     "request-trace-1",
+		FlowType:    providers.FlowTypeAuthentication,
+		AppID:       "agent-entity-1",
+		Application: providers.Application{
+			ID:             "agent-entity-1",
+			EntityCategory: providers.EntityCategoryAgent,
+			InboundAuthConfig: []providers.InboundAuthConfigWithSecret{
+				{
+					Type:        providers.OAuthInboundAuthType,
+					OAuthConfig: &providers.OAuthConfigWithSecret{ClientID: "agent-client-id"},
+				},
+			},
+		},
+		ExecutionHistory: make(map[string]*providers.NodeExecutionRecord),
+	}
+	ctx.AuthUser.SetStateFor("credentials", providers.AuthState{
+		EntityReference: &providers.EntityReference{
+			EntityID:       "user-123",
+			EntityCategory: string(providers.EntityCategoryUser),
+			EntityType:     "Person",
+		},
+	})
+	return ctx
+}
+
+func TestFlowStartedEvent_ReportsPrincipalAndCorrelation(t *testing.T) {
+	mockObs, captured := setupCapturingObservability(t)
+	defer config.ResetServerRuntime()
+
+	publishFlowStartedEvent(agentFlowContext(), mockObs)
+
+	if len(*captured) != 1 {
+		t.Fatalf("expected 1 published event, got %d", len(*captured))
+	}
+	evt := (*captured)[0]
+
+	// The whole flow must share one trace, keyed on the execution id, so FLOW_STARTED stitches to
+	// its own child events.
+	if evt.TraceID != "flow-exec-1" {
+		t.Errorf("TraceID = %q, want the execution id %q", evt.TraceID, "flow-exec-1")
+	}
+
+	assertEventData(t, evt, map[string]interface{}{
+		event.DataKey.ActorType:     event.PrincipalTypeAgent,
+		event.DataKey.ClientID:      "agent-client-id",
+		event.DataKey.EntityID:      "agent-entity-1",
+		event.DataKey.CorrelationID: "flow-exec-1",
+		event.DataKey.Subject:       "user-123",
+		event.DataKey.SubjectType:   event.PrincipalTypeUser,
+	})
+}
+
+// subjectFlowContext returns a minimal context whose only authenticated subject is the given entity
+// reference, isolating the subject fields from the application-side ones.
+func subjectFlowContext(ref providers.EntityReference) *EngineContext {
+	ctx := &EngineContext{
+		ExecutionID:      "flow-exec-3",
+		FlowType:         providers.FlowTypeAuthentication,
+		AppID:            "app-3",
+		ExecutionHistory: make(map[string]*providers.NodeExecutionRecord),
+	}
+	ctx.AuthUser.SetStateFor("credentials", providers.AuthState{EntityReference: &ref})
+	return ctx
+}
+
+// The authentication executors record the resolved entity on AuthUser; AuthenticatedUser carries no
+// id during execution, so the subject must be read from AuthUser for it to appear at all.
+func TestFlowStartedEvent_SubjectComesFromAuthUser(t *testing.T) {
+	mockObs, captured := setupCapturingObservability(t)
+	defer config.ResetServerRuntime()
+
+	publishFlowStartedEvent(subjectFlowContext(providers.EntityReference{
+		EntityID:       "user-999",
+		EntityCategory: string(providers.EntityCategoryUser),
+		EntityType:     "Person",
+	}), mockObs)
+
+	assertEventData(t, (*captured)[0], map[string]interface{}{
+		event.DataKey.Subject:     "user-999",
+		event.DataKey.SubjectType: event.PrincipalTypeUser,
+	})
+}
+
+// An agent can authenticate through a flow, so the subject category must come from the resolved
+// entity reference rather than being assumed to be a user.
+func TestFlowStartedEvent_AgentSubjectReportsAgentCategory(t *testing.T) {
+	mockObs, captured := setupCapturingObservability(t)
+	defer config.ResetServerRuntime()
+
+	publishFlowStartedEvent(subjectFlowContext(providers.EntityReference{
+		EntityID:       "agent-999",
+		EntityCategory: string(providers.EntityCategoryAgent),
+	}), mockObs)
+
+	assertEventData(t, (*captured)[0], map[string]interface{}{
+		event.DataKey.Subject:     "agent-999",
+		event.DataKey.SubjectType: event.PrincipalTypeAgent,
+	})
+}
+
+func TestFlowStartedEvent_SubjectTypeOmittedWhenCategoryUnknown(t *testing.T) {
+	mockObs, captured := setupCapturingObservability(t)
+	defer config.ResetServerRuntime()
+
+	publishFlowStartedEvent(subjectFlowContext(providers.EntityReference{EntityID: "user-999"}), mockObs)
+
+	evt := (*captured)[0]
+	if got, ok := evt.Data[event.DataKey.SubjectType]; ok {
+		t.Errorf("subject_type should be omitted when the category is unknown, got %v", got)
+	}
+	assertEventData(t, evt, map[string]interface{}{event.DataKey.Subject: "user-999"})
+}
+
+// The entity vocabulary spells an application "app" while the reported principal type spells it
+// "application", matching the token's sub_type claim. The events must carry the claim's spelling.
+func TestFlowStartedEvent_ApplicationReportsApplicationActorType(t *testing.T) {
+	mockObs, captured := setupCapturingObservability(t)
+	defer config.ResetServerRuntime()
+
+	ctx := agentFlowContext()
+	ctx.Application.EntityCategory = providers.EntityCategoryApp
+
+	publishFlowStartedEvent(ctx, mockObs)
+
+	assertEventData(t, (*captured)[0], map[string]interface{}{
+		event.DataKey.ActorType: event.PrincipalTypeApplication,
+	})
+}
+
+func TestFlowStartedEvent_OmitsUnknownPrincipalAndSubjectFields(t *testing.T) {
+	mockObs, captured := setupCapturingObservability(t)
+	defer config.ResetServerRuntime()
+
+	ctx := &EngineContext{
+		ExecutionID:      "flow-exec-2",
+		FlowType:         providers.FlowTypeRegistration,
+		AppID:            "app-2",
+		ExecutionHistory: make(map[string]*providers.NodeExecutionRecord),
+	}
+
+	publishFlowStartedEvent(ctx, mockObs)
+
+	evt := (*captured)[0]
+	for _, key := range []string{
+		event.DataKey.ActorType, event.DataKey.ClientID,
+		event.DataKey.Subject, event.DataKey.SubjectType,
+	} {
+		if _, ok := evt.Data[key]; ok {
+			t.Errorf("expected %q to be omitted, got %v", key, evt.Data[key])
+		}
+	}
+	if evt.Data[event.DataKey.CorrelationID] != "flow-exec-2" {
+		t.Errorf("correlation_id = %v, want %q", evt.Data[event.DataKey.CorrelationID], "flow-exec-2")
+	}
+}
+
+func TestNodeExecutionStartedEvent_ReportsSubjectAndPrincipal(t *testing.T) {
+	mockObs, captured := setupCapturingObservability(t)
+	defer config.ResetServerRuntime()
+
+	node := coremock.NewNodeInterfaceMock(t)
+	node.On("GetID").Return("node-1")
+	node.On("GetType").Return(common.NodeTypeTaskExecution)
+
+	publishNodeExecutionStartedEvent(agentFlowContext(), node, mockObs)
+
+	assertEventData(t, (*captured)[0], map[string]interface{}{
+		event.DataKey.ActorType:     string(providers.EntityCategoryAgent),
+		event.DataKey.ClientID:      "agent-client-id",
+		event.DataKey.CorrelationID: "flow-exec-1",
+		event.DataKey.Subject:       "user-123",
+		event.DataKey.SubjectType:   string(providers.EntityCategoryUser),
+	})
+}
+
+// The engine merges a node's AuthUser into the context only after the node-completed event is
+// published, so the node that authenticates the subject must report it from its own response.
+// Otherwise the subject first appears one node later and the authenticating node's event — the one an
+// auditor reads to see who authenticated — carries none.
+func TestNodeExecutionCompletedEvent_SubjectComesFromTheNodeResponse(t *testing.T) {
+	mockObs, captured := setupCapturingObservability(t)
+	defer config.ResetServerRuntime()
+
+	node := coremock.NewNodeInterfaceMock(t)
+	node.On("GetID").Return("credentials_auth")
+	node.On("GetType").Return(common.NodeTypeTaskExecution)
+
+	// The context has no subject yet, exactly as during the authenticating node's own completion.
+	ctx := &EngineContext{
+		ExecutionID:      "flow-exec-4",
+		FlowType:         providers.FlowTypeAuthentication,
+		AppID:            "app-4",
+		ExecutionHistory: make(map[string]*providers.NodeExecutionRecord),
+	}
+	recordNodeExecution(ctx, node, &common.NodeResponse{Status: common.NodeStatusComplete}, nil, 0, 1)
+
+	nodeResp := &common.NodeResponse{Status: common.NodeStatusComplete}
+	nodeResp.AuthUser.SetStateFor("credentials", providers.AuthState{
+		EntityReference: &providers.EntityReference{
+			EntityID:       "user-777",
+			EntityCategory: string(providers.EntityCategoryUser),
+		},
+	})
+
+	publishNodeExecutionCompletedEvent(ctx, node, nodeResp, nil, 0, 1, mockObs)
+
+	assertEventData(t, (*captured)[0], map[string]interface{}{
+		event.DataKey.NodeID:      "credentials_auth",
+		event.DataKey.Subject:     "user-777",
+		event.DataKey.SubjectType: event.PrincipalTypeUser,
+	})
+}
+
+func TestFlowCompletedEvent_ReportsPrincipalAndCorrelation(t *testing.T) {
+	mockObs, captured := setupCapturingObservability(t)
+	defer config.ResetServerRuntime()
+
+	publishFlowCompletedEvent(agentFlowContext(), 0, 5, mockObs)
+
+	assertEventData(t, (*captured)[0], map[string]interface{}{
+		event.DataKey.ActorType:     string(providers.EntityCategoryAgent),
+		event.DataKey.CorrelationID: "flow-exec-1",
+		event.DataKey.Subject:       "user-123",
+	})
+}
+
+func TestFlowFailedEvent_SharesTheFlowTrace(t *testing.T) {
+	mockObs, captured := setupCapturingObservability(t)
+	defer config.ResetServerRuntime()
+
+	publishFlowFailedEvent(agentFlowContext(), nil, 0, 5, mockObs)
+
+	evt := (*captured)[0]
+	if evt.TraceID != "flow-exec-1" {
+		t.Errorf("TraceID = %q, want the execution id %q", evt.TraceID, "flow-exec-1")
+	}
+	assertEventData(t, evt, map[string]interface{}{
+		event.DataKey.ActorType:     string(providers.EntityCategoryAgent),
+		event.DataKey.CorrelationID: "flow-exec-1",
+	})
+}
+
+// assertEventData checks that the event carries each expected key with the expected value.
+func assertEventData(t *testing.T, evt *providers.Event, want map[string]interface{}) {
+	t.Helper()
+
+	for key, wantValue := range want {
+		got, ok := evt.Data[key]
+		if !ok {
+			t.Errorf("event data is missing key %q", key)
+			continue
+		}
+		if got != wantValue {
+			t.Errorf("event data %q = %v, want %v", key, got, wantValue)
+		}
+	}
 }

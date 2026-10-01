@@ -1,38 +1,22 @@
-/**
- * Copyright (c) 2026, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied. See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2026 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 import Link from '@docusaurus/Link';
 import {useWindowSize} from '@docusaurus/theme-common';
+import {AndroidLogo, FlutterLogo, LangChainLogo} from '@thunderid/components';
 import {Box, Chip, Typography} from '@wso2/oxygen-ui';
-import {AppWindow, Bot, Check, Download, MonitorSmartphone, Server, Zap} from '@wso2/oxygen-ui-icons-react';
+import {Bot, Check, Download, MonitorSmartphone, Server, Zap} from '@wso2/oxygen-ui-icons-react';
 import React, {useCallback} from 'react';
-import AndroidLogo from './icons/AndroidLogo';
 import ExpressLogo from './icons/ExpressLogo';
-import FlutterLogo from './icons/FlutterLogo';
 import IOSLogo from './icons/IOSLogo';
 import JavaScriptLogo from './icons/JavaScriptLogo';
-import LangChainLogo from './icons/LangChainLogo';
 import NextLogo from './icons/NextLogo';
 import NodeLogo from './icons/NodeLogo';
 import NuxtLogo from './icons/NuxtLogo';
 import ReactLogo from './icons/ReactLogo';
 import VueLogo from './icons/VueLogo';
 import {applyConnectType, useConnectType} from '../utils/connectType';
+import {useDocsUrl} from '@site/src/hooks/useDocsUrl';
 
 type ConnectType = 'app' | 'agent' | 'mcp';
 
@@ -54,8 +38,7 @@ const AGENT_QUICKSTARTS = [
 ];
 
 const MCP_QUICKSTARTS = [
-  {Logo: Server, href: '/docs/next/getting-started/connect-your-mcp/server/python', label: 'Server'},
-  {Logo: AppWindow, href: '/docs/next/getting-started/connect-your-mcp/client/connect/mcp-inspector', label: 'Client'},
+  {Logo: Server, href: '/docs/next/getting-started/connect-your-mcp/python', label: 'MCP'},
 ];
 
 const CATEGORIES: {id: ConnectType; icon: React.ReactElement; label: string; description: string; comingSoon: boolean}[] = [
@@ -99,8 +82,11 @@ export default function DeveloperShortcut({
 }: DeveloperShortcutProps): React.ReactElement {
   const windowSize = useWindowSize();
   const isMobile = windowSize === 'mobile';
+  const docsUrl = useDocsUrl();
 
-  const selected = useConnectType();
+  // The sidebar can clear the shared state to collapse every card; the home-page
+  // selector always shows one path, so fall back to the default when it is null.
+  const selected = useConnectType() ?? 'app';
 
   const handleSelect = useCallback((type: ConnectType, comingSoon: boolean) => {
     if (comingSoon) return;
@@ -282,7 +268,7 @@ export default function DeveloperShortcut({
                 <Box
                   key={label}
                   component={Link}
-                  to={href}
+                  to={docsUrl(href)}
                   sx={{
                     alignItems: 'center',
                     bgcolor: 'rgba(255,255,255,0.06)',
@@ -349,7 +335,7 @@ export default function DeveloperShortcut({
               </Typography>
               <Box
                 component={Link}
-                to="/docs/next/getting-started/get-thunderid"
+                to={docsUrl('/docs/next/getting-started/get-thunderid')}
                 sx={{
                   color: 'primary.main',
                   fontSize: '0.875rem',

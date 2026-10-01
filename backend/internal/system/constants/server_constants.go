@@ -1,20 +1,5 @@
-/*
- * Copyright (c) 2025, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2025 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 // Package constants defines global constants used across the system module.
 package constants
@@ -47,6 +32,10 @@ const CorrelationIDHeaderName = "X-Correlation-ID"
 // FlowSecretHeaderName is the name of the header used to present a Flow Secret when initiating
 // a flow directly over HTTP.
 const FlowSecretHeaderName = "Flow-Secret"
+
+// APIKeyHeaderName is the header a management API key is presented in, rather than Authorization,
+// so it never competes with an OAuth bearer token a request may legitimately carry as well.
+const APIKeyHeaderName = "API-Key"
 
 // AttestationTokenHeaderName is the name of the header used to present a platform attestation token
 // (e.g. a Google Play Integrity token) when a mobile application initiates a flow directly over HTTP.
@@ -82,8 +71,15 @@ const XFrameOptionsDeny = "DENY"
 // ContentSecurityPolicyHeaderName is the name of the Content-Security-Policy header used in HTTP responses.
 const ContentSecurityPolicyHeaderName = "Content-Security-Policy"
 
-// ContentSecurityPolicyFrameAncestorsNone is the CSP directive that prevents the page from being embedded in frames.
-const ContentSecurityPolicyFrameAncestorsNone = "frame-ancestors 'none'"
+// ContentSecurityPolicyReportOnlyHeaderName is the name of the Content-Security-Policy-Report-Only header.
+const ContentSecurityPolicyReportOnlyHeaderName = "Content-Security-Policy-Report-Only"
+
+// ContentTypeHTML is the content type for HTML documents.
+const ContentTypeHTML = "text/html; charset=utf-8"
+
+// CSPNoncePlaceholder is the token in index.html that serveIndex replaces with the per-request CSP
+// nonce, so the frontend's own inline <style> tags can read it from the resulting meta tag.
+const CSPNoncePlaceholder = "__CSP_NONCE__"
 
 // CacheControlHeaderName is the name of the cache-control header used in HTTP responses.
 const CacheControlHeaderName = "Cache-Control"

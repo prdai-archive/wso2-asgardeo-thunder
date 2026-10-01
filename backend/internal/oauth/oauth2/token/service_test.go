@@ -1,20 +1,5 @@
-/*
- * Copyright (c) 2025, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2025 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 package token
 
@@ -31,6 +16,8 @@ import (
 	"github.com/thunder-id/thunderid/internal/oauth/oauth2/dpop"
 	"github.com/thunder-id/thunderid/internal/oauth/oauth2/model"
 	"github.com/thunder-id/thunderid/internal/oauth/scope"
+	sysContext "github.com/thunder-id/thunderid/internal/system/context"
+	"github.com/thunder-id/thunderid/internal/system/observability/event"
 	"github.com/thunder-id/thunderid/pkg/thunderidengine/providers"
 	"github.com/thunder-id/thunderid/tests/mocks/oauth/oauth2/dpopmock"
 	"github.com/thunder-id/thunderid/tests/mocks/oauth/oauth2/granthandlersmock"
@@ -530,7 +517,7 @@ func (suite *TokenServiceTestSuite) TestProcessTokenRequest_WithRefreshToken() {
 	// The access token's tfid must be forwarded to refresh-token issuance so both tokens share the family.
 	mockRefreshHandler.
 		On("IssueRefreshToken", mock.Anything, tokenRespDTO, app, "user123", []string{"test-audience"},
-			"authorization_code", []string{"openid"}, (*model.ClaimsRequest)(nil), "", "", "tfid-access-123").
+			"authorization_code", []string{"openid"}, (*model.ClaimsRequest)(nil), "", "", "tfid-access-123", int64(0)).
 		Return(nil)
 
 	svc := suite.newService()
@@ -585,7 +572,7 @@ func (suite *TokenServiceTestSuite) TestProcessTokenRequest_RefreshTokenIssuance
 
 	mockRefreshHandler.
 		On("IssueRefreshToken", mock.Anything, tokenRespDTO, app, "user123", []string{"test-audience"},
-			"authorization_code", []string{"openid"}, (*model.ClaimsRequest)(nil), "", "", "").
+			"authorization_code", []string{"openid"}, (*model.ClaimsRequest)(nil), "", "", "", int64(0)).
 		Return(&model.ErrorResponse{
 			Error:            "server_error",
 			ErrorDescription: "Failed to issue refresh token",
@@ -807,7 +794,7 @@ func (suite *TokenServiceTestSuite) TestProcessTokenRequest_WithRefreshToken_Use
 	mockRefreshHandler.
 		On("IssueRefreshToken", mock.Anything, tokenRespDTO, app, "user123",
 			[]string{"original-audience-1", "original-audience-2"},
-			"authorization_code", []string{"openid"}, (*model.ClaimsRequest)(nil), "", "", "").
+			"authorization_code", []string{"openid"}, (*model.ClaimsRequest)(nil), "", "", "", int64(0)).
 		Return(nil)
 
 	svc := suite.newService()
@@ -865,7 +852,8 @@ func (suite *TokenServiceTestSuite) TestProcessTokenRequest_CIBA_RefreshTokenUse
 	mockRefreshHandler.
 		On("IssueRefreshToken", mock.Anything, tokenRespDTO, app, "user-1",
 			[]string{"https://api.example.com"},
-			string(providers.GrantTypeCIBA), []string{"openid", "read"}, (*model.ClaimsRequest)(nil), "", "", "").
+			string(providers.GrantTypeCIBA), []string{"openid", "read"},
+			(*model.ClaimsRequest)(nil), "", "", "", int64(0)).
 		Return(nil)
 
 	svc := suite.newService()
@@ -874,4 +862,215 @@ func (suite *TokenServiceTestSuite) TestProcessTokenRequest_CIBA_RefreshTokenUse
 	assert.Nil(suite.T(), errResp)
 	assert.NotNil(suite.T(), tokenResp)
 	assert.Equal(suite.T(), "access-token-123", tokenResp.AccessToken)
+}
+
+const (
+	testAgentEntityID = "agent-entity-1"
+	testAppEntityID   = "app-entity-1"
+	testTraceID       = "trace-1"
+)
+
+type TokenEventsTestSuite struct {
+	suite.Suite
+	mockObsSvc *observabilitymock.ObservabilityServiceInterfaceMock
+	published  []*providers.Event
+}
+
+func TestTokenEventsSuite(t *testing.T) {
+	suite.Run(t, new(TokenEventsTestSuite))
+}
+
+func (suite *TokenEventsTestSuite) SetupTest() {
+	suite.published = nil
+	suite.mockObsSvc = observabilitymock.NewObservabilityServiceInterfaceMock(suite.T())
+	suite.mockObsSvc.On("IsEnabled").Return(true).Maybe()
+	suite.mockObsSvc.
+		On("PublishEvent", mock.Anything, mock.Anything).
+		Run(func(args mock.Arguments) {
+			suite.published = append(suite.published, args.Get(1).(*providers.Event))
+		}).
+		Return().Maybe()
+}
+
+func (suite *TokenEventsTestSuite) newService() *tokenService {
+	return &tokenService{observabilitySvc: suite.mockObsSvc}
+}
+
+func (suite *TokenEventsTestSuite) ctx() context.Context {
+	return sysContext.WithTraceID(context.Background(), testTraceID)
+}
+
+// lastEvent returns the single event published by the call under test.
+func (suite *TokenEventsTestSuite) lastEvent() *providers.Event {
+	suite.Require().Len(suite.published, 1)
+	return suite.published[0]
+}
+
+func agentClient() *providers.OAuthClient {
+	return &providers.OAuthClient{
+		ID:             testAgentEntityID,
+		ClientID:       "agent-client-id",
+		EntityCategory: providers.EntityCategoryAgent,
+	}
+}
+
+func appClient() *providers.OAuthClient {
+	return &providers.OAuthClient{
+		ID:             testAppEntityID,
+		ClientID:       "app-client-id",
+		EntityCategory: providers.EntityCategoryApp,
+	}
+}
+
+func (suite *TokenEventsTestSuite) TestIssuanceStarted_AgentReportsActorTypeAndEntityID() {
+	suite.newService().publishTokenIssuanceStartedEvent(
+		suite.ctx(), agentClient(), "agent-client-id", "client_credentials", "")
+
+	evt := suite.lastEvent()
+	assert.Equal(suite.T(), event.PrincipalTypeAgent, evt.Data[event.DataKey.ActorType])
+	assert.Equal(suite.T(), testAgentEntityID, evt.Data[event.DataKey.EntityID])
+	assert.Equal(suite.T(), testTraceID, evt.Data[event.DataKey.CorrelationID])
+}
+
+// The entity vocabulary spells an application "app" while the reported principal type spells it
+// "application", matching the token's sub_type claim.
+func (suite *TokenEventsTestSuite) TestIssuanceStarted_ApplicationReportsApplicationActorType() {
+	suite.newService().publishTokenIssuanceStartedEvent(
+		suite.ctx(), appClient(), "app-client-id", "authorization_code", "")
+
+	assert.Equal(suite.T(), event.PrincipalTypeApplication, suite.lastEvent().Data[event.DataKey.ActorType])
+}
+
+func (suite *TokenEventsTestSuite) TestIssuanceStarted_UnresolvedClientOmitsPrincipalFields() {
+	suite.newService().publishTokenIssuanceStartedEvent(suite.ctx(), nil, "", "", "")
+
+	evt := suite.lastEvent()
+	assert.NotContains(suite.T(), evt.Data, event.DataKey.ActorType)
+	assert.NotContains(suite.T(), evt.Data, event.DataKey.EntityID)
+}
+
+func (suite *TokenEventsTestSuite) TestIssued_M2MReportsAgentSubjectAndNoDelegation() {
+	app := agentClient()
+	respDTO := &model.TokenResponseDTO{
+		AccessToken: model.TokenDTO{
+			SubjectID:       testAgentEntityID,
+			SubjectCategory: string(providers.EntityCategoryAgent),
+		},
+	}
+
+	suite.newService().publishTokenIssuedEvent(
+		suite.ctx(), app, respDTO, app.ClientID, "client_credentials", "", 0)
+
+	evt := suite.lastEvent()
+	assert.Equal(suite.T(), event.PrincipalTypeAgent, evt.Data[event.DataKey.ActorType])
+	assert.Equal(suite.T(), testAgentEntityID, evt.Data[event.DataKey.Subject])
+	assert.Equal(suite.T(), event.PrincipalTypeAgent, evt.Data[event.DataKey.SubjectType])
+	assert.Equal(suite.T(), false, evt.Data[event.DataKey.IsDelegated])
+	assert.NotContains(suite.T(), evt.Data, event.DataKey.ActorSub)
+}
+
+func (suite *TokenEventsTestSuite) TestIssued_OBOReportsUserSubjectWithAgentActor() {
+	app := agentClient()
+	respDTO := &model.TokenResponseDTO{
+		AccessToken: model.TokenDTO{
+			SubjectID:       "user-1",
+			SubjectCategory: string(providers.EntityCategoryUser),
+			Delegated:       true,
+			ActorSub:        testAgentEntityID,
+		},
+	}
+
+	suite.newService().publishTokenIssuedEvent(
+		suite.ctx(), app, respDTO, app.ClientID, "authorization_code", "", 0)
+
+	evt := suite.lastEvent()
+	assert.Equal(suite.T(), event.PrincipalTypeAgent, evt.Data[event.DataKey.ActorType])
+	assert.Equal(suite.T(), "user-1", evt.Data[event.DataKey.Subject])
+	assert.Equal(suite.T(), event.PrincipalTypeUser, evt.Data[event.DataKey.SubjectType])
+	assert.Equal(suite.T(), testAgentEntityID, evt.Data[event.DataKey.ActorSub])
+	assert.Equal(suite.T(), true, evt.Data[event.DataKey.IsDelegated])
+}
+
+// An exchange whose actor_token carried a mapped attribute reports no act_sub, but the delegation
+// itself is still reported: is_delegated must not be downgraded to a claim the issuance was direct.
+func (suite *TokenEventsTestSuite) TestIssued_DelegationReportedWhenActorIsWithheld() {
+	app := agentClient()
+	respDTO := &model.TokenResponseDTO{
+		AccessToken: model.TokenDTO{
+			SubjectID:       "user-1",
+			SubjectCategory: string(providers.EntityCategoryUser),
+			Delegated:       true,
+		},
+	}
+
+	suite.newService().publishTokenIssuedEvent(
+		suite.ctx(), app, respDTO, app.ClientID, "urn:ietf:params:oauth:grant-type:token-exchange", "", 0)
+
+	evt := suite.lastEvent()
+	assert.Equal(suite.T(), true, evt.Data[event.DataKey.IsDelegated])
+	assert.NotContains(suite.T(), evt.Data, event.DataKey.ActorSub)
+}
+
+func (suite *TokenEventsTestSuite) TestIssued_GrantCorrelationIDWinsOverTraceID() {
+	app := agentClient()
+	respDTO := &model.TokenResponseDTO{
+		AccessToken:   model.TokenDTO{SubjectID: "user-1"},
+		CorrelationID: "flow-execution-1",
+	}
+
+	suite.newService().publishTokenIssuedEvent(
+		suite.ctx(), app, respDTO, app.ClientID, "authorization_code", "", 0)
+
+	assert.Equal(suite.T(), "flow-execution-1", suite.lastEvent().Data[event.DataKey.CorrelationID])
+}
+
+func (suite *TokenEventsTestSuite) TestIssued_FallsBackToTraceIDWhenGrantHasNoCorrelationID() {
+	app := agentClient()
+	respDTO := &model.TokenResponseDTO{AccessToken: model.TokenDTO{SubjectID: testAgentEntityID}}
+
+	suite.newService().publishTokenIssuedEvent(
+		suite.ctx(), app, respDTO, app.ClientID, "client_credentials", "", 0)
+
+	assert.Equal(suite.T(), testTraceID, suite.lastEvent().Data[event.DataKey.CorrelationID])
+}
+
+func (suite *TokenEventsTestSuite) TestIssuanceFailed_ReportsActorTypeWhenClientIsKnown() {
+	publishTokenIssuanceFailedEvent(suite.mockObsSvc, suite.ctx(), agentClient(),
+		"agent-client-id", "client_credentials", "", 400, "invalid_scope", 0)
+
+	evt := suite.lastEvent()
+	assert.Equal(suite.T(), event.PrincipalTypeAgent, evt.Data[event.DataKey.ActorType])
+	assert.Equal(suite.T(), testAgentEntityID, evt.Data[event.DataKey.EntityID])
+	assert.Equal(suite.T(), testTraceID, evt.Data[event.DataKey.CorrelationID])
+}
+
+// The subject's category is resolved while the token is built, so the event reports whatever the
+// token carries rather than inferring it from the client.
+func (suite *TokenEventsTestSuite) TestIssued_SubjectTypeIsReadFromTheToken() {
+	app := agentClient()
+	respDTO := &model.TokenResponseDTO{
+		AccessToken: model.TokenDTO{
+			SubjectID:       "agent-b",
+			SubjectCategory: string(providers.EntityCategoryAgent),
+		},
+	}
+
+	suite.newService().publishTokenIssuedEvent(
+		suite.ctx(), app, respDTO, app.ClientID, "urn:ietf:params:oauth:grant-type:token-exchange", "", 0)
+
+	evt := suite.lastEvent()
+	assert.Equal(suite.T(), "agent-b", evt.Data[event.DataKey.Subject])
+	assert.Equal(suite.T(), event.PrincipalTypeAgent, evt.Data[event.DataKey.SubjectType])
+}
+
+func (suite *TokenEventsTestSuite) TestIssued_SubjectTypeOmittedWhenTokenHasNoCategory() {
+	app := agentClient()
+	respDTO := &model.TokenResponseDTO{AccessToken: model.TokenDTO{SubjectID: "user-1"}}
+
+	suite.newService().publishTokenIssuedEvent(
+		suite.ctx(), app, respDTO, app.ClientID, "authorization_code", "", 0)
+
+	evt := suite.lastEvent()
+	assert.Equal(suite.T(), "user-1", evt.Data[event.DataKey.Subject])
+	assert.NotContains(suite.T(), evt.Data, event.DataKey.SubjectType)
 }

@@ -1,20 +1,5 @@
-/**
- * Copyright (c) 2026, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied. See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2026 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 import {Box, Typography, useTheme} from '@wso2/oxygen-ui';
 import React, {useState} from 'react';
@@ -23,6 +8,7 @@ import CliLogo from './icons/CliLogo';
 import CodexLogo from './icons/CodexLogo';
 import DockerLogo from './icons/DockerLogo';
 import SkillsLogo from './icons/SkillsLogo';
+import {useDocsUrl} from '@site/src/hooks/useDocsUrl';
 
 type TabId = 'cli' | 'docker' | 'claude' | 'codex' | 'skills';
 
@@ -89,12 +75,21 @@ function CopyButton({text}: {text: string}): React.ReactElement {
 interface RunThunderIDProps {
   tabs?: TabId[];
   defaultTab?: TabId;
+  /**
+   * Hides the requirement hint and the link to the server install guide.
+   *
+   * That link is the right next step when this card starts a setup flow, and
+   * the wrong one where the card installs something else, such as the agent
+   * skills bundle.
+   */
+  hideFooter?: boolean;
 }
 
-export default function RunThunderID({tabs, defaultTab}: RunThunderIDProps = {}): React.ReactElement {
+export default function RunThunderID({tabs, defaultTab, hideFooter}: RunThunderIDProps = {}): React.ReactElement {
   const visibleTabs = tabs ? TABS.filter(({id}) => tabs.includes(id)) : TABS;
   const [activeTab, setActiveTab] = useState<TabId>(defaultTab ?? visibleTabs[0]?.id ?? 'cli');
   const theme = useTheme();
+  const docsUrl = useDocsUrl();
   const {command, hint, shell} = CONTENT[activeTab];
 
   return (
@@ -228,35 +223,37 @@ export default function RunThunderID({tabs, defaultTab}: RunThunderIDProps = {})
       </Box>
 
       {/* Footer */}
-      <Box
-        sx={{
-          alignItems: 'center',
-          borderTop: '1px solid',
-          borderColor: 'divider',
-          display: 'flex',
-          justifyContent: 'space-between',
-          px: 2.5,
-          py: 0.85,
-        }}
-      >
-        <Typography sx={{color: 'text.disabled', fontSize: '0.75rem'}}>{hint}</Typography>
+      {!hideFooter && (
         <Box
-          component="a"
-          href="/docs/next/getting-started/get-thunderid"
           sx={{
-            color: 'text.disabled',
-            flexShrink: 0,
-            fontSize: '0.75rem',
-            ml: 2,
-            textDecoration: 'none',
-            whiteSpace: 'nowrap',
-            transition: 'color 0.15s',
-            '&:hover': {color: 'primary.main'},
+            alignItems: 'center',
+            borderTop: '1px solid',
+            borderColor: 'divider',
+            display: 'flex',
+            justifyContent: 'space-between',
+            px: 2.5,
+            py: 0.85,
           }}
         >
-          Full install guide →
+          <Typography sx={{color: 'text.disabled', fontSize: '0.75rem'}}>{hint}</Typography>
+          <Box
+            component="a"
+            href={docsUrl('/docs/next/getting-started/get-thunderid')}
+            sx={{
+              color: 'text.disabled',
+              flexShrink: 0,
+              fontSize: '0.75rem',
+              ml: 2,
+              textDecoration: 'none',
+              whiteSpace: 'nowrap',
+              transition: 'color 0.15s',
+              '&:hover': {color: 'primary.main'},
+            }}
+          >
+            Full install guide →
+          </Box>
         </Box>
-      </Box>
+      )}
     </Box>
   );
 }

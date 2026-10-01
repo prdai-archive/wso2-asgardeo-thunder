@@ -1,20 +1,5 @@
-/*
- * Copyright (c) 2025, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2025 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 package mgt
 
@@ -45,7 +30,7 @@ func (f *fileBasedStore) Create(id string, data interface{}) error {
 }
 
 // GetDistinctLanguages retrieves all distinct language codes that have translations.
-func (f *fileBasedStore) GetDistinctLanguages() ([]string, error) {
+func (f *fileBasedStore) GetDistinctLanguages(ctx context.Context) ([]string, error) {
 	list, err := f.GenericFileBasedStore.List()
 	if err != nil {
 		return nil, err
@@ -61,7 +46,7 @@ func (f *fileBasedStore) GetDistinctLanguages() ([]string, error) {
 }
 
 // GetTranslations retrieves all translations.
-func (f *fileBasedStore) GetTranslations() (map[string]map[string]Translation, error) {
+func (f *fileBasedStore) GetTranslations(ctx context.Context) (map[string]map[string]Translation, error) {
 	list, err := f.GenericFileBasedStore.List()
 	if err != nil {
 		return nil, err
@@ -90,7 +75,8 @@ func (f *fileBasedStore) GetTranslations() (map[string]map[string]Translation, e
 }
 
 // GetTranslationsByNamespace retrieves all translations for a namespace.
-func (f *fileBasedStore) GetTranslationsByNamespace(namespace string) (map[string]map[string]Translation, error) {
+func (f *fileBasedStore) GetTranslationsByNamespace(ctx context.Context,
+	namespace string) (map[string]map[string]Translation, error) {
 	list, err := f.GenericFileBasedStore.List()
 	if err != nil {
 		return nil, err
@@ -122,7 +108,8 @@ func (f *fileBasedStore) GetTranslationsByNamespace(namespace string) (map[strin
 }
 
 // GetTranslationsByKey retrieves a single translation by key and namespace.
-func (f *fileBasedStore) GetTranslationsByKey(key string, namespace string) (map[string]Translation, error) {
+func (f *fileBasedStore) GetTranslationsByKey(ctx context.Context, key string,
+	namespace string) (map[string]Translation, error) {
 	list, err := f.GenericFileBasedStore.List()
 	if err != nil {
 		return nil, err
@@ -154,12 +141,13 @@ func (f *fileBasedStore) GetTranslationsByKey(key string, namespace string) (map
 }
 
 // UpsertTranslationsByLanguage is not supported in file-based store.
-func (f *fileBasedStore) UpsertTranslationsByLanguage(language string, translations []Translation) error {
+func (f *fileBasedStore) UpsertTranslationsByLanguage(ctx context.Context, language string,
+	translations []Translation) error {
 	return errors.New("UpsertTranslationsByLanguage is not supported in file-based store")
 }
 
 // UpsertTranslation is not supported in file-based store.
-func (f *fileBasedStore) UpsertTranslation(trans Translation) error {
+func (f *fileBasedStore) UpsertTranslation(ctx context.Context, trans Translation) error {
 	return errors.New("UpsertTranslation is not supported in file-based store")
 }
 
@@ -169,12 +157,12 @@ func (f *fileBasedStore) UpsertTranslations(_ context.Context, _ []Translation) 
 }
 
 // DeleteTranslationsByLanguage is not supported in file-based store.
-func (f *fileBasedStore) DeleteTranslationsByLanguage(language string) error {
+func (f *fileBasedStore) DeleteTranslationsByLanguage(ctx context.Context, language string) error {
 	return errors.New("DeleteTranslationsByLanguage is not supported in file-based store")
 }
 
 // DeleteTranslation is not supported in file-based store.
-func (f *fileBasedStore) DeleteTranslation(language string, key string, namespace string) error {
+func (f *fileBasedStore) DeleteTranslation(ctx context.Context, language string, key string, namespace string) error {
 	return errors.New("DeleteTranslation is not supported in file-based store")
 }
 

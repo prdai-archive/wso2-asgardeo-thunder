@@ -1,20 +1,5 @@
-/*
- * Copyright (c) 2025, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2025 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 package ou
 
@@ -22,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -456,12 +442,12 @@ func (suite *OrganizationUnitHandlerTestSuite) TestOUHandler_HandleOUPostRequest
 			},
 		},
 		{
-			name: "declarative validation failure - handle too short",
-			body: `{"handle": "fi", "name": "Finance Services"}`,
+			name: "declarative validation failure - handle too long",
+			body: fmt.Sprintf(`{"handle": %q, "name": "Finance Services"}`, strings.Repeat("f", 101)),
 			assert: func(recorder *httptest.ResponseRecorder) {
 				if recorder.Code == http.StatusCreated {
 					suite.T().Log("⚠️ Warning: Request passed validation. " +
-						"Ensure your model.go struct fields have `validate:\"min=3\"` tags attached!")
+						"Ensure your model.go struct fields have `native:\"max=100\"` tags attached!")
 					return
 				}
 				suite.Equal(http.StatusBadRequest, recorder.Code)
@@ -469,6 +455,22 @@ func (suite *OrganizationUnitHandlerTestSuite) TestOUHandler_HandleOUPostRequest
 			},
 			assertService: func(serviceMock *OrganizationUnitServiceInterfaceMock) {
 				serviceMock.AssertNotCalled(suite.T(), "CreateOrganizationUnit", mock.Anything)
+			},
+		},
+		{
+			name: "accepts a single character handle",
+			body: `{"handle": "w", "name": "Workforce"}`,
+			setup: func(serviceMock *OrganizationUnitServiceInterfaceMock) {
+				serviceMock.
+					On("CreateOrganizationUnit", mock.Anything,
+						mock.MatchedBy(func(req providers.OrganizationUnitRequestWithID) bool {
+							return req.Handle == "w" && req.Name == "Workforce"
+						})).
+					Return(providers.OrganizationUnit{ID: "ou-1", Handle: "w", Name: "Workforce"}, nil).
+					Once()
+			},
+			assert: func(recorder *httptest.ResponseRecorder) {
+				suite.Equal(http.StatusCreated, recorder.Code)
 			},
 		},
 		{
@@ -483,10 +485,10 @@ func (suite *OrganizationUnitHandlerTestSuite) TestOUHandler_HandleOUPostRequest
 					On("CreateOrganizationUnit", mock.Anything,
 						mock.MatchedBy(func(req providers.OrganizationUnitRequestWithID) bool {
 							return req.Handle == defaultOUHandle &&
-								req.Name == "Finance &lt;script&gt;" &&
+								req.Name == "Finance <script>" &&
 								req.Description == "desc"
 						})).
-					Return(providers.OrganizationUnit{ID: "ou-1", Name: "Finance &lt;script&gt;"}, nil).
+					Return(providers.OrganizationUnit{ID: "ou-1", Name: "Finance <script>"}, nil).
 					Once()
 			},
 			assert: func(recorder *httptest.ResponseRecorder) {
@@ -885,18 +887,18 @@ func (suite *OrganizationUnitHandlerTestSuite) TestOUHandler_HandleOUPutRequest(
 						defaultOURequestID,
 						mock.MatchedBy(func(req providers.OrganizationUnitRequestWithID) bool {
 							return req.Handle == defaultOUHandle &&
-								req.Name == "Finance &lt;script&gt;" &&
+								req.Name == "Finance <script>" &&
 								req.Description == "desc"
 						}),
 					).
-					Return(providers.OrganizationUnit{ID: defaultOURequestID, Name: "Finance &lt;script&gt;"}, nil).
+					Return(providers.OrganizationUnit{ID: defaultOURequestID, Name: "Finance <script>"}, nil).
 					Once()
 			},
 			assert: func(recorder *httptest.ResponseRecorder) {
 				suite.Equal(http.StatusOK, recorder.Code)
 				var resp providers.OrganizationUnit
 				suite.NoError(json.Unmarshal(recorder.Body.Bytes(), &resp))
-				suite.Equal("Finance &lt;script&gt;", resp.Name)
+				suite.Equal("Finance <script>", resp.Name)
 			},
 		},
 		{

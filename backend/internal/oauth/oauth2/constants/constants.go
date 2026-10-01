@@ -1,20 +1,5 @@
-/*
- * Copyright (c) 2025-2026, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2025-2026 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 // Package constants defines constants used across the OAuth2 module.
 package constants
@@ -22,9 +7,7 @@ package constants
 import (
 	"errors"
 
-	oauthconfig "github.com/thunder-id/thunderid/internal/oauth/config"
 	"github.com/thunder-id/thunderid/internal/oauth/oauth2/model"
-	"github.com/thunder-id/thunderid/pkg/thunderidengine/providers"
 )
 
 // OAuth2 request parameters.
@@ -61,8 +44,10 @@ const (
 	RequestParamAssertion           string = "assertion"
 	RequestParamClaims              string = "claims"
 	RequestParamClaimsLocales       string = "claims_locales"
+	RequestParamUILocales           string = "ui_locales"
 	RequestParamNonce               string = "nonce"
 	RequestParamPrompt              string = "prompt"
+	RequestParamRequest             string = "request"
 	RequestParamRequestURI          string = "request_uri"
 	RequestParamAcrValues           string = "acr_values"
 	RequestParamMaxAge              string = "max_age"
@@ -211,6 +196,8 @@ const (
 	ErrorExpiredToken             string = "expired_token" // #nosec G101
 	ErrorUnknownUserID            string = "unknown_user_id"
 	ErrorInvalidBindingMessage    string = "invalid_binding_message"
+	ErrorRequestNotSupported      string = "request_not_supported"
+	ErrorRequestURINotSupported   string = "request_uri_not_supported"
 )
 
 // UnSupportedGrantTypeError is returned when an unsupported grant type is requested.
@@ -264,6 +251,7 @@ const (
 	ClaimIat      string = "iat"
 	ClaimJTI      string = "jti"
 	ClaimAuthTime string = "auth_time"
+	ClaimACR      string = "acr"
 )
 
 // Custom JWT claim names.
@@ -282,16 +270,45 @@ const (
 	ClaimAuthorizedPermissions  string = "authorized_permissions"
 	ClaimAuthorizationRequestID string = "authorization_request_id"
 	ClaimClientID               string = "client_id"
+	ClaimAccessTokenSubject     string = "access_token_sub"
 	// ClaimIDP identifies the source identity provider (by issuer) that authenticated the subject of a
 	// jwt-bearer-grant (ID-JAG) access token, so downstream consumers can distinguish a federated
 	// principal from a local one.
 	ClaimIDP string = "idp"
+	// ClaimSubType identifies the identity class of the token subject, so a resource server can apply
+	// policy that differs by class. Emitted on client_credentials tokens.
+	ClaimSubType string = "sub_type"
 	// ClaimTokenFamilyID identifies the token family (one authorization grant) a token belongs to.
 	// A single tfid is minted per grant during the login flow and rides every access and refresh
 	// token of that grant, unchanged across refresh rotation, so revocation can target a whole
 	// family at once. Revocation-only and not a client-managed identifier: it rides the token JWTs
 	// but is not part of any client-facing API.
 	ClaimTokenFamilyID string = "tfid"
+	// ClaimSessionID is the OIDC sid claim the id of the SSO session an authentication belongs to. Carried by ID and
+	// refresh tokens, never by access tokens, and omitted when no session was established.
+	ClaimSessionID string = "sid"
+	// ClaimCorrelationID carries the login flow's execution id on the flow assertion so the
+	// authorization code, and in turn the token issuance events, report the same correlation
+	// identifier as the flow's own observability events. Observability-only: it rides the internal
+	// flow assertion and is never emitted on a client-facing token.
+	ClaimCorrelationID string = "correlation_id"
+	// ClaimSubjectID carries the resource ID of the entity the flow authenticated, and
+	// ClaimSubjectType its entity category. The assertion's own sub claim holds the token subject,
+	// which the application may map to an attribute such as an email address; these two carry the
+	// opaque identity alongside it so token issuance can report the subject without resolving it
+	// again and without reporting a mapped attribute. Observability-only: both ride the internal flow
+	// assertion, neither is emitted on a client-facing token, and no authorization decision reads
+	// either claim.
+	ClaimSubjectID   string = "sub_id"
+	ClaimSubjectType string = "sub_type"
+)
+
+// Subject type values for the sub_type claim.
+const (
+	// SubTypeApp marks the subject as an application.
+	SubTypeApp string = "application"
+	// SubTypeAgent marks the subject as an agent.
+	SubTypeAgent string = "agent"
 )
 
 // SurfaceableClientSystemClaims is the fixed set of entity system-attribute keys that may be
@@ -349,49 +366,10 @@ const (
 	CIBAMaxExpiresInSeconds = 600
 )
 
-// GetSupportedResponseTypes returns all supported OAuth2 response types.
-func GetSupportedResponseTypes(oauthConfig oauthconfig.Config) []string {
-	allowedResponseTypes := oauthConfig.OAuth.AllowedResponseTypes
-	if len(allowedResponseTypes) > 0 {
-		return allowedResponseTypes
-	}
-	result := make([]string, len(providers.SupportedResponseTypes))
-	for i, rt := range providers.SupportedResponseTypes {
-		result[i] = string(rt)
-	}
-	return result
-}
-
-// GetSupportedGrantTypes returns all supported OAuth2 grant types.
-func GetSupportedGrantTypes(oauthConfig oauthconfig.Config) []string {
-	allowedGrantTypes := oauthConfig.OAuth.AllowedGrantTypes
-	if len(allowedGrantTypes) > 0 {
-		return allowedGrantTypes
-	}
-	result := make([]string, len(providers.SupportedGrantTypes))
-	for i, gt := range providers.SupportedGrantTypes {
-		result[i] = string(gt)
-	}
-	return result
-}
-
-// GetSupportedTokenEndpointAuthMethods returns all supported token endpoint authentication methods.
-func GetSupportedTokenEndpointAuthMethods(oauthConfig oauthconfig.Config) []string {
-	allowedAuthMethods := oauthConfig.OAuth.AllowedAuthMethods
-	if len(allowedAuthMethods) > 0 {
-		return allowedAuthMethods
-	}
-	result := make([]string, len(providers.SupportedTokenEndpointAuthMethods))
-	for i, tam := range providers.SupportedTokenEndpointAuthMethods {
-		result[i] = string(tam)
-	}
-	return result
-}
-
-// GetSupportedSubjectTypes returns all supported OIDC subject types.
-func GetSupportedSubjectTypes() []string {
-	return []string{SubjectTypePublic}
-}
+const (
+	// SupportedAuthorizationGrantProfileIDJAG is the constant for supported authorization grant profile ID-JAG.
+	SupportedAuthorizationGrantProfileIDJAG = "urn:ietf:params:oauth:grant-profile:id-jag"
+)
 
 // GetStandardClaims returns all standard JWT claims that are always included in tokens.
 func GetStandardClaims() []string {

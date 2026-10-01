@@ -1,20 +1,5 @@
-/*
- * Copyright (c) 2025-2026, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2025-2026 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 package application
 
@@ -302,19 +287,6 @@ var (
 			DefaultValue: "An application with the same client ID already exists",
 		},
 	}
-	// ErrorJWKSUriNotHTTPS is the error returned when jwks_uri does not use HTTPS.
-	ErrorJWKSUriNotHTTPS = tidcommon.ServiceError{
-		Type: tidcommon.ClientErrorType,
-		Code: "APP-1022",
-		Error: tidcommon.I18nMessage{
-			Key:          "error.applicationservice.invalid_jwks_uri_scheme",
-			DefaultValue: "Invalid JWKS URI scheme",
-		},
-		ErrorDescription: tidcommon.I18nMessage{
-			Key:          "error.applicationservice.invalid_jwks_uri_scheme_description",
-			DefaultValue: "'jwks_uri' must use HTTPS scheme",
-		},
-	}
 	// ErrorInvalidPublicClientConfiguration is the generic error returned for public client configuration issues.
 	ErrorInvalidPublicClientConfiguration = tidcommon.ServiceError{
 		Type: tidcommon.ClientErrorType,
@@ -352,6 +324,20 @@ var (
 		ErrorDescription: tidcommon.I18nMessage{
 			Key:          "error.applicationservice.invalid_user_type_description",
 			DefaultValue: "One or more user types in allowed_user_types do not exist in the system",
+		},
+	}
+	// ErrorInvalidAgentType is the error returned when an invalid agent type is provided in
+	// allowedAgentTypes.
+	ErrorInvalidAgentType = tidcommon.ServiceError{
+		Type: tidcommon.ClientErrorType,
+		Code: "APP-1046",
+		Error: tidcommon.I18nMessage{
+			Key:          "error.applicationservice.invalid_agent_type",
+			DefaultValue: "Invalid agent type",
+		},
+		ErrorDescription: tidcommon.I18nMessage{
+			Key:          "error.applicationservice.invalid_agent_type_description",
+			DefaultValue: "One or more agent types in allowedAgentTypes do not exist in the system",
 		},
 	}
 	// ErrorThemeNotFound is the error returned when theme is not found.
@@ -586,6 +572,77 @@ var (
 		ErrorDescription: tidcommon.I18nMessage{
 			Key:          "error.applicationservice.invalid_policy_uri_description",
 			DefaultValue: "The provided Privacy Policy URI is not a valid URI",
+		},
+	}
+	// ErrorInvalidSubjectAttributeMapping is the error returned when the subject attribute mapping
+	// references an attribute that is not unique, required, and string-typed in an allowed user type.
+	ErrorInvalidSubjectAttributeMapping = tidcommon.ServiceError{
+		Type: tidcommon.ClientErrorType,
+		Code: "APP-1045",
+		Error: tidcommon.I18nMessage{
+			Key:          "error.applicationservice.invalid_subject_attribute_mapping",
+			DefaultValue: "Invalid subject attribute mapping",
+		},
+		ErrorDescription: tidcommon.I18nMessage{
+			Key: "error.applicationservice.invalid_subject_attribute_mapping_description",
+			DefaultValue: "The subject attribute mapping must reference an attribute that is unique, required, " +
+				"and string-typed in an allowed user type",
+		},
+	}
+	// ErrorInvalidCredential is returned when a supplied credential is invalid.
+	ErrorInvalidCredential = tidcommon.ServiceError{
+		Type: tidcommon.ClientErrorType,
+		Code: "APP-1046",
+		Error: tidcommon.I18nMessage{
+			Key:          "error.applicationservice.invalid_credential",
+			DefaultValue: "Invalid credential",
+		},
+		ErrorDescription: tidcommon.I18nMessage{
+			Key:          "error.applicationservice.invalid_credential_description",
+			DefaultValue: "The provided credential is invalid",
+		},
+	}
+	// ErrorApplicationHasNoClientSecret is the error returned when a client secret regeneration targets an
+	// application that authenticates without one: a public client, or one using private_key_jwt.
+	ErrorApplicationHasNoClientSecret = tidcommon.ServiceError{
+		Type: tidcommon.ClientErrorType,
+		Code: "APP-1047",
+		Error: tidcommon.I18nMessage{
+			Key:          "error.applicationservice.application_has_no_client_secret",
+			DefaultValue: "Application has no client secret",
+		},
+		ErrorDescription: tidcommon.I18nMessage{
+			Key:          "error.applicationservice.application_has_no_client_secret_description",
+			DefaultValue: "A client secret is not applicable to this application: it authenticates without one",
+		},
+	}
+	// ErrorApplicationHasBlockingDependencies is the error returned when the application cannot be deleted
+	// because another resource holds a reference that forbids it.
+	ErrorApplicationHasBlockingDependencies = tidcommon.ServiceError{
+		Type: tidcommon.ClientErrorType,
+		Code: "APP-1048",
+		Error: tidcommon.I18nMessage{
+			Key:          "error.applicationservice.application_has_blocking_dependencies",
+			DefaultValue: "Application has blocking dependencies",
+		},
+		ErrorDescription: tidcommon.I18nMessage{
+			Key: "error.applicationservice.application_has_blocking_dependencies_description",
+			DefaultValue: "The application cannot be deleted because other resources depend on it. " +
+				"Remove or reassign them first",
+		},
+	}
+	// ErrorUnsupportedCredentialAction is the error returned when a credential action the service does
+	// not implement is requested.
+	ErrorUnsupportedCredentialAction = tidcommon.ServiceError{
+		Type: tidcommon.ClientErrorType,
+		Code: "APP-1049",
+		Error: tidcommon.I18nMessage{
+			Key:          "error.applicationservice.unsupported_credential_action",
+			DefaultValue: "Unsupported credential action",
+		},
+		ErrorDescription: tidcommon.I18nMessage{
+			Key:          "error.applicationservice.unsupported_credential_action_description",
+			DefaultValue: "The requested action is not supported for this application's credential",
 		},
 	}
 )

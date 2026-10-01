@@ -1,20 +1,5 @@
-/*
- * Copyright (c) 2025, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2025 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 package config
 
@@ -22,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -30,6 +16,19 @@ import (
 
 	engineconfig "github.com/thunder-id/thunderid/pkg/thunderidengine/config"
 )
+
+func TestAuthZENPDPDefaultsMergeAndValidation(t *testing.T) {
+	defaultRetries, zeroRetries := 1, 0
+	base := Config{AuthZENPDP: AuthZENPDPConfig{TimeoutMS: 500, RetryCount: &defaultRetries}}
+	user := Config{AuthZENPDP: AuthZENPDPConfig{TimeoutMS: 2000, RetryCount: &zeroRetries}}
+	mergeConfigs(&base, &user)
+	assert.Equal(t, 2000, base.AuthZENPDP.TimeoutMS)
+	assert.Equal(t, 0, *base.AuthZENPDP.RetryCount)
+	assert.NoError(t, base.AuthZENPDP.Validate())
+	negative := -1
+	assert.Error(t, (AuthZENPDPConfig{TimeoutMS: -1}).Validate())
+	assert.Error(t, (AuthZENPDPConfig{RetryCount: &negative}).Validate())
+}
 
 type ConfigTestSuite struct {
 	suite.Suite
@@ -473,6 +472,36 @@ func (suite *ConfigTestSuite) TestLogConfigOverrideToZeroValues() {
 	assert.Equal(suite.T(), boolPtr(true), base2.Log.Output.Console.Enabled, "nil override keeps the default")
 }
 
+// TestOAuthSendServerErrorsToClientOverride verifies the presence-based (pointer) merge for
+// the OAuth.SendServerErrorsToClient field:
+func (suite *ConfigTestSuite) TestOAuthSendServerErrorsToClientOverride() {
+	base := &Config{}
+	base.OAuth.SendServerErrorsToClient = boolPtr(false)
+
+	user := &Config{}
+	user.OAuth.SendServerErrorsToClient = boolPtr(true)
+
+	mergeConfigs(base, user)
+	assert.Equal(suite.T(), boolPtr(true), base.OAuth.SendServerErrorsToClient,
+		"true must override the false default")
+
+	// The reverse direction is what a plain bool could not express: a zero-valued user field is
+	// skipped by the merge, so only the pointer lets deployment.yaml turn the toggle back off.
+	base2 := &Config{}
+	base2.OAuth.SendServerErrorsToClient = boolPtr(true)
+	user2 := &Config{}
+	user2.OAuth.SendServerErrorsToClient = boolPtr(false)
+	mergeConfigs(base2, user2)
+	assert.Equal(suite.T(), boolPtr(false), base2.OAuth.SendServerErrorsToClient,
+		"explicit false must override a true base")
+
+	base3 := &Config{}
+	base3.OAuth.SendServerErrorsToClient = boolPtr(false)
+	mergeConfigs(base3, &Config{})
+	assert.Equal(suite.T(), boolPtr(false), base3.OAuth.SendServerErrorsToClient,
+		"nil override keeps the default")
+}
+
 func (suite *ConfigTestSuite) TestLoadConfigWithDefaults_ErrorCases() {
 	tempDir := suite.T().TempDir()
 
@@ -510,7 +539,7 @@ func (suite *ConfigTestSuite) TestMergeStructs() {
 			Issuer:         "base-issuer",
 			ValidityPeriod: 3600,
 		},
-		OAuth: engineconfig.OAuthConfig{
+		OAuth: OAuthConfig{
 			RefreshToken: engineconfig.RefreshTokenConfig{
 				RenewOnGrant:   false,
 				ValidityPeriod: 7200,
@@ -557,7 +586,7 @@ func (suite *ConfigTestSuite) TestMergeStructs() {
 			Issuer: "user-issuer", // Override
 			// ValidityPeriod: 0 (zero value, should not override)
 		},
-		OAuth: engineconfig.OAuthConfig{
+		OAuth: OAuthConfig{
 			RefreshToken: engineconfig.RefreshTokenConfig{
 				RenewOnGrant: true, // Override
 				// ValidityPeriod: 0 (zero value, should not override)
@@ -839,6 +868,81 @@ func (suite *ConfigTestSuite) TestMergeStructs_PrimitiveTypes() {
 	assert.Equal(suite.T(), 2.71, base.Float64Field)         // Overridden
 }
 
+// TestMergeConfigs_BoolPointerOverride guards the fix for the bug where plain bool config fields
+// defaulting to true in default.json could not be overridden to false via deployment.yaml (a user
+// false was indistinguishable from the zero value and silently dropped). The affected fields use
+// *bool so an explicit false overrides while an absent value keeps the default.
+func (suite *ConfigTestSuite) TestMergeConfigs_BoolPointerOverride() {
+	newBase := func() *Config {
+		return &Config{
+			Notification: NotificationConfig{OTP: OTPConfig{UseNumericOnly: boolPtr(true)}},
+			OpenID4VP:    OpenID4VPConfig{EnforceKeyBinding: boolPtr(true)},
+			OAuth: OAuthConfig{
+				RefreshToken:    engineconfig.RefreshTokenConfig{RevokePreviousOnRenew: boolPtr(true)},
+				TokenRevocation: engineconfig.OAuthTokenRevocationConfig{Enabled: boolPtr(true)},
+				Logout:          engineconfig.LogoutConfig{Enabled: boolPtr(true)},
+				Revocation: engineconfig.RevocationConfig{TokenFamily: engineconfig.TokenFamilyRevocationConfig{
+					OnRefreshReplay:  boolPtr(true),
+					OnExplicitRevoke: boolPtr(true),
+					OnCodeReplay:     boolPtr(true),
+				}},
+			},
+			Server: engineconfig.ServerConfig{SecurityConfig: engineconfig.SecurityConfig{
+				TokenRevocation: engineconfig.TokenRevocationConfig{Enabled: boolPtr(true)},
+			}},
+		}
+	}
+
+	suite.Run("explicit false overrides the true default", func() {
+		base := newBase()
+		user := &Config{
+			Notification: NotificationConfig{OTP: OTPConfig{UseNumericOnly: boolPtr(false)}},
+			OpenID4VP:    OpenID4VPConfig{EnforceKeyBinding: boolPtr(false)},
+			OAuth: OAuthConfig{
+				RefreshToken:    engineconfig.RefreshTokenConfig{RevokePreviousOnRenew: boolPtr(false)},
+				TokenRevocation: engineconfig.OAuthTokenRevocationConfig{Enabled: boolPtr(false)},
+				Logout:          engineconfig.LogoutConfig{Enabled: boolPtr(false)},
+				Revocation: engineconfig.RevocationConfig{TokenFamily: engineconfig.TokenFamilyRevocationConfig{
+					OnRefreshReplay:  boolPtr(false),
+					OnExplicitRevoke: boolPtr(false),
+					OnCodeReplay:     boolPtr(false),
+				}},
+			},
+			Server: engineconfig.ServerConfig{SecurityConfig: engineconfig.SecurityConfig{
+				TokenRevocation: engineconfig.TokenRevocationConfig{Enabled: boolPtr(false)},
+			}},
+		}
+
+		mergeConfigs(base, user)
+
+		assert.False(suite.T(), base.Notification.OTP.UsesNumericOnly())
+		assert.False(suite.T(), base.OpenID4VP.EnforceKeyBindingEnabled())
+		assert.False(suite.T(), base.OAuth.RefreshToken.RevokePreviousOnRenewEnabled())
+		assert.False(suite.T(), base.OAuth.TokenRevocation.IsEnabled())
+		assert.False(suite.T(), base.OAuth.Logout.IsEnabled())
+		assert.False(suite.T(), base.OAuth.Revocation.TokenFamily.OnRefreshReplayEnabled())
+		assert.False(suite.T(), base.OAuth.Revocation.TokenFamily.OnExplicitRevokeEnabled())
+		assert.False(suite.T(), base.OAuth.Revocation.TokenFamily.OnCodeReplayEnabled())
+		assert.False(suite.T(), base.Server.SecurityConfig.TokenRevocation.IsEnabled())
+	})
+
+	suite.Run("absent value keeps the true default", func() {
+		base := newBase()
+
+		mergeConfigs(base, &Config{})
+
+		assert.True(suite.T(), base.Notification.OTP.UsesNumericOnly())
+		assert.True(suite.T(), base.OpenID4VP.EnforceKeyBindingEnabled())
+		assert.True(suite.T(), base.OAuth.RefreshToken.RevokePreviousOnRenewEnabled())
+		assert.True(suite.T(), base.OAuth.TokenRevocation.IsEnabled())
+		assert.True(suite.T(), base.OAuth.Logout.IsEnabled())
+		assert.True(suite.T(), base.OAuth.Revocation.TokenFamily.OnRefreshReplayEnabled())
+		assert.True(suite.T(), base.OAuth.Revocation.TokenFamily.OnExplicitRevokeEnabled())
+		assert.True(suite.T(), base.OAuth.Revocation.TokenFamily.OnCodeReplayEnabled())
+		assert.True(suite.T(), base.Server.SecurityConfig.TokenRevocation.IsEnabled())
+	})
+}
+
 func (suite *ConfigTestSuite) TestMergeStructs_SliceHandling() {
 	// Test non-empty slice override
 	type SliceConfig struct {
@@ -1017,6 +1121,73 @@ notification:
 			}
 		})
 	}
+}
+
+// TestLoadConfig_GateAudiences round-trips server.security.rest.audience and
+// server.security.mcp.audience, and locks in that a block carrying no audience leaves it unset —
+// the shape deployment.yaml ships, where the keys are present only as commented-out examples.
+func (suite *ConfigTestSuite) TestLoadConfig_GateAudiences() {
+	load := func(content string) *Config {
+		tempDir := suite.T().TempDir()
+		userFile := suite.createTempFile(tempDir, "rest-audience*.yaml", content)
+		cfg, err := LoadConfig(userFile, "", tempDir)
+		suite.Require().NoError(err)
+		suite.Require().NotNil(cfg)
+		return cfg
+	}
+
+	suite.Run("configured audience reaches the loaded config", func() {
+		cfg := load(`
+notification:
+  otp:
+    length: 6
+    use_numeric_only: true
+    validity_period_seconds: 120
+server:
+  hostname: "localhost"
+  port: 8090
+  security:
+    rest:
+      audience: "https://localhost:8090/mcp"
+`)
+		suite.Require().NotNil(cfg.Server.SecurityConfig.REST.Audience)
+		assert.Equal(suite.T(), "https://localhost:8090/mcp", *cfg.Server.SecurityConfig.REST.Audience)
+	})
+
+	suite.Run("mcp audience reaches the loaded config", func() {
+		cfg := load(`
+notification:
+  otp:
+    length: 6
+    use_numeric_only: true
+    validity_period_seconds: 120
+server:
+  hostname: "localhost"
+  port: 8090
+  security:
+    mcp:
+      audience: "https://id.example.com/mcp"
+`)
+		suite.Require().NotNil(cfg.Server.SecurityConfig.MCP.Audience)
+		assert.Equal(suite.T(), "https://id.example.com/mcp", *cfg.Server.SecurityConfig.MCP.Audience)
+	})
+
+	suite.Run("rest block with no audience leaves it unset", func() {
+		cfg := load(`
+notification:
+  otp:
+    length: 6
+    use_numeric_only: true
+    validity_period_seconds: 120
+server:
+  hostname: "localhost"
+  port: 8090
+  security:
+    rest:
+      # audience: "https://localhost:8090/mcp"
+`)
+		assert.Nil(suite.T(), cfg.Server.SecurityConfig.REST.Audience)
+	})
 }
 
 func (suite *ConfigTestSuite) TestLoadConfig_InvalidYAML() {
@@ -1492,7 +1663,7 @@ flow:
 func (suite *ConfigTestSuite) TestOTPConfig_Validate_Defaults() {
 	cfg := &OTPConfig{
 		Length:                6,
-		UseNumericOnly:        true,
+		UseNumericOnly:        boolPtr(true),
 		ValidityPeriodSeconds: 120,
 	}
 	assert.NoError(suite.T(), cfg.Validate())
@@ -1531,4 +1702,121 @@ func (suite *ConfigTestSuite) TestNotificationConfig_Validate_DelegatesToOTP() {
 	err := cfg.Validate()
 	assert.Error(suite.T(), err)
 	assert.Contains(suite.T(), err.Error(), "notification.otp.length")
+}
+
+func (suite *ConfigTestSuite) TestOAuthConfig_ToEngineConfig_CopiesYAMLFields() {
+	sendErrs := true
+	src := OAuthConfig{
+		RefreshToken:             engineconfig.RefreshTokenConfig{RenewOnGrant: true, ValidityPeriod: 7200},
+		AuthorizationCode:        engineconfig.AuthorizationCodeConfig{ValidityPeriod: 300},
+		AuthorizationRequest:     engineconfig.AuthorizationRequestConfig{ValidityPeriod: 60},
+		DCR:                      engineconfig.DCRConfig{Insecure: true},
+		PAR:                      engineconfig.PARConfig{ExpiresIn: 600, RequirePAR: true},
+		DPoP:                     engineconfig.DPoPConfig{Required: true, AllowedAlgs: []string{"ES256"}},
+		CIBA:                     engineconfig.CIBAConfig{IDTokenHintMaxAgeDays: 30},
+		TokenExchange:            engineconfig.TokenExchangeConfig{TokenFamily: "inherit"},
+		AllowWildcardRedirectURI: true,
+		AllowedGrantTypes:        []string{"authorization_code"},
+		AllowedResponseTypes:     []string{"code"},
+		AllowedAuthMethods:       []string{"client_secret_basic"},
+		SendServerErrorsToClient: &sendErrs,
+	}
+
+	dst := src.ToEngineConfig()
+
+	assert.Equal(suite.T(), src.RefreshToken, dst.RefreshToken)
+	assert.Equal(suite.T(), src.AuthorizationCode, dst.AuthorizationCode)
+	assert.Equal(suite.T(), src.AuthorizationRequest, dst.AuthorizationRequest)
+	assert.Equal(suite.T(), src.DCR, dst.DCR)
+	assert.Equal(suite.T(), src.PAR, dst.PAR)
+	assert.Equal(suite.T(), src.DPoP, dst.DPoP)
+	assert.Equal(suite.T(), src.CIBA, dst.CIBA)
+	assert.Equal(suite.T(), src.TokenExchange, dst.TokenExchange)
+	assert.Equal(suite.T(), src.AllowWildcardRedirectURI, dst.AllowWildcardRedirectURI)
+	assert.Equal(suite.T(), src.AllowedGrantTypes, dst.AllowedGrantTypes)
+	assert.Equal(suite.T(), src.AllowedResponseTypes, dst.AllowedResponseTypes)
+	assert.Equal(suite.T(), src.AllowedAuthMethods, dst.AllowedAuthMethods)
+	assert.Equal(suite.T(), src.SendServerErrorsToClient, dst.SendServerErrorsToClient)
+
+	// The four engine-only OIDC discovery fields are not settable through the yaml struct
+	// and must remain zero after conversion.
+	assert.Empty(suite.T(), dst.AllowedScopes)
+	assert.Empty(suite.T(), dst.AllowedClaims)
+	assert.Empty(suite.T(), dst.DefaultScopeClaimsMapping)
+	assert.Empty(suite.T(), dst.AllowedSubjectTypes)
+}
+
+func (suite *ConfigTestSuite) TestOAuthConfig_YAMLDoesNotBindOIDCFields() {
+	// The four engine-only OIDC discovery fields must not be bindable through yaml. Under
+	// strict decoding (KnownFields(true), as used by the production loader) any yaml document
+	// that tries to set them should fail with an "unknown field" error.
+	cases := []string{
+		"allowed_scopes:\n  - openid\n",
+		"allowed_claims:\n  - sub\n",
+		"default_scope_claims_mapping:\n  openid:\n    - sub\n",
+		"allowed_subject_types:\n  - public\n",
+	}
+	for _, doc := range cases {
+		var cfg OAuthConfig
+		dec := yaml.NewDecoder(strings.NewReader(doc))
+		dec.KnownFields(true)
+		err := dec.Decode(&cfg)
+		suite.Require().Error(err, "yaml %q should be rejected by strict decoder", doc)
+		suite.Contains(err.Error(), "not found in type")
+	}
+
+	// Lenient decoding must silently drop the keys rather than populate a struct field.
+	const combined = `
+allowed_scopes:
+  - openid
+allowed_claims:
+  - sub
+default_scope_claims_mapping:
+  openid:
+    - sub
+allowed_subject_types:
+  - public
+`
+	var cfg OAuthConfig
+	suite.Require().NoError(yaml.Unmarshal([]byte(combined), &cfg))
+	dst := cfg.ToEngineConfig()
+	assert.Empty(suite.T(), dst.AllowedScopes)
+	assert.Empty(suite.T(), dst.AllowedClaims)
+	assert.Empty(suite.T(), dst.DefaultScopeClaimsMapping)
+	assert.Empty(suite.T(), dst.AllowedSubjectTypes)
+}
+
+// A deployment that sets max_gateways to zero means it administers none, and the merge has to keep
+// that. The merge only takes a user-supplied primitive when it is non-zero, so a plain int would be
+// indistinguishable from an omitted field and default.json's one would win.
+func TestMergeKeepsAnExplicitlyZeroGatewayBound(t *testing.T) {
+	shipped := 1
+	none := 0
+
+	base := &Config{Gateway: GatewayConfig{MaxGateways: &shipped}}
+	mergeConfigs(base, &Config{Gateway: GatewayConfig{MaxGateways: &none}})
+
+	if got := base.Gateway.MaxGatewayCount(); got != 0 {
+		t.Errorf("an explicit zero was discarded by the merge, got %d", got)
+	}
+}
+
+// Omitting it is the other half: nothing supplied leaves what default.json carries.
+func TestMergeKeepsTheShippedGatewayBoundWhenUnset(t *testing.T) {
+	shipped := 1
+
+	base := &Config{Gateway: GatewayConfig{MaxGateways: &shipped}}
+	mergeConfigs(base, &Config{})
+
+	if got := base.Gateway.MaxGatewayCount(); got != 1 {
+		t.Errorf("an omitted field overwrote the shipped bound, got %d", got)
+	}
+}
+
+// With nothing configured at all a deployment administers none, rather than this code inventing a
+// number that default.json already carries.
+func TestGatewayBoundDefaultsToNone(t *testing.T) {
+	if got := (GatewayConfig{}).MaxGatewayCount(); got != 0 {
+		t.Errorf("expected an unconfigured bound to be none, got %d", got)
+	}
 }

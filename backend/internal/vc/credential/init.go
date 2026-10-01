@@ -1,20 +1,5 @@
-/*
- * Copyright (c) 2026, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2026 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 package credential
 
@@ -40,11 +25,16 @@ import (
 func Initialize(
 	mux *http.ServeMux, ouService ou.OrganizationUnitServiceInterface,
 ) (CredentialConfigurationServiceInterface, declarativeresource.ResourceExporter, error) {
-	store, err := initializeStore()
+	store, fileStore, dbStore, err := initializeStore()
 	if err != nil {
 		return nil, nil, err
 	}
 	svc := newCredentialConfigurationService(store, ouService)
+	if fileStore != nil {
+		if err := loadDeclarativeResources(fileStore, dbStore, svc); err != nil {
+			return nil, nil, err
+		}
+	}
 	registerRoutes(mux, newConfigurationHandler(svc))
 	return svc, newConfigurationExporter(svc), nil
 }
@@ -83,28 +73,29 @@ func registerRoutes(mux *http.ServeMux, h *configurationHandler) {
 		func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) }, resourceOpts))
 }
 
-// initializeStore creates the credential store for the configured store mode, loading declarative resources as needed.
-func initializeStore() (credentialStoreInterface, error) {
+// initializeStore creates the credential stores for the configured store mode.
+func initializeStore() (credentialStoreInterface, *credentialFileBasedStore, credentialStoreInterface, error) {
 	mode, err := getCredentialStoreMode()
 	if err != nil {
-		return nil, err
+		return nil, nil, nil, err
 	}
 	switch mode {
 	case serverconst.StoreModeComposite:
 		fileStore := newCredentialFileBasedStore()
-		if err := loadDeclarativeResources(&credentialStorer{store: fileStore}); err != nil {
-			return nil, err
-		}
-		return newCompositeCredentialStore(fileStore, newCredentialStore()), nil
+		dbStore := newCredentialStore()
+		return newCompositeCredentialStore(fileStore, dbStore), fileStore, dbStore, nil
 	case serverconst.StoreModeDeclarative:
 		fileStore := newCredentialFileBasedStore()
-		if err := loadDeclarativeResources(&credentialStorer{store: fileStore}); err != nil {
-			return nil, err
-		}
-		return fileStore, nil
+		return fileStore, fileStore, nil, nil
 	default:
-		return newCredentialStore(), nil
+		return newCredentialStore(), nil, nil, nil
 	}
+}
+
+// isDeclarativeModeEnabled checks if immutable-only store mode is enabled for credential configurations.
+func isDeclarativeModeEnabled() bool {
+	mode, err := getCredentialStoreMode()
+	return err == nil && mode == serverconst.StoreModeDeclarative
 }
 
 // getCredentialStoreMode determines the credential store mode from configuration, defaulting based on declarative mode.

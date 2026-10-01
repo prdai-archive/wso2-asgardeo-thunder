@@ -1,20 +1,5 @@
-/*
- * Copyright (c) 2026, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2026 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 package group
 
@@ -438,6 +423,36 @@ func (suite *CompositeGroupStoreEdgeCaseTestSuite) TestGetGroupsByIDs_DBError() 
 
 	assert.Error(suite.T(), err)
 	assert.Equal(suite.T(), dbErr, err)
+}
+
+// Test GetGroupsByNames queries both stores in full, even when the name is found in one already —
+// unlike GetGroupsByIDs, a name is not unique across organization units, so a match in one store
+// cannot rule out a match in the other.
+func (suite *CompositeGroupStoreEdgeCaseTestSuite) TestGetGroupsByNames_QueriesBothStoresInFull() {
+	names := []string{"engineering"}
+	dbGroups := []GroupBasicDAO{{ID: "grp-db", Name: "engineering", OUID: "ou1"}}
+	fileGroups := []GroupBasicDAO{{ID: "grp-file", Name: "engineering", OUID: "ou2", IsReadOnly: true}}
+
+	suite.mockDBStore.On("GetGroupsByNames", suite.ctx, names).Return(dbGroups, nil)
+	suite.mockFileStore.On("GetGroupsByNames", suite.ctx, names).Return(fileGroups, nil)
+
+	result, err := suite.store.GetGroupsByNames(suite.ctx, names)
+
+	assert.NoError(suite.T(), err)
+	assert.Len(suite.T(), result, 2)
+	suite.mockFileStore.AssertExpectations(suite.T())
+}
+
+// Test GetGroupsByNames propagates a DB error without querying the file store.
+func (suite *CompositeGroupStoreEdgeCaseTestSuite) TestGetGroupsByNames_DBError() {
+	dbErr := errors.New("db error")
+	suite.mockDBStore.On("GetGroupsByNames", suite.ctx, []string{"engineering"}).Return(nil, dbErr)
+
+	_, err := suite.store.GetGroupsByNames(suite.ctx, []string{"engineering"})
+
+	assert.Error(suite.T(), err)
+	assert.Equal(suite.T(), dbErr, err)
+	suite.mockFileStore.AssertNotCalled(suite.T(), "GetGroupsByNames")
 }
 
 // Test IsGroupDeclarative delegates to file store.

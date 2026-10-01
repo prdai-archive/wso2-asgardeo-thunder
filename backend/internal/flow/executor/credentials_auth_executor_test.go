@@ -1,20 +1,5 @@
-/*
- * Copyright (c) 2025-2026, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2025-2026 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 package executor
 
@@ -318,7 +303,7 @@ func (suite *CredentialsAuthExecutorTestSuite) TestExecute_AuthenticationFailed(
 	assert.NoError(suite.T(), err)
 	assert.NotNil(suite.T(), resp)
 	assert.Equal(suite.T(), providers.ExecUserInputRequired, resp.Status)
-	assert.Equal(suite.T(), ErrUserAuthFailed.Code, resp.Error.Code)
+	assert.Equal(suite.T(), ErrEntityAuthFailed.Code, resp.Error.Code)
 	assert.NotEmpty(suite.T(), resp.Inputs, "Inputs should be re-populated for retry")
 	suite.mockAuthnProvider.AssertExpectations(suite.T())
 }
@@ -334,7 +319,7 @@ func (suite *CredentialsAuthExecutorTestSuite) TestExecute_UserNotFound_Authenti
 		RuntimeData: make(map[string]string),
 	}
 
-	// Authenticate internally calls IdentifyUser and returns user not found error
+	// Authenticate internally calls IdentifyEntity and returns user not found error
 	suite.mockAuthnProvider.On("AuthenticateUser", mock.Anything, map[string]interface{}{
 		userAttributeUsername: "nonexistent",
 	}, map[string]interface{}{
@@ -350,7 +335,7 @@ func (suite *CredentialsAuthExecutorTestSuite) TestExecute_UserNotFound_Authenti
 	assert.NoError(suite.T(), err)
 	assert.NotNil(suite.T(), resp)
 	assert.Equal(suite.T(), providers.ExecUserInputRequired, resp.Status)
-	assert.Equal(suite.T(), ErrUserAuthFailed.Code, resp.Error.Code,
+	assert.Equal(suite.T(), ErrEntityAuthFailed.Code, resp.Error.Code,
 		"Failure reason should contain authentication failure message")
 	assert.NotEmpty(suite.T(), resp.Inputs, "Inputs should be re-populated for retry")
 	suite.mockAuthnProvider.AssertExpectations(suite.T())
@@ -377,7 +362,7 @@ func (suite *CredentialsAuthExecutorTestSuite) TestExecute_UserAlreadyExists_Reg
 	assert.NoError(suite.T(), err)
 	assert.NotNil(suite.T(), resp)
 	assert.Equal(suite.T(), providers.ExecFailure, resp.Status)
-	assert.Equal(suite.T(), ErrUserAlreadyExists.Code, resp.Error.Code)
+	assert.Equal(suite.T(), ErrEntityAlreadyExists.Code, resp.Error.Code)
 	suite.mockEntityProvider.AssertExpectations(suite.T())
 }
 
@@ -436,7 +421,7 @@ func (suite *CredentialsAuthExecutorTestSuite) TestExecute_AuthenticationService
 	assert.NoError(suite.T(), err)
 	assert.NotNil(suite.T(), resp)
 	assert.Equal(suite.T(), providers.ExecFailure, resp.Status)
-	assert.Equal(suite.T(), ErrUserAuthFailed.Code, resp.Error.Code)
+	assert.Equal(suite.T(), ErrEntityAuthFailed.Code, resp.Error.Code)
 	suite.mockAuthnProvider.AssertExpectations(suite.T())
 }
 
@@ -504,7 +489,7 @@ func (suite *CredentialsAuthExecutorTestSuite) TestAuthenticateUser_Success_With
 	suite.mockAuthnProvider.AssertExpectations(suite.T())
 }
 
-func (suite *CredentialsAuthExecutorTestSuite) TestAuthenticateUser_AuthenticationFlow_NoRedundantIdentifyUser() {
+func (suite *CredentialsAuthExecutorTestSuite) TestAuthenticateUser_AuthenticationFlow_NoRedundantIdentifyEntity() {
 	ctx := &providers.NodeContext{
 		ExecutionID: "flow-123",
 		FlowType:    providers.FlowTypeAuthentication,
@@ -533,7 +518,7 @@ func (suite *CredentialsAuthExecutorTestSuite) TestAuthenticateUser_Authenticati
 	suite.mockAuthnProvider.AssertExpectations(suite.T())
 }
 
-func (suite *CredentialsAuthExecutorTestSuite) TestAuthenticateUser_RegistrationFlow_CallsIdentifyUser() {
+func (suite *CredentialsAuthExecutorTestSuite) TestAuthenticateUser_RegistrationFlow_CallsIdentifyEntity() {
 	ctx := &providers.NodeContext{
 		ExecutionID: "flow-123",
 		FlowType:    providers.FlowTypeRegistration,
@@ -581,7 +566,7 @@ func (suite *CredentialsAuthExecutorTestSuite) TestExecute_RetryableAuthenticati
 			username:          "nonexistent",
 			password:          "password123",
 			errorCode:         authnprovidermgr.ErrorUserNotFound.Code,
-			expectedErrorCode: ErrUserNotFound.Code,
+			expectedErrorCode: ErrEntityNotFound.Code,
 			message:           "Should return specific failure reason for user not found",
 		},
 	}

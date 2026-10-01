@@ -1,20 +1,5 @@
-/*
- * Copyright (c) 2026, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2026 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 package entity
 
@@ -24,7 +9,9 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
+	authnprovidercm "github.com/thunder-id/thunderid/internal/authnprovider/common"
 	"github.com/thunder-id/thunderid/internal/entitytype"
 	"github.com/thunder-id/thunderid/internal/ou"
 	"github.com/thunder-id/thunderid/internal/system/cryptolib"
@@ -75,6 +62,8 @@ type EntityServiceInterface interface {
 	GetGroupCountForEntity(ctx context.Context, entityID string) (int, error)
 	GetEntityGroups(ctx context.Context, entityID string, limit, offset int) ([]providers.EntityGroup, error)
 	GetTransitiveEntityGroups(ctx context.Context, entityID string) ([]providers.EntityGroup, error)
+	// GetTransitiveGroupAncestors resolves the ancestor chain of a single group.
+	GetTransitiveGroupAncestors(ctx context.Context, groupID string) ([]string, error)
 
 	// Authentication
 	AuthenticateEntity(ctx context.Context, identifiers map[string]interface{},
@@ -98,6 +87,7 @@ type EntityServiceInterface interface {
 // Covers both DB-backed and declarative (YAML) group memberships.
 type GroupMembershipProvider interface {
 	GetTransitiveGroupsForEntity(ctx context.Context, entityID string) ([]providers.EntityGroup, error)
+	GetTransitiveAncestorGroups(ctx context.Context, groupID string) ([]string, error)
 }
 
 // entityService is the default implementation of EntityServiceInterface.
@@ -261,6 +251,12 @@ func (s *entityService) UpdateEntity(
 	var updated providers.Entity
 	err = s.transactioner.Transact(ctx, func(txCtx context.Context) error {
 		entity.ID = entityID
+		preserved, prErr := s.mergeReservedAttributes(txCtx, entityID, entity.SystemAttributes)
+		if prErr != nil {
+			return prErr
+		}
+		entity.SystemAttributes = preserved
+
 		if err := s.store.UpdateEntity(txCtx, entity); err != nil {
 			return err
 		}
@@ -362,7 +358,11 @@ func (s *entityService) UpdateSystemAttributes(ctx context.Context, entityID str
 	attrs json.RawMessage) error {
 	s.logger.Debug(ctx, "Updating entity system attributes", log.MaskedString("id", entityID))
 	return s.transactioner.Transact(ctx, func(txCtx context.Context) error {
-		return s.store.UpdateSystemAttributes(txCtx, entityID, attrs)
+		preserved, err := s.mergeReservedAttributes(txCtx, entityID, attrs)
+		if err != nil {
+			return err
+		}
+		return s.store.UpdateSystemAttributes(txCtx, entityID, preserved)
 	})
 }
 
@@ -455,6 +455,16 @@ func (s *entityService) GetTransitiveEntityGroups(
 	return s.groupMembershipProvider.GetTransitiveGroupsForEntity(ctx, entityID)
 }
 
+// GetTransitiveGroupAncestors resolves the ancestor chain of a single group.
+func (s *entityService) GetTransitiveGroupAncestors(
+	ctx context.Context, groupID string,
+) ([]string, error) {
+	if s.groupMembershipProvider == nil {
+		return []string{}, nil
+	}
+	return s.groupMembershipProvider.GetTransitiveAncestorGroups(ctx, groupID)
+}
+
 // AuthenticateEntity authenticates an entity by combining identify and verify operations.
 // Identifiers are used to find the entity, and credentials are verified against stored credentials.
 func (s *entityService) AuthenticateEntity(
@@ -501,7 +511,7 @@ func (s *entityService) AuthenticateEntityByID(
 		return nil, ErrEntityNotFound
 	}
 
-	if err := s.verifyCredentials(credentials, result.SchemaCredentials, result.SystemCredentials); err != nil {
+	if err := s.verifyCredentials(ctx, credentials, result.SchemaCredentials, result.SystemCredentials); err != nil {
 		return nil, err
 	}
 
@@ -514,7 +524,7 @@ func (s *entityService) AuthenticateEntityByID(
 }
 
 // verifyCredentials verifies provided credentials from both schema and system credentials.
-func (s *entityService) verifyCredentials(credentials map[string]interface{},
+func (s *entityService) verifyCredentials(ctx context.Context, credentials map[string]interface{},
 	schemaCredsJSON, systemCredsJSON json.RawMessage) error {
 	// Merge both credential columns for verification.
 	storedCreds := make(map[string][]StoredCredential)
@@ -564,16 +574,17 @@ func (s *entityService) verifyCredentials(credentials map[string]interface{},
 		verified := false
 		for _, stored := range credList {
 			ref := cryptolib.Credential{
-				Algorithm: stored.StorageAlgo,
-				Hash:      stored.Value,
-				Parameters: cryptolib.CredParameters{
-					Salt:       stored.StorageAlgoParams.Salt,
-					Iterations: stored.StorageAlgoParams.Iterations,
-					KeySize:    stored.StorageAlgoParams.KeySize,
-				},
+				Algorithm:  stored.StorageAlgo,
+				Hash:       stored.Value,
+				Parameters: stored.StorageAlgoParams,
 			}
 			ok, verifyErr := s.hashService.Verify([]byte(credValue), ref)
-			if verifyErr == nil && ok {
+			if verifyErr != nil {
+				s.logger.Debug(ctx, "Credential verification error", log.String("credentialType", credType),
+					log.Any("error", verifyErr))
+				continue
+			}
+			if ok {
 				verified = true
 				break
 			}
@@ -658,7 +669,18 @@ func (s *entityService) UpdateCredentials(ctx context.Context, entityID string,
 			return fmt.Errorf("failed to marshal merged credentials: %w", err)
 		}
 
-		return s.store.UpdateCredentials(txCtx, entityID, mergedJSON)
+		if err := s.store.UpdateCredentials(txCtx, entityID, mergedJSON); err != nil {
+			return err
+		}
+
+		// Record the change so the refresh grant can reject tokens established before it. Every
+		// password change lands here, and the marker shares this transaction with the write.
+		markedAttrs, err := setCredentialUpdatedAt(
+			existingWithCreds.Entity.SystemAttributes, time.Now().UTC())
+		if err != nil {
+			return err
+		}
+		return s.store.UpdateSystemAttributes(txCtx, entityID, markedAttrs)
 	})
 }
 
@@ -672,7 +694,7 @@ func (s *entityService) validateCredentialKeys(
 	}
 
 	credInfos, svcErr := s.entityTypeService.GetAttributes(ctx,
-		entitytype.TypeCategory(category), entityType, true, false, false)
+		entitytype.TypeCategory(category), entityType, entitytype.AttributeFilter{AllowCredential: true})
 	if svcErr != nil {
 		return fmt.Errorf("failed to get credential attributes from schema: %s", svcErr.ErrorDescription)
 	}
@@ -699,7 +721,8 @@ func (s *entityService) stripUndeclaredAttributes(
 	}
 
 	attrInfos, svcErr := s.entityTypeService.GetAttributes(ctx,
-		entitytype.TypeCategory(category), entityType, true, true, false)
+		entitytype.TypeCategory(category), entityType,
+		entitytype.AttributeFilter{AllowCredential: true, AllowNonCredential: true})
 	if svcErr != nil {
 		return nil, fmt.Errorf("failed to get schema attributes: %s", svcErr.ErrorDescription)
 	}
@@ -803,7 +826,20 @@ func (s *entityService) UpdateSystemCredentials(ctx context.Context, entityID st
 			return fmt.Errorf("failed to marshal merged credentials: %w", err)
 		}
 
-		return s.store.UpdateSystemCredentials(txCtx, entityID, mergedJSON)
+		if err := s.store.UpdateSystemCredentials(txCtx, entityID, mergedJSON); err != nil {
+			return err
+		}
+
+		// Only a client secret rotation marks the entity. A passkey adds an authentication option
+		// rather than replacing one, and the flow secret does not authenticate the client.
+		if _, rotatesClientSecret := updates[authnprovidercm.CredentialTypeClientSecret]; !rotatesClientSecret {
+			return nil
+		}
+		markedAttrs, err := setCredentialUpdatedAt(existing.Entity.SystemAttributes, time.Now().UTC())
+		if err != nil {
+			return err
+		}
+		return s.store.UpdateSystemAttributes(txCtx, entityID, markedAttrs)
 	})
 }
 
@@ -892,6 +928,70 @@ func (s *entityService) validateEntityType(
 	return nil
 }
 
+// mergeReservedAttributes carries the reserved, server-owned keys of an entity's stored system
+// attributes into a replacement blob. Both write paths replace the blob wholesale, and the services
+// that own an entity rebuild it from their own model, so without this a rename would drop the
+// credential-change marker this package writes and revive the tokens a credential change invalidated.
+func (s *entityService) mergeReservedAttributes(ctx context.Context, entityID string,
+	incoming json.RawMessage) (json.RawMessage, error) {
+	current, err := s.store.GetEntity(ctx, entityID)
+	if err != nil {
+		return nil, err
+	}
+	marker := credentialUpdatedAtOf(current.SystemAttributes)
+	if marker == "" {
+		return incoming, nil
+	}
+
+	attrs := map[string]interface{}{}
+	if len(incoming) > 0 {
+		if err := json.Unmarshal(incoming, &attrs); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal system attributes: %w", err)
+		}
+	}
+	attrs[authnprovidercm.SystemAttrCredentialUpdatedAt] = marker
+
+	merged, err := json.Marshal(attrs)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal system attributes: %w", err)
+	}
+	return merged, nil
+}
+
+// credentialUpdatedAtOf returns the credential-change marker in the given system attributes, or empty
+// when none is recorded.
+func credentialUpdatedAtOf(systemAttributes json.RawMessage) string {
+	if len(systemAttributes) == 0 {
+		return ""
+	}
+	var attrs map[string]interface{}
+	if err := json.Unmarshal(systemAttributes, &attrs); err != nil {
+		return ""
+	}
+	marker, _ := attrs[authnprovidercm.SystemAttrCredentialUpdatedAt].(string)
+	return marker
+}
+
+// setCredentialUpdatedAt returns systemAttributes with the credential-change marker set to at. The
+// marker is merged in rather than replacing the blob, whose other keys belong to the service that
+// owns the entity. Unlike mergeCredentialJSON, an unparsable blob is an error rather than a silent
+// overwrite, since dropping those keys would go unnoticed.
+func setCredentialUpdatedAt(systemAttributes json.RawMessage, at time.Time) (json.RawMessage, error) {
+	attrs := map[string]interface{}{}
+	if len(systemAttributes) > 0 {
+		if err := json.Unmarshal(systemAttributes, &attrs); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal system attributes: %w", err)
+		}
+	}
+	attrs[authnprovidercm.SystemAttrCredentialUpdatedAt] = at.UTC().Format(time.RFC3339)
+
+	marked, err := json.Marshal(attrs)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal system attributes: %w", err)
+	}
+	return marked, nil
+}
+
 // mergeCredentialJSON merges new credential JSON into existing credential JSON.
 // New credential types replace existing ones; types not in the update are preserved.
 func mergeCredentialJSON(existing, updates json.RawMessage) json.RawMessage {
@@ -938,7 +1038,7 @@ func (s *entityService) extractAndHashSchemaCredentials(
 	}
 
 	credentialInfos, svcErr := s.entityTypeService.GetAttributes(ctx,
-		entitytype.TypeCategory(entity.Category), entity.Type, true, false, false)
+		entitytype.TypeCategory(entity.Category), entity.Type, entitytype.AttributeFilter{AllowCredential: true})
 	if svcErr != nil {
 		return nil, fmt.Errorf("failed to get credential attributes from schema: %s", svcErr.ErrorDescription)
 	}
@@ -1011,13 +1111,9 @@ func (s *entityService) hashPlaintextCredentials(creds json.RawMessage) (json.Ra
 			}
 			result[credType] = []StoredCredential{
 				{
-					StorageAlgo: credHash.Algorithm,
-					StorageAlgoParams: cryptolib.CredParameters{
-						Salt:       credHash.Parameters.Salt,
-						Iterations: credHash.Parameters.Iterations,
-						KeySize:    credHash.Parameters.KeySize,
-					},
-					Value: credHash.Hash,
+					StorageAlgo:       credHash.Algorithm,
+					StorageAlgoParams: credHash.Parameters,
+					Value:             credHash.Hash,
 				},
 			}
 		default:

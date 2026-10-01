@@ -1,25 +1,11 @@
-/*
- * Copyright (c) 2025-2026, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2025-2026 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 package security
 
 import (
 	"context"
+	"time"
 )
 
 type contextKey string
@@ -34,13 +20,16 @@ const (
 
 // SecurityContext holds immutable authenticated subject information.
 type SecurityContext struct {
-	subject       string
-	ouID          string
-	token         string
-	revocationID  string
-	tokenFamilyID string
-	permissions   []string
-	attributes    map[string]interface{}
+	subject           string
+	ouID              string
+	token             string
+	revocationID      string
+	tokenFamilyID     string
+	revocationSubject string
+	revocationAppKey  string
+	establishedAt     time.Time
+	permissions       []string
+	attributes        map[string]interface{}
 }
 
 // newSecurityContext creates a new immutable SecurityContext.
@@ -129,6 +118,14 @@ func GetAttribute(ctx context.Context, key string) interface{} {
 		// Immutable types (string, int, bool, etc.) are safe to return directly
 		return value
 	}
+}
+
+// WithSecurityContext attaches sc to ctx, so GetSubject, GetOUID, GetPermissions, and GetAttribute
+// resolve for it. Exported for authenticated surfaces outside the REST gate (e.g. the MCP server)
+// that build their own request context after calling BearerAuthenticator.Authenticate directly,
+// rather than going through the securityService middleware that attaches it for REST requests.
+func WithSecurityContext(ctx context.Context, sc *SecurityContext) context.Context {
+	return withSecurityContext(ctx, sc)
 }
 
 // WithRuntimeContext marks the context as an internal runtime caller.

@@ -1,20 +1,5 @@
-/*
- * Copyright (c) 2026, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2026 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 // Package manager coordinates authentication provider registration and dispatch.
 package manager
@@ -126,6 +111,21 @@ var (
 		ErrorDescription: tidcommon.I18nMessage{
 			Key:          "error.authnmgrservice.get_entity_reference_client_error_description",
 			DefaultValue: "The entity reference fetch was rejected by the provider",
+		},
+	}
+
+	// ErrorSubjectNotAllowed is returned when the authenticated entity's category and type are not
+	// accepted as a subject by the application/agent driving the authentication.
+	ErrorSubjectNotAllowed = tidcommon.ServiceError{
+		Type: tidcommon.ClientErrorType,
+		Code: "AUTHN-MGR-1011",
+		Error: tidcommon.I18nMessage{
+			Key:          "error.authnmgrservice.subject_not_allowed",
+			DefaultValue: "Subject not allowed",
+		},
+		ErrorDescription: tidcommon.I18nMessage{
+			Key:          "error.authnmgrservice.subject_not_allowed_description",
+			DefaultValue: "The authenticated subject is not allowed to sign in to this application",
 		},
 	}
 )

@@ -1,20 +1,5 @@
-/**
- * Copyright (c) 2025, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied. See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2025 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 import type {JSX} from 'react';
 
@@ -28,6 +13,7 @@ export const ConnectionTypes = {
   OAUTH: 'oauth',
   TWILIO: 'twilio',
   VONAGE: 'vonage',
+  SMS_GATEWAY: 'sms-gateway',
 } as const;
 
 export type ConnectionType = (typeof ConnectionTypes)[keyof typeof ConnectionTypes];
@@ -60,19 +46,13 @@ export type ConnectionInstanceCategory =
   (typeof ConnectionInstanceCategories)[keyof typeof ConnectionInstanceCategories];
 
 /**
- * Instance vendor type — ConnectionType plus 'sms-gateway' (the generic HTTP webhook SMS
- * sender vendor).
- */
-export type ConnectionInstanceType = ConnectionType | 'sms-gateway';
-
-/**
  * One entry of GET /connections — a configured connection instance.
  */
 export interface ConnectionInstance {
   id: string;
   name: string;
   description?: string;
-  type: ConnectionInstanceType;
+  type: ConnectionType;
   categories: ConnectionInstanceCategory[];
   /**
    * Present only for trust-only OIDC instances (trusted issuers); absent for plain federation
@@ -142,10 +122,9 @@ export interface AttributeMapping {
 
 /**
  * Resolves which local user type a federated identity maps to (selecting its attribute-mapping
- * profile). `default` is the fixed fallback type. When `externalAttribute` and `valueMapping` are
- * set, the type is derived from the
- * value of that external attribute (`valueMapping` maps an external value to a local user type),
- * falling back to `default`.
+ * profile). `default` is the fixed fallback type. When `externalAttribute` and `valueMapping` are set,
+ * the type is derived from the value of that external attribute (`valueMapping` maps an external value
+ * to a local user type), falling back to `default`.
  */
 export interface UserTypeResolution {
   default: string;
@@ -171,12 +150,96 @@ export interface AccountLinking {
 }
 
 /**
+ * A local role, group, or permission an authorization mapping value confers. For `role` and `group`,
+ * `id` identifies the target directly. For `permission`, `resourceServerId` and `permission` together
+ * identify it, since a permission only means something on a resource server.
+ */
+export type AuthorizationTargetType = 'role' | 'group' | 'permission';
+
+export interface AuthorizationTarget {
+  type: AuthorizationTargetType;
+  id?: string;
+  resourceServerId?: string;
+  permission?: string;
+}
+
+/**
+ * How an authorization rule compares the claim's resolved value against its configured `value`.
+ * `equals`/`not_equals` are valid for a single-valued claim (a `string` mapping with no delimiter,
+ * `number`, or `boolean`). The ordering operators (`greater_than`/`less_than`/`greater_than_or_equal`/
+ * `less_than_or_equal`) are only valid when the mapping's `valueType` is `number`. `includes`/
+ * `not_includes` are valid only for a multi-valued claim (`array`, or `string` with a delimiter set).
+ */
+export type AuthorizationOperator =
+  | 'equals'
+  | 'not_equals'
+  | 'greater_than'
+  | 'less_than'
+  | 'greater_than_or_equal'
+  | 'less_than_or_equal'
+  | 'includes'
+  | 'not_includes';
+
+/** The declared type of a claim's value, used to decide which operators are valid and how the
+ * configured rule value is compared. Defaults to `string` when omitted. */
+export type AuthorizationValueType = 'string' | 'number' | 'boolean' | 'array';
+
+/**
+ * A single rule within an authorization mapping: if any one of the claim's resolved values satisfies
+ * `operator` against `value`, the rule's `targets` are granted.
+ */
+export interface AuthorizationRule {
+  operator: AuthorizationOperator;
+  value: string;
+  targets: AuthorizationTarget[];
+}
+
+/**
+ * Maps values of a single external claim to local roles, groups, or permissions. `claim` is the
+ * source claim, which may be a dot-notation path into a nested claim. A claim value that is a list
+ * contributes each element; a string value splits on `delimiter` when one is configured, otherwise it
+ * is a single value. A rule matches when any one of the claim's resolved values satisfies it; every
+ * matched rule contributes to the union of what it maps to, and an unmatched value confers nothing.
+ * `delimiter` is only meaningful when `valueType` is `string` (or unset).
+ */
+export interface AuthorizationRuleMapping {
+  claim: string;
+  valueType?: AuthorizationValueType;
+  delimiter?: string;
+  values: AuthorizationRule[];
+}
+
+/**
+ * Feeds every value of a single external claim directly onto local roles, groups, or permissions of
+ * `targetType`, using each value as the name (or permission string) to look up, rather than an
+ * explicit per-value rule table. A value with no unambiguous match (none, or more than one, since role
+ * and group names are only unique within an organization unit) confers nothing. `resourceServerId` is
+ * required when `targetType` is `permission`, and not allowed otherwise.
+ */
+export interface AuthorizationDirectMapping {
+  claim: string;
+  delimiter?: string;
+  targetType: AuthorizationTargetType;
+  resourceServerId?: string;
+}
+
+/**
+ * A connection's authorization mapping configuration: explicit value-to-target rules, direct
+ * name-based lookups, or both together, in which case their resolved targets union.
+ */
+export interface AuthorizationMapping {
+  rules?: AuthorizationRuleMapping[];
+  direct?: AuthorizationDirectMapping[];
+}
+
+/**
  * External-to-local attribute mapping configuration for an authentication provider.
  */
 export interface AttributeConfiguration {
   userTypeResolution: UserTypeResolution;
   userTypeAttributeMappings?: UserTypeAttributeMapping[];
   accountLinking?: AccountLinking;
+  authorizationMapping?: AuthorizationMapping;
 }
 
 /**
@@ -203,7 +266,6 @@ export interface OIDCConnectionRequest extends OAuthConnectionRequest {
   tokenEndpoint: string;
   userInfoEndpoint?: string;
   jwksEndpoint?: string;
-  logoutEndpoint?: string;
   issuer?: string;
   tokenExchangeEnabled?: boolean;
   trustedTokenAudience?: string;
@@ -224,14 +286,14 @@ export interface TwilioConnectionRequest {
 }
 
 /**
- * Request payload for generic OAuth 2.0 connections — no OpenID Connect discovery and no
- * id_token, so the user profile is always fetched from userInfoEndpoint (required, unlike OIDC).
+ * Request payload for generic OAuth 2 connections — no OpenID Connect discovery and no id_token, so
+ * user attributes come from the provider's own profile API (userInfoEndpoint). It is optional:
+ * providers without one carry the subject in a JWT access token.
  */
 export interface OAuth2ConnectionRequest extends OAuthConnectionRequest {
   authorizationEndpoint: string;
   tokenEndpoint: string;
-  userInfoEndpoint: string;
-  logoutEndpoint?: string;
+  userInfoEndpoint?: string;
 }
 
 /**
@@ -246,12 +308,28 @@ export interface VonageConnectionRequest {
   senderId: string;
 }
 
+/**
+ * Request payload for a generic HTTP SMS gateway connection — a webhook ThunderID calls to
+ * deliver the message, for SMS providers without a dedicated vendor integration.
+ */
+export interface SMSGatewayConnectionRequest {
+  name: string;
+  description?: string;
+  /** The HTTP endpoint called to send an SMS. */
+  url: string;
+  httpMethod: string;
+  contentType: string;
+  /** Comma-separated "Key: value" pairs sent with every request. */
+  httpHeaders?: string;
+}
+
 export type ConnectionRequest =
   | OAuthConnectionRequest
   | OIDCConnectionRequest
   | OAuth2ConnectionRequest
   | TwilioConnectionRequest
-  | VonageConnectionRequest;
+  | VonageConnectionRequest
+  | SMSGatewayConnectionRequest;
 
 /**
  * Vendor response — secrets returned masked as "******". A superset carrying every vendor's
@@ -268,6 +346,11 @@ export interface ConnectionResponse extends OIDCConnectionRequest {
   apiSecret?: string;
   /** SMS (shared) field. */
   senderId?: string;
+  /** SMS gateway fields. */
+  url?: string;
+  httpMethod?: string;
+  contentType?: string;
+  httpHeaders?: string;
 }
 
 /**
@@ -283,7 +366,7 @@ export type ConnectionPresentation = 'branded' | 'custom' | 'coming-soon';
  * Frontend-owned presentation metadata for a vendor.
  */
 export interface ConnectionVendorMeta {
-  /** Stable map key (matches backendType for real vendors, e.g. "google", or "custom-sms"). */
+  /** Stable map key (matches backendType for real vendors, e.g. "google"). */
   key: string;
   /** The backend /connections type, when this vendor maps to one. */
   backendType?: ConnectionType;

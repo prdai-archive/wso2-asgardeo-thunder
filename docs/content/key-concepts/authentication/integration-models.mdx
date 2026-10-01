@@ -4,8 +4,8 @@ docType: concept
 sidebar_position: 1
 description: Understand how {{ProductName}} authenticates users and the three integration models available for your application.
 ---
-import { B2CIntegrationApproachesRoadmap } from '../../../src/components/B2CIdentityJourney';
-import { RedirectBasedDiagram, AppNativeDiagram, DirectAPIDiagram } from '../../../src/components/AuthIntegrationDiagrams';
+import { B2CIntegrationApproachesRoadmap } from '@site/src/components/B2CIdentityJourney';
+import { RedirectBasedDiagram, AppNativeDiagram, DirectAPIDiagram } from '@site/src/components/AuthIntegrationDiagrams';
 
 
 # Integration Models
@@ -84,6 +84,29 @@ Whether an application may initiate one of these flows directly depends on its [
 
 See the [API Reference](../../../apis#tag/flow-execution) for endpoint specifications.
 
+:::note[No Backward Navigation]
+Flow execution does not support going back to a previous step, either through a dedicated back control or the browser's back button.
+:::
+
+### Flow Secret
+
+A confidential server-side application (one with no OAuth 2.0 configuration, or one that is confidential and does not use the `authorization_code` grant) authenticates at flow initiation with a **Flow Secret**. <ProductName /> issues this secret once, when the application is created, and never returns it again; the [Console](../../guides/applications/application-settings.mdx) can regenerate it if it's lost. Keep it server-side only, since a browser SPA has nowhere safe to hold it, which is why the `browser` application type is never issued one (see [Direct Initiation Restriction](#direct-initiation-restriction) above).
+
+To initiate a new authentication or sign-out flow, the application presents the secret in the `Flow-Secret` request header:
+
+```http
+POST /flow/execute
+Content-Type: application/json
+Flow-Secret: <flow-secret>
+
+{
+  "applicationId": "<application-id>",
+  "flowType": "AUTHENTICATION"
+}
+```
+
+An application eligible for a Flow Secret that omits the header is rejected with `401 Unauthorized`, and an incorrect value is also rejected with `401 Unauthorized`. Flow **continuation** requests (those carrying an `executionId`) do not require the header.
+
 ### Attestation
 
 A confidential server-side application authenticates at flow initiation with a Flow Secret, but a mobile application cannot safely hold one. Instead, a **Mobile** [application type](../../guides/applications/manage-applications.mdx#application-types) proves its identity through platform attestation. <ProductName /> supports Google [Play Integrity](https://developer.android.com/google/play/integrity) for Android clients and Apple [App Attest](https://developer.apple.com/documentation/devicecheck/validating-apps-that-connect-to-your-server) for iOS clients. A Mobile application must configure attestation and present a valid attestation token to initiate a sign-in flow directly; <ProductName /> verifies the token against the registered identity before starting the flow.
@@ -104,6 +127,10 @@ Attestation-Token: <attestation-token>
 ```
 
 A Mobile application that has not configured attestation is rejected with `400 Bad Request`. Once attestation is configured, an application that omits the token is rejected with `401 Unauthorized`, and an invalid or malformed token is also rejected with `401 Unauthorized`. Flow **continuation** requests (those carrying an `executionId`) do not require an attestation token.
+
+:::note
+A Mobile application with **Dev Mode** enabled is an exception to the rejections above. It can initiate a flow without presenting an attestation token, regardless of whether a platform is configured. **Dev Mode** is intended for testing and trying out sample or development clients, not production use. See [Dev Mode](../../guides/applications/application-settings.mdx#dev-mode).
+:::
 
 ### Integration Modes
 
@@ -325,6 +352,8 @@ On a fresh setup, the `setup.sh` / `setup.ps1` script generates a secret, writes
 
 This suits the intended Direct API callers, such as CLI tools, automation scripts, and server-to-server integrations, which can hold a configured secret. Browser and mobile applications, which cannot safely store a static secret, should use the [Redirect-Based](#redirect-based) or [App-Native](#app-native) model instead.
 
+The secret identifies the calling integration, not the end user, and every caller shares the same value. So it authorizes use of the Direct API but never stands in for a user's own identity. Endpoints that act on a specific account require separate proof of that user: enrolling a passkey through `/register/passkey/start`, for example, also requires the `assertion` from a prior authentication, and enrolls the credential only for that assertion's subject. See [Passkeys](../passwordless/passkeys#registration-flow).
+
 ```bash
 curl -X POST https://localhost:8090/auth/credentials/authenticate \
   -H 'Content-Type: application/json' \
@@ -336,6 +365,14 @@ curl -X POST https://localhost:8090/auth/credentials/authenticate \
 ```
 
 See [Security Configuration](../../../deployment/configuration#security-configuration) for details.
+
+### Rate Limiting
+
+<ProductName /> does not apply rate limiting or brute-force protection to Direct API endpoints. It enforces no per-user lockout, no per-client request quota, and no throttling on repeated failures. An endpoint such as `POST /auth/credentials/authenticate` or `POST /auth/otp/sms/verify` accepts credential and OTP attempts at whatever rate the caller sends them.
+
+:::warning
+Front the Direct API endpoints with an API gateway and apply rate limiting there before exposing them outside a trusted network. Without it, these endpoints are open to password guessing, OTP enumeration, and messaging costs driven up by repeated `POST /auth/otp/sms/send` calls.
+:::
 
 ### Step-Up Authentication
 

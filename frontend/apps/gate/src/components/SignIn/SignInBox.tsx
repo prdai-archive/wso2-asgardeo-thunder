@@ -1,27 +1,12 @@
-/**
- * Copyright (c) 2025, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied. See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2025 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 import {useDesign, FlowComponentRenderer, AuthCardLayout} from '@thunderid/design';
 import {useTemplateLiteralResolver} from '@thunderid/hooks';
 import {EmbeddedFlowComponentType, SignIn, type EmbeddedFlowComponent} from '@thunderid/react';
 import {EMAIL_REGEX, TemplateLiteralType} from '@thunderid/utils';
-import {Box, Alert, CircularProgress} from '@wso2/oxygen-ui';
-import {useRef, useState} from 'react';
+import {Box, Alert, CircularProgress, Link, Typography} from '@wso2/oxygen-ui';
+import {useEffect, useRef, useState} from 'react';
 import type {JSX} from 'react';
 import {useTranslation} from 'react-i18next';
 
@@ -35,6 +20,13 @@ export default function SignInBox(): JSX.Element {
   const [touched, setTouched] = useState<Record<string, boolean>>({});
   const componentsRef = useRef<EmbeddedFlowComponent[]>([]);
   const debounceTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
+
+  useEffect(() => {
+    const timers = debounceTimers.current;
+    return () => {
+      Object.values(timers).forEach(clearTimeout);
+    };
+  }, []);
 
   const collectInputComponents = (components: EmbeddedFlowComponent[]): void => {
     const fields: EmbeddedFlowComponent[] = [];
@@ -149,16 +141,24 @@ export default function SignInBox(): JSX.Element {
       logoDisplay={!isDesignEnabled ? {xs: 'flex', md: 'none'} : {display: 'none'}}
     >
       <SignIn>
-        {({onSubmit, isLoading, components, error, isInitialized, meta: flowMeta, additionalData}) =>
-          (isLoading ?? !isInitialized) ? (
+        {({onSubmit, isLoading, components, error, meta: flowMeta, additionalData}) =>
+          isLoading && !components?.length ? (
             <Box sx={{display: 'flex', justifyContent: 'center', p: 3}}>
               <CircularProgress />
             </Box>
           ) : (
             <>
-              {error && (
+              {/* Held back while a submission is in flight. An expired consent prompt auto-submits, and
+                  the SDK raises its expiry error against the request already on the wire, which would
+                  otherwise flash an error the user cannot act on. Errors worth showing outlive the
+                  request, since the flow clears them as each submission starts. */}
+              {error && !isLoading && (
                 <Alert severity="error" sx={{mb: 2}}>
-                  {error.message ?? t('signin:errors.signin.failed.description')}
+                  {error.message ??
+                    t(
+                      'signin:errors.signin.failed.description',
+                      'We are sorry, something has gone wrong here. Please try again.',
+                    )}
                 </Alert>
               )}
               {(() => {
@@ -204,6 +204,30 @@ export default function SignInBox(): JSX.Element {
                         />
                       ))}
                     </Box>
+                  );
+                }
+
+                // Terminal failure with nothing to render. A spinner here would look like loading,
+                // so offer the way back to the application instead.
+                if (error) {
+                  const applicationUrl = flowMeta?.application?.url;
+                  if (!applicationUrl) {
+                    // No application URL to link back to, so at least tell the user what to do.
+                    return (
+                      <Typography sx={{textAlign: 'center', p: 1}}>
+                        {t(
+                          'signin:errors.signin.returnToApplicationUnavailable',
+                          'Please return to the application and try again.',
+                        )}
+                      </Typography>
+                    );
+                  }
+                  return (
+                    <Typography sx={{textAlign: 'center', p: 1}}>
+                      <Link href={applicationUrl}>
+                        {t('signin:errors.signin.returnToApplication', 'Return to application')}
+                      </Link>
+                    </Typography>
                   );
                 }
 

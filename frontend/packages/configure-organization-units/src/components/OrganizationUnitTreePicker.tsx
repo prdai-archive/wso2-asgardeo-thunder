@@ -1,23 +1,8 @@
-/**
- * Copyright (c) 2026, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied. See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2026 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 import {useQueryClient} from '@tanstack/react-query';
-import {PageLoadingAnimation, ResourceAvatar} from '@thunderid/components';
+import {PageLoadingAnimation, QueryErrorNotice, ResourceAvatar} from '@thunderid/components';
 import {useConfig} from '@thunderid/contexts';
 import {useLogger} from '@thunderid/logger/react';
 import {useThunderID} from '@thunderid/react';
@@ -48,6 +33,7 @@ interface PickerTreeItemProps extends TreeView.TreeItemProps {
   loadingItems?: Set<string>;
   loadMoreLoadingItems?: Set<string>;
   onLoadMore?: (parentId: string) => void;
+  onItemActivate?: (itemId: string) => void;
   spacious?: boolean;
 }
 
@@ -57,6 +43,7 @@ function PickerTreeItem(allProps: PickerTreeItemProps): JSX.Element {
     loadingItems: loadingItemsProp,
     loadMoreLoadingItems: loadMoreLoadingItemsProp,
     onLoadMore: onLoadMoreProp,
+    onItemActivate: onItemActivateProp,
     spacious = false,
     itemId,
     label,
@@ -182,7 +169,24 @@ function PickerTreeItem(allProps: PickerTreeItemProps): JSX.Element {
       {...treeItemProps}
       {...(isItemLoading ? {slots: {collapseIcon: PickerLoadingIcon, expandIcon: PickerLoadingIcon}} : {})}
       label={
-        <Box sx={{display: 'flex', alignItems: 'center', gap: spacious ? 2 : 1.5}}>
+        <Box
+          role={onItemActivateProp ? 'button' : undefined}
+          tabIndex={onItemActivateProp ? 0 : undefined}
+          onClick={(event) => {
+            if (onItemActivateProp) {
+              event.stopPropagation();
+              onItemActivateProp(itemId);
+            }
+          }}
+          onKeyDown={(event) => {
+            if (onItemActivateProp && (event.key === 'Enter' || event.key === ' ')) {
+              event.preventDefault();
+              event.stopPropagation();
+              onItemActivateProp(itemId);
+            }
+          }}
+          sx={{display: 'flex', alignItems: 'center', gap: spacious ? 2 : 1.5}}
+        >
           <ResourceAvatar
             variant="rounded"
             value={itemData?.logoUrl}
@@ -209,9 +213,17 @@ interface OrganizationUnitTreePickerProps {
   id?: string;
   value: string;
   onChange: (ouId: string) => void;
+  /**
+   * Handles explicit activation of an OU row without treating expansion clicks as selection.
+   */
+  onItemActivate?: (ouId: string) => void;
   error?: boolean;
   helperText?: string;
   rootOuId?: string;
+  /**
+   * Hides the configured root OU and renders its direct children as the first visible level.
+   */
+  hideRoot?: boolean;
   maxHeight?: number;
   /**
    * Renders larger rows with softer, borderless cards and no dashed nesting guide, for standalone
@@ -229,9 +241,11 @@ export default function OrganizationUnitTreePicker({
   id = undefined,
   value,
   onChange,
+  onItemActivate = undefined,
   error = false,
   helperText = '',
   rootOuId = undefined,
+  hideRoot = false,
   maxHeight = 300,
   spacious = false,
   autoSelectFirst = false,
@@ -242,18 +256,29 @@ export default function OrganizationUnitTreePicker({
   const {http} = useThunderID();
   const {getServerUrl} = useConfig();
   const queryClient = useQueryClient();
-  const {data, isLoading} = useGetOrganizationUnits(undefined, !rootOuId);
+  const {
+    data,
+    isLoading,
+    error: rootListError,
+    refetch: refetchRootList,
+  } = useGetOrganizationUnits(undefined, !rootOuId);
 
   useEffect((): void => {
     if (!autoSelectFirst || rootOuId || value) return;
     const firstRootOuId = data?.organizationUnits[0]?.id;
     if (firstRootOuId) onChange(firstRootOuId);
   }, [autoSelectFirst, rootOuId, value, data, onChange]);
-  const {data: rootOuData, isLoading: isRootOuLoading, error: rootOuError} = useGetOrganizationUnit(rootOuId);
+  const {
+    data: rootOuData,
+    isLoading: isRootOuLoading,
+    error: rootOuError,
+    refetch: refetchRootOu,
+  } = useGetOrganizationUnit(rootOuId, !hideRoot);
   const {
     data: rootOuChildrenData,
     isLoading: isRootOuChildrenLoading,
     error: rootOuChildrenError,
+    refetch: refetchRootOuChildren,
   } = useGetChildOrganizationUnits(rootOuId);
 
   const [treeItems, setTreeItems] = useState<OrganizationUnitTreeItem[]>([]);
@@ -308,7 +333,7 @@ export default function OrganizationUnitTreePicker({
   // change (e.g. t reference), preserving user-expanded subtrees and loaded-more items.
   // The reset effect on rootOuId change clears treeItems to [], allowing this to rebuild.
   useEffect(() => {
-    if (!rootOuId || !rootOuData || !rootOuChildrenData || treeItems.length > 0) return;
+    if (!rootOuId || (!hideRoot && !rootOuData) || !rootOuChildrenData || treeItems.length > 0) return;
 
     const childItems = buildTreeItems(rootOuChildrenData.organizationUnits);
 
@@ -320,6 +345,27 @@ export default function OrganizationUnitTreePicker({
         isPlaceholder: true,
       });
     }
+
+    if (hideRoot) {
+      const visibleItems: OrganizationUnitTreeItem[] =
+        rootOuChildrenData.organizationUnits.length > 0
+          ? childItems
+          : [
+              {
+                id: `${rootOuId}${OrganizationUnitTreeConstants.EMPTY_SUFFIX}`,
+                label: t('organizationUnits:listing.treeView.noChildren'),
+                handle: '',
+                isPlaceholder: true,
+              },
+            ];
+
+      setChildOffsets((prev) => new Map(prev).set(rootOuId, rootOuChildrenData.organizationUnits.length));
+      setTreeItems(visibleItems);
+
+      return;
+    }
+
+    if (!rootOuData) return;
 
     // If no children, show the root OU as a leaf node
     const rootChildren: OrganizationUnitTreeItem[] =
@@ -347,7 +393,7 @@ export default function OrganizationUnitTreePicker({
     setLoadedItems((prev) => new Set(prev).add(rootOuId));
     setExpandedItems([rootOuId]);
     setTreeItems([rootItem]);
-  }, [rootOuId, rootOuData, rootOuChildrenData, treeItems.length, t]);
+  }, [rootOuId, hideRoot, rootOuData, rootOuChildrenData, treeItems.length, t]);
 
   const fetchChildPage = useCallback(
     async (parentId: string, offset: number): Promise<OrganizationUnitListResponse> =>
@@ -487,7 +533,16 @@ export default function OrganizationUnitTreePicker({
         const newItems = buildChildItems(parentId, result, offset);
 
         setChildOffsets((prev) => new Map(prev).set(parentId, offset + result.organizationUnits.length));
-        setTreeItems((prev) => appendTreeItemChildren(prev, parentId, newItems));
+        setTreeItems((prev) => {
+          if (hideRoot && parentId === rootOuId) {
+            const loadMoreId = `${parentId}${OrganizationUnitTreeConstants.LOAD_MORE_SUFFIX}`;
+            const withoutLoadMore = prev.filter((item) => item.id !== loadMoreId);
+
+            return [...withoutLoadMore, ...newItems];
+          }
+
+          return appendTreeItemChildren(prev, parentId, newItems);
+        });
       } catch (_error: unknown) {
         logger.error('Failed to load more child organization units', {error: _error, parentId});
       } finally {
@@ -499,7 +554,7 @@ export default function OrganizationUnitTreePicker({
         });
       }
     },
-    [childOffsets, fetchChildPage, buildChildItems, logger, handleRootLoadMore],
+    [childOffsets, fetchChildPage, buildChildItems, hideRoot, rootOuId, logger, handleRootLoadMore],
   );
 
   const combinedLoadMoreLoadingItems = useMemo(() => {
@@ -555,18 +610,30 @@ export default function OrganizationUnitTreePicker({
     [handleLoadMore, logger],
   );
 
-  const isTreeLoading = rootOuId ? isRootOuLoading || isRootOuChildrenLoading : isLoading;
-  const rootedModeError = rootOuId ? (rootOuError ?? rootOuChildrenError) : null;
+  const isTreeLoading = rootOuId ? (!hideRoot && isRootOuLoading) || isRootOuChildrenLoading : isLoading;
+  const activeError = rootOuId ? ((!hideRoot ? rootOuError : null) ?? rootOuChildrenError) : rootListError;
 
   if (isTreeLoading) {
     return <PageLoadingAnimation />;
   }
 
-  if (rootedModeError) {
+  if (activeError) {
     return (
-      <Typography variant="body2" color="error">
-        {rootedModeError.message ?? t('organizationUnits:treePicker.error')}
-      </Typography>
+      <QueryErrorNotice
+        error={activeError}
+        t={(key, options) => t(key.includes(':') ? key : `organizationUnits:${key}`, options)}
+        variant="inline"
+        fallbackKey="organizationUnits:treePicker.error"
+        fallbackDefaultValue="Failed to load organization unit data"
+        onRetry={() => {
+          if (rootOuId) {
+            if (!hideRoot && rootOuError) void refetchRootOu();
+            if (rootOuChildrenError) void refetchRootOuChildren();
+          } else {
+            void refetchRootList();
+          }
+        }}
+      />
     );
   }
 
@@ -574,6 +641,14 @@ export default function OrganizationUnitTreePicker({
     return (
       <Typography variant="body2" color="text.secondary">
         {t('organizationUnits:treePicker.empty')}
+      </Typography>
+    );
+  }
+
+  if (hideRoot && rootOuChildrenData?.organizationUnits.length === 0) {
+    return (
+      <Typography variant="body2" color="text.secondary" sx={{px: 1, py: 0.75}}>
+        {t('organizationUnits:listing.treeView.noChildren')}
       </Typography>
     );
   }
@@ -594,6 +669,7 @@ export default function OrganizationUnitTreePicker({
           onItemExpansionToggle={handleItemExpansionToggle}
           selectedItems={value || null}
           onSelectedItemsChange={handleSelectedItemsChange}
+          disableSelection={Boolean(onItemActivate)}
           slots={{item: PickerTreeItem}}
           slotProps={{
             item: {
@@ -601,6 +677,7 @@ export default function OrganizationUnitTreePicker({
               loadingItems,
               loadMoreLoadingItems: combinedLoadMoreLoadingItems,
               onLoadMore: handleLoadMoreWithErrorLogging,
+              onItemActivate,
               spacious,
             } as Record<string, unknown>,
           }}

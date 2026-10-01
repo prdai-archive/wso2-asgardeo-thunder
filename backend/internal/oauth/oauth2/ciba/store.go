@@ -1,20 +1,5 @@
-/*
- * Copyright (c) 2026, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2026 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 package ciba
 
@@ -37,7 +22,7 @@ type CIBARequestStoreInterface interface {
 	Add(ctx context.Context, request *CIBAAuthRequest) error
 	GetByID(ctx context.Context, authReqID string) (*CIBAAuthRequest, error)
 	MarkAuthenticated(ctx context.Context, authReqID, userID, authorizedScopes, attributeCacheID,
-		completedACR string, authTime time.Time) error
+		completedACR, sessionID string, authTime time.Time) error
 	MarkConsumed(ctx context.Context, authReqID string) (bool, error)
 	UpdateLastPolled(ctx context.Context, authReqID string, polledAt time.Time) error
 	UpdateState(ctx context.Context, authReqID string, state CIBARequestState) error
@@ -93,10 +78,10 @@ func (s *cibaStore) GetByID(ctx context.Context, authReqID string) (*CIBAAuthReq
 }
 
 // MarkAuthenticated transitions a pending request to authenticated and records the user ID (from
-// the assertion sub claim), authorized scopes, attribute cache ID, completed ACR, and authentication
-// time. The compare-and-swap on the State field prevents a double-callback race condition.
+// the assertion sub claim), authorized scopes, attribute cache ID, completed ACR, SSO session id, and
+// authentication time. The compare-and-swap on the State field prevents a double-callback race condition.
 func (s *cibaStore) MarkAuthenticated(ctx context.Context, authReqID, userID,
-	authorizedScopes, attributeCacheID, completedACR string, authTime time.Time) error {
+	authorizedScopes, attributeCacheID, completedACR, sessionID string, authTime time.Time) error {
 	record, err := s.GetByID(ctx, authReqID)
 	if err != nil {
 		return err
@@ -110,6 +95,7 @@ func (s *cibaStore) MarkAuthenticated(ctx context.Context, authReqID, userID,
 	record.AuthorizedScopes = authorizedScopes
 	record.AttributeCacheID = attributeCacheID
 	record.CompletedACR = completedACR
+	record.SessionID = sessionID
 	record.AuthTime = authTime
 
 	data, err := json.Marshal(record)

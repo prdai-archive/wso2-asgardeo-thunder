@@ -50,7 +50,7 @@ jobs:
       powershell-changed: ${{ steps.filter.outputs.powershell }}
     steps:
       - name: 📥 Checkout Code
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
@@ -58,7 +58,7 @@ jobs:
       # merge_group payload, which a manual dispatch does not carry.
       - name: 🔍 Detect Docs and PowerShell Changes
         if: ${{ github.event_name != 'workflow_dispatch' }}
-        uses: dorny/paths-filter@de90cc6fb38fc0963ad72b210f1f284cd68cea36 # v3
+        uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
         id: filter
         with:
           base: ${{ github.event_name == 'merge_group' && github.event.merge_group.base_sha || github.event.pull_request.base.sha }}
@@ -90,7 +90,7 @@ jobs:
 
       - name: 🔎 Dependency Review
         if: ${{ github.event_name != 'workflow_dispatch' }}
-        uses: actions/dependency-review-action@2031cfc080254a8a887f58cffee85186f0e49e48 # v4
+        uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
         with:
           fail-on-severity: high
           deny-licenses: GPL-3.0-only,GPL-3.0-or-later,AGPL-3.0-only,AGPL-3.0-or-later
@@ -129,7 +129,7 @@ jobs:
     timeout-minutes: 5
     steps:
       - name: 📥 Checkout Code
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: ⚙️ Set up Go Environment
         uses: ./.github/actions/setup-go
@@ -166,18 +166,15 @@ jobs:
     timeout-minutes: 20
     steps:
       - name: 📥 Checkout Code
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          # We need to fetch all branches and commits so that Turbo's --affected has a base to compare against.
+          # We need the full history so that Turbo's --affected can diff against the PR or merge-group base commit.
           fetch-depth: 0
 
       - name: ⚙️ Set up Node.js and pnpm
         uses: ./.github/actions/setup-pnpm
         with:
           node-version: ${{ env.NODE_VERSION }}
-
-      - name: 🔄 Fetch main branch for Turbo affected base
-        run: git fetch origin main:main --update-head-ok || true
 
       - name: ⚙️ Set up Go Environment
         uses: ./.github/actions/setup-go
@@ -202,7 +199,7 @@ jobs:
         run: |
           pnpm turbo run lint --affected --filter=!./tests/**
         env:
-          TURBO_SCM_BASE: main
+          TURBO_SCM_BASE: ${{ github.event_name == 'merge_group' && github.event.merge_group.base_sha || github.event.pull_request.base.sha }}
 
       - name: 🎨 Check Frontend Formatting
         run: |
@@ -219,7 +216,7 @@ jobs:
       contents: read
     steps:
       - name: 📥 Checkout Code
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: ⚙️ Set up Go Environment
         uses: ./.github/actions/setup-go
@@ -228,17 +225,6 @@ jobs:
         uses: ./.github/actions/setup-pnpm
         with:
           node-version: ${{ env.NODE_VERSION }}
-
-      - name: 🗄️ Cache Go Modules
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
-        id: cache-go-modules
-        with:
-          path: |
-            ~/.cache/go-build
-            ~/go/pkg/mod
-          key: ${{ runner.os }}-go-modules-${{ hashFiles('**/go.sum') }}
-          restore-keys: |
-            ${{ runner.os }}-go-modules-
 
       - name: 📦 Install Backend Dependencies
         run: |
@@ -278,7 +264,7 @@ jobs:
           echo "Built distribution: $DIST_PATH"
 
       - name: 📦 Upload Built Distribution
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: product-distribution
           path: target/dist/*.zip
@@ -295,22 +281,12 @@ jobs:
       contents: read
     steps:
       - name: 📥 Checkout Code
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
       - name: ⚙️ Set up Go Environment
         uses: ./.github/actions/setup-go
-
-      - name: 🗄️ Cache Go Modules
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
-        with:
-          path: |
-            ~/.cache/go-build
-            ~/go/pkg/mod
-          key: ${{ runner.os }}-go-modules-${{ hashFiles('**/go.sum') }}
-          restore-keys: |
-            ${{ runner.os }}-go-modules-
 
       - name: 📦 Install Backend Dependencies
         run: |
@@ -326,7 +302,7 @@ jobs:
         # Skipped on merge queue commits: Codecov cannot process them, and the
         # codecov-merge-queue-status job stamps the required status instead.
         if: github.event_name != 'merge_group'
-        uses: codecov/codecov-action@v5
+        uses: codecov/codecov-action@v7
         timeout-minutes: 5
         continue-on-error: true
         with:
@@ -338,7 +314,7 @@ jobs:
           fail_ci_if_error: false
 
       - name: 📦 Archive Unit Coverage Report
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: unit-coverage-report
           path: backend/coverage_unit.out
@@ -374,15 +350,8 @@ jobs:
         shell: bash
     timeout-minutes: 30
     steps:
-      - name: 🔧 Install Native-Build Toolchain
-        # Some transitive workspace deps (better-sqlite3) don't ship prebuilt binaries for the
-        # Node version in this image and fall back to `node-gyp rebuild`, which needs make + g++.
-        run: |
-          apt-get update
-          apt-get install -y --no-install-recommends build-essential
-
       - name: 📥 Checkout Code
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
@@ -391,7 +360,7 @@ jobs:
         # both of which are noisy inside containers and add ~15-20s.
         run: |
           corepack enable
-          corepack prepare pnpm@11.13.1 --activate
+          corepack prepare pnpm@11.21.0 --activate
           pnpm --version
 
       - name: 📦 Install Frontend Dependencies
@@ -414,7 +383,7 @@ jobs:
       # Each package writes its own coverage/lcov.info with repo-relative paths, so the
       # whole set is uploaded under one flag rather than one flag per package.
       - name: 📤 Upload packages coverage artifact
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: packages-coverage
           path: frontend/packages/*/coverage/lcov.info
@@ -428,7 +397,7 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: 📥 Checkout Code
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: ⚙️ Set up Node.js and pnpm
         uses: ./.github/actions/setup-pnpm
@@ -463,7 +432,7 @@ jobs:
           fi
 
       - name: 📦 Upload gate coverage artifact
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: gate-coverage
           path: frontend/apps/gate/coverage/lcov.info
@@ -491,7 +460,7 @@ jobs:
       SHARD_COUNT: 3
     steps:
       - name: 📥 Checkout Code
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: ⚙️ Set up Node.js and pnpm
         uses: ./.github/actions/setup-pnpm
@@ -528,7 +497,7 @@ jobs:
       # Named without "coverage" so the patch coverage gate, which downloads
       # every "*coverage*" artifact, only ever sees the merged report.
       - name: 📦 Upload console shard LCOV report
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: console-lcov-shard-${{ matrix.shard }}
           path: frontend/apps/console/coverage/lcov.info
@@ -556,12 +525,12 @@ jobs:
           echo "✅ All console test shards passed"
 
       - name: 📥 Checkout Code
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
       - name: 📥 Download console shard LCOV reports
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           pattern: console-lcov-shard-*
           path: console-shards
@@ -573,7 +542,7 @@ jobs:
           output-file: frontend/apps/console/coverage/lcov.info
 
       - name: 📦 Upload console coverage artifact
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: console-coverage
           path: frontend/apps/console/coverage/lcov.info
@@ -590,29 +559,29 @@ jobs:
       contents: read
     steps:
       - name: 📥 Checkout Code
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: 📥 Download console coverage artifact
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: console-coverage
           path: coverage/console
 
       - name: 📥 Download gate coverage artifact
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: gate-coverage
           path: coverage/gate
 
       - name: 📥 Download packages coverage artifact
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: packages-coverage
           path: coverage/packages
 
       - name: 📊 Upload `@thunderid/console` Unit Test Coverage Report to Codecov
         if: github.event_name != 'merge_group'
-        uses: codecov/codecov-action@v5
+        uses: codecov/codecov-action@v7
         timeout-minutes: 5
         continue-on-error: true
         with:
@@ -625,7 +594,7 @@ jobs:
 
       - name: 📊 Upload `@thunderid/gate` Unit Test Coverage Report to Codecov
         if: github.event_name != 'merge_group'
-        uses: codecov/codecov-action@v5
+        uses: codecov/codecov-action@v7
         timeout-minutes: 5
         continue-on-error: true
         with:
@@ -641,7 +610,7 @@ jobs:
       # is why moving console features into packages silently dropped them from coverage.
       - name: 📊 Upload Frontend Packages Unit Test Coverage Report to Codecov
         if: github.event_name != 'merge_group'
-        uses: codecov/codecov-action@v5
+        uses: codecov/codecov-action@v7
         timeout-minutes: 5
         continue-on-error: true
         with:
@@ -669,7 +638,7 @@ jobs:
       checks: read
     steps:
       - name: 📥 Checkout Code
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           persist-credentials: false
@@ -731,7 +700,7 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: 📥 Checkout Code
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: ⚙️ Set up Go Environment
         uses: ./.github/actions/setup-go
@@ -746,10 +715,160 @@ jobs:
           make package_samples OS=$(go env GOOS) ARCH=$(go env GOARCH)
 
       - name: 📦 Upload Built Sample App
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: sample-app-react-sdk
           path: target/dist/sample-app-react-sdk-*.zip
+
+      # Kept separately from sample-app-react-sdk, which other workflows consume by name.
+      # The CLI installs this bundle for `try`, so cli-compatibility serves it with the product.
+      - name: 📦 Upload Wayfinder Sample
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: sample-app-wayfinder
+          path: target/dist/sample-app-wayfinder-*.zip
+          if-no-files-found: error
+
+  # Fast gate for the CLI: everything that needs neither the network nor a running server.
+  # Kept out of the `lint` job above because the CLI lints with its own golangci-lint, built
+  # against the toolchain in tools/cli/go.mod: a published prebuilt binary is compiled with an
+  # older Go than the CLI targets and refuses to run at all in that case.
+  cli-lint-unit:
+    name: 🔍 CLI Lint and Unit Tests
+    needs: [preflight]
+    if: ${{ github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'trigger-pr-builder') && (github.event.action != 'labeled' || github.event.label.name == 'trigger-pr-builder')) || github.event_name == 'merge_group' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: 📥 Checkout Code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: ⚙️ Set up Go Environment
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: tools/cli/go.mod
+          cache-dependency-path: tools/cli/go.sum
+
+      - name: 🧹 Lint CLI
+        run: make tools_lint_cli
+
+      - name: 🧪 Run CLI Unit Tests
+        run: make tools_test_cli
+
+  # Lane 1 of the CLI e2e strategy: does a CLI change break the CLI? Drives the npx wrapper
+  # against the currently published release, not the distribution built above: that pairing
+  # is cli-compatibility's job, below. Split from cli-lint-unit so a lint or unit failure
+  # reports without paying for this.
+  cli-e2e:
+    name: 🎭 CLI E2E (${{ matrix.os }})
+    needs: [cli-lint-unit]
+    if: ${{ github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'trigger-pr-builder') && (github.event.action != 'labeled' || github.event.label.name == 'trigger-pr-builder')) || github.event_name == 'merge_group' }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - name: 📥 Checkout Code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # global-setup.ts builds the CLI binary that the npx wrapper resolves.
+      - name: ⚙️ Set up Go Environment
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: tools/cli/go.mod
+          cache-dependency-path: tools/cli/go.sum
+
+      - name: ⚙️ Set up Node.js and pnpm
+        uses: ./.github/actions/setup-pnpm
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: 📦 Set up CLI E2E Suite
+        uses: ./.github/actions/setup-cli-e2e
+
+      - name: 🔌 Verify Required Ports Are Free
+        uses: ./.github/actions/verify-cli-e2e-ports
+
+      - name: 🎭 Run E2E Tests
+        working-directory: tests/e2e-cli
+        run: pnpm test
+
+      - name: 📄 Upload Playwright Report on Failure
+        if: failure()
+        uses: ./.github/actions/upload-cli-e2e-report
+        with:
+          name: cli-e2e-report-${{ matrix.os }}
+
+  cli-compatibility:
+    name: 🔗 CLI Against This Build
+    needs: [preflight, build, build_samples]
+    if: ${{ github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'trigger-pr-builder') && (github.event.action != 'labeled' || github.event.label.name == 'trigger-pr-builder')) || github.event_name == 'merge_group' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: 📥 Checkout Code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # global-setup builds the CLI from this checkout; the product comes from the artifacts.
+      - name: ⚙️ Set up Go Environment
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: tools/cli/go.mod
+          cache-dependency-path: tools/cli/go.sum
+
+      - name: ⚙️ Set up Node.js and pnpm
+        uses: ./.github/actions/setup-pnpm
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      # Reusing what build-product and build-samples already produced, rather than building the
+      # distribution a second time.
+      - name: 📥 Download the Built Distribution
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: product-distribution
+          path: target/dist
+
+      - name: 📥 Download the Wayfinder Sample
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: sample-app-wayfinder
+          path: target/dist
+
+      - name: 🔍 Show What Will Be Served
+        run: ls -lh target/dist/
+
+      - name: 📦 Set up CLI E2E Suite
+        uses: ./.github/actions/setup-cli-e2e
+
+      # 8899 is the local release server this run serves target/dist through, on top of the
+      # suite's own fixed ports.
+      - name: 🔌 Verify Required Ports Are Free
+        uses: ./.github/actions/verify-cli-e2e-ports
+        with:
+          extra-ports: "8899"
+
+      # E2E_PRODUCT_DIST makes the suite serve target/dist with a generated manifest and point the
+      # CLI at it, so everything it installs was built by this pull request.
+      - name: 🎭 Run the CLI Against This Build
+        working-directory: tests/e2e-cli
+        env:
+          E2E_PRODUCT_DIST: ${{ github.workspace }}/target/dist
+        run: pnpm test
+
+      - name: 📄 Upload Playwright Report on Failure
+        if: failure()
+        uses: ./.github/actions/upload-cli-e2e-report
+        with:
+          name: cli-compatibility-report
 
   test-integration:
     name: 🧪 Integration Tests (${{ matrix.database }})
@@ -789,21 +908,10 @@ jobs:
           --health-retries 5
     steps:
       - name: 📥 Checkout Code
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: ⚙️ Set up Go Environment
         uses: ./.github/actions/setup-go
-
-      - name: 🗄️ Cache Go Modules
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
-        id: cache-go-modules
-        with:
-          path: |
-            ~/.cache/go-build
-            ~/go/pkg/mod
-          key: ${{ runner.os }}-go-modules-${{ hashFiles('**/go.sum') }}
-          restore-keys: |
-            ${{ runner.os }}-go-modules-
 
       - name: 📦 Install Dependencies
         run: |
@@ -826,7 +934,7 @@ jobs:
           coverage-enabled: true
 
       - name: 📦 Archive Integration Coverage Report
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: integration-coverage-${{ matrix.database }}
           path: target/coverage_integration.out
@@ -834,7 +942,7 @@ jobs:
 
       - name: 📊 Upload Integration Test Coverage Report to Codecov
         if: github.event_name != 'merge_group'
-        uses: codecov/codecov-action@v5
+        uses: codecov/codecov-action@v7
         timeout-minutes: 5
         continue-on-error: true
         with:
@@ -849,7 +957,7 @@ jobs:
       #   run: ./build.sh merge_coverage
 
       # - name: 📊 Upload Combined Coverage Report to Codecov
-      #   uses: codecov/codecov-action@v4
+      #   uses: codecov/codecov-action@v7
       #   with:
       #     token: ${{ secrets.CODECOV_TOKEN }}
       #     files: target/coverage_combined.out
@@ -857,6 +965,43 @@ jobs:
       #     flags: backend-combined-${{ matrix.database }}
       #     name: Backend-combined Coverage (${{ matrix.database }})
       #     fail_ci_if_error: false
+
+  backend-integration-patch-coverage:
+    name: 🛡️ Backend Integration Patch Coverage
+    # Measures only what the integration suite executed. The combined
+    # 🛡️ Patch Coverage Gate pools backend unit, backend integration, and both
+    # frontend reports into one percentage, so a changed backend line covered
+    # only by a unit test satisfies it. This job loads the three
+    # integration-coverage-* artifacts and nothing else, which is the whole
+    # reason it exists separately rather than as another threshold on that gate.
+    #
+    # Gated like the other checks: it needs only build and test-integration, so
+    # unlike the combined gate it does not wait on the frontend or unit jobs, and
+    # it is skipped when those two did not succeed rather than reporting on data
+    # it does not have.
+    needs: [build, test-integration]
+    if: ${{ always() && (github.event_name == 'pull_request' || github.event_name == 'merge_group') && needs.build.result == 'success' && needs.test-integration.result == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - name: 📥 Checkout Code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The base-to-head diff needs full history; a shallow clone makes the
+          # merge base unreachable and every changed line look new.
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: 🛡️ Measure Backend Integration Patch Coverage
+        uses: ./.github/actions/backend-integration-patch-coverage
+        with:
+          base-ref: ${{ github.event_name == 'merge_group' && github.event.merge_group.base_sha || format('origin/{0}', github.base_ref) }}
+          # A merge_group payload carries no pull request labels, so queue runs
+          # apply no tag group. Thresholds still come from the base packages map,
+          # and only then the global default.
+          pr-labels: ${{ github.event_name == 'pull_request' && toJSON(github.event.pull_request.labels.*.name) || '' }}
 
   test-integration-status:
     name: ✅ Integration Tests Status
@@ -892,18 +1037,18 @@ jobs:
     defaults:
       run:
         shell: bash
-    timeout-minutes: 30
+    # Provisions and runs against two servers in sequence (core, then a fresh one for @wayfinder).
+    timeout-minutes: 40
     steps:
       - name: 🔧 Install Required OS Utilities
-        # jq/lsof/unzip are used by the bash setup steps below. No toolchain is
-        # needed: the install below is scoped to @thunderid/e2e, so it never
-        # reaches the better-sqlite3 postinstall that would want node-gyp.
+        # jq/lsof/unzip are used by the bash setup steps below. No build toolchain
+        # is needed: no workspace dependency compiles from source.
         run: |
           apt-get update
           apt-get install -y --no-install-recommends jq lsof unzip
 
       - name: 📥 Checkout Code
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
@@ -912,17 +1057,17 @@ jobs:
         # both of which are noisy inside containers and add ~15-20s.
         run: |
           corepack enable
-          corepack prepare pnpm@11.13.1 --activate
+          corepack prepare pnpm@11.21.0 --activate
           pnpm --version
 
       - name: 📥 Download Built Distribution
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: product-distribution
           path: target/dist/
 
       - name: 📥 Download Built Sample App
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: sample-app-react-sdk
           path: target/dist/
@@ -958,8 +1103,28 @@ jobs:
           echo "ADMIN_PASSWORD=$ADMIN_PASSWORD" >> "$GITHUB_ENV"
           echo "✅ Resolved admin credentials (Secret > Variable > defaults.env)"
 
+      - name: 📋 Load E2E Default Configuration
+        run: |
+          # Loads tests/e2e/defaults.env (the canonical fixed dataset, shared with run-e2e.sh
+          # for local runs) as DEFAULT_* so later steps can fall back to it.
+          while IFS='=' read -r key value; do
+            case "$key" in ''|'#'*) continue ;; esac
+            echo "DEFAULT_${key}=${value}" >> "$GITHUB_ENV"
+          done < tests/e2e/defaults.env
+
       - name: 🚀 Start the Server
         run: |
+          # Redirect the backend's Google and GitHub endpoints to the mock servers the social login
+          # specs start, mirroring what run-e2e.sh does locally. Else the specs would use the real
+          # accounts.google.com/github.com.
+          cat >> tests/e2e/server/deployment.yaml <<EOF
+
+          identity_provider:
+            google_base_url: "$DEFAULT_MOCK_GOOGLE_BASE_URL"
+            github_base_url: "$DEFAULT_MOCK_GITHUB_BASE_URL"
+          EOF
+          echo "✅ Pointed identity provider endpoints at the mock servers"
+
           cd tests/e2e/server
           ./setup.sh
           # In container jobs, GitHub Actions reaps a step's descendant processes when the step's
@@ -989,180 +1154,58 @@ jobs:
           echo "Server started successfully!"
       
       - name: 🔑 Obtain Admin Access Token
-        run: |
-          # The server runs with security enabled, so the management /import and
-          # /applications calls below need an admin token.
-          # Obtain one via OAuth2 authorization code + PKCE through the CONSOLE app,
-          # authenticating the bootstrapped admin user.
-          SERVER_URL="https://localhost:8090"
-          CONSOLE_REDIRECT_URI="https://localhost:8090/console"
-          # Tokens are bound to a single resource server (RFC 8707), so the CONSOLE app targets the
-          # bootstrapped System resource server, mirroring the console runtime config.
-          CONSOLE_RESOURCE="https://localhost:8090/mcp"
-          CODE_VERIFIER=$(openssl rand -hex 32 | cut -c1-43)
-          CODE_CHALLENGE=$(printf '%s' "$CODE_VERIFIER" | openssl dgst -sha256 -binary | openssl base64 -A | tr '+/' '-_' | tr -d '=')
+        id: admin-token
+        uses: ./.github/actions/obtain-admin-token
+        with:
+          admin-username: ${{ env.ADMIN_USERNAME }}
+          admin-password: ${{ env.ADMIN_PASSWORD }}
 
-          curl -sk -o /dev/null -D /tmp/authz_headers.txt -G "$SERVER_URL/oauth2/authorize" \
-            --data-urlencode "client_id=CONSOLE" \
-            --data-urlencode "redirect_uri=$CONSOLE_REDIRECT_URI" \
-            --data-urlencode "scope=system" \
-            --data-urlencode "response_type=code" \
-            --data-urlencode "resource=$CONSOLE_RESOURCE" \
-            --data-urlencode "code_challenge=$CODE_CHALLENGE" \
-            --data-urlencode "code_challenge_method=S256"
+      - name: 📦 Import Vanilla Sample Resources
+        uses: ./.github/actions/import-declarative-config
+        with:
+          config-path: samples/apps/vanilla-sample/thunderid-config/basic/thunderid-config.yaml
+          admin-token: ${{ steps.admin-token.outputs.token }}
+          label: Vanilla Sample resources
+          variables-json: |
+            {
+              "SAMPLE_APP_FLOW_SECRET": "sample-app-flow-secret",
+              "SAMPLE_APP_GOOGLE_CLIENT_ID": "test-google-client-id",
+              "SAMPLE_APP_GOOGLE_CLIENT_SECRET": "test-google-client-secret",
+              "SAMPLE_APP_GOOGLE_REDIRECT_URI": "https://localhost:3000/",
+              "SAMPLE_APP_GOOGLE_SCOPES": "openid,email,profile",
+              "SAMPLE_APP_GITHUB_CLIENT_ID": "test-github-client-id",
+              "SAMPLE_APP_GITHUB_CLIENT_SECRET": "test-github-client-secret",
+              "SAMPLE_APP_GITHUB_REDIRECT_URI": "https://localhost:3000/",
+              "SAMPLE_APP_SMS_SENDER_ID": "test-sms-sender-id"
+            }
 
-          LOCATION=$(grep -i "^location:" /tmp/authz_headers.txt | tr -d '\r' | sed 's/^[Ll]ocation: //')
-          AUTH_ID=$(echo "$LOCATION" | sed 's/.*[?&]authId=\([^&]*\).*/\1/')
-          EXEC_ID=$(echo "$LOCATION" | sed 's/.*[?&]executionId=\([^&]*\).*/\1/')
-          if [ -z "$AUTH_ID" ] || [ -z "$EXEC_ID" ]; then
-            echo "❌ Failed to parse authId/executionId from authorize redirect: $LOCATION"
-            exit 1
-          fi
+      - name: 📦 Import React SDK Sample Resources
+        uses: ./.github/actions/import-declarative-config
+        with:
+          config-path: samples/apps/react-sdk-sample/thunderid-config/thunderid-config.yaml
+          admin-token: ${{ steps.admin-token.outputs.token }}
+          label: React SDK Sample resources
+          variables-json: |
+            {
+              "REACT_SDK_SAMPLE_CLIENT_ID": "REACT_SDK_SAMPLE",
+              "REACT_SDK_SAMPLE_REDIRECT_URIS": ["http://localhost:3000", "https://localhost:3000"],
+              "REACT_SDK_SAMPLE_POST_LOGOUT_REDIRECT_URIS": ["http://localhost:3000", "https://localhost:3000"]
+            }
 
-          # The console login flow runs an SSO check before the credentials prompt. This bootstrap is a
-          # fresh, cookie-less login (no SSO session), so the first execute advances the flow past the
-          # SSO check to the credentials prompt and mints a challenge token; the second submits the admin
-          # credentials with that token.
-          PROMPT_RESP=$(curl -sk -X POST "$SERVER_URL/flow/execute" \
-            -H "Content-Type: application/json" \
-            -d "{\"executionId\": \"$EXEC_ID\"}")
-          CHALLENGE_TOKEN=$(echo "$PROMPT_RESP" | jq -r '.challengeToken // empty')
-          FLOW_PAYLOAD=$(jq -n \
-            --arg executionId "$EXEC_ID" \
-            --arg challengeToken "$CHALLENGE_TOKEN" \
-            --arg username "$ADMIN_USERNAME" \
-            --arg password "$ADMIN_PASSWORD" \
-            '{executionId: $executionId, challengeToken: $challengeToken, inputs: {username: $username, password: $password}, action: "action_001"}')
-          FLOW_RESP=$(curl -sk -X POST "$SERVER_URL/flow/execute" \
-            -H "Content-Type: application/json" \
-            -d "$FLOW_PAYLOAD")
-          ASSERTION=$(echo "$FLOW_RESP" | jq -r '.assertion // empty')
-          if [ -z "$ASSERTION" ]; then
-            echo "❌ Flow execution did not return an assertion: $FLOW_RESP"
-            exit 1
-          fi
+      - name: 📦 Import E2E Admin App
+        uses: ./.github/actions/import-declarative-config
+        with:
+          config-path: tests/e2e/thunderid-config.yaml
+          admin-token: ${{ steps.admin-token.outputs.token }}
+          label: E2E admin app
 
-          CALLBACK_RESP=$(curl -sk -X POST "$SERVER_URL/oauth2/auth/callback" \
-            -H "Content-Type: application/json" \
-            -d "{\"authId\": \"$AUTH_ID\", \"assertion\": \"$ASSERTION\"}")
-          AUTH_CODE=$(echo "$CALLBACK_RESP" | jq -r '.redirect_uri // empty' | sed 's/.*[?&]code=\([^&]*\).*/\1/')
-          if [ -z "$AUTH_CODE" ]; then
-            echo "❌ Callback did not return an authorization code: $CALLBACK_RESP"
-            exit 1
-          fi
+      - name: 📦 Import E2E Sample-App Infrastructure
+        uses: ./.github/actions/import-declarative-config
+        with:
+          config-path: tests/e2e/thunderid-config-sample-apps.yaml
+          admin-token: ${{ steps.admin-token.outputs.token }}
+          label: E2E sample-app infrastructure
 
-          TOKEN_RESP=$(curl -sk -X POST "$SERVER_URL/oauth2/token" \
-            -H "Content-Type: application/x-www-form-urlencoded" \
-            --data-urlencode "grant_type=authorization_code" \
-            --data-urlencode "code=$AUTH_CODE" \
-            --data-urlencode "redirect_uri=$CONSOLE_REDIRECT_URI" \
-            --data-urlencode "client_id=CONSOLE" \
-            --data-urlencode "code_verifier=$CODE_VERIFIER")
-          ADMIN_TOKEN=$(echo "$TOKEN_RESP" | jq -r '.access_token // empty')
-          if [ -z "$ADMIN_TOKEN" ]; then
-            echo "❌ Failed to obtain admin access token: $TOKEN_RESP"
-            exit 1
-          fi
-          echo "::add-mask::$ADMIN_TOKEN"
-          echo "ADMIN_TOKEN=$ADMIN_TOKEN" >> "$GITHUB_ENV"
-          echo "✅ Obtained admin access token."
-
-      - name: 📦 Import Sample App Resources
-        run: |
-          echo "Importing React Vanilla Sample declarative resources..."
-          YAML_CONTENT=$(cat samples/apps/react-vanilla-sample/thunderid-config/basic/thunderid-config.yaml)
-          HTTP_STATUS=$(curl -k -s -o /tmp/import_response.json -w "%{http_code}" \
-            -X POST https://localhost:8090/import \
-            -H 'Content-Type: application/json' \
-            -H "Authorization: Bearer $ADMIN_TOKEN" \
-            -d "{
-              \"content\": $(echo "$YAML_CONTENT" | jq -Rs .),
-              \"variables\": {
-                \"SAMPLE_APP_CLIENT_ID\": \"sample_app_client\",
-                \"SAMPLE_APP_REDIRECT_URIS\": [\"https://localhost:3000\"],
-                \"SAMPLE_APP_GOOGLE_CLIENT_ID\": \"test-google-client-id\",
-                \"SAMPLE_APP_GOOGLE_CLIENT_SECRET\": \"test-google-client-secret\",
-                \"SAMPLE_APP_GOOGLE_REDIRECT_URI\": \"https://localhost:3000/\",
-                \"SAMPLE_APP_GOOGLE_SCOPES\": \"openid,email,profile\",
-                \"SAMPLE_APP_GITHUB_CLIENT_ID\": \"test-github-client-id\",
-                \"SAMPLE_APP_GITHUB_CLIENT_SECRET\": \"test-github-client-secret\",
-                \"SAMPLE_APP_GITHUB_REDIRECT_URI\": \"https://localhost:3000/\",
-                \"SAMPLE_APP_SMS_SENDER_ID\": \"test-sms-sender-id\"
-              },
-              \"options\": {\"upsert\": true}
-            }")
-          echo "Import HTTP status: $HTTP_STATUS"
-          cat /tmp/import_response.json | jq . || cat /tmp/import_response.json
-          if [ "$HTTP_STATUS" != "200" ]; then
-            echo "❌ Failed to import React Vanilla Sample resources (HTTP $HTTP_STATUS)"
-            exit 1
-          fi
-          echo "✅ React Vanilla Sample resources imported successfully"
-
-          echo "Importing React SDK Sample declarative resources..."
-          YAML_CONTENT=$(cat samples/apps/react-sdk-sample/thunderid-config/thunderid-config.yaml)
-          HTTP_STATUS=$(curl -k -s -o /tmp/import_response.json -w "%{http_code}" \
-            -X POST https://localhost:8090/import \
-            -H 'Content-Type: application/json' \
-            -H "Authorization: Bearer $ADMIN_TOKEN" \
-            -d "{
-              \"content\": $(echo "$YAML_CONTENT" | jq -Rs .),
-              \"variables\": {
-                \"REACT_SDK_SAMPLE_CLIENT_ID\": \"REACT_SDK_SAMPLE\",
-                \"REACT_SDK_SAMPLE_REDIRECT_URIS\": [\"https://localhost:3000\"],
-                \"REACT_SDK_SAMPLE_POST_LOGOUT_REDIRECT_URIS\": [\"https://localhost:3000\"]
-              },
-              \"options\": {\"upsert\": true}
-            }")
-          echo "Import HTTP status: $HTTP_STATUS"
-          cat /tmp/import_response.json | jq . || cat /tmp/import_response.json
-          if [ "$HTTP_STATUS" != "200" ]; then
-            echo "❌ Failed to import React SDK Sample resources (HTTP $HTTP_STATUS)"
-            exit 1
-          fi
-          echo "✅ React SDK Sample resources imported successfully"
-
-          echo "Importing E2E test infrastructure resources..."
-          YAML_CONTENT=$(cat tests/e2e/thunderid-config.yaml)
-          HTTP_STATUS=$(curl -k -s -o /tmp/import_response.json -w "%{http_code}" \
-            -X POST https://localhost:8090/import \
-            -H 'Content-Type: application/json' \
-            -H "Authorization: Bearer $ADMIN_TOKEN" \
-            -d "{
-              \"content\": $(echo "$YAML_CONTENT" | jq -Rs .),
-              \"options\": {\"upsert\": true}
-            }")
-          echo "Import HTTP status: $HTTP_STATUS"
-          cat /tmp/import_response.json | jq . || cat /tmp/import_response.json
-          if [ "$HTTP_STATUS" != "200" ]; then
-            echo "❌ Failed to import E2E test infrastructure resources (HTTP $HTTP_STATUS)"
-            exit 1
-          fi
-          echo "✅ E2E test infrastructure resources imported successfully"
-
-      - name: 🔍 Extract Sample App ID
-        id: extract-app-id
-        run: |
-          echo "Fetching applications from the server..."
-
-          # Get applications list
-          APPS_RESPONSE=$(curl -s -k -H "Authorization: Bearer $ADMIN_TOKEN" https://localhost:8090/applications)
-
-          # Extract Sample App ID using jq (uses "Sample App" from vanilla sample,
-          # which is unaffected by MFA test setup/teardown)
-          SAMPLE_APP_ID=$(echo "$APPS_RESPONSE" | jq -r '(.applications // [])[] | select(.name == "Sample App") | .id')
-
-          if [ -z "$SAMPLE_APP_ID" ] || [ "$SAMPLE_APP_ID" == "null" ]; then
-            echo "⚠️  Warning: Sample App not found in applications list"
-            echo "Available applications:"
-            echo "$APPS_RESPONSE" | jq -r '(.applications // [])[] | "  - \(.name) (\(.id))"'
-            echo "sample_app_id=" >> $GITHUB_OUTPUT
-            exit 1
-          else
-            echo "✓ Sample App ID extracted: $SAMPLE_APP_ID"
-            echo "sample_app_id=$SAMPLE_APP_ID" >> $GITHUB_OUTPUT
-          fi
-      
       - name: 🔄 Restart the Server with Security Enabled
         run: |
           cd tests/e2e/server
@@ -1243,7 +1286,7 @@ jobs:
           openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
               -keyout server.key \
               -out server.cert \
-              -subj "/O=WSO2/OU=${{ env.PRODUCT_NAME }}/CN=localhost" \
+              -subj "/O=ThunderID/OU=${{ env.PRODUCT_NAME }}/CN=localhost" \
               > /dev/null 2>&1
 
           echo "Starting Sample App..."
@@ -1277,38 +1320,28 @@ jobs:
       - name: 📦 Install E2E Dependencies
         run: pnpm install --frozen-lockfile --filter @thunderid/e2e
 
-      - name: 📋 Load E2E Default Configuration
-        run: |
-          # Loads tests/e2e/defaults.env (the canonical fixed dataset, shared with run-e2e.sh
-          # for local runs) as DEFAULT_* so the step below can fall back to it.
-          while IFS='=' read -r key value; do
-            case "$key" in ''|'#'*) continue ;; esac
-            echo "DEFAULT_${key}=${value}" >> "$GITHUB_ENV"
-          done < tests/e2e/defaults.env
-
-
-      # Pull requests run the Chromium projects only, and the merge queue runs all
+      # Pull requests run the Chromium project only, and the merge queue runs all
       # three browsers, so nothing reaches main without the full matrix. On a pull
-      # request that is 45 of the 133 tests, and it also collapses the serial
-      # project chain (the CORS and MFA specs, which cannot overlap) from three
-      # sequential browsers to one, which is the part of the suite that no amount
-      # of workers can shorten.
+      # request that is 74 of the 187 tests.
 
-      - name: 🎭 Run Playwright E2E Tests
+      # The Wayfinder specs (tagged @wayfinder) import a config bundle that replaces the
+      # server-wide CORS allowlist and default resource server (full-replace import semantics),
+      # so they must not share a server with anything that depends on either setting; run them
+      # separately, below, against their own freshly provisioned server.
+      - name: 🎭 Run Playwright E2E Tests (core)
         run: |
           if [ -n "$PLAYWRIGHT_PROJECT_FILTER" ]; then
             echo "Running Playwright projects matching '$PLAYWRIGHT_PROJECT_FILTER'"
-            pnpm test --project="$PLAYWRIGHT_PROJECT_FILTER"
+            pnpm test --project="$PLAYWRIGHT_PROJECT_FILTER" --grep-invert @wayfinder --pass-with-no-tests
           else
             echo "Running every Playwright project"
-            pnpm test
+            pnpm test --grep-invert @wayfinder --pass-with-no-tests
           fi
         working-directory: tests/e2e
         env:
-          # Matches the chromium and serial-chromium projects; setup comes along as
-          # their dependency. Empty on merge_group and workflow_dispatch, which run
-          # every project.
-          PLAYWRIGHT_PROJECT_FILTER: ${{ github.event_name == 'pull_request' && '*chromium*' || '' }}
+          # setup comes along as the chromium project's dependency. Empty on
+          # merge_group and workflow_dispatch, which run every project.
+          PLAYWRIGHT_PROJECT_FILTER: ${{ github.event_name == 'pull_request' && 'chromium' || '' }}
           # Configuration Priority: Secret > Variable > tests/e2e/defaults.env (loaded above as DEFAULT_*)
           # ADMIN_USERNAME/ADMIN_PASSWORD were already resolved once by the "Resolve Admin
           # Credentials" step above and reused for server bootstrap and token acquisition; reuse
@@ -1321,19 +1354,187 @@ jobs:
           PLAYWRIGHT_WORKERS: ${{ vars.PLAYWRIGHT_WORKERS || env.DEFAULT_PLAYWRIGHT_WORKERS }}
           DEBUG_AUTH: ${{ vars.PLAYWRIGHT_DEBUG_AUTH || env.DEFAULT_DEBUG_AUTH }}
           # MFA Test Configuration
-          SAMPLE_APP_ID: ${{ steps.extract-app-id.outputs.sample_app_id }}
           SAMPLE_APP_URL: ${{ env.DEFAULT_SAMPLE_APP_URL }}
           SERVER_URL: ${{ env.DEFAULT_SERVER_URL }}
           AUTO_SETUP_MFA: ${{ vars.AUTO_SETUP_MFA || env.DEFAULT_AUTO_SETUP_MFA }}
           MOCK_SMS_SERVER_PORT: ${{ vars.MOCK_SMS_SERVER_PORT || env.DEFAULT_MOCK_SMS_SERVER_PORT }}
+          # Social Login Test Configuration. The specs bind their mock servers to these URLs and
+          # skip entirely when unset, so they must match what "Start the Server" wrote into
+          # deployment.yaml as identity_provider.
+          MOCK_GOOGLE_BASE_URL: ${{ env.DEFAULT_MOCK_GOOGLE_BASE_URL }}
+          MOCK_GITHUB_BASE_URL: ${{ env.DEFAULT_MOCK_GITHUB_BASE_URL }}
           SAMPLE_APP_USERNAME: ${{ secrets.SAMPLE_APP_USERNAME || vars.SAMPLE_APP_USERNAME || env.DEFAULT_SAMPLE_APP_USERNAME }}
           SAMPLE_APP_PASSWORD: ${{ secrets.SAMPLE_APP_PASSWORD || env.DEFAULT_SAMPLE_APP_PASSWORD }}
 
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: ${{ !cancelled() }}
         with:
           name: playwright-report
           path: tests/e2e/playwright-report/
+          retention-days: 30
+
+      - name: 🛑 Stop the Server
+        if: ${{ !cancelled() }}
+        run: |
+          kill $SERVER_PID 2>/dev/null || true
+          sleep 2
+          if lsof -ti tcp:8090 >/dev/null 2>&1; then
+            kill -9 $(lsof -ti tcp:8090) 2>/dev/null || true
+          fi
+          sleep 3
+          rm -rf tests/e2e/server
+
+      # A fresh server for the Wayfinder specs: same distribution zip, re-extracted so the CORS
+      # allowlist and default resource server the previous phase set are gone, and importing only
+      # the E2E admin app so there is no `Customer` user type for the Wayfinder bundle's own
+      # `Customer` user type to collide with. Runs regardless of the core phase's result - a
+      # different server, so the core phase's failure tells us nothing about this one (mirrors
+      # run-e2e.sh's run_phase, which does the same for the same reason).
+      - name: 📂 Extract Fresh Server for Wayfinder Tests
+        if: ${{ !cancelled() }}
+        run: |
+          mkdir -p tests/e2e/server
+          unzip target/dist/$PRODUCT_NAME_LOWER-*.zip -d tests/e2e/server
+          cd tests/e2e/server
+          EXTRACTED_DIR=$(find . -maxdepth 1 -type d -name "$PRODUCT_NAME_LOWER-*" | head -n 1)
+          if [ -n "$EXTRACTED_DIR" ]; then
+            mv "$EXTRACTED_DIR"/* .
+            rmdir "$EXTRACTED_DIR"
+          fi
+          chmod +x setup.sh start.sh
+
+      - name: 🚀 Start the Server (Wayfinder)
+        if: ${{ !cancelled() }}
+        run: |
+          cd tests/e2e/server
+          ./setup.sh
+          setsid ./start.sh > "$GITHUB_WORKSPACE/server-wayfinder.log" 2>&1 < /dev/null &
+          SERVER_PID=$!
+          echo "SERVER_PID=$SERVER_PID" >> $GITHUB_ENV
+          disown $SERVER_PID 2>/dev/null || true
+          echo "Waiting for server to be ready on https://localhost:8090..."
+          for i in {1..60}; do
+            if curl -s -k https://localhost:8090/health/liveness > /dev/null; then
+              echo "Server is UP!"
+              break
+            fi
+            echo "Still waiting ($i/60)..."
+            sleep 2
+          done
+          if ! curl -s -k https://localhost:8090/health/liveness > /dev/null; then
+            echo "Server failed to start within 2 minutes"
+            exit 1
+          fi
+          echo "Server started successfully!"
+
+      - name: 🔑 Obtain Admin Access Token (Wayfinder)
+        if: ${{ !cancelled() }}
+        id: admin-token-wayfinder
+        uses: ./.github/actions/obtain-admin-token
+        with:
+          admin-username: ${{ env.ADMIN_USERNAME }}
+          admin-password: ${{ env.ADMIN_PASSWORD }}
+
+      - name: 📦 Import E2E Admin App (Wayfinder)
+        if: ${{ !cancelled() }}
+        uses: ./.github/actions/import-declarative-config
+        with:
+          config-path: tests/e2e/thunderid-config.yaml
+          admin-token: ${{ steps.admin-token-wayfinder.outputs.token }}
+          label: E2E admin app
+
+      - name: 🚀 Start Wayfinder Sample App
+        if: ${{ !cancelled() }}
+        run: |
+          cd samples/apps/wayfinder-sample/frontend
+          cp .env.example .env
+          npm install
+          setsid npm run dev > "$GITHUB_WORKSPACE/wayfinder-app.log" 2>&1 < /dev/null &
+          disown $! 2>/dev/null || true
+          echo "Waiting for Wayfinder sample app on http://localhost:5173..."
+          for i in {1..60}; do
+            if curl -s http://localhost:5173 > /dev/null; then
+              echo "Wayfinder sample app is up!"
+              break
+            fi
+            sleep 2
+          done
+          if ! curl -s http://localhost:5173 > /dev/null; then
+            echo "❌ Wayfinder sample app failed to start within 2 minutes"
+            echo "--- wayfinder-app.log ---"
+            cat "$GITHUB_WORKSPACE/wayfinder-app.log" || true
+            exit 1
+          fi
+
+      - name: 🗂️ Cache Wayfinder Mock SMTP Server Dependencies
+        if: ${{ !cancelled() }}
+        id: cache-wayfinder-smtp
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: samples/apps/wayfinder-sample/smtp-server/node_modules
+          key: wayfinder-smtp-server-${{ runner.os }}-${{ hashFiles('samples/apps/wayfinder-sample/smtp-server/package.json') }}
+
+      - name: 🚀 Start Wayfinder Mock SMTP Server
+        if: ${{ !cancelled() }}
+        run: |
+          cd samples/apps/wayfinder-sample/smtp-server
+          if [ "${{ steps.cache-wayfinder-smtp.outputs.cache-hit }}" != "true" ]; then
+            npm install
+          fi
+          npm run build
+          setsid node src/index.js > "$GITHUB_WORKSPACE/wayfinder-smtp-server.log" 2>&1 < /dev/null &
+          disown $! 2>/dev/null || true
+          # Defaults (127.0.0.1:2525 SMTP, 127.0.0.1:8788 inbox) match the server distribution's
+          # deployment.yaml email.smtp settings exactly, so no .env or config changes are needed.
+          echo "Waiting for Wayfinder mock SMTP inbox on http://localhost:8788..."
+          for i in {1..60}; do
+            if curl -s http://localhost:8788/health > /dev/null; then
+              echo "Wayfinder mock SMTP inbox is up!"
+              break
+            fi
+            sleep 2
+          done
+          if ! curl -s http://localhost:8788/health > /dev/null; then
+            echo "❌ Wayfinder mock SMTP inbox failed to start within 2 minutes"
+            echo "--- wayfinder-smtp-server.log ---"
+            cat "$GITHUB_WORKSPACE/wayfinder-smtp-server.log" || true
+            exit 1
+          fi
+
+      - name: 🎭 Run Playwright E2E Tests (Wayfinder)
+        if: ${{ !cancelled() }}
+        run: |
+          if [ -n "$PLAYWRIGHT_PROJECT_FILTER" ]; then
+            echo "Running Playwright projects matching '$PLAYWRIGHT_PROJECT_FILTER'"
+            pnpm test --project $PLAYWRIGHT_PROJECT_FILTER --output=test-results-wayfinder --grep @wayfinder --pass-with-no-tests
+          else
+            echo "Running every Playwright project"
+            pnpm test --output=test-results-wayfinder --grep @wayfinder --pass-with-no-tests
+          fi
+        working-directory: tests/e2e
+        env:
+          # wayfinder-sample-setup.spec.ts and tests/wayfinder/** run through their own dedicated
+          # projects (see playwright.config.ts), not the plain chromium/firefox/webkit ones, so PRs
+          # name the Wayfinder projects explicitly (chromium's tryout project plus the two
+          # browser-agnostic ones) instead of a 'chromium' or '*wayfinder-*' filter - the former
+          # would match none of them, the latter would also pull in firefox/webkit tryout runs.
+          PLAYWRIGHT_PROJECT_FILTER: ${{ github.event_name == 'pull_request' && 'wayfinder-setup chromium-wayfinder-tryout wayfinder-mock-email' || '' }}
+          PLAYWRIGHT_HTML_OUTPUT_DIR: playwright-report-wayfinder
+          PLAYWRIGHT_JSON_OUTPUT_FILE: test-results-wayfinder/test-results.json
+          PLAYWRIGHT_JUNIT_OUTPUT_FILE: test-results-wayfinder/junit.xml
+          BASE_URL: ${{ secrets.PLAYWRIGHT_BASE_URL || vars.PLAYWRIGHT_BASE_URL || env.DEFAULT_BASE_URL }}
+          ADMIN_USERNAME: ${{ env.ADMIN_USERNAME }}
+          ADMIN_PASSWORD: ${{ env.ADMIN_PASSWORD }}
+          WAYFINDER_APP_URL: http://localhost:5173
+          PLAYWRIGHT_WORKERS: ${{ vars.PLAYWRIGHT_WORKERS || env.DEFAULT_PLAYWRIGHT_WORKERS }}
+          DEBUG_AUTH: ${{ vars.PLAYWRIGHT_DEBUG_AUTH || env.DEFAULT_DEBUG_AUTH }}
+          SERVER_URL: ${{ env.DEFAULT_SERVER_URL }}
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: ${{ !cancelled() }}
+        with:
+          name: playwright-report-wayfinder
+          path: tests/e2e/playwright-report-wayfinder/
           retention-days: 30
 
 
@@ -1345,7 +1546,7 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: 📥 Checkout Code
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: ⚙️ Set up Node.js and pnpm
         uses: ./.github/actions/setup-pnpm

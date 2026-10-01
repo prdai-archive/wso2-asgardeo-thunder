@@ -1,20 +1,5 @@
-/*
- * Copyright (c) 2026, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2026 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 package revocationcache
 
@@ -55,6 +40,7 @@ func (suite *DBSourceTestSuite) SetupTest() {
 
 func (suite *DBSourceTestSuite) TestSnapshot_Success() {
 	expiry := time.Now().Add(time.Hour).UTC()
+	revokedAt := time.Now().UTC()
 	suite.mockDBProvider.On("GetRuntimePersistentDBClient").Return(suite.mockDBClient, nil)
 	suite.mockDBClient.On("QueryContext", mock.Anything, querySnapshotRevokedTokens,
 		mock.Anything, testDeploymentID).
@@ -67,6 +53,20 @@ func (suite *DBSourceTestSuite) TestSnapshot_Success() {
 		Return([]map[string]interface{}{
 			{"criterion_value": "tfid-1", "expiry_time": expiry},
 		}, nil)
+	suite.mockDBClient.On("QueryContext", mock.Anything, querySnapshotBoundedCriteria,
+		criterionTypeSubject, mock.Anything, testDeploymentID).
+		Return([]map[string]interface{}{
+			{"criterion_value": "user-1", "reason": "role_assignment_removed",
+				"revoked_at": revokedAt, "expiry_time": expiry},
+		}, nil)
+	suite.mockDBClient.On("QueryContext", mock.Anything, querySnapshotBoundedCriteria,
+		criterionTypeAppKey, mock.Anything, testDeploymentID).
+		Return([]map[string]interface{}{
+			{"criterion_value": "client-1", "reason": "application_secret_regenerated",
+				"revoked_at": revokedAt, "expiry_time": expiry},
+			{"criterion_value": "client-2", "reason": "application_deleted",
+				"revoked_at": revokedAt, "expiry_time": expiry},
+		}, nil)
 
 	snapshot, err := suite.source.Snapshot(context.Background())
 
@@ -76,6 +76,19 @@ func (suite *DBSourceTestSuite) TestSnapshot_Success() {
 	assert.Equal(suite.T(), expiry, snapshot.Tokens[0].ExpiryTime)
 	assert.Len(suite.T(), snapshot.Families, 1)
 	assert.Equal(suite.T(), "tfid-1", snapshot.Families[0].Value)
+	assert.Len(suite.T(), snapshot.Subjects, 1)
+	assert.Equal(suite.T(), "user-1", snapshot.Subjects[0].Value)
+	assert.Equal(suite.T(), revokedAt, snapshot.Subjects[0].RevokedAt)
+	assert.True(suite.T(), snapshot.Subjects[0].Boundary)
+
+	// Secret regeneration is a boundary reason; application deletion is terminal. The classification
+	// must come through on app-key entries exactly as it does on subjects.
+	suite.Require().Len(snapshot.AppKeys, 2)
+	assert.Equal(suite.T(), "client-1", snapshot.AppKeys[0].Value)
+	assert.Equal(suite.T(), revokedAt, snapshot.AppKeys[0].RevokedAt)
+	assert.True(suite.T(), snapshot.AppKeys[0].Boundary)
+	assert.Equal(suite.T(), "client-2", snapshot.AppKeys[1].Value)
+	assert.False(suite.T(), snapshot.AppKeys[1].Boundary)
 }
 
 func (suite *DBSourceTestSuite) TestSnapshot_Empty() {
@@ -86,12 +99,54 @@ func (suite *DBSourceTestSuite) TestSnapshot_Empty() {
 	suite.mockDBClient.On("QueryContext", mock.Anything, querySnapshotRevokedTokenFamilies,
 		criterionTypeTokenFamily, mock.Anything, testDeploymentID).
 		Return([]map[string]interface{}{}, nil)
+	suite.mockDBClient.On("QueryContext", mock.Anything, querySnapshotBoundedCriteria,
+		criterionTypeSubject, mock.Anything, testDeploymentID).
+		Return([]map[string]interface{}{}, nil)
+	suite.mockDBClient.On("QueryContext", mock.Anything, querySnapshotBoundedCriteria,
+		criterionTypeAppKey, mock.Anything, testDeploymentID).
+		Return([]map[string]interface{}{}, nil)
 
 	snapshot, err := suite.source.Snapshot(context.Background())
 
 	suite.Require().NoError(err)
 	assert.Empty(suite.T(), snapshot.Tokens)
 	assert.Empty(suite.T(), snapshot.Families)
+	assert.Empty(suite.T(), snapshot.Subjects)
+	assert.Empty(suite.T(), snapshot.AppKeys)
+}
+
+func (suite *DBSourceTestSuite) TestSnapshot_AppKeyQueryError() {
+	suite.mockDBProvider.On("GetRuntimePersistentDBClient").Return(suite.mockDBClient, nil)
+	suite.mockDBClient.On("QueryContext", mock.Anything, querySnapshotRevokedTokens,
+		mock.Anything, testDeploymentID).Return([]map[string]interface{}{}, nil)
+	suite.mockDBClient.On("QueryContext", mock.Anything, querySnapshotRevokedTokenFamilies,
+		criterionTypeTokenFamily, mock.Anything, testDeploymentID).Return([]map[string]interface{}{}, nil)
+	suite.mockDBClient.On("QueryContext", mock.Anything, querySnapshotBoundedCriteria,
+		criterionTypeSubject, mock.Anything, testDeploymentID).Return([]map[string]interface{}{}, nil)
+	suite.mockDBClient.On("QueryContext", mock.Anything, querySnapshotBoundedCriteria,
+		criterionTypeAppKey, mock.Anything, testDeploymentID).Return(nil, errors.New("query error"))
+
+	snapshot, err := suite.source.Snapshot(context.Background())
+
+	assert.Error(suite.T(), err)
+	assert.Empty(suite.T(), snapshot.AppKeys)
+	assert.Contains(suite.T(), err.Error(), "error reading revoked application snapshot")
+}
+
+func (suite *DBSourceTestSuite) TestSnapshot_SubjectQueryError() {
+	suite.mockDBProvider.On("GetRuntimePersistentDBClient").Return(suite.mockDBClient, nil)
+	suite.mockDBClient.On("QueryContext", mock.Anything, querySnapshotRevokedTokens,
+		mock.Anything, testDeploymentID).Return([]map[string]interface{}{}, nil)
+	suite.mockDBClient.On("QueryContext", mock.Anything, querySnapshotRevokedTokenFamilies,
+		criterionTypeTokenFamily, mock.Anything, testDeploymentID).Return([]map[string]interface{}{}, nil)
+	suite.mockDBClient.On("QueryContext", mock.Anything, querySnapshotBoundedCriteria,
+		criterionTypeSubject, mock.Anything, testDeploymentID).Return(nil, errors.New("query error"))
+
+	snapshot, err := suite.source.Snapshot(context.Background())
+
+	assert.Error(suite.T(), err)
+	assert.Empty(suite.T(), snapshot.Subjects)
+	assert.Contains(suite.T(), err.Error(), "error reading revoked subject snapshot")
 }
 
 func (suite *DBSourceTestSuite) TestSnapshot_DBClientError() {

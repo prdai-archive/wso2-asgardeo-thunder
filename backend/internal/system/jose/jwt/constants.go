@@ -1,20 +1,5 @@
-/*
- * Copyright (c) 2026, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2026 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 package jwt
 
@@ -28,6 +13,13 @@ const (
 	// TokenTypeAccessTokenWithPrefix is the media-type form of the access token typ header. RFC 9068
 	// requires validators to accept both this and TokenTypeAccessToken.
 	TokenTypeAccessTokenWithPrefix = "application/at+jwt"
+
+	// TokenTypeRefreshToken is the JWT type header value for refresh tokens. Refresh tokens
+	// historically shared the generic "JWT" typ with ID tokens and were told apart only by their
+	// access_token_sub claim; an explicit type makes them self-identifying, so a validator that
+	// whitelists the types it accepts rejects a refresh token by default rather than by remembering
+	// to check a claim. Validators accept both during the migration window.
+	TokenTypeRefreshToken = "rt+jwt" //nolint:gosec // JWT typ header value, not a credential
 
 	// TokenTypeIDJAG is the JWT type header value for an Identity Assertion Authorization Grant
 	// (draft-ietf-oauth-identity-assertion-authz-grant).

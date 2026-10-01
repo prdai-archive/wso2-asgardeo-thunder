@@ -1,20 +1,5 @@
-/*
- * Copyright (c) 2026, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2026 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 // Package providers provides interfaces for the providers module.
 package providers
@@ -83,6 +68,29 @@ type ActorProvider interface {
 	GetActor(actorID string) (*Entity, *common.ServiceError)
 	GetActorGroups(actorID string) ([]EntityGroup, *common.ServiceError)
 	GetActorRoles(actorID string, groupIDs []string) ([]string, *common.ServiceError)
+	GetTransitiveGroupAncestors(groupID string) ([]string, *common.ServiceError)
+}
+
+// AgentMgtProvider provisions agents on behalf of runtime capabilities. The rules and semantics of an
+// agent remain owned by the agent management service; this exposes only what the runtime needs.
+type AgentMgtProvider interface {
+	// CreateAgent provisions the supplied agent, deriving its inbound auth profile and OAuth client
+	// configuration. Redirect URIs are the one OAuth value a caller may supply; any other
+	// authentication field left unset is the provider's to fill. Delegated is separate because it
+	// selects the authentication shape rather than describing the agent.
+	//
+	// The returned agent carries the generated identifier and, on InboundAuthConfig, the generated
+	// client credentials. Fields the agent service does not echo come back zero, so the result is
+	// not a full round-trip. Owner falls back to the authenticated caller when unset.
+	CreateAgent(ctx context.Context, agent *Agent, delegated bool) (*Agent, *common.ServiceError)
+}
+
+// UserMgtProvider provisions users on behalf of runtime capabilities. The rules and semantics of a
+// user remain owned by the user management service; this exposes only what the runtime needs.
+type UserMgtProvider interface {
+	// CreateUser provisions a user and returns it with its generated ID. Errors from the user
+	// service are returned unchanged so callers can distinguish the actual failure.
+	CreateUser(ctx context.Context, user *User) (*User, *common.ServiceError)
 }
 
 // I18nProvider defines the interface for the i18n provider.
@@ -143,6 +151,9 @@ type IDPProvider interface {
 	GetIdentityProvidersByProperty(ctx context.Context, propertyKey,
 		propertyValue string) ([]IDPDTO, *common.ServiceError)
 	GetIdentityProvider(ctx context.Context, idpID string) (*IDPDTO, *common.ServiceError)
+	GetDirectAuthorizationTargets(
+		ctx context.Context, idp *IDPDTO, claims map[string]interface{},
+	) ([]AuthorizationTarget, *common.ServiceError)
 }
 
 // ConsentProvider provides functionality to resolve consent requirements and
@@ -273,4 +284,31 @@ type Transactioner interface {
 	// If a transaction already exists in the context, it reuses it.
 	// Otherwise, it creates a new transaction and commits/rolls back automatically.
 	Transact(ctx context.Context, txFunc func(context.Context) error) error
+}
+
+// RuntimeCryptoProvider provides asymmetric cryptographic operations including
+// encryption, decryption, signing, verification, and key discovery.
+type RuntimeCryptoProvider interface {
+	//	 Encrypt encrypts the given content using the specified key reference, algorithm, and parameters.
+	Encrypt(ctx context.Context, keyRef *KeyRef, algorithm string, params map[string]interface{},
+		content []byte) ([]byte, *CryptoDetails, error)
+
+	// Decrypt decrypts the given content using the specified key reference, algorithm, and parameters.
+	Decrypt(ctx context.Context, keyRef *KeyRef, algorithm string, params map[string]interface{},
+		content []byte) ([]byte, error)
+
+	// Sign signs the given content using the specified key reference and algorithm.
+	Sign(ctx context.Context, keyRef KeyRef, alg string, content []byte) ([]byte, error)
+
+	// Verify verifies the signature of the given content using the specified key reference and algorithm.
+	Verify(ctx context.Context, keyRef KeyRef, alg string, content, signature []byte) error
+
+	// GetPublicKeys retrieves public keys based on the provided filter criteria.
+	GetPublicKeys(ctx context.Context, filter PublicKeyFilter) ([]PublicKeyInfo, error)
+
+	// GetSupportedSigningAlgorithms returns the list of signing algorithms supported by Sign and Verify.
+	GetSupportedSigningAlgorithms() []string
+
+	// GetSupportedEncryptionAlgorithms returns the list of algorithms supported by Encrypt and Decrypt.
+	GetSupportedEncryptionAlgorithms() []string
 }

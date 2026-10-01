@@ -1,20 +1,5 @@
-/*
- * Copyright (c) 2025, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2025 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 package resource
 
@@ -131,10 +116,11 @@ func (h *resourceHandler) HandleResourceServerPutRequest(w http.ResponseWriter, 
 
 	sanitized := sanitizeUpdateResourceServerRequest(req)
 	serviceReq := providers.ResourceServer{
-		Name:        sanitized.Name,
-		Description: sanitized.Description,
-		Identifier:  sanitized.Identifier,
-		OUID:        sanitized.OUID,
+		Name:                sanitized.Name,
+		Description:         sanitized.Description,
+		Identifier:          sanitized.Identifier,
+		OUID:                sanitized.OUID,
+		AuthorizationEngine: sanitized.AuthorizationEngine,
 	}
 
 	result, svcErr := h.resourceService.UpdateResourceServer(ctx, id, serviceReq)
@@ -622,11 +608,19 @@ func sanitizeCreateResourceServerRequest(req *CreateResourceServerRequest) Creat
 // sanitizeUpdateResourceServerRequest sanitizes input for updating a resource server.
 func sanitizeUpdateResourceServerRequest(req *UpdateResourceServerRequest) UpdateResourceServerRequest {
 	return UpdateResourceServerRequest{
-		Name:        sysutils.SanitizeString(req.Name),
-		Description: sysutils.SanitizeString(req.Description),
-		Identifier:  sysutils.SanitizeString(req.Identifier),
-		OUID:        sysutils.SanitizeString(req.OUID),
+		Name:                sysutils.SanitizeString(req.Name),
+		Description:         sysutils.SanitizeString(req.Description),
+		Identifier:          sysutils.SanitizeString(req.Identifier),
+		OUID:                sysutils.SanitizeString(req.OUID),
+		AuthorizationEngine: sanitizeAuthorizationEngine(req.AuthorizationEngine),
 	}
+}
+
+// sanitizeAuthorizationEngine sanitizes user-controlled authorization engine identifiers.
+func sanitizeAuthorizationEngine(engine providers.AuthorizationEngineConfig) providers.AuthorizationEngineConfig {
+	engine.Type = sysutils.SanitizeString(engine.Type)
+	engine.Properties.PDPConnectionID = sysutils.SanitizeString(engine.Properties.PDPConnectionID)
+	return engine
 }
 
 // sanitizeCreateResourceRequest sanitizes input for creating a resource.
@@ -681,14 +675,15 @@ func toResourceServerResponse(rs *providers.ResourceServer) *ResourceServerRespo
 		resType = providers.ResourceServerTypeCustom
 	}
 	return &ResourceServerResponse{
-		ID:          rs.ID,
-		Name:        rs.Name,
-		Description: rs.Description,
-		Identifier:  rs.Identifier,
-		Type:        resType,
-		OUID:        rs.OUID,
-		Delimiter:   rs.Delimiter,
-		IsReadOnly:  rs.IsReadOnly,
+		ID:                  rs.ID,
+		Name:                rs.Name,
+		Description:         rs.Description,
+		Identifier:          rs.Identifier,
+		Type:                resType,
+		OUID:                rs.OUID,
+		Delimiter:           rs.Delimiter,
+		AuthorizationEngine: rs.AuthorizationEngine,
+		IsReadOnly:          rs.IsReadOnly,
 	}
 }
 

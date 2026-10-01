@@ -1,27 +1,26 @@
-/**
- * Copyright (c) 2025, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied. See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2025 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 import {type ConnectionType, ConnectionTypes} from '../models/connection';
 
-export type ConnectionFieldKind = 'text' | 'url' | 'secret' | 'scopes' | 'readonly-copy' | 'switch';
+export type ConnectionFieldKind =
+  | 'text'
+  | 'url'
+  | 'secret'
+  | 'scopes'
+  | 'readonly-copy'
+  | 'switch'
+  | 'select'
+  | 'key-value';
 
 /** Which form mode renders a field. Defaults to 'both' when unset. */
 export type ConnectionFieldVisibility = 'create' | 'edit' | 'both';
+
+/** One choice of a 'select' field. Values are sent to the API verbatim. */
+export interface ConnectionFieldOption {
+  value: string;
+  label: string;
+}
 
 export interface ConnectionFieldDef {
   /** Request payload property this field maps to. */
@@ -33,6 +32,12 @@ export interface ConnectionFieldDef {
   /** Required on create. Secret fields are required on create but optional (omit-to-keep) on edit. */
   required?: boolean;
   placeholder?: string;
+  /** Choices of a 'select' field. */
+  options?: ConnectionFieldOption[];
+  /** i18n key for the add-row button of a 'key-value' field. */
+  addLabelKey?: string;
+  /** Value prefilled on create (and used when the API returns none). */
+  defaultValue?: string;
   /** Format the value must match (checked only when non-empty). Mirrors backend validation. */
   pattern?: RegExp;
   /** i18n key for the error shown when {@link pattern} does not match. */
@@ -65,16 +70,12 @@ const PROMPT_FIELD: ConnectionFieldDef = {
   visibility: 'edit',
 };
 
-const LOGOUT_ENDPOINT_FIELD: ConnectionFieldDef = {
-  name: 'logoutEndpoint',
-  labelKey: 'connections:form.fields.logoutEndpoint.label',
-  hintKey: 'connections:form.fields.logoutEndpoint.hint',
-  kind: 'url',
-  placeholder: 'https://idp.example.com/logout',
-  visibility: 'edit',
-};
-
-const oauthFields = (namePlaceholder: string, clientIdPlaceholder: string): ConnectionFieldDef[] => [
+const oauthFields = (
+  namePlaceholder: string,
+  clientIdPlaceholder: string,
+  scopesHintKey = 'connections:form.fields.scopes.hint',
+  scopesPlaceholder = 'openid email profile',
+): ConnectionFieldDef[] => [
   NAME_FIELD(namePlaceholder),
   {
     name: 'clientId',
@@ -100,9 +101,9 @@ const oauthFields = (namePlaceholder: string, clientIdPlaceholder: string): Conn
   {
     name: 'scopes',
     labelKey: 'connections:form.fields.scopes.label',
-    hintKey: 'connections:form.fields.scopes.hint',
+    hintKey: scopesHintKey,
     kind: 'scopes',
-    placeholder: 'openid email profile',
+    placeholder: scopesPlaceholder,
     visibility: 'edit',
   },
   PROMPT_FIELD,
@@ -133,7 +134,12 @@ const TRUSTED_TOKEN_AUDIENCE_FIELD: ConnectionFieldDef = {
  */
 export const CONNECTION_FORM_FIELDS: Record<ConnectionType, ConnectionFieldDef[]> = {
   [ConnectionTypes.GOOGLE]: oauthFields('Google Workspace', '1234567890-abc.apps.googleusercontent.com'),
-  [ConnectionTypes.GITHUB]: oauthFields('GitHub OAuth', 'Iv1.0123456789abcdef'),
+  [ConnectionTypes.GITHUB]: oauthFields(
+    'GitHub OAuth',
+    'Iv1.0123456789abcdef',
+    'connections:form.fields.scopes.githubHint',
+    'user:email',
+  ),
   [ConnectionTypes.OIDC]: [
     NAME_FIELD('Acme Workforce OIDC'),
     {
@@ -193,7 +199,6 @@ export const CONNECTION_FORM_FIELDS: Record<ConnectionType, ConnectionFieldDef[]
       requiredWhen: 'tokenExchangeEnabled',
       visibility: 'edit',
     },
-    LOGOUT_ENDPOINT_FIELD,
     {
       name: 'redirectUri',
       labelKey: 'connections:form.fields.redirectUri.label',
@@ -247,13 +252,11 @@ export const CONNECTION_FORM_FIELDS: Record<ConnectionType, ConnectionFieldDef[]
     },
     {
       name: 'userInfoEndpoint',
-      labelKey: 'connections:form.fields.userInfoEndpoint.label',
-      hintKey: 'connections:form.fields.userInfoEndpoint.hint',
+      labelKey: 'connections:form.fields.userProfileEndpoint.label',
+      hintKey: 'connections:form.fields.userProfileEndpoint.hint',
       kind: 'url',
-      required: true,
-      placeholder: 'https://idp.example.com/userinfo',
+      placeholder: 'https://api.example.com/user',
     },
-    LOGOUT_ENDPOINT_FIELD,
     {
       name: 'redirectUri',
       labelKey: 'connections:form.fields.redirectUri.label',
@@ -322,6 +325,47 @@ export const CONNECTION_FORM_FIELDS: Record<ConnectionType, ConnectionFieldDef[]
       kind: 'text',
       required: true,
       placeholder: '+15005550006',
+    },
+  ],
+  [ConnectionTypes.SMS_GATEWAY]: [
+    NAME_FIELD('Custom SMS Sender'),
+    {
+      name: 'url',
+      labelKey: 'connections:form.fields.smsGatewayUrl.label',
+      hintKey: 'connections:form.fields.smsGatewayUrl.hint',
+      kind: 'url',
+      required: true,
+      placeholder: 'https://sms.example.com/send',
+    },
+    {
+      name: 'httpMethod',
+      labelKey: 'connections:form.fields.httpMethod.label',
+      hintKey: 'connections:form.fields.httpMethod.hint',
+      kind: 'select',
+      defaultValue: 'POST',
+      options: [
+        {value: 'POST', label: 'POST'},
+        {value: 'GET', label: 'GET'},
+      ],
+    },
+    {
+      name: 'contentType',
+      labelKey: 'connections:form.fields.contentType.label',
+      hintKey: 'connections:form.fields.contentType.hint',
+      kind: 'select',
+      defaultValue: 'JSON',
+      options: [
+        {value: 'JSON', label: 'JSON'},
+        {value: 'FORM', label: 'FORM'},
+      ],
+    },
+    {
+      name: 'httpHeaders',
+      labelKey: 'connections:form.fields.httpHeaders.label',
+      hintKey: 'connections:form.fields.httpHeaders.hint',
+      kind: 'key-value',
+      placeholder: 'X-API-Key',
+      addLabelKey: 'connections:form.fields.httpHeaders.add',
     },
   ],
 };

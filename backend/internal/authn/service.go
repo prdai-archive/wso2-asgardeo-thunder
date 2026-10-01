@@ -1,20 +1,5 @@
-/*
- * Copyright (c) 2025, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2025 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 // Package authn implements the authentication service for authenticating users against different methods.
 package authn
@@ -24,7 +9,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"slices"
-	"strconv"
 	"strings"
 	"time"
 
@@ -40,6 +24,7 @@ import (
 	"github.com/thunder-id/thunderid/internal/authn/oidc"
 	"github.com/thunder-id/thunderid/internal/authn/otp"
 	"github.com/thunder-id/thunderid/internal/authn/passkey"
+	authnprovidercm "github.com/thunder-id/thunderid/internal/authnprovider/common"
 	authnprovidermgr "github.com/thunder-id/thunderid/internal/authnprovider/manager"
 	"github.com/thunder-id/thunderid/internal/idp"
 	"github.com/thunder-id/thunderid/internal/notification"
@@ -49,6 +34,7 @@ import (
 	"github.com/thunder-id/thunderid/internal/system/jose/jwt"
 	"github.com/thunder-id/thunderid/internal/system/log"
 	"github.com/thunder-id/thunderid/internal/system/template"
+	systemutils "github.com/thunder-id/thunderid/internal/system/utils"
 )
 
 const svcLoggerComponentName = "AuthenticationService"
@@ -75,7 +61,7 @@ type AuthenticationServiceInterface interface {
 	) (*common.AuthenticationResponse, *tidcommon.ServiceError)
 	// Passkey methods
 	StartPasskeyRegistration(ctx context.Context, userID, relyingPartyID, relyingPartyName string,
-		authSelection *PasskeyAuthenticatorSelectionDTO, attestation string,
+		authSelection *PasskeyAuthenticatorSelectionDTO, attestation, assertion string,
 	) (interface{}, *tidcommon.ServiceError)
 	FinishPasskeyRegistration(ctx context.Context, credential PasskeyPublicKeyCredentialDTO,
 		sessionToken string, skipAssertion bool, existingAssertion string,
@@ -151,6 +137,14 @@ func (as *authenticationService) AuthenticateWithCredentials(ctx context.Context
 		return nil, &ErrorEmptyAttributesOrCredentials
 	}
 
+	// Credential types reserved for internal flows select an authentication mechanism by key name in
+	// the provider chain, so accepting them here would let a client pick any mechanism directly.
+	if reserved, found := authnprovidercm.FindReservedCredentialType(credentials); found {
+		logger.Debug(ctx, "Rejected reserved credential type on the credentials API",
+			log.String("credentialType", reserved))
+		return nil, &ErrorReservedCredentialType
+	}
+
 	newAuthUser, _, svcErr := as.authnProvider.AuthenticateUser(ctx, identifiers, credentials, nil, nil,
 		providers.AuthUser{})
 	if svcErr != nil {
@@ -208,7 +202,7 @@ func (as *authenticationService) SendOTP(ctx context.Context, senderID string, c
 	recipient string) (string, *tidcommon.ServiceError) {
 	logger := log.GetLogger().With(log.String(log.LoggerKeyComponentName, svcLoggerComponentName))
 
-	sessionToken, otpValue, _, svcErr := as.otpService.GenerateOTP(ctx, recipient, "mobile_number", nil)
+	sessionToken, otpValue, expirySeconds, svcErr := as.otpService.GenerateOTP(ctx, recipient, "mobile_number", nil)
 	if svcErr != nil {
 		if svcErr.Type == tidcommon.ServerErrorType {
 			logger.Error(ctx, "Failed to generate OTP", log.String("error", svcErr.Code))
@@ -217,9 +211,10 @@ func (as *authenticationService) SendOTP(ctx context.Context, senderID string, c
 		return "", svcErr
 	}
 
-	otpCfg := config.GetServerRuntime().Config.Notification.OTP
-	expiryMinutes := strconv.FormatInt(int64(otpCfg.ValidityPeriodSeconds)/60, 10)
-	templateData := template.TemplateData{"otpCode": otpValue, "expiryMinutes": expiryMinutes}
+	templateData := template.TemplateData{
+		"otpCode":    otpValue,
+		"expiryTime": systemutils.FormatExpiryDuration(expirySeconds),
+	}
 	rendered, renderErr := as.templateService.Render(ctx, template.ScenarioOTP, template.TemplateTypeSMS, templateData)
 	if renderErr != nil {
 		if renderErr.Type == tidcommon.ServerErrorType {
@@ -248,7 +243,7 @@ func (as *authenticationService) VerifyOTP(ctx context.Context, sessionToken str
 	logger.Debug(ctx, "Verifying OTP for authentication")
 
 	credentials := map[string]interface{}{
-		"otp": map[string]interface{}{
+		authnprovidercm.CredentialTypeOTP: map[string]interface{}{
 			"sessionToken": sessionToken,
 			"otp":          otpCode,
 		},
@@ -383,7 +378,7 @@ func (as *authenticationService) FinishIDPAuthentication(ctx context.Context, re
 	}
 
 	credentials := map[string]interface{}{
-		"federated": &common.FederatedAuthCredential{
+		authnprovidercm.CredentialTypeFederated: &common.FederatedAuthCredential{
 			IDPID:   sessionData.IDPID,
 			IDPType: sessionData.IDPType,
 			AuthorizationData: common.AuthorizationData{
@@ -576,6 +571,32 @@ func (as *authenticationService) extractClaimsFromAssertion(ctx context.Context,
 	return &assuranceCtx, sub, nil
 }
 
+// verifyAssertionSubject rejects the request unless assertion is a valid auth assertion whose
+// subject is userID. Callers use it to gate operations that act on an account rather than merely
+// reporting on one, where a caller supplied user ID is not trustworthy on its own.
+func (as *authenticationService) verifyAssertionSubject(ctx context.Context, assertion, userID string,
+	logger *log.Logger) *tidcommon.ServiceError {
+	// Callers arriving over HTTP are already stopped by the required-field validation on the DTO,
+	// which treats a blank string as absent. This guards the service contract for any other caller.
+	if strings.TrimSpace(assertion) == "" {
+		logger.Debug(ctx, "Assertion missing on a request that requires proof of the target user")
+		return &common.ErrorInvalidAssertion
+	}
+
+	_, assertionSub, svcErr := as.extractClaimsFromAssertion(ctx, assertion, logger)
+	if svcErr != nil {
+		return svcErr
+	}
+
+	if assertionSub != userID {
+		logger.Debug(ctx, "Assertion subject does not match the target user",
+			log.MaskedString("assertionSub", assertionSub), log.MaskedString(log.LoggerKeyUserID, userID))
+		return &common.ErrorAssertionSubjectMismatch
+	}
+
+	return nil
+}
+
 // mapFederatedAuthnError maps provider manager errors to federated-authentication-specific service errors.
 func (as *authenticationService) mapFederatedAuthnError(ctx context.Context, svcErr *tidcommon.ServiceError,
 	logger *log.Logger) *tidcommon.ServiceError {
@@ -729,10 +750,17 @@ func (as *authenticationService) verifyAndDecodeSessionToken(ctx context.Context
 // StartPasskeyRegistration starts the passkey registration process.
 func (as *authenticationService) StartPasskeyRegistration(
 	ctx context.Context, userID, relyingPartyID, relyingPartyName string,
-	authSelection *PasskeyAuthenticatorSelectionDTO, attestation string,
+	authSelection *PasskeyAuthenticatorSelectionDTO, attestation, assertion string,
 ) (interface{}, *tidcommon.ServiceError) {
 	logger := log.GetLogger().With(log.String(log.LoggerKeyComponentName, svcLoggerComponentName))
 	logger.Debug(ctx, "Starting Passkey registration")
+
+	// Enrollment binds a new credential to an account, so it is gated on proof that the caller
+	// holds that account. The challenge is bound to userID here, which makes this the only point
+	// where the check is effective.
+	if svcErr := as.verifyAssertionSubject(ctx, assertion, userID, logger); svcErr != nil {
+		return nil, svcErr
+	}
 
 	var passkeyAuthSel *passkey.AuthenticatorSelection
 	if authSelection != nil {

@@ -1,20 +1,5 @@
-/*
- * Copyright (c) 2025, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2025 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 package application
 
@@ -97,7 +82,7 @@ var (
 	appToUpdate = Application{
 		Name:                      "Updated App",
 		Description:               "Updated Description",
-		IsRegistrationFlowEnabled: false,
+		IsRegistrationFlowEnabled: true,
 		Template:                  "mobile",
 		URL:                       "https://appToUpdate.example.com",
 		LogoURL:                   "https://appToUpdate.example.com/logo.png",
@@ -2038,17 +2023,13 @@ func (ts *ApplicationAPITestSuite) TestApplicationWithOnlyIDToken() {
 	ts.Assert().NotNil(retrievedApp.InboundAuthConfig[0].OAuthAppConfig.Token)
 	ts.Assert().NotNil(retrievedApp.InboundAuthConfig[0].OAuthAppConfig.Token.IDToken)
 	ts.Assert().Equal(int64(3600), retrievedApp.InboundAuthConfig[0].OAuthAppConfig.Token.IDToken.ValidityPeriod)
-	// The response returns the effective scope-claims mapping: the standard OIDC defaults with the
-	// app's stored overrides applied on top, so all six standard scopes are present. The overridden
-	// scopes carry the stored values; the rest carry the exact standard defaults.
+	// A mapping sent at creation is stored exactly as sent: standard scopes the app does not declare
+	// are not added to it, and openid needs no entry because it is always granted.
 	scopeClaims := retrievedApp.InboundAuthConfig[0].OAuthAppConfig.ScopeClaims
-	ts.Assert().Len(scopeClaims, 6)
+	ts.Assert().Len(scopeClaims, 2)
 	ts.Assert().Equal([]string{"name", "given_name", "family_name", "middle_name"}, scopeClaims["profile"])
 	ts.Assert().Equal([]string{"email", "email_verified"}, scopeClaims["email"])
-	ts.Assert().Equal([]string{"sub"}, scopeClaims["openid"])
-	ts.Assert().Equal([]string{"phone_number", "phone_number_verified"}, scopeClaims["phone"])
-	ts.Assert().Equal([]string{"address"}, scopeClaims["address"])
-	ts.Assert().Equal([]string{"roles"}, scopeClaims["roles"])
+	ts.Assert().NotContains(scopeClaims, "openid")
 }
 
 // TestApplicationWithBothTokenTypes tests creating application with both AccessToken and IDToken.
@@ -2280,13 +2261,25 @@ func (ts *ApplicationAPITestSuite) TestApplicationWithComplexScopeClaims() {
 	retrievedApp, err := getApplicationByID(appID)
 	ts.Require().NoError(err)
 	ts.Assert().NotNil(retrievedApp.InboundAuthConfig[0].OAuthAppConfig.Token.IDToken)
-	// The response returns the effective mapping: the six standard OIDC scopes (defaults with the
-	// app's overrides applied) plus the "custom" scope carried through.
+	// The response returns the mapping exactly as sent: the four standard OIDC scopes the app
+	// declared plus its "custom" scope, with no defaults merged in.
 	scopeClaims := retrievedApp.InboundAuthConfig[0].OAuthAppConfig.ScopeClaims
-	ts.Assert().Len(scopeClaims, 7)
-	ts.Assert().Contains(scopeClaims, "profile")
-	ts.Assert().GreaterOrEqual(len(scopeClaims["profile"]), 10)
-	ts.Assert().Equal([]string{"organization", "department", "employee_id"}, scopeClaims["custom"])
+	ts.Assert().Equal(map[string][]string{
+		"profile": {
+			"name", "given_name", "family_name", "middle_name",
+			"nickname", "preferred_username", "profile", "picture",
+			"website", "gender", "birthdate", "zoneinfo", "locale",
+			"updated_at",
+		},
+		"email": {"email", "email_verified"},
+		"address": {
+			"address.formatted", "address.street_address",
+			"address.locality", "address.region",
+			"address.postal_code", "address.country",
+		},
+		"phone":  {"phone_number", "phone_number_verified"},
+		"custom": {"organization", "department", "employee_id"},
+	}, scopeClaims)
 }
 
 // TestApplicationCertificateRollbackOnOAuthFail tests certificate rollback when OAuth creation fails.
@@ -3640,17 +3633,16 @@ func (ts *ApplicationAPITestSuite) TestApplicationCreateWithDefaultAuthFlowID() 
 }
 
 // TestApplicationCreateWithoutRegistrationFlowID tests creating an application without a
-// RegistrationFlowID when its AuthFlowID transitively references a registration flow. The server
-// must auto-fill RegistrationFlowID with the reachable target and force IsRegistrationFlowEnabled
-// to false.
+// RegistrationFlowID when the caller left IsRegistrationFlowEnabled=false. The server must
+// persist the disabled binding (empty ID) even if the AuthFlowID transitively references a
+// registration flow.
 func (ts *ApplicationAPITestSuite) TestApplicationCreateWithoutRegistrationFlowID() {
 	app := Application{
-		OUID:                      testOUID,
-		Name:                      "No Registration Flow Test",
-		Description:               "Test that registration flow is auto-filled from the referenced auth flow",
-		IsRegistrationFlowEnabled: true,
-		AuthFlowID:                defaultAuthFlowID,
-		Certificate:               nil,
+		OUID:        testOUID,
+		Name:        "No Registration Flow Test",
+		Description: "Test that a disabled registration binding is not auto-filled from the auth flow",
+		AuthFlowID:  defaultAuthFlowID,
+		Certificate: nil,
 	}
 
 	appID, err := createApplication(app)
@@ -3660,10 +3652,9 @@ func (ts *ApplicationAPITestSuite) TestApplicationCreateWithoutRegistrationFlowI
 	retrievedApp, err := getApplicationByID(appID)
 	ts.Require().NoError(err)
 
-	ts.Assert().Equal(defaultRegistrationFlowID, retrievedApp.RegistrationFlowID,
-		"auto-fill must populate RegistrationFlowID from the auth flow's reachable target")
-	ts.Assert().False(retrievedApp.IsRegistrationFlowEnabled,
-		"auto-fill must force IsRegistrationFlowEnabled to false")
+	ts.Assert().Empty(retrievedApp.RegistrationFlowID,
+		"disabled registration binding must not be auto-filled from the auth flow's reachable target")
+	ts.Assert().False(retrievedApp.IsRegistrationFlowEnabled)
 }
 
 // TestApplicationCreateWithDuplicateClientID tests creating application with duplicate client ID
@@ -4864,6 +4855,71 @@ func (ts *ApplicationAPITestSuite) TestApplicationUserInfoInvalidSigningAlgRejec
 	_, err := createApplication(app)
 	ts.Require().Error(err, "Creating an app with an unsupported signingAlg should fail")
 	ts.Assert().Contains(err.Error(), "400", "Expected HTTP 400 for unsupported signingAlg")
+}
+
+// TestApplicationIDTokenSigningAlgValidation verifies that ID token signing algorithm validation
+// applies on the management API, not only the DCR path, so an app cannot be created with an
+// algorithm the deployment has no signing key for.
+func (ts *ApplicationAPITestSuite) TestApplicationIDTokenSigningAlgValidation() {
+	testCases := []struct {
+		name        string
+		signingAlg  string
+		expectError bool
+	}{
+		{name: "ConfiguredAlgAccepted", signingAlg: "ES256"},
+		{name: "AlgWithoutConfiguredKeyRejected", signingAlg: "PS256", expectError: true},
+		{name: "NotAnAlgorithmRejected", signingAlg: "INVALID_ALG", expectError: true},
+	}
+
+	for i, tc := range testCases {
+		ts.Run(tc.name, func() {
+			clientID := fmt.Sprintf("idtoken_alg_client_%d", i)
+			app := Application{
+				OUID:        testOUID,
+				Name:        "App IDToken SigningAlg " + tc.name,
+				Description: "Testing ID token signingAlg validation on the management API",
+				InboundAuthConfig: []InboundAuthConfig{
+					{
+						Type: "oauth2",
+						OAuthAppConfig: &OAuthAppConfig{
+							ClientID:                clientID,
+							ClientSecret:            clientID + "_secret",
+							RedirectURIs:            []string{"http://localhost/callback"},
+							GrantTypes:              []string{"authorization_code"},
+							ResponseTypes:           []string{"code"},
+							TokenEndpointAuthMethod: "client_secret_basic",
+							Token: &OAuthTokenConfig{
+								IDToken: &IDTokenConfig{SigningAlg: tc.signingAlg},
+							},
+						},
+					},
+				},
+			}
+			app.AuthFlowID = defaultAuthFlowID
+			app.RegistrationFlowID = defaultRegistrationFlowID
+
+			appID, err := createApplication(app)
+			if tc.expectError {
+				ts.Require().Error(err, "an unsupported signingAlg must be rejected")
+				ts.Assert().Contains(err.Error(), "400", "expected HTTP 400 for unsupported signingAlg")
+				return
+			}
+
+			ts.Require().NoError(err)
+			defer func() {
+				if delErr := deleteApplication(appID); delErr != nil {
+					ts.T().Logf("failed to delete application: %v", delErr)
+				}
+			}()
+
+			retrievedApp, err := getApplicationByID(appID)
+			ts.Require().NoError(err)
+			oauth := retrievedApp.InboundAuthConfig[0].OAuthAppConfig
+			ts.Require().NotNil(oauth.Token)
+			ts.Require().NotNil(oauth.Token.IDToken)
+			ts.Assert().Equal(tc.signingAlg, oauth.Token.IDToken.SigningAlg)
+		})
+	}
 }
 
 // ---------------------------------------------------------------------------

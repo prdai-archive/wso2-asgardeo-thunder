@@ -1,20 +1,5 @@
-/*
- * Copyright (c) 2025, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2025 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 package application
 
@@ -27,6 +12,7 @@ type Application struct {
 	Type                      string              `json:"type,omitempty"`
 	ClientID                  string              `json:"clientId,omitempty"`
 	ClientSecret              string              `json:"clientSecret,omitempty"`
+	FlowSecret                string              `json:"flowSecret,omitempty"`
 	AuthFlowID                string              `json:"authFlowId,omitempty"`
 	RegistrationFlowID        string              `json:"registrationFlowId,omitempty"`
 	IsRegistrationFlowEnabled bool                `json:"isRegistrationFlowEnabled"`
@@ -132,6 +118,7 @@ type IDTokenConfig struct {
 	ValidityPeriod int64    `json:"validityPeriod,omitempty"`
 	UserAttributes []string `json:"userAttributes,omitempty"`
 	ResponseType   string   `json:"responseType,omitempty"`
+	SigningAlg     string   `json:"signingAlg,omitempty"`
 	EncryptionAlg  string   `json:"encryptionAlg,omitempty"`
 	EncryptionEnc  string   `json:"encryptionEnc,omitempty"`
 }

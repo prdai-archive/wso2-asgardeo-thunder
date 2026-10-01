@@ -1,20 +1,5 @@
-/*
- * Copyright (c) 2025, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2025 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 package log
 
@@ -28,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 
 	sysContext "github.com/thunder-id/thunderid/internal/system/context"
@@ -305,12 +291,10 @@ func (suite *LogTestSuite) TestMaskedMap() {
 
 // newContextTestLogger creates a Logger backed by a contextHandler writing to buf.
 func newContextTestLogger(buf *bytes.Buffer) *Logger {
-	handlerOptions := &slog.HandlerOptions{
-		Level: slog.LevelDebug,
-	}
-	return &Logger{
-		internal: slog.New(&contextHandler{Handler: slog.NewTextHandler(buf, handlerOptions)}),
-	}
+	levelVar := new(slog.LevelVar)
+	levelVar.Set(slog.LevelDebug)
+	handler := slog.NewTextHandler(buf, &slog.HandlerOptions{Level: levelVar})
+	return newLogger(&contextHandler{Handler: handler}, levelVar, buf, formatText)
 }
 
 func (suite *LogTestSuite) TestContextLogMethodsWithTraceID() {
@@ -390,8 +374,10 @@ func (suite *LogTestSuite) TestGetLoggerUsesContextHandler() {
 	once = sync.Once{}
 
 	log := GetLogger()
-	_, ok := log.internal.Handler().(*contextHandler)
-	assert.True(suite.T(), ok, "GetLogger should wrap the handler with contextHandler")
+	dynamic, ok := log.internal.Handler().(*dynamicHandler)
+	require.True(suite.T(), ok, "GetLogger should install the dynamic handler")
+	_, ok = dynamic.resolve().(*contextHandler)
+	assert.True(suite.T(), ok, "the resolved handler should be wrapped with contextHandler")
 }
 
 func (suite *LogTestSuite) TestServerErrorWriterWrite() {
@@ -415,10 +401,7 @@ func (suite *LogTestSuite) TestServerErrorWriterWrite() {
 func (suite *LogTestSuite) TestServerErrorWriterRespectsLevel() {
 	var buf bytes.Buffer
 	log := newContextTestLogger(&buf)
-	log.levelVar = new(slog.LevelVar)
-	log.levelVar.Set(slog.LevelError)
-	log.internal = slog.New(&contextHandler{Handler: slog.NewTextHandler(&buf,
-		&slog.HandlerOptions{Level: log.levelVar})})
+	require.NoError(suite.T(), log.SetLevel("error"))
 	w := &serverErrorWriter{logger: log}
 
 	_, err := w.Write([]byte("some server error"))

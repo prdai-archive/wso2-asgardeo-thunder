@@ -1,20 +1,5 @@
-/**
- * Copyright (c) 2026, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied. See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2026 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 import {Box, Button, ListItemIcon, ListItemText, ListSubheader, Menu, MenuItem, Typography} from '@wso2/oxygen-ui';
 import {ArrowUpRight, Check, ChevronDown, Heart, MessageCircle, MousePointer2} from '@wso2/oxygen-ui-icons-react';
@@ -124,11 +109,11 @@ function ListRow({icon, label, onClick, isLight, showArrow = true}: ListRowProps
       sx={{
         display: 'flex',
         alignItems: 'center',
-        gap: 1.5,
+        gap: 1.25,
         width: '100%',
-        p: 1.25,
+        p: 1,
         border: 'none',
-        borderRadius: '10px',
+        borderRadius: '9px',
         bgcolor: 'transparent',
         cursor: 'pointer',
         textAlign: 'left',
@@ -137,11 +122,27 @@ function ListRow({icon, label, onClick, isLight, showArrow = true}: ListRowProps
         '&:hover': {bgcolor: isLight ? 'rgba(0,0,0,0.04)' : 'rgba(255,255,255,0.05)'},
       }}
     >
-      <Box sx={{display: 'inline-flex', flexShrink: 0, color: 'text.primary'}}>{icon}</Box>
-      <Typography sx={{flex: 1, fontSize: '14.5px', color: 'text.primary'}}>{label}</Typography>
+      {/* Icon chip, matching the SDK detail rail's "Related SDKs" row icon treatment
+          (Ecosystem/Detail/Detail.tsx's `Rail`) instead of a bare floating icon. */}
+      <Box
+        sx={{
+          width: 26,
+          height: 26,
+          flexShrink: 0,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          borderRadius: '7px',
+          bgcolor: isLight ? 'rgba(0,0,0,0.03)' : 'rgba(255,255,255,0.04)',
+          color: 'text.primary',
+        }}
+      >
+        {icon}
+      </Box>
+      <Typography sx={{flex: 1, fontSize: '12.5px', fontWeight: 500, color: 'text.primary'}}>{label}</Typography>
       {showArrow && (
         <Box component="span" sx={{display: 'inline-flex', opacity: 0.5, color: 'text.secondary'}}>
-          <ArrowUpRight size={15} />
+          <ArrowUpRight size={14} />
         </Box>
       )}
     </Box>
@@ -183,8 +184,34 @@ export default function AIPageActions({
   if (variant === 'list') {
     return (
       <Box>
-        <Typography sx={{fontSize: '17px', fontWeight: 700, color: 'text.primary', mb: 1}}>Explore with AI</Typography>
-        <Box sx={{display: 'flex', flexDirection: 'column'}}>
+        {/* Matches the SDK detail page's quiet section labels (RailHeading in
+            Ecosystem/Detail/primitives.tsx — "ON THIS PAGE", "BUNDLE", etc.) instead of
+            standing out as a bold heading of its own. */}
+        <Typography
+          sx={{
+            fontFamily: 'monospace',
+            fontSize: '9.5px',
+            letterSpacing: '0.14em',
+            textTransform: 'uppercase',
+            color: isLight ? 'rgba(0,0,0,0.4)' : 'rgba(255,255,255,0.3)',
+            mb: 1.5,
+          }}
+        >
+          Explore with AI
+        </Typography>
+        {/* Bordered card, matching the SDK detail rail's "Bundle"/"Package" box
+            (Ecosystem/Detail/Detail.tsx's `Rail`) instead of floating bare rows. */}
+        <Box
+          sx={{
+            border: '1px solid',
+            borderColor: isLight ? 'rgba(0,0,0,0.08)' : 'rgba(255,255,255,0.07)',
+            bgcolor: isLight ? 'rgba(0,0,0,0.015)' : 'rgba(255,255,255,0.02)',
+            borderRadius: '12px',
+            p: 0.5,
+            display: 'flex',
+            flexDirection: 'column',
+          }}
+        >
           {items.map((item) => (
             <ListRow key={item.id} icon={item.icon} label={item.title} onClick={() => openItem(item)} isLight={isLight} />
           ))}

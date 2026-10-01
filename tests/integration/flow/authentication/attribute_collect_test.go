@@ -1,20 +1,5 @@
-/*
- * Copyright (c) 2025-2026, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2025-2026 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 package authentication
 
@@ -437,8 +422,8 @@ func (ts *AttributeCollectFlowTestSuite) TestInvalidCredentials() {
 	errorResp, err := common.CompleteFlow(flowStep.ExecutionID, invalidCredentials, "", flowStep.ChallengeToken)
 	ts.Require().NoError(err, "Expected error response for invalid credentials")
 	ts.Require().NotNil(errorResp.Error, "Expected error for invalid credentials")
-	ts.Require().Contains(errorResp.Error.Message.DefaultValue, "User not found",
-		"Expected error message to indicate user not found")
+	ts.Require().Contains(errorResp.Error.Message.DefaultValue, "The user could not be found",
+		"Expected error message to indicate the user was not found")
 }
 
 func (ts *AttributeCollectFlowTestSuite) validateRequiredInputs(actualInputs []common.Inputs,

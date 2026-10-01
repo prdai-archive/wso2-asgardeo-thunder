@@ -1,20 +1,5 @@
-/*
- * Copyright (c) 2025, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2025 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 // Package idp handles the identity provider management operations.
 package idp
@@ -23,6 +8,8 @@ import (
 	"strings"
 
 	"github.com/thunder-id/thunderid/internal/entitytype"
+	"github.com/thunder-id/thunderid/internal/group"
+	"github.com/thunder-id/thunderid/internal/role"
 	"github.com/thunder-id/thunderid/internal/system/cache"
 	"github.com/thunder-id/thunderid/internal/system/config"
 	serverconst "github.com/thunder-id/thunderid/internal/system/constants"
@@ -36,6 +23,9 @@ import (
 func Initialize(
 	cacheManager cache.CacheManagerInterface,
 	entityTypeService entitytype.EntityTypeServiceInterface,
+	roleService role.RoleServiceInterface,
+	groupService group.GroupServiceInterface,
+	resourceService providers.ResourceServerProvider,
 ) (IDPServiceInterface, error) {
 	// Create store and transactioner based on store mode
 	idpStore, transactioner, err := initializeStore(cacheManager)
@@ -43,7 +33,7 @@ func Initialize(
 		return nil, err
 	}
 
-	idpService := newIDPService(idpStore, entityTypeService, transactioner)
+	idpService := newIDPService(idpStore, entityTypeService, roleService, groupService, resourceService, transactioner)
 	return idpService, nil
 }
 

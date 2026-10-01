@@ -1,20 +1,5 @@
-/*
- * Copyright (c) 2026, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2026 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 // Package providers provides constants for the providers module.
 package providers
@@ -60,6 +45,8 @@ const (
 	FlowTypeRecovery FlowType = "RECOVERY"
 	// FlowTypeSignOut represents a flow execution for terminating an SSO session.
 	FlowTypeSignOut FlowType = "SIGNOUT"
+	// FlowTypeAdministration represents an administrator-designed operational flow.
+	FlowTypeAdministration FlowType = "ADMINISTRATION"
 )
 
 // ValidFlowTypes is the set of supported flow types.
@@ -69,6 +56,7 @@ var ValidFlowTypes = []FlowType{
 	FlowTypeUserOnboarding,
 	FlowTypeRecovery,
 	FlowTypeSignOut,
+	FlowTypeAdministration,
 }
 
 // NodeVariant identifies a PROMPT node sub-type that activates a variant-specific code path.
@@ -291,6 +279,11 @@ const (
 	UserInfoResponseTypeNESTEDJWT UserInfoResponseType = "NESTED_JWT"
 )
 
+// RawJWTAttributeKey is the AttributesResponse.Attributes key an authn provider uses to return
+// an opaque JWT/JWE from its backing identity system in place of individual claims. When present,
+// it is the only key in the map and its value is passed through as-is rather than treated as a claim.
+const RawJWTAttributeKey = "_jwt"
+
 // CertificateType represents the type of certificates in the system.
 type CertificateType string
 
@@ -336,6 +329,17 @@ type ConsentType string
 const (
 	// ConsentTypeAuthentication represents a consent record related to authentication flows.
 	ConsentTypeAuthentication ConsentType = "AUTHENTICATION"
+)
+
+// ConsentDecisionReason defines the possible reasons a consent decision was submitted.
+type ConsentDecisionReason string
+
+const (
+	// ConsentDecisionReasonTimeout marks decisions submitted because the consent prompt expired
+	// rather than because the user chose anything.
+	ConsentDecisionReasonTimeout ConsentDecisionReason = "timeout"
+	// ConsentDecisionReasonUserDenied marks decisions submitted because the user denied the prompt.
+	ConsentDecisionReasonUserDenied ConsentDecisionReason = "user_denied"
 )
 
 // Namespace represents the consent namespace to scope consent elements and purposes.
@@ -395,10 +399,15 @@ const (
 	InputTypeSelect = "SELECT"
 	// InputTypeOUSelect represents an organization unit selection input type.
 	InputTypeOUSelect = "OU_SELECT"
+	// InputTypeUserSelect represents a user selection input type. As with OU_SELECT the client
+	// sources the candidates, and the value submitted is a user identifier.
+	InputTypeUserSelect = "USER_SELECT"
 	// InputTypeNumber represents a numeric input type.
 	InputTypeNumber = "NUMBER_INPUT"
 	// InputTypeDate represents a date input type.
 	InputTypeDate = "DATE_INPUT"
+	// InputTypeBoolean represents a boolean (checkbox) input type.
+	InputTypeBoolean = "BOOLEAN_INPUT"
 
 	// TODO: Add support for other sensitive input types:
 	// - Passkey credential fields (credentialId, clientDataJSON, authenticatorData, signature, userHandle)
@@ -409,17 +418,19 @@ const (
 
 // ValidInputTypes is the set of valid input type strings.
 var ValidInputTypes = map[string]bool{
-	InputTypeText:     true,
-	InputTypeEmail:    true,
-	InputTypePassword: true,
-	InputTypeOTP:      true,
-	InputTypePhone:    true,
-	InputTypeConsent:  true,
-	InputTypeHidden:   true,
-	InputTypeSelect:   true,
-	InputTypeOUSelect: true,
-	InputTypeNumber:   true,
-	InputTypeDate:     true,
+	InputTypeText:       true,
+	InputTypeEmail:      true,
+	InputTypePassword:   true,
+	InputTypeOTP:        true,
+	InputTypePhone:      true,
+	InputTypeConsent:    true,
+	InputTypeHidden:     true,
+	InputTypeSelect:     true,
+	InputTypeOUSelect:   true,
+	InputTypeUserSelect: true,
+	InputTypeNumber:     true,
+	InputTypeDate:       true,
+	InputTypeBoolean:    true,
 }
 
 // ExecutorType defines the type of an executor in the flow execution.
@@ -533,4 +544,36 @@ const (
 var (
 	// ErrRuntimeStoreKeyNotFound to identify key not found error in the runtime store providers
 	ErrRuntimeStoreKeyNotFound = errors.New("RuntimeStore key not found")
+)
+
+// Runtime crypto provider errors
+var (
+	// ErrKeyNotFound indicates that no key managed by the provider matches the
+	// requested identifier.
+	ErrKeyNotFound = errors.New("RuntimeCryptoProvider: no key found matching the requested identifier")
+
+	// ErrUnsupportedAlgorithm indicates the requested signature algorithm is not
+	// supported by the provider or is incompatible with the resolved key.
+	ErrUnsupportedAlgorithm = errors.New("RuntimeCryptoProvider: unsupported signature algorithm")
+)
+
+// Runtime crypto provider Encrypt/Decrypt param map keys. These identify the algorithm-specific
+// inputs a caller may pass via the params map (e.g. ECDH-ES key establishment).
+const (
+	// ParamContentEncryptionAlgorithm is the content encryption algorithm identifier (e.g. "A128GCM"),
+	// used to size the CEK for RSA-OAEP, RSA-OAEP-256, and ECDH-ES variants. Value type: string.
+	ParamContentEncryptionAlgorithm = "contentEncryptionAlgorithm"
+
+	// ParamKeyEncryptionAlgorithm
+	ParamKeyEncryptionAlgorithm = "contentKeyAlgorithm"
+
+	// ParamEPK is the ECDH-ES ephemeral public key. Required for ECDH-ES decrypt; populated by the
+	// provider on ECDH-ES encrypt. Value type: crypto.PublicKey.
+	ParamEPK = "epk"
+
+	// ParamAPU is the raw (already base64url-decoded) ECDH-ES apu header value. Value type: []byte.
+	ParamAPU = "apu"
+
+	// ParamAPV is the raw (already base64url-decoded) ECDH-ES apv header value. Value type: []byte.
+	ParamAPV = "apv"
 )

@@ -1,20 +1,5 @@
-/*
- * Copyright (c) 2026, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2026 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 package application
 
@@ -29,7 +14,6 @@ import (
 
 	"github.com/thunder-id/thunderid/internal/application/model"
 	oauthconfig "github.com/thunder-id/thunderid/internal/oauth/config"
-	oauth2const "github.com/thunder-id/thunderid/internal/oauth/oauth2/constants"
 	"github.com/thunder-id/thunderid/internal/system/mcp/tool"
 )
 
@@ -347,11 +331,9 @@ func (t *applicationTools) getApplicationTemplates(
 func getCommonSchemaModifiers() []func(*jsonschema.Schema) {
 	oauthCfg := oauthconfig.FromServerRuntime()
 	return []func(*jsonschema.Schema){
-		tool.WithEnum("inbound_auth_config.config", "grant_types", oauth2const.GetSupportedGrantTypes(oauthCfg)),
-		tool.WithEnum("inbound_auth_config.config", "response_types",
-			oauth2const.GetSupportedResponseTypes(oauthCfg)),
-		tool.WithEnum("inbound_auth_config.config", "token_endpoint_auth_method",
-			oauth2const.GetSupportedTokenEndpointAuthMethods(oauthCfg)),
+		tool.WithEnum("inbound_auth_config.config", "grant_types", oauthCfg.OAuth.AllowedGrantTypes),
+		tool.WithEnum("inbound_auth_config.config", "response_types", oauthCfg.OAuth.AllowedResponseTypes),
+		tool.WithEnum("inbound_auth_config.config", "token_endpoint_auth_method", oauthCfg.OAuth.AllowedAuthMethods),
 		tool.WithEnum("inbound_auth_config", "type", []string{string(providers.OAuthInboundAuthType)}),
 	}
 }

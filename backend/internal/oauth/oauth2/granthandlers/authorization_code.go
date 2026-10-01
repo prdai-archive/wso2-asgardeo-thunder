@@ -1,20 +1,5 @@
-/*
- * Copyright (c) 2025, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2025 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 package granthandlers
 
@@ -58,6 +43,16 @@ func newAuthorizationCodeGrantHandler(
 		attributeCache:  attributeCache,
 		resourceService: resourceService,
 	}
+}
+
+// resolveAuthTime returns when the subject authenticated. Codes minted before AuthTime existed as a
+// field unmarshal with a zero value, so their creation time stands in: for those codes the two
+// moments coincided anyway, since authorization did not consult an existing session.
+func resolveAuthTime(authCode *authz.AuthorizationCode) int64 {
+	if authCode.AuthTime.IsZero() {
+		return authCode.TimeCreated.Unix()
+	}
+	return authCode.AuthTime.Unix()
 }
 
 // ValidateGrant validates the authorization code grant request.
@@ -181,6 +176,8 @@ func (h *authorizationCodeGrantHandler) HandleGrant(ctx context.Context, tokenRe
 		ValidityPeriod:    userSubConfig.ValidityPeriodOrZero(),
 		DPoPJkt:           dpop.GetJkt(ctx),
 		TokenFamilyID:     authCode.TokenFamilyID,
+		SubjectEntityID:   authCode.SubjectID,
+		SubjectCategory:   authCode.SubjectCategory,
 	}
 	if oauthApp.ShouldAppendActorClaim() {
 		accessTokenCtx.ActorClaims = &tokenservice.SubjectTokenClaims{Sub: oauthApp.ID}
@@ -198,7 +195,9 @@ func (h *authorizationCodeGrantHandler) HandleGrant(ctx context.Context, tokenRe
 
 	// Build token response
 	tokenResponse := &model.TokenResponseDTO{
-		AccessToken: *accessToken,
+		AccessToken:   *accessToken,
+		CorrelationID: authCode.CorrelationID,
+		SessionID:     authCode.SessionID,
 	}
 
 	// Generate ID token if 'openid' scope is present
@@ -208,11 +207,12 @@ func (h *authorizationCodeGrantHandler) HandleGrant(ctx context.Context, tokenRe
 			Audience:       tokenRequest.ClientID,
 			Scopes:         accessTokenScopes,
 			UserAttributes: attrs,
-			AuthTime:       authCode.TimeCreated.Unix(),
+			AuthTime:       resolveAuthTime(authCode),
 			OAuthApp:       oauthApp,
 			ClaimsRequest:  authCode.ClaimsRequest,
 			Nonce:          authCode.Nonce,
 			CompletedACR:   authCode.CompletedACR,
+			SessionID:      authCode.SessionID,
 		})
 		if err != nil {
 			logger.Error(ctx, "Failed to generate ID token", log.Error(err))

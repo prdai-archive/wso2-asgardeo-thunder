@@ -1,20 +1,5 @@
-/*
- * Copyright (c) 2025-2026, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2025-2026 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 // Package model defines the data structures for the application module.
 //
@@ -91,7 +76,7 @@ type ApplicationProcessedDTO struct {
 // ApplicationRequest represents the request structure for creating or updating an application.
 type ApplicationRequest struct {
 	OUID        string          `json:"ouId,omitempty" yaml:"ouId,omitempty"`
-	Name        string          `json:"name" yaml:"name" native:"required,min=3,max=100"`
+	Name        string          `json:"name" yaml:"name" native:"required,min=1,max=100"`
 	Description string          `json:"description" yaml:"description"`
 	Type        ApplicationType `json:"type,omitempty" yaml:"type,omitempty"`
 	Template    string          `json:"template,omitempty" yaml:"template,omitempty"`
@@ -102,9 +87,10 @@ type ApplicationRequest struct {
 	PolicyURI   string          `json:"policyUri,omitempty" yaml:"policyUri,omitempty" native:"omitempty,url,max=2048"`
 	Contacts    []string        `json:"contacts,omitempty" yaml:"contacts,omitempty"`
 
-	providers.InboundAuthProfile `yaml:",inline"`
-	InboundAuthConfig            []providers.InboundAuthConfigWithSecret `json:"inboundAuthConfig,omitempty" yaml:"inboundAuthConfig,omitempty"`
-	Metadata                     map[string]interface{}                  `json:"metadata,omitempty" yaml:"metadata,omitempty"`
+	inboundmodel.InboundAuthProfileReq `yaml:",inline"`
+
+	InboundAuthConfig []providers.InboundAuthConfigWithSecret `json:"inboundAuthConfig,omitempty" yaml:"inboundAuthConfig,omitempty"`
+	Metadata          map[string]interface{}                  `json:"metadata,omitempty" yaml:"metadata,omitempty"`
 }
 
 // ApplicationRequestWithID represents the request structure for importing an application using file based runtime.
@@ -123,9 +109,10 @@ type ApplicationRequestWithID struct {
 	PolicyURI   string          `json:"policyUri,omitempty" yaml:"policyUri,omitempty"`
 	Contacts    []string        `json:"contacts,omitempty" yaml:"contacts,omitempty"`
 
-	providers.InboundAuthProfile `yaml:",inline"`
-	InboundAuthConfig            []providers.InboundAuthConfigWithSecret `json:"inboundAuthConfig,omitempty" yaml:"inboundAuthConfig,omitempty"`
-	Metadata                     map[string]interface{}                  `json:"metadata,omitempty" yaml:"metadata,omitempty"`
+	inboundmodel.InboundAuthProfileReq `yaml:",inline"`
+
+	InboundAuthConfig []providers.InboundAuthConfigWithSecret `json:"inboundAuthConfig,omitempty" yaml:"inboundAuthConfig,omitempty"`
+	Metadata          map[string]interface{}                  `json:"metadata,omitempty" yaml:"metadata,omitempty"`
 }
 
 // ApplicationCompleteResponse represents the complete response structure for an application.
@@ -144,7 +131,8 @@ type ApplicationCompleteResponse struct {
 	PolicyURI   string          `json:"policyUri,omitempty"`
 	Contacts    []string        `json:"contacts,omitempty"`
 
-	providers.InboundAuthProfile
+	inboundmodel.InboundAuthProfileReq
+
 	InboundAuthConfig []providers.InboundAuthConfigWithSecret `json:"inboundAuthConfig,omitempty"`
 	Metadata          map[string]interface{}                  `json:"metadata,omitempty"`
 }
@@ -164,7 +152,8 @@ type ApplicationGetResponse struct {
 	PolicyURI   string          `json:"policyUri,omitempty"`
 	Contacts    []string        `json:"contacts,omitempty"`
 
-	providers.InboundAuthProfile
+	inboundmodel.InboundAuthProfileReq
+
 	InboundAuthConfig []inboundmodel.InboundAuthConfig `json:"inboundAuthConfig,omitempty"`
 	Metadata          map[string]interface{}           `json:"metadata,omitempty"`
 }

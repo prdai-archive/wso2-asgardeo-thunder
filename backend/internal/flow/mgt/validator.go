@@ -1,20 +1,5 @@
-/*
- * Copyright (c) 2026, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2026 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 package flowmgt
 
@@ -24,7 +9,8 @@ import (
 	"strconv"
 
 	"github.com/thunder-id/thunderid/internal/flow/common"
-	"github.com/thunder-id/thunderid/internal/flow/executor"
+	"github.com/thunder-id/thunderid/internal/flow/core"
+	"github.com/thunder-id/thunderid/internal/flow/executormeta"
 	"github.com/thunder-id/thunderid/internal/flow/graphbuilder"
 	"github.com/thunder-id/thunderid/internal/flow/interceptor"
 	"github.com/thunder-id/thunderid/internal/system/log"
@@ -42,7 +28,7 @@ type FlowValidatorInterface interface {
 // flowValidator is responsible for validating flow definitions,
 // including metadata, structure, node configurations, and registry-dependent checks.
 type flowValidator struct {
-	executorRegistry    executor.ExecutorRegistryInterface
+	executorRegistry    core.ExecutorMetadataProvider
 	interceptorRegistry interceptor.InterceptorRegistryInterface
 	graphBuilder        graphbuilder.GraphBuilderInterface
 	logger              *log.Logger
@@ -50,7 +36,7 @@ type flowValidator struct {
 
 // newFlowValidator creates a new instance of flowValidator with the provided dependencies.
 func newFlowValidator(
-	executorRegistry executor.ExecutorRegistryInterface,
+	executorRegistry core.ExecutorMetadataProvider,
 	interceptorRegistry interceptor.InterceptorRegistryInterface,
 	graphBuilder graphbuilder.GraphBuilderInterface,
 ) *flowValidator {
@@ -154,9 +140,25 @@ func (v *flowValidator) validateMetadata(flowDef *FlowDefinition) *tidcommon.Ser
 
 // requiredExecutorsByFlowType maps flow type → executor names that must appear at least once.
 var requiredExecutorsByFlowType = map[providers.FlowType][]string{
-	providers.FlowTypeAuthentication: {executor.ExecutorNameAuthAssert},
-	providers.FlowTypeRegistration:   {executor.ExecutorNameProvisioning, executor.ExecutorNameUserTypeResolver},
-	providers.FlowTypeUserOnboarding: {executor.ExecutorNameProvisioning, executor.ExecutorNameUserTypeResolver},
+	providers.FlowTypeAuthentication: {executormeta.ExecutorNameAuthAssert},
+	providers.FlowTypeRegistration: {
+		executormeta.ExecutorNameProvisioning, executormeta.ExecutorNameUserTypeResolver,
+	},
+	providers.FlowTypeUserOnboarding: {
+		executormeta.ExecutorNameProvisioning, executormeta.ExecutorNameUserTypeResolver,
+	},
+}
+
+// companionExecutors maps an executor to executors that must appear alongside it in the same flow,
+// independent of flow type.
+//
+// SessionRevocationExecutor terminates a subject's SSO sessions but records no revocation itself. The
+// tokens those sessions hold are covered by the subject criterion that CriteriaRevocationExecutor
+// persists, which is why session termination does not enumerate token families per application. A
+// flow that terminates without it would therefore delete sessions while their tokens stay live, so
+// the pairing is required rather than conventional.
+var companionExecutors = map[string][]string{
+	executormeta.ExecutorNameSessionRevocation: {executormeta.ExecutorNameCriteriaRevocation},
 }
 
 // validateFlowTypeBasedConstraints checks forbidden and required executor rules for the flow type.
@@ -164,7 +166,38 @@ var requiredExecutorsByFlowType = map[providers.FlowType][]string{
 func (v *flowValidator) validateFlowTypeBasedConstraints(
 	flowType providers.FlowType, nodes []providers.NodeDefinition,
 ) *tidcommon.ServiceError {
-	return v.validateRequiredExecutors(flowType, nodes)
+	if svcErr := v.validateRequiredExecutors(flowType, nodes); svcErr != nil {
+		return svcErr
+	}
+	return v.validateCompanionExecutors(nodes)
+}
+
+// validateCompanionExecutors returns an error when an executor is present without an executor it
+// depends on.
+func (v *flowValidator) validateCompanionExecutors(
+	nodes []providers.NodeDefinition,
+) *tidcommon.ServiceError {
+	presentExecutors := collectPresentExecutors(nodes)
+	for name, companions := range companionExecutors {
+		if !presentExecutors[name] {
+			continue
+		}
+		for _, companion := range companions {
+			if presentExecutors[companion] {
+				continue
+			}
+			return tidcommon.CustomServiceError(ErrorInvalidExecutorConfig, tidcommon.I18nMessage{
+				Key: "error.flowmgtservice.companion_executor_missing_description",
+				DefaultValue: "Executor '{{param(executorName)}}' requires executor " +
+					"'{{param(companionExecutorName)}}' in the same flow",
+				Params: map[string]string{
+					"executorName":          name,
+					"companionExecutorName": companion,
+				},
+			})
+		}
+	}
+	return nil
 }
 
 // validateRequiredExecutors returns an error if a TASK_EXECUTION node with a required executor
@@ -850,9 +883,9 @@ func (v *flowValidator) validateExecutorSpecificConstraints(
 	nodeIndex map[string]*providers.NodeDefinition, nodes []providers.NodeDefinition,
 ) *tidcommon.ServiceError {
 	switch node.Executor.Name {
-	case executor.ExecutorNameSSOCheck:
+	case executormeta.ExecutorNameSSOCheck:
 		return v.validateSSOCheckExecutor(node, nodeIndex)
-	case executor.ExecutorNameSession:
+	case executormeta.ExecutorNameSession:
 		return v.validateSessionExecutor(node, nodes)
 	}
 	return nil
@@ -1014,7 +1047,7 @@ func (v *flowValidator) validateSSOCheckExecutor(
 		})
 	}
 	if target.Type != string(common.NodeTypeTaskExecution) ||
-		target.Executor == nil || target.Executor.Name != executor.ExecutorNameSession {
+		target.Executor == nil || target.Executor.Name != executormeta.ExecutorNameSession {
 		return tidcommon.CustomServiceError(ErrorInvalidExecutorConfig, tidcommon.I18nMessage{
 			Key: "error.flowmgtservice.checkpoint_ref_not_session_description",
 			DefaultValue: "Node '{{param(nodeID)}}': checkpointRef must reference " +
@@ -1032,7 +1065,7 @@ func (v *flowValidator) validateSessionExecutor(
 ) *tidcommon.ServiceError {
 	for _, n := range nodes {
 		if n.Type == string(common.NodeTypeTaskExecution) &&
-			n.Executor != nil && n.Executor.Name == executor.ExecutorNameSSOCheck {
+			n.Executor != nil && n.Executor.Name == executormeta.ExecutorNameSSOCheck {
 			if ref, ok := n.Properties[common.NodePropertyCheckpointRef].(string); ok && ref == node.ID {
 				return nil
 			}

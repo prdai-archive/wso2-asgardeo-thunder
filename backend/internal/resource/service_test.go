@@ -1,20 +1,5 @@
-/*
- * Copyright (c) 2025, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2025 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 package resource
 
@@ -32,6 +17,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 
+	"github.com/thunder-id/thunderid/internal/connection/authzenpdp"
 	oupkg "github.com/thunder-id/thunderid/internal/ou"
 	"github.com/thunder-id/thunderid/internal/system/config"
 	"github.com/thunder-id/thunderid/internal/system/log"
@@ -50,6 +36,20 @@ const (
 
 var testParentResourceID = "parent-123"
 var testEmptyResourceID = ""
+
+type authZENPDPConnectionLookupStub struct {
+	connection *authzenpdp.AuthZENPDPConnection
+	id         string
+	err        *tidcommon.ServiceError
+}
+
+func (s *authZENPDPConnectionLookupStub) GetAuthZENPDP(
+	_ context.Context,
+	id string,
+) (*authzenpdp.AuthZENPDPConnection, *tidcommon.ServiceError) {
+	s.id = id
+	return s.connection, s.err
+}
 
 // matchResourceServer is a matcher function that compares providers.ResourceServer ignoring the Delimiter field
 // since it's set by the service before calling the store.
@@ -87,6 +87,31 @@ func matchAction(expected providers.Action) interface{} {
 	})
 }
 
+// recordingCascadeDeleter is a dependency provider test double that records the cascade-delete
+// calls it receives, so tests can assert what a deletion cascaded to and in which order.
+type recordingCascadeDeleter struct {
+	calls []string
+	order *[]string
+	err   error
+}
+
+func (r *recordingCascadeDeleter) GetResourceDependencies(
+	_ context.Context, _, _ string) ([]resourcedependency.ResourceDependency, error) {
+	return []resourcedependency.ResourceDependency{}, nil
+}
+
+func (r *recordingCascadeDeleter) CascadeDeleteDependencies(
+	_ context.Context, resourceType, id string) (int, error) {
+	r.calls = append(r.calls, resourceType+":"+id)
+	if r.order != nil {
+		*r.order = append(*r.order, "cascade")
+	}
+	if r.err != nil {
+		return 0, r.err
+	}
+	return 1, nil
+}
+
 // Test Suite
 type ResourceServiceTestSuite struct {
 	suite.Suite
@@ -94,6 +119,14 @@ type ResourceServiceTestSuite struct {
 	mockOU            *oumock.OrganizationUnitServiceInterfaceMock
 	mockTransactioner *fakeTransactioner
 	service           ResourceServiceInterface
+}
+
+// registerCascadeDeleter re-registers the dependency registry with the given cascade deleter
+// alongside the service's own provider, and returns it for assertions.
+func (suite *ResourceServiceTestSuite) registerCascadeDeleter(
+	deleter *recordingCascadeDeleter) *recordingCascadeDeleter {
+	suite.service.SetDependencyRegistry(resourcedependency.Initialize(suite.service, deleter))
+	return deleter
 }
 
 func TestResourceServiceTestSuite(t *testing.T) {
@@ -126,7 +159,7 @@ func (suite *ResourceServiceTestSuite) SetupTest() {
 	suite.mockOU = new(oumock.OrganizationUnitServiceInterfaceMock)
 	suite.mockTransactioner = &fakeTransactioner{}
 	suite.service, err = newResourceService(
-		suite.mockOU, suite.mockStore, suite.mockTransactioner,
+		suite.mockOU, suite.mockStore, suite.mockTransactioner, nil,
 	)
 	suite.NoError(err)
 	// The resource service is its own dependency provider: deletion consults the registry, which
@@ -168,7 +201,7 @@ func (suite *ResourceServiceTestSuite) TestNewResourceService_InvalidDelimiter()
 	mockOU := new(oumock.OrganizationUnitServiceInterfaceMock)
 
 	mockTransactioner := &fakeTransactioner{}
-	service, err := newResourceService(mockOU, mockStore, mockTransactioner)
+	service, err := newResourceService(mockOU, mockStore, mockTransactioner, nil)
 
 	suite.Error(err)
 	suite.Nil(service)
@@ -176,6 +209,42 @@ func (suite *ResourceServiceTestSuite) TestNewResourceService_InvalidDelimiter()
 }
 
 // Resource Server Tests
+
+func TestValidateAuthorizationEngine(t *testing.T) {
+	lookup := &authZENPDPConnectionLookupStub{
+		connection: &authzenpdp.AuthZENPDPConnection{ID: "pdp-1"},
+	}
+	service := &resourceService{
+		logger:            *log.GetLogger(),
+		authZENPDPService: lookup,
+	}
+
+	engineConfig := providers.AuthorizationEngineConfig{
+		Type: providers.AuthorizationEngineTypeAuthZENPDP,
+		Properties: providers.AuthorizationEngineProperties{
+			PDPConnectionID: " pdp-1 ",
+		},
+	}
+	require.Nil(t, service.validateAuthorizationEngine(context.Background(), &engineConfig))
+	require.Equal(t, "pdp-1", lookup.id)
+	require.Equal(t, "pdp-1", engineConfig.Properties.PDPConnectionID)
+
+	emptyConfig := providers.AuthorizationEngineConfig{
+		Type: providers.AuthorizationEngineTypeAuthZENPDP,
+	}
+	require.Equal(t, ErrorInvalidRequestFormat.Code,
+		service.validateAuthorizationEngine(context.Background(), &emptyConfig).Code)
+
+	lookup.connection = nil
+	missingConfig := providers.AuthorizationEngineConfig{
+		Type: providers.AuthorizationEngineTypeAuthZENPDP,
+		Properties: providers.AuthorizationEngineProperties{
+			PDPConnectionID: "missing-pdp",
+		},
+	}
+	require.Equal(t, ErrorInvalidRequestFormat.Code,
+		service.validateAuthorizationEngine(context.Background(), &missingConfig).Code)
+}
 
 func (suite *ResourceServiceTestSuite) TestCreateResourceServer_Success() {
 	rs := providers.ResourceServer{
@@ -652,6 +721,18 @@ func (suite *ResourceServiceTestSuite) TestUpdateResourceServer_ValidationErrors
 			resourceServer: providers.ResourceServer{Name: "test-rs", OUID: ""},
 			expectedError:  ErrorInvalidRequestFormat,
 		},
+		{
+			name: "UnsupportedAuthorizationEngine",
+			id:   "rs-123",
+			resourceServer: providers.ResourceServer{
+				Name: "test-rs",
+				OUID: "ou-123",
+				AuthorizationEngine: providers.AuthorizationEngineConfig{
+					Type: "unsupported",
+				},
+			},
+			expectedError: ErrorInvalidRequestFormat,
+		},
 	}
 
 	for _, tc := range testCases {
@@ -811,6 +892,62 @@ func (suite *ResourceServiceTestSuite) TestDeleteResourceServer_Success() {
 	err := suite.service.DeleteResourceServer(context.Background(), "rs-123")
 
 	suite.Nil(err)
+}
+
+// Deleting a resource server must cascade so that references to it (such as role permissions) are
+// cleaned up instead of being left dangling.
+func (suite *ResourceServiceTestSuite) TestDeleteResourceServer_CascadesToDependents() {
+	order := []string{}
+	deleter := suite.registerCascadeDeleter(&recordingCascadeDeleter{order: &order})
+
+	suite.mockStore.On("IsResourceServerDeclarative", "rs-123").Return(false)
+	suite.mockStore.On("GetResourceServer", mock.Anything,
+		"rs-123").Return(providers.ResourceServer{}, nil)
+	suite.mockStore.On("CheckResourceServerHasDependencies", mock.Anything,
+		"rs-123").Return(false, nil)
+	suite.mockStore.On("DeleteResourceServer", mock.Anything, "rs-123").Return(nil).
+		Run(func(_ mock.Arguments) { order = append(order, "delete") })
+
+	err := suite.service.DeleteResourceServer(context.Background(), "rs-123")
+
+	suite.Nil(err)
+	suite.Equal([]string{"resourceServer:rs-123"}, deleter.calls)
+	// The cascade resolves references against this service, so it must run after the target is gone.
+	suite.Equal([]string{"delete", "cascade"}, order)
+}
+
+func (suite *ResourceServiceTestSuite) TestDeleteResourceServer_CascadeFailureAbortsDelete() {
+	suite.registerCascadeDeleter(&recordingCascadeDeleter{err: errors.New("cascade error")})
+
+	suite.mockStore.On("IsResourceServerDeclarative", "rs-123").Return(false)
+	suite.mockStore.On("GetResourceServer", mock.Anything,
+		"rs-123").Return(providers.ResourceServer{}, nil)
+	suite.mockStore.On("CheckResourceServerHasDependencies", mock.Anything,
+		"rs-123").Return(false, nil)
+	suite.mockStore.On("DeleteResourceServer", mock.Anything, "rs-123").Return(nil)
+
+	err := suite.service.DeleteResourceServer(context.Background(), "rs-123")
+
+	suite.NotNil(err)
+	suite.Equal(tidcommon.InternalServerError.Code, err.Code)
+}
+
+// Deletion must not silently skip cleanup when the registry was never injected, so the delete is
+// rolled back rather than leaving dependents dangling.
+func (suite *ResourceServiceTestSuite) TestDeleteResourceServer_FailsWhenRegistryMissing() {
+	suite.mockStore.On("IsResourceServerDeclarative", "rs-123").Return(false)
+	suite.mockStore.On("GetResourceServer", mock.Anything,
+		"rs-123").Return(providers.ResourceServer{}, nil)
+	suite.mockStore.On("CheckResourceServerHasDependencies", mock.Anything,
+		"rs-123").Return(false, nil)
+	// Drop the registry once the blocking check has passed, isolating the cascade's own guard.
+	suite.mockStore.On("DeleteResourceServer", mock.Anything, "rs-123").Return(nil).
+		Run(func(_ mock.Arguments) { suite.service.SetDependencyRegistry(nil) })
+
+	svcErr := suite.service.DeleteResourceServer(context.Background(), "rs-123")
+
+	suite.NotNil(svcErr)
+	suite.Equal(tidcommon.InternalServerError.Code, svcErr.Code)
 }
 
 func (suite *ResourceServiceTestSuite) TestDeleteResourceServer_IdempotentWhenNotExists() {
@@ -1761,6 +1898,46 @@ func (suite *ResourceServiceTestSuite) TestDeleteResource_Success() {
 	err := suite.service.DeleteResource(context.Background(), "rs-123", "res-123")
 
 	suite.Nil(err)
+}
+
+// Deleting a resource must cascade so that role permissions granting it are cleaned up.
+func (suite *ResourceServiceTestSuite) TestDeleteResource_CascadesToDependents() {
+	order := []string{}
+	deleter := suite.registerCascadeDeleter(&recordingCascadeDeleter{order: &order})
+
+	suite.mockStore.On("IsResourceServerDeclarative", "rs-123").Return(false)
+	suite.mockStore.On("GetResourceServer", mock.Anything,
+		"rs-123").Return(providers.ResourceServer{}, nil)
+	suite.mockStore.On("GetResource", mock.Anything,
+		"res-123", "rs-123").Return(providers.Resource{}, nil)
+	suite.mockStore.On("CheckResourceHasDependencies", mock.Anything,
+		"res-123").Return(false, nil)
+	suite.mockStore.On("DeleteResource", mock.Anything, "res-123", "rs-123").Return(nil).
+		Run(func(_ mock.Arguments) { order = append(order, "delete") })
+
+	err := suite.service.DeleteResource(context.Background(), "rs-123", "res-123")
+
+	suite.Nil(err)
+	suite.Equal([]string{"resource:res-123"}, deleter.calls)
+	suite.Equal([]string{"delete", "cascade"}, order)
+}
+
+func (suite *ResourceServiceTestSuite) TestDeleteResource_CascadeFailureAbortsDelete() {
+	suite.registerCascadeDeleter(&recordingCascadeDeleter{err: errors.New("cascade error")})
+
+	suite.mockStore.On("IsResourceServerDeclarative", "rs-123").Return(false)
+	suite.mockStore.On("GetResourceServer", mock.Anything,
+		"rs-123").Return(providers.ResourceServer{}, nil)
+	suite.mockStore.On("GetResource", mock.Anything,
+		"res-123", "rs-123").Return(providers.Resource{}, nil)
+	suite.mockStore.On("CheckResourceHasDependencies", mock.Anything,
+		"res-123").Return(false, nil)
+	suite.mockStore.On("DeleteResource", mock.Anything, "res-123", "rs-123").Return(nil)
+
+	err := suite.service.DeleteResource(context.Background(), "rs-123", "res-123")
+
+	suite.NotNil(err)
+	suite.Equal(tidcommon.InternalServerError.Code, err.Code)
 }
 
 func (suite *ResourceServiceTestSuite) TestDeleteResource_HasDependencies() {
@@ -3401,6 +3578,44 @@ func (suite *ResourceServiceTestSuite) TestDeleteActionAtResourceServer_Success(
 	suite.Nil(err)
 }
 
+// Deleting an action must cascade so that role permissions granting it are cleaned up.
+func (suite *ResourceServiceTestSuite) TestDeleteActionAtResourceServer_CascadesToDependents() {
+	order := []string{}
+	deleter := suite.registerCascadeDeleter(&recordingCascadeDeleter{order: &order})
+
+	suite.mockStore.On("IsResourceServerDeclarative", "rs-123").Return(false)
+	suite.mockStore.On("GetResourceServer", mock.Anything,
+		"rs-123").Return(providers.ResourceServer{}, nil)
+	suite.mockStore.On("IsActionExist", mock.Anything,
+		"action-123", "rs-123", (*string)(nil)).Return(true, nil)
+	suite.mockStore.On("DeleteAction", mock.Anything,
+		"action-123", "rs-123", (*string)(nil)).Return(nil).
+		Run(func(_ mock.Arguments) { order = append(order, "delete") })
+
+	err := suite.service.DeleteAction(context.Background(), "rs-123", nil, "action-123")
+
+	suite.Nil(err)
+	suite.Equal([]string{"action:action-123"}, deleter.calls)
+	suite.Equal([]string{"delete", "cascade"}, order)
+}
+
+func (suite *ResourceServiceTestSuite) TestDeleteActionAtResourceServer_CascadeFailureAbortsDelete() {
+	suite.registerCascadeDeleter(&recordingCascadeDeleter{err: errors.New("cascade error")})
+
+	suite.mockStore.On("IsResourceServerDeclarative", "rs-123").Return(false)
+	suite.mockStore.On("GetResourceServer", mock.Anything,
+		"rs-123").Return(providers.ResourceServer{}, nil)
+	suite.mockStore.On("IsActionExist", mock.Anything,
+		"action-123", "rs-123", (*string)(nil)).Return(true, nil)
+	suite.mockStore.On("DeleteAction", mock.Anything,
+		"action-123", "rs-123", (*string)(nil)).Return(nil)
+
+	err := suite.service.DeleteAction(context.Background(), "rs-123", nil, "action-123")
+
+	suite.NotNil(err)
+	suite.Equal(tidcommon.InternalServerError.Code, err.Code)
+}
+
 func (suite *ResourceServiceTestSuite) TestDeleteActionAtResourceServer_MissingID() {
 	err := suite.service.DeleteAction(context.Background(), "", nil, "action-123")
 	suite.NotNil(err)
@@ -4662,7 +4877,7 @@ func (suite *ResourceServiceTestSuite) TestValidatePermissions() {
 			// Create a fresh service instance with the fresh mocks
 			mockTransactioner := &fakeTransactioner{}
 			svc, err := newResourceService(
-				mockOU, mockStore, mockTransactioner,
+				mockOU, mockStore, mockTransactioner, nil,
 			)
 			suite.Require().NoError(err)
 

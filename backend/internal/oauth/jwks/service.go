@@ -1,20 +1,5 @@
-/*
- * Copyright (c) 2025, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2025 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 // Package jwks provides the implementation for retrieving JSON Web Key Sets (JWKS).
 package jwks
@@ -29,6 +14,7 @@ import (
 	"strings"
 
 	tidcommon "github.com/thunder-id/thunderid/pkg/thunderidengine/common"
+	"github.com/thunder-id/thunderid/pkg/thunderidengine/providers"
 
 	// Use crypto/sha1 only for JWKS x5t as required by spec for thumbprint.
 	"crypto/sha1" //nolint:gosec
@@ -38,7 +24,6 @@ import (
 	"github.com/cloudflare/circl/sign/mldsa/mldsa87"
 
 	"github.com/thunder-id/thunderid/internal/system/cryptolib"
-	kmprovider "github.com/thunder-id/thunderid/internal/system/kmprovider/common"
 	"github.com/thunder-id/thunderid/internal/system/log"
 )
 
@@ -49,12 +34,12 @@ type JWKSServiceInterface interface {
 
 // jwksService implements the JWKSServiceInterface.
 type jwksService struct {
-	cryptoProvider kmprovider.RuntimeCryptoProvider
+	cryptoProvider providers.RuntimeCryptoProvider
 	logger         *log.Logger
 }
 
 // newJWKSService creates a new instance of JWKSService.
-func newJWKSService(cryptoProvider kmprovider.RuntimeCryptoProvider) JWKSServiceInterface {
+func newJWKSService(cryptoProvider providers.RuntimeCryptoProvider) JWKSServiceInterface {
 	return &jwksService{
 		cryptoProvider: cryptoProvider,
 		logger:         log.GetLogger().With(log.String(log.LoggerKeyComponentName, "JWKSService")),
@@ -63,7 +48,7 @@ func newJWKSService(cryptoProvider kmprovider.RuntimeCryptoProvider) JWKSService
 
 // GetJWKS retrieves the JSON Web Key Set (JWKS) from the runtime crypto provider.
 func (s *jwksService) GetJWKS(ctx context.Context) (*JWKSResponse, *tidcommon.ServiceError) {
-	publicKeys, err := s.cryptoProvider.GetPublicKeys(ctx, kmprovider.PublicKeyFilter{})
+	publicKeys, err := s.cryptoProvider.GetPublicKeys(ctx, providers.PublicKeyFilter{})
 	if err != nil {
 		s.logger.Error(ctx, "Failed to retrieve public keys", log.Error(err))
 		return nil, &tidcommon.InternalServerError
@@ -76,7 +61,12 @@ func (s *jwksService) GetJWKS(ctx context.Context) (*JWKSResponse, *tidcommon.Se
 	var jwksKeys []JWKS
 
 	for _, keyInfo := range publicKeys {
-		kid := keyInfo.Thumbprint
+		kid := keyInfo.Kid
+		if kid == "" {
+			s.logger.Warn(ctx, "Public key is missing kid, considering thumbprint as kid")
+			kid = keyInfo.Thumbprint
+		}
+		alg := keyInfo.Algorithm
 
 		var x5c []string
 		var x5t, x5tS256 string
@@ -89,14 +79,14 @@ func (s *jwksService) GetJWKS(ctx context.Context) (*JWKSResponse, *tidcommon.Se
 
 		switch pub := keyInfo.PublicKey.(type) {
 		case *rsa.PublicKey:
-			jwksKeys = append(jwksKeys, getRSAPublicKeyJWKS(pub, kid, x5c, x5t, x5tS256))
+			jwksKeys = append(jwksKeys, getRSAPublicKeyJWKS(pub, kid, alg, x5c, x5t, x5tS256))
 		case *ecdsa.PublicKey:
-			jwksKeys = append(jwksKeys, getECDSAPublicKeyJWKS(pub, kid, x5c, x5t, x5tS256))
+			jwksKeys = append(jwksKeys, getECDSAPublicKeyJWKS(pub, kid, alg, x5c, x5t, x5tS256))
 		case ed25519.PublicKey:
-			jwksKeys = append(jwksKeys, getEdDSAPublicKeyJWKS(pub, kid, x5c, x5t, x5tS256))
+			jwksKeys = append(jwksKeys, getEdDSAPublicKeyJWKS(pub, kid, alg, x5c, x5t, x5tS256))
 		case *mldsa44.PublicKey, *mldsa65.PublicKey, *mldsa87.PublicKey:
 			// ML-DSA (RFC 9964 AKP).
-			mldsaJWK, ok := getMLDSAPublicKeyJWKS(pub, kid, x5c, x5t, x5tS256)
+			mldsaJWK, ok := getMLDSAPublicKeyJWKS(pub, kid, alg, x5c, x5t, x5tS256)
 			if !ok {
 				s.logger.Debug(ctx, "Unsupported public key type for JWKS", log.String("keyID", keyInfo.KeyID))
 				continue
@@ -118,7 +108,7 @@ func (s *jwksService) GetJWKS(ctx context.Context) (*JWKSResponse, *tidcommon.Se
 }
 
 // getRSAPublicKeyJWKS converts an RSA public key to JWKS format.
-func getRSAPublicKeyJWKS(pub *rsa.PublicKey, kid string, x5c []string, x5t, x5tS256 string) JWKS {
+func getRSAPublicKeyJWKS(pub *rsa.PublicKey, kid, alg string, x5c []string, x5t, x5tS256 string) JWKS {
 	n := encodeBase64URL(pub.N.Bytes())
 	// Properly encode the exponent as a big-endian byte slice, trimmed of leading zeros
 	eBytes := make([]byte, 0, 8)
@@ -136,7 +126,7 @@ func getRSAPublicKeyJWKS(pub *rsa.PublicKey, kid string, x5c []string, x5t, x5tS
 		Kid:     kid,
 		Kty:     "RSA",
 		Use:     "sig",
-		Alg:     "RS256",
+		Alg:     alg,
 		N:       n,
 		E:       eEnc,
 		X5c:     x5c,
@@ -146,18 +136,11 @@ func getRSAPublicKeyJWKS(pub *rsa.PublicKey, kid string, x5c []string, x5t, x5tS
 }
 
 // getECDSAPublicKeyJWKS converts an ECDSA public key to JWKS format.
-func getECDSAPublicKeyJWKS(pub *ecdsa.PublicKey, kid string, x5c []string, x5t, x5tS256 string) JWKS {
+func getECDSAPublicKeyJWKS(pub *ecdsa.PublicKey, kid, alg string, x5c []string, x5t, x5tS256 string) JWKS {
 	crv := pub.Curve.Params().Name
-	x := encodeBase64URL(pub.X.Bytes())
-	y := encodeBase64URL(pub.Y.Bytes())
-
-	alg := "ES256"
-	switch crv {
-	case "P-384":
-		alg = "ES384"
-	case "P-521":
-		alg = "ES512"
-	}
+	coordLen := (pub.Curve.Params().BitSize + 7) / 8
+	x := encodeBase64URL(padCoordinate(pub.X.Bytes(), coordLen))
+	y := encodeBase64URL(padCoordinate(pub.Y.Bytes(), coordLen))
 
 	return JWKS{
 		Kid:     kid,
@@ -174,14 +157,14 @@ func getECDSAPublicKeyJWKS(pub *ecdsa.PublicKey, kid string, x5c []string, x5t, 
 }
 
 // getEdDSAPublicKeyJWKS converts an EdDSA public key to JWKS format.
-func getEdDSAPublicKeyJWKS(pub ed25519.PublicKey, kid string, x5c []string, x5t, x5tS256 string) JWKS {
+func getEdDSAPublicKeyJWKS(pub ed25519.PublicKey, kid, alg string, x5c []string, x5t, x5tS256 string) JWKS {
 	x := encodeBase64URL(pub)
 
 	return JWKS{
 		Kid:     kid,
 		Kty:     "OKP",
 		Use:     "sig",
-		Alg:     "EdDSA",
+		Alg:     alg,
 		Crv:     "Ed25519",
 		X:       x,
 		X5c:     x5c,
@@ -192,11 +175,7 @@ func getEdDSAPublicKeyJWKS(pub ed25519.PublicKey, kid string, x5c []string, x5t,
 
 // getMLDSAPublicKeyJWKS converts an ML-DSA public key to an AKP JWK (RFC 9964).
 // It reports false when pub is not an ML-DSA public key.
-func getMLDSAPublicKeyJWKS(pub crypto.PublicKey, kid string, x5c []string, x5t, x5tS256 string) (JWKS, bool) {
-	alg, ok := cryptolib.MLDSAAlgForPublicKey(pub)
-	if !ok {
-		return JWKS{}, false
-	}
+func getMLDSAPublicKeyJWKS(pub crypto.PublicKey, kid, alg string, x5c []string, x5t, x5tS256 string) (JWKS, bool) {
 	pubBytes, ok := cryptolib.MLDSAPublicKeyBytes(pub)
 	if !ok {
 		return JWKS{}, false
@@ -206,7 +185,7 @@ func getMLDSAPublicKeyJWKS(pub crypto.PublicKey, kid string, x5c []string, x5t, 
 		Kid:     kid,
 		Kty:     "AKP",
 		Use:     "sig",
-		Alg:     string(alg),
+		Alg:     alg,
 		Pub:     encodeBase64URL(pubBytes),
 		X5c:     x5c,
 		X5t:     x5t,
@@ -216,4 +195,15 @@ func getMLDSAPublicKeyJWKS(pub crypto.PublicKey, kid string, x5c []string, x5t, 
 
 func encodeBase64URL(b []byte) string {
 	return strings.TrimRight(base64.URLEncoding.EncodeToString(b), "=")
+}
+
+// padCoordinate left-pads an EC coordinate with zero bytes to the curve's fixed
+// coordinate size, per RFC 7518 Section 6.2.1.2.
+func padCoordinate(b []byte, coordLen int) []byte {
+	if len(b) >= coordLen {
+		return b
+	}
+	padded := make([]byte, coordLen)
+	copy(padded[coordLen-len(b):], b)
+	return padded
 }

@@ -1,7 +1,7 @@
 {
   "private": false,
   "name": "@thunderid/eslint-plugin",
-  "version": "0.0.6",
+  "version": "1.0.1",
   "description": "ESLint plugin for ThunderID projects",
   "keywords": [
     "thunderid",
@@ -9,14 +9,13 @@
     "eslintplugin",
     "eslint-plugin",
     "plugin",
-    "shareable",
-    "wso2"
+    "shareable"
   ],
   "homepage": "https://github.com/thunder-id/thunderid/tree/main/frontend/packages/eslint-config#readme",
   "bugs": {
     "url": "https://github.com/thunder-id/thunderid/issues"
   },
-  "author": "WSO2",
+  "author": "The ThunderID Authors",
   "license": "Apache-2.0",
   "type": "module",
   "main": "./dist/cjs/index.cjs",

@@ -1,20 +1,5 @@
-/*
- * Copyright (c) 2025, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2025 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 package jwt
 
@@ -79,4 +64,18 @@ func DecodeJWTHeader(jwtToken string) (map[string]interface{}, error) {
 	}
 
 	return header, nil
+}
+
+// IsRefreshTokenType reports whether a typ header names a refresh token.
+func IsRefreshTokenType(typ string) bool {
+	return strings.EqualFold(typ, TokenTypeRefreshToken)
+}
+
+// IsLegacyRefreshTokenType reports whether a typ header is the generic type that refresh tokens
+// minted before rt+jwt carry. Such a token is a refresh token only if it also has access_token_sub.
+//
+// TODO: Remove this and its callers on the next major version, once no pre-rt+jwt refresh token
+// can still be valid; refresh tokens will then be identified by their typ header alone.
+func IsLegacyRefreshTokenType(typ string) bool {
+	return strings.EqualFold(typ, TokenTypeJWT)
 }

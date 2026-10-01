@@ -1,0 +1,71 @@
+{
+  "id": "vanilla-js",
+  "type": "browser",
+  "displayName": "JavaScript",
+  "description": "Browser application built with vanilla JavaScript",
+  "quickstarts": [
+    {
+      "label": "JavaScript",
+      "docsUrl": "{{applications.templates.browser.docs}}"
+    }
+  ],
+  "playgrounds": [
+    {
+      "label": "JavaScript",
+      "environment": "stackblitz",
+      "url": "{{applications.templates.browser.playground}}"
+    }
+  ],
+  "capabilities": {
+    "cors": true
+  },
+  "devServer": {
+    "id": "vite",
+    "label": "Vite",
+    "url": "http://localhost:5173"
+  },
+  "creationFlow": {
+    "steps": ["ORGANIZATION_UNIT", "DETAILS", "SECURITY", "DESIGN", "CONFIGURE", "COMPLETE"],
+    "previewSteps": ["DETAILS", "SECURITY", "DESIGN"]
+  },
+  "defaults": {
+    "name": "JavaScript Application",
+    "inboundAuthConfig": [
+      {
+        "type": "oauth2",
+        "config": {
+          "grantTypes": ["authorization_code", "refresh_token"],
+          "responseTypes": ["code"],
+          "redirectUris": ["http://localhost:5173"],
+          "pkceRequired": true,
+          "tokenEndpointAuthMethod": "none",
+          "publicClient": true
+        }
+      }
+    ],
+    "allowedUserTypes": []
+  },
+  "fieldConstraints": {
+    "oauth2": {
+      "publicClient": {
+        "readOnly": true,
+        "value": true
+      },
+      "pkceRequired": {
+        "readOnly": true,
+        "value": true
+      },
+      "tokenEndpointAuthMethod": {
+        "readOnly": true,
+        "value": "none"
+      }
+    }
+  },
+  "integrationGuides": {
+    "REDIRECT_BASED": {
+      "llm_prompt": {
+        "docsUrl": "{{applications.templates.browser.llmPrompt.redirectBased}}"
+      }
+    }
+  }
+}

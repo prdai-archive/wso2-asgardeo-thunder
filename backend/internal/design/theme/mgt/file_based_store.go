@@ -1,24 +1,10 @@
-/*
- * Copyright (c) 2026, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2026 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 package thememgt
 
 import (
+	"context"
 	"errors"
 
 	declarativeresource "github.com/thunder-id/thunderid/internal/system/declarative_resource"
@@ -31,6 +17,8 @@ type themeFileBasedStore struct {
 
 // Create implements declarativeresource.Storer interface for resource loader
 func (f *themeFileBasedStore) Create(id string, data interface{}) error {
+	// The declarative loader has no request behind it, so the configured identifier applies.
+	ctx := context.Background()
 	theme, ok := data.(*Theme)
 	if !ok {
 		declarativeresource.LogTypeAssertionError("theme", id)
@@ -42,11 +30,11 @@ func (f *themeFileBasedStore) Create(id string, data interface{}) error {
 		Description: theme.Description,
 		Theme:       theme.Theme,
 	}
-	return f.CreateTheme(id, createReq)
+	return f.CreateTheme(ctx, id, createReq)
 }
 
 // CreateTheme implements themeMgtStoreInterface.
-func (f *themeFileBasedStore) CreateTheme(id string, theme CreateThemeRequest) error {
+func (f *themeFileBasedStore) CreateTheme(ctx context.Context, id string, theme CreateThemeRequest) error {
 	themeData := &Theme{
 		ID:          id,
 		Handle:      theme.Handle,
@@ -60,12 +48,12 @@ func (f *themeFileBasedStore) CreateTheme(id string, theme CreateThemeRequest) e
 }
 
 // DeleteTheme implements themeMgtStoreInterface.
-func (f *themeFileBasedStore) DeleteTheme(id string) error {
+func (f *themeFileBasedStore) DeleteTheme(ctx context.Context, id string) error {
 	return errors.New("deleteTheme is not supported in file-based store")
 }
 
 // GetTheme implements themeMgtStoreInterface.
-func (f *themeFileBasedStore) GetTheme(id string) (Theme, error) {
+func (f *themeFileBasedStore) GetTheme(ctx context.Context, id string) (Theme, error) {
 	data, err := f.GenericFileBasedStore.Get(id)
 	if err != nil {
 		return Theme{}, errThemeNotFound
@@ -79,7 +67,7 @@ func (f *themeFileBasedStore) GetTheme(id string) (Theme, error) {
 }
 
 // GetThemeList implements themeMgtStoreInterface.
-func (f *themeFileBasedStore) GetThemeList(limit, offset int) ([]Theme, error) {
+func (f *themeFileBasedStore) GetThemeList(ctx context.Context, limit, offset int) ([]Theme, error) {
 	// Validate input parameters to prevent panics
 	if offset < 0 {
 		offset = 0
@@ -114,7 +102,7 @@ func (f *themeFileBasedStore) GetThemeList(limit, offset int) ([]Theme, error) {
 }
 
 // GetThemeListCount implements themeMgtStoreInterface.
-func (f *themeFileBasedStore) GetThemeListCount() (int, error) {
+func (f *themeFileBasedStore) GetThemeListCount(ctx context.Context) (int, error) {
 	count, err := f.GenericFileBasedStore.Count()
 	if err != nil {
 		return 0, err
@@ -123,8 +111,8 @@ func (f *themeFileBasedStore) GetThemeListCount() (int, error) {
 }
 
 // IsThemeExist implements themeMgtStoreInterface.
-func (f *themeFileBasedStore) IsThemeExist(id string) (bool, error) {
-	_, err := f.GetTheme(id)
+func (f *themeFileBasedStore) IsThemeExist(ctx context.Context, id string) (bool, error) {
+	_, err := f.GetTheme(ctx, id)
 	if err != nil {
 		return false, nil
 	}
@@ -132,17 +120,18 @@ func (f *themeFileBasedStore) IsThemeExist(id string) (bool, error) {
 }
 
 // UpdateTheme implements themeMgtStoreInterface.
-func (f *themeFileBasedStore) UpdateTheme(id string, theme UpdateThemeRequest) error {
+func (f *themeFileBasedStore) UpdateTheme(ctx context.Context, id string, theme UpdateThemeRequest) error {
 	return errors.New("updateTheme is not supported in file-based store")
 }
 
 // IsThemeDeclarative checks if a theme is immutable (in file-based store, all themes are immutable).
-func (f *themeFileBasedStore) IsThemeDeclarative(id string) bool {
+func (f *themeFileBasedStore) IsThemeDeclarative(ctx context.Context, id string) bool {
 	return true
 }
 
 // IsThemeHandleConflict checks if a theme handle already exists (excluding a specific ID).
-func (f *themeFileBasedStore) IsThemeHandleConflict(handle string, excludeID string) (bool, error) {
+func (f *themeFileBasedStore) IsThemeHandleConflict(ctx context.Context, handle string, excludeID string) (bool,
+	error) {
 	list, err := f.GenericFileBasedStore.List()
 	if err != nil {
 		return false, err

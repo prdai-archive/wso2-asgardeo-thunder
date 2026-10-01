@@ -1,20 +1,5 @@
-/*
- * Copyright (c) 2026, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2026 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 // Package connection exposes the /connections API: a thin HTTP layer in front of the
 // existing identity-provider (and, later, notification-sender) services. It owns no
@@ -37,7 +22,7 @@ type idpBackedVendor struct {
 // idpBackedVendors is the set of connection types backed by the identity-provider service.
 // The generic "oidc" connection covers custom OIDC providers;
 // "oauth" covers OAuth 2.0 providers that don't implement OIDC discovery and have no id_token,
-// relying on userInfoEndpoint instead.
+// taking user attributes from the provider's own profile API instead.
 var idpBackedVendors = []idpBackedVendor{
 	{name: "google", idpType: providers.IDPTypeGoogle},
 	{name: "github", idpType: providers.IDPTypeGitHub},
@@ -46,21 +31,21 @@ var idpBackedVendors = []idpBackedVendor{
 }
 
 // smsGatewayVendorName is the connection vendor name for the generic HTTP SMS gateway. The
-// stored message provider stays MessageProviderTypeCustom; this name is presentation-only,
+// stored message provider stays NotificationProviderTypeCustom; this name is presentation-only,
 // surfaced in the /connections/{vendor} path and the flat-list type.
 const smsGatewayVendorName = "sms-gateway"
 
 // smsBackedVendor maps a connection path segment to an underlying message provider.
 type smsBackedVendor struct {
 	name     string
-	provider ncommon.MessageProviderType
+	provider ncommon.NotificationProviderType
 }
 
 // smsBackedVendors is the set of connection types backed by the notification-sender service.
 var smsBackedVendors = []smsBackedVendor{
-	{name: "twilio", provider: ncommon.MessageProviderTypeTwilio},
-	{name: "vonage", provider: ncommon.MessageProviderTypeVonage},
-	{name: smsGatewayVendorName, provider: ncommon.MessageProviderTypeCustom},
+	{name: "twilio", provider: ncommon.NotificationProviderTypeTwilio},
+	{name: "vonage", provider: ncommon.NotificationProviderTypeVonage},
+	{name: smsGatewayVendorName, provider: ncommon.NotificationProviderTypeCustom},
 }
 
 // connectionCategory is the functional category of a connection instance, used as the
@@ -70,13 +55,14 @@ type connectionCategory string
 const (
 	categoryIdentityProvider connectionCategory = "identity-provider"
 	categorySMSProvider      connectionCategory = "sms-provider"
+	categoryAuthorizationPDP connectionCategory = "authorization-pdp"
 )
 
 // parseConnectionCategory validates the raw category query value. Empty means "no filter";
 // any other unrecognized value returns false.
 func parseConnectionCategory(raw string) (connectionCategory, bool) {
 	switch connectionCategory(raw) {
-	case "", categoryIdentityProvider, categorySMSProvider:
+	case "", categoryIdentityProvider, categorySMSProvider, categoryAuthorizationPDP:
 		return connectionCategory(raw), true
 	default:
 		return "", false

@@ -1,50 +1,36 @@
-/**
- * Copyright (c) 2025-2026, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied. See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2025-2026 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
+import {FullScreenCreationWizardLayout} from '@thunderid/components';
 import {OrganizationUnitTreePicker} from '@thunderid/configure-organization-units';
 import {useLogger} from '@thunderid/logger/react';
 import {
   EmbeddedFlowComponentType,
   InviteUser,
-  useThunderID,
   type EmbeddedFlowComponent,
   type InviteUserRenderProps,
 } from '@thunderid/react';
 import {
-  Box,
+  Alert,
+  AlertTitle,
   Stack,
   Typography,
   Button,
   TextField,
-  IconButton,
+  Checkbox,
   FormControl,
+  FormControlLabel,
   FormLabel,
   Select,
   MenuItem,
-  LinearProgress,
-  AppBreadcrumbs,
 } from '@wso2/oxygen-ui';
-import {X} from '@wso2/oxygen-ui-icons-react';
 import type {JSX} from 'react';
 import {useState, useCallback, useEffect, useRef} from 'react';
 import {useTranslation} from 'react-i18next';
 import {useNavigate} from 'react-router';
+import useFlowTextResolver from '../hooks/useFlowTextResolver';
 import useUserRoutes from '../hooks/useUserRoutes';
+import getUserErrorMessage from '../utils/getUserErrorMessage';
 
 const ONBOARDING_MODE_CREATE_ACTION_ID = 'action_create_user_now';
 
@@ -58,15 +44,31 @@ type FlowSubComponent = EmbeddedFlowComponent & {
   variant?: string;
 };
 
+/** Collects the refs of every boolean field in a component tree. */
+function collectBooleanRefs(comps: EmbeddedFlowComponent[]): string[] {
+  const refs: string[] = [];
+  comps.forEach((comp) => {
+    if (comp.type === 'BOOLEAN_INPUT' && typeof comp.ref === 'string') {
+      refs.push(comp.ref);
+    }
+    const nested = (comp as FlowSubComponent).components;
+    if (nested) refs.push(...collectBooleanRefs(nested));
+  });
+  return refs;
+}
+
 function UserCreateStepContent({
   renderProps,
+  error,
+  onFieldChange,
   onStepLabelChange,
 }: {
   renderProps: InviteUserRenderProps;
+  error: string | null;
+  onFieldChange: () => void;
   onStepLabelChange: (label: string) => void;
 }): JSX.Element {
-  const {resolveFlowTemplateLiterals: rawResolve} = useThunderID();
-  const resolve = useCallback((text?: string) => (text ? rawResolve(text) : undefined), [rawResolve]);
+  const resolve = useFlowTextResolver();
   const {t} = useTranslation();
   const components = renderProps.components as EmbeddedFlowComponent[] | undefined;
 
@@ -95,7 +97,28 @@ function UserCreateStepContent({
     }
   }, [stepLabel, resolve, t, onStepLabelChange]);
 
-  const {values, additionalData, handleInputChange} = renderProps;
+  const {values, additionalData, handleInputChange: rawHandleInputChange} = renderProps;
+  const handleInputChange = useCallback(
+    (name: string, value: string) => {
+      onFieldChange(); // a create failure is stale once the form changes
+      rawHandleInputChange(name, value);
+    },
+    [rawHandleInputChange, onFieldChange],
+  );
+
+  // Seed boolean fields with their unchecked value. A boolean answer is meaningful even when the
+  // user never touches the field, and without a seeded value a required boolean attribute is absent
+  // from the submission and can never be satisfied. Seeding goes through the raw handler so it does
+  // not clear a create error the user has not acted on yet.
+  useEffect(() => {
+    if (!components?.length) return;
+    const current = values as Record<string, unknown> | undefined;
+    collectBooleanRefs(components).forEach((ref) => {
+      if (current?.[ref] === undefined) {
+        rawHandleInputChange(ref, 'false');
+      }
+    });
+  }, [components, values, rawHandleInputChange]);
 
   const renderComponent = (component: EmbeddedFlowComponent, index: number): JSX.Element | null => {
     // Render text components
@@ -123,6 +146,7 @@ function UserCreateStepContent({
       component.type === 'EMAIL_INPUT' ||
       component.type === 'TEXT_INPUT' ||
       component.type === 'PHONE_INPUT' ||
+      component.type === 'NUMBER_INPUT' ||
       component.type === 'PASSWORD_INPUT'
     ) {
       const ref = component.ref;
@@ -138,6 +162,7 @@ function UserCreateStepContent({
       if (component.type === 'EMAIL_INPUT') inputType = 'email';
       if (component.type === 'PASSWORD_INPUT') inputType = 'password';
       if (component.type === 'PHONE_INPUT') inputType = 'tel';
+      if (component.type === 'NUMBER_INPUT') inputType = 'number';
 
       return (
         <FormControl key={component.id ?? index} fullWidth required={required}>
@@ -192,6 +217,33 @@ function UserCreateStepContent({
               );
             })}
           </Select>
+        </FormControl>
+      );
+    }
+
+    // Render BOOLEAN_INPUT
+    if (component.type === 'BOOLEAN_INPUT') {
+      const ref = component.ref;
+      const label = typeof component.label === 'string' ? component.label : '';
+      const required = (component as FlowSubComponent).required ?? false;
+
+      if (!ref) return null;
+
+      const checked = (values as Record<string, unknown>)?.[ref] === 'true';
+
+      return (
+        <FormControl key={component.id ?? index} required={required}>
+          <FormControlLabel
+            control={
+              <Checkbox
+                id={ref}
+                size="small"
+                checked={checked}
+                onChange={(e) => handleInputChange(ref, String(e.target.checked))}
+              />
+            }
+            label={t(resolve(label) ?? label)}
+          />
         </FormControl>
       );
     }
@@ -254,6 +306,12 @@ function UserCreateStepContent({
 
   return (
     <Stack direction="column" spacing={4}>
+      {error && (
+        <Alert severity="error">
+          <AlertTitle>{t('users:errors.failed.title', 'Error')}</AlertTitle>
+          {error}
+        </Alert>
+      )}
       {components?.map((component: EmbeddedFlowComponent, index: number) => renderComponent(component, index))}
     </Stack>
   );
@@ -265,6 +323,7 @@ export default function UserCreatePage(): JSX.Element {
   const routes = useUserRoutes();
   const logger = useLogger('UserCreatePage');
   const [breadcrumbs, setBreadcrumbs] = useState<string[]>([]);
+  const [error, setError] = useState<string | null>(null);
 
   const handleClose = useCallback(() => {
     Promise.resolve(navigate(routes.list())).catch((err: unknown) => {
@@ -279,67 +338,41 @@ export default function UserCreatePage(): JSX.Element {
     [t],
   );
 
+  const handleError = useCallback(
+    (err: Error) => {
+      logger.error('Failed to create user', {error: err});
+      setError(
+        getUserErrorMessage(
+          err,
+          (key, options) => t(key.includes(':') ? key : `users:${key}`, options),
+          'errors.failed.description',
+          'An error occurred. Please try again.',
+        ),
+      );
+    },
+    [logger, t],
+  );
+
   return (
-    <Box sx={{minHeight: '100vh', display: 'flex', flexDirection: 'column'}}>
-      <LinearProgress variant="determinate" value={0} sx={{height: 6}} />
-
-      <Box sx={{flex: 1, display: 'flex', flexDirection: 'column'}}>
-        {/* Header with close button and breadcrumb */}
-        <Box sx={{p: 4, display: 'flex', justifyContent: 'space-between', alignItems: 'center'}}>
-          <Stack direction="row" alignItems="center" spacing={2}>
-            <IconButton
-              aria-label={t('common:actions.close', 'Close')}
-              onClick={handleClose}
-              sx={{
-                bgcolor: 'background.paper',
-                '&:hover': {bgcolor: 'action.hover'},
-                boxShadow: 1,
-              }}
-            >
-              <X size={24} />
-            </IconButton>
-            <AppBreadcrumbs
-              items={breadcrumbs.map((label, idx) => ({
-                key: `breadcrumb-${idx}`,
-                label,
-              }))}
-            />
-          </Stack>
-        </Box>
-
-        {/* Main content */}
-        <Box sx={{flex: 1, display: 'flex', minHeight: 0}}>
-          <Box
-            sx={{
-              flex: 1,
-              display: 'flex',
-              flexDirection: 'column',
-              pt: 8,
-              pb: 8,
-              px: 20,
-              mx: 'auto',
-              alignItems: 'flex-start',
-              justifyContent: 'flex-start',
-            }}
-          >
-            <Box
-              sx={{
-                width: '100%',
-                maxWidth: 800,
-                flex: 1,
-                display: 'flex',
-                flexDirection: 'column',
-              }}
-            >
-              <InviteUser>
-                {(renderProps: InviteUserRenderProps) => (
-                  <UserCreateStepContent renderProps={renderProps} onStepLabelChange={handleStepLabelChange} />
-                )}
-              </InviteUser>
-            </Box>
-          </Box>
-        </Box>
-      </Box>
-    </Box>
+    <FullScreenCreationWizardLayout
+      onClose={handleClose}
+      progress={0}
+      breadcrumbItems={breadcrumbs.map((label, idx) => ({
+        key: `breadcrumb-${idx}`,
+        label,
+      }))}
+      footer={null}
+    >
+      <InviteUser onError={handleError}>
+        {(renderProps: InviteUserRenderProps) => (
+          <UserCreateStepContent
+            renderProps={renderProps}
+            error={error}
+            onFieldChange={() => setError(null)}
+            onStepLabelChange={handleStepLabelChange}
+          />
+        )}
+      </InviteUser>
+    </FullScreenCreationWizardLayout>
   );
 }

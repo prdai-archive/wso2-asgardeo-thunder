@@ -1,20 +1,5 @@
-/*
- * Copyright (c) 2025, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2025 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 package utils
 
@@ -24,7 +9,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"html"
 	"net/http"
 	"net/url"
 	"path"
@@ -465,7 +449,9 @@ func DecodeJSONResponse[T any](resp *http.Response) (*T, error) {
 	return &data, nil
 }
 
-// SanitizeString trims whitespace, removes control characters, and escapes HTML.
+// SanitizeString trims whitespace and removes control characters (except newline and tab).
+// It does NOT HTML-escape: escaping is an output-context concern and is applied at the
+// rendering sinks, so applying it here would corrupt the stored value.
 func SanitizeString(input string) string {
 	if input == "" {
 		return input
@@ -475,21 +461,16 @@ func SanitizeString(input string) string {
 	trimmed := strings.TrimSpace(input)
 
 	// Remove non-printable/control characters (except newline and tab)
-	cleaned := strings.Map(func(r rune) rune {
+	return strings.Map(func(r rune) rune {
 		if unicode.IsControl(r) && r != '\n' && r != '\t' {
 			return -1
 		}
 		return r
 	}, trimmed)
-
-	// Escape HTML to prevent XSS
-	safe := html.EscapeString(cleaned)
-
-	return safe
 }
 
 // SanitizeStringMap sanitizes a map of strings.
-// This function trim whitespace, removes control characters, and escapes HTML in each map entry.
+// This function trims whitespace and removes control characters in each map entry.
 func SanitizeStringMap(inputs map[string]string) map[string]string {
 	if len(inputs) == 0 {
 		return inputs

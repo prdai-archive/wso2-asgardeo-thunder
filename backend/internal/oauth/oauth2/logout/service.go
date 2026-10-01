@@ -1,20 +1,5 @@
-/*
- * Copyright (c) 2026, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2026 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 // Package logout implements the OIDC RP-Initiated Logout 1.0 end_session_endpoint
 // (GET/POST /oauth2/logout). It resolves the target application from id_token_hint (or client_id),
@@ -243,8 +228,25 @@ func (s *logoutService) clientIDFromIDTokenHint(ctx context.Context, idTokenHint
 	if svcErr := s.jwtService.VerifyJWTSignature(ctx, idTokenHint); svcErr != nil {
 		return "", errInvalidIDTokenHint
 	}
+	header, err := jwt.DecodeJWTHeader(idTokenHint)
+	if err != nil {
+		return "", errInvalidIDTokenHint
+	}
+	// The hint must be an ID token, not any other JWT this server signs. An access token issued to an
+	// application with no configured default audience carries aud=client_id, so without this check it
+	// would resolve to a client and be accepted as a hint, which suppresses the End-User sign-out
+	// confirmation.
+	if typ, _ := header["typ"].(string); typ != jwt.TokenTypeJWT {
+		return "", errInvalidIDTokenHint
+	}
 	payload, err := jwt.DecodeJWTPayload(idTokenHint)
 	if err != nil {
+		return "", errInvalidIDTokenHint
+	}
+	// An rt+jwt refresh token is already refused by the typ check above. This catches the ones minted
+	// before rt+jwt existed, which share the generic type with ID tokens.
+	// TODO: Remove on the next major version, once no pre-rt+jwt refresh token can still be valid.
+	if _, isRefreshToken := payload[constants.ClaimAccessTokenSubject]; isRefreshToken {
 		return "", errInvalidIDTokenHint
 	}
 	if iss, _ := payload[constants.ClaimIss].(string); iss != s.issuer {

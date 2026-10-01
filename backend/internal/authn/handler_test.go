@@ -1,20 +1,5 @@
-/*
- * Copyright (c) 2025, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2025 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 package authn
 
@@ -32,6 +17,7 @@ import (
 	"github.com/stretchr/testify/suite"
 
 	"github.com/thunder-id/thunderid/internal/authn/common"
+	authnprovidercm "github.com/thunder-id/thunderid/internal/authnprovider/common"
 	"github.com/thunder-id/thunderid/internal/system/error/apierror"
 )
 
@@ -269,6 +255,20 @@ func (suite *AuthenticationHandlerTestSuite) TestHandleCredentialsAuthRequestSer
 			},
 			expectedStatusCode: http.StatusBadRequest,
 			expectedErrorCode:  "CUSTOM_ERROR",
+		},
+		{
+			name: "ReservedCredentialType",
+			authRequest: map[string]interface{}{
+				"identifiers": map[string]interface{}{
+					"username": "testuser",
+				},
+				"credentials": map[string]interface{}{
+					authnprovidercm.CredentialTypeProvisionedEntityID: "user123",
+				},
+			},
+			serviceError:       &ErrorReservedCredentialType,
+			expectedStatusCode: http.StatusBadRequest,
+			expectedErrorCode:  ErrorReservedCredentialType.Code,
 		},
 		{
 			name: "ServerError",
@@ -766,6 +766,7 @@ func (suite *AuthenticationHandlerTestSuite) TestHandlePasskeyRegisterStartReque
 		RelyingPartyID:   "example.com",
 		RelyingPartyName: "Example Corp",
 		Attestation:      "direct",
+		Assertion:        testJWTToken,
 	}
 	regResponse := map[string]interface{}{
 		"publicKeyCredentialCreationOptions": map[string]interface{}{
@@ -789,7 +790,8 @@ func (suite *AuthenticationHandlerTestSuite) TestHandlePasskeyRegisterStartReque
 		regRequest.RelyingPartyID,
 		regRequest.RelyingPartyName,
 		regRequest.AuthenticatorSelection,
-		regRequest.Attestation).Return(regResponse, nil)
+		regRequest.Attestation,
+		regRequest.Assertion).Return(regResponse, nil)
 
 	body, _ := json.Marshal(regRequest)
 	req := httptest.NewRequest(http.MethodPost, "/authenticate/passkey/register/start", bytes.NewReader(body))
@@ -819,15 +821,53 @@ func (suite *AuthenticationHandlerTestSuite) TestHandlePasskeyRegisterStartReque
 	suite.Equal(common.APIErrorInvalidRequestFormat.Code, errResp.Code)
 }
 
-func (suite *AuthenticationHandlerTestSuite) TestHandlePasskeyRegisterStartRequestServiceError() {
+// TestHandlePasskeyRegisterStartRequestMissingAssertion asserts the assertion is rejected as a
+// missing required field, so the request never reaches the service.
+func (suite *AuthenticationHandlerTestSuite) TestHandlePasskeyRegisterStartRequestMissingAssertion() {
 	regRequest := PasskeyRegisterStartRequestDTO{
 		UserID:         "user123",
 		RelyingPartyID: "example.com",
 	}
+
+	body, _ := json.Marshal(regRequest)
+	req := httptest.NewRequest(http.MethodPost, "/register/passkey/start", bytes.NewReader(body))
+	w := httptest.NewRecorder()
+
+	suite.handler.HandlePasskeyRegisterStartRequest(w, req)
+
+	suite.Equal(http.StatusBadRequest, w.Code)
+	suite.mockService.AssertNotCalled(suite.T(), "StartPasskeyRegistration")
+}
+
+// TestHandlePasskeyRegisterStartRequestMissingUserID asserts userId stays required alongside the
+// assertion, so a caller cannot fall back to an assertion-only request.
+func (suite *AuthenticationHandlerTestSuite) TestHandlePasskeyRegisterStartRequestMissingUserID() {
+	regRequest := PasskeyRegisterStartRequestDTO{
+		RelyingPartyID: "example.com",
+		Assertion:      testJWTToken,
+	}
+
+	body, _ := json.Marshal(regRequest)
+	req := httptest.NewRequest(http.MethodPost, "/register/passkey/start", bytes.NewReader(body))
+	w := httptest.NewRecorder()
+
+	suite.handler.HandlePasskeyRegisterStartRequest(w, req)
+
+	suite.Equal(http.StatusBadRequest, w.Code)
+	suite.mockService.AssertNotCalled(suite.T(), "StartPasskeyRegistration")
+}
+
+func (suite *AuthenticationHandlerTestSuite) TestHandlePasskeyRegisterStartRequestServiceError() {
+	regRequest := PasskeyRegisterStartRequestDTO{
+		UserID:         "user123",
+		RelyingPartyID: "example.com",
+		Assertion:      testJWTToken,
+	}
 	serviceError := &common.ErrorUserNotFound
 
 	suite.mockService.On("StartPasskeyRegistration",
-		mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).
+		mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything,
+		mock.Anything).
 		Return(nil, serviceError)
 
 	body, _ := json.Marshal(regRequest)

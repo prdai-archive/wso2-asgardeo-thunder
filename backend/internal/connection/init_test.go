@@ -1,20 +1,5 @@
-/*
- * Copyright (c) 2026, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2026 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 // Package connection provides tests for the connections API. This file holds the shared
 // test fixtures plus the route-registration (Initialize) integration test.
@@ -31,10 +16,13 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 
+	"github.com/thunder-id/thunderid/internal/connection/authzenpdp"
 	"github.com/thunder-id/thunderid/internal/idp"
 	ncommon "github.com/thunder-id/thunderid/internal/notification/common"
 	"github.com/thunder-id/thunderid/internal/system/cmodels"
 	"github.com/thunder-id/thunderid/internal/system/config"
+	"github.com/thunder-id/thunderid/internal/system/kmprovider/defaultkm"
+	"github.com/thunder-id/thunderid/internal/system/resourcedependency"
 	tidcommon "github.com/thunder-id/thunderid/pkg/thunderidengine/common"
 	engineconfig "github.com/thunder-id/thunderid/pkg/thunderidengine/config"
 	"github.com/thunder-id/thunderid/pkg/thunderidengine/providers"
@@ -45,12 +33,17 @@ import (
 // testCryptoKey is the shared key used so secret property encryption works in tests.
 const testCryptoKey = "0579f866ac7c9273580d0ff163fa01a7b2401a7ff3ddc3e3b14ae3136fa6025e"
 
-// initConfigWithTestCryptoKey initializes the server runtime with the test crypto key.
-func initConfigWithTestCryptoKey() {
+// initConfigWithTestCryptoKey initializes the server runtime with the test crypto key and
+// wires cmodels' package-level config crypto provider so secret Property encryption works.
+func initConfigWithTestCryptoKey(t *testing.T) {
+	t.Helper()
 	config.ResetServerRuntime()
-	_ = config.InitializeServerRuntime("/tmp/test", &config.Config{
+	require.NoError(t, config.InitializeServerRuntime("/tmp/test", &config.Config{
 		Crypto: config.CryptoConfig{Encryption: engineconfig.EncryptionConfig{Key: testCryptoKey}},
-	})
+	}))
+	_, cfgCryptoSvc, err := defaultkm.Initialize(nil)
+	require.NoError(t, err)
+	cmodels.SetConfigCryptoProvider(cfgCryptoSvc)
 }
 
 // newConnectionTestHandler returns a connection handler over fresh mock IdP and
@@ -59,11 +52,14 @@ func initConfigWithTestCryptoKey() {
 func newConnectionTestHandler(t *testing.T) (*handler, *idpmock.IDPServiceInterfaceMock,
 	*notificationmock.NotificationSenderMgtSvcInterfaceMock) {
 	t.Helper()
-	initConfigWithTestCryptoKey()
+	initConfigWithTestCryptoKey(t)
 	t.Cleanup(config.ResetServerRuntime)
 	mockIDP := idpmock.NewIDPServiceInterfaceMock(t)
 	mockNotif := notificationmock.NewNotificationSenderMgtSvcInterfaceMock(t)
-	return newHandler(newService(mockIDP, mockNotif)), mockIDP, mockNotif
+	return newHandler(newService(
+		mockIDP, mockNotif, &testResourceServerLister{},
+		&authZENPDPServiceStub{},
+	)), mockIDP, mockNotif
 }
 
 // mustProperty builds a property, failing the test on error.
@@ -80,9 +76,11 @@ func boolPtr(b bool) *bool { return &b }
 // ServeMux, exercising route registration, CORS/OPTIONS handling, and path-value extraction.
 type InitTestSuite struct {
 	suite.Suite
-	mux       *http.ServeMux
-	mockIDP   *idpmock.IDPServiceInterfaceMock
-	mockNotif *notificationmock.NotificationSenderMgtSvcInterfaceMock
+	mux          *http.ServeMux
+	mockIDP      *idpmock.IDPServiceInterfaceMock
+	mockNotif    *notificationmock.NotificationSenderMgtSvcInterfaceMock
+	mockResource *testResourceServerLister
+	authZENPDP   *authZENPDPServiceStub
 }
 
 func TestInitSuite(t *testing.T) {
@@ -90,11 +88,14 @@ func TestInitSuite(t *testing.T) {
 }
 
 func (s *InitTestSuite) SetupTest() {
-	initConfigWithTestCryptoKey()
+	initConfigWithTestCryptoKey(s.T())
+	s.authZENPDP = &authZENPDPServiceStub{}
 	s.mockIDP = idpmock.NewIDPServiceInterfaceMock(s.T())
 	s.mockNotif = notificationmock.NewNotificationSenderMgtSvcInterfaceMock(s.T())
+	s.mockResource = &testResourceServerLister{}
 	s.mux = http.NewServeMux()
-	_, err := Initialize(s.mux, s.mockIDP, s.mockNotif)
+	_, err := Initialize(s.mux, s.mockIDP, s.mockNotif, s.mockResource,
+		s.authZENPDP)
 	s.Require().NoError(err)
 }
 
@@ -118,12 +119,12 @@ func (s *InitTestSuite) TestRouteTable() {
 
 	twilioDTO := &ncommon.NotificationSenderDTO{
 		ID: "tw-1", Name: "TW", Type: ncommon.NotificationSenderTypeMessage,
-		Provider: ncommon.MessageProviderTypeTwilio,
+		Provider: ncommon.NotificationProviderTypeTwilio,
 	}
 	s.mockNotif.On("ListSendersByType", mock.Anything, ncommon.NotificationSenderTypeMessage).
 		Return([]ncommon.NotificationSenderDTO{*twilioDTO}, (*tidcommon.ServiceError)(nil))
 	s.mockNotif.On("CreateSender", mock.Anything, mock.MatchedBy(func(dto ncommon.NotificationSenderDTO) bool {
-		return dto.Provider == ncommon.MessageProviderTypeTwilio
+		return dto.Provider == ncommon.NotificationProviderTypeTwilio
 	})).Return(twilioDTO, (*tidcommon.ServiceError)(nil))
 	s.mockNotif.On("GetSender", mock.Anything, "tw-1").
 		Return(twilioDTO, (*tidcommon.ServiceError)(nil))
@@ -134,10 +135,10 @@ func (s *InitTestSuite) TestRouteTable() {
 
 	smsGatewayDTO := &ncommon.NotificationSenderDTO{
 		ID: "sg-1", Name: "SG", Type: ncommon.NotificationSenderTypeMessage,
-		Provider: ncommon.MessageProviderTypeCustom,
+		Provider: ncommon.NotificationProviderTypeCustom,
 	}
 	s.mockNotif.On("CreateSender", mock.Anything, mock.MatchedBy(func(dto ncommon.NotificationSenderDTO) bool {
-		return dto.Provider == ncommon.MessageProviderTypeCustom
+		return dto.Provider == ncommon.NotificationProviderTypeCustom
 	})).Return(smsGatewayDTO, (*tidcommon.ServiceError)(nil))
 	s.mockNotif.On("GetSender", mock.Anything, "sg-1").
 		Return(smsGatewayDTO, (*tidcommon.ServiceError)(nil))
@@ -145,6 +146,26 @@ func (s *InitTestSuite) TestRouteTable() {
 		Return(smsGatewayDTO, (*tidcommon.ServiceError)(nil))
 	s.mockNotif.On("DeleteSender", mock.Anything, "sg-1").
 		Return((*tidcommon.ServiceError)(nil))
+
+	emptyUsages := &resourcedependency.DependenciesResponse{
+		Usages: []resourcedependency.ResourceDependency{},
+	}
+	s.mockIDP.On("GetIDPUsages", mock.Anything, "gh-1").
+		Return(emptyUsages, (*tidcommon.ServiceError)(nil))
+	s.mockNotif.On("GetSenderUsages", mock.Anything, "tw-1").
+		Return(emptyUsages, (*tidcommon.ServiceError)(nil))
+	s.mockNotif.On("GetSenderUsages", mock.Anything, "sg-1").
+		Return(emptyUsages, (*tidcommon.ServiceError)(nil))
+
+	s.authZENPDP.connection = &authzenpdp.AuthZENPDPConnection{
+		ID:            "pdp-1",
+		Name:          "PDP",
+		Endpoint:      "https://pdp.example.com/access/v1/evaluation",
+		BatchEndpoint: "https://pdp.example.com/access/v1/evaluations",
+	}
+	s.authZENPDP.connections = []authzenpdp.AuthZENPDPConnection{*s.authZENPDP.connection}
+	s.authZENPDP.createResult = &authzenpdp.AuthZENPDPConnection{ID: "pdp-new", Name: "PDP-new"}
+	s.authZENPDP.updateResult = s.authZENPDP.connection
 
 	body, _ := json.Marshal(githubConnectionRequest{
 		Name: "GH", ClientID: "c", ClientSecret: "s", RedirectURI: "https://app/cb",
@@ -154,6 +175,14 @@ func (s *InitTestSuite) TestRouteTable() {
 	})
 	smsGatewayBody, _ := json.Marshal(smsGatewayConnectionRequest{
 		Name: "SG", URL: "https://sms.example.com/send", HTTPMethod: "POST",
+	})
+	authZENPDPBody, _ := json.Marshal(authzenpdp.ConnectionRequest{
+		Name: "PDP-new", Endpoint: "https://pdp.example.com/access/v1/evaluation",
+		BatchEndpoint: "https://pdp.example.com/access/v1/evaluations",
+	})
+	authZENPDPUpdateBody, _ := json.Marshal(authzenpdp.ConnectionRequest{
+		Name: "PDP", Endpoint: "https://pdp.example.com/access/v1/evaluation",
+		BatchEndpoint: "https://pdp.example.com/access/v1/evaluations",
 	})
 
 	cases := []struct {
@@ -170,6 +199,8 @@ func (s *InitTestSuite) TestRouteTable() {
 		{http.MethodPut, "/connections/github/gh-1", body, http.StatusOK},
 		{http.MethodDelete, "/connections/github/gh-1", nil, http.StatusNoContent},
 		{http.MethodOptions, "/connections/github/gh-1", nil, http.StatusNoContent},
+		{http.MethodGet, "/connections/github/gh-1/usages", nil, http.StatusOK},
+		{http.MethodOptions, "/connections/github/gh-1/usages", nil, http.StatusNoContent},
 		{http.MethodPost, "/connections/twilio", twilioBody, http.StatusCreated},
 		{http.MethodGet, "/connections/twilio", nil, http.StatusOK},
 		{http.MethodOptions, "/connections/twilio", nil, http.StatusNoContent},
@@ -177,6 +208,8 @@ func (s *InitTestSuite) TestRouteTable() {
 		{http.MethodPut, "/connections/twilio/tw-1", twilioBody, http.StatusOK},
 		{http.MethodDelete, "/connections/twilio/tw-1", nil, http.StatusNoContent},
 		{http.MethodOptions, "/connections/twilio/tw-1", nil, http.StatusNoContent},
+		{http.MethodGet, "/connections/twilio/tw-1/usages", nil, http.StatusOK},
+		{http.MethodOptions, "/connections/twilio/tw-1/usages", nil, http.StatusNoContent},
 		{http.MethodPost, "/connections/sms-gateway", smsGatewayBody, http.StatusCreated},
 		{http.MethodGet, "/connections/sms-gateway", nil, http.StatusOK},
 		{http.MethodOptions, "/connections/sms-gateway", nil, http.StatusNoContent},
@@ -184,6 +217,17 @@ func (s *InitTestSuite) TestRouteTable() {
 		{http.MethodPut, "/connections/sms-gateway/sg-1", smsGatewayBody, http.StatusOK},
 		{http.MethodDelete, "/connections/sms-gateway/sg-1", nil, http.StatusNoContent},
 		{http.MethodOptions, "/connections/sms-gateway/sg-1", nil, http.StatusNoContent},
+		{http.MethodGet, "/connections/sms-gateway/sg-1/usages", nil, http.StatusOK},
+		{http.MethodOptions, "/connections/sms-gateway/sg-1/usages", nil, http.StatusNoContent},
+		{http.MethodPost, "/connections/authzen-pdp", authZENPDPBody, http.StatusCreated},
+		{http.MethodGet, "/connections/authzen-pdp", nil, http.StatusOK},
+		{http.MethodOptions, "/connections/authzen-pdp", nil, http.StatusNoContent},
+		{http.MethodGet, "/connections/authzen-pdp/pdp-1", nil, http.StatusOK},
+		{http.MethodPut, "/connections/authzen-pdp/pdp-1", authZENPDPUpdateBody, http.StatusOK},
+		{http.MethodGet, "/connections/authzen-pdp/pdp-1/usages", nil, http.StatusOK},
+		{http.MethodOptions, "/connections/authzen-pdp/pdp-1/usages", nil, http.StatusNoContent},
+		{http.MethodDelete, "/connections/authzen-pdp/pdp-1", nil, http.StatusNoContent},
+		{http.MethodOptions, "/connections/authzen-pdp/pdp-1", nil, http.StatusNoContent},
 	}
 	for _, tc := range cases {
 		req := httptest.NewRequest(tc.method, tc.path, bytes.NewReader(tc.body))

@@ -1,20 +1,5 @@
-/*
- * Copyright (c) 2025, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2025 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 package notification
 
@@ -711,6 +696,84 @@ func (suite *NotificationSenderMgtServiceTestSuite) TestDeleteSender_RefusedWhen
 	suite.mockStore.AssertNotCalled(suite.T(), "deleteSender", mock.Anything, mock.Anything)
 }
 
+func (suite *NotificationSenderMgtServiceTestSuite) TestGetSenderUsages() {
+	total := 1
+	suite.service.dependencyRegistry = &stubDependencyRegistry{resp: &resourcedependency.DependenciesResponse{
+		TotalResults: &total,
+		Count:        1,
+		Usages: []resourcedependency.ResourceDependency{
+			{ResourceType: resourcedependency.ResourceTypeFlow, ID: "flow-1",
+				DisplayName: "SMS OTP", BehaviorOnDelete: resourcedependency.BehaviorRestrict},
+		},
+	}}
+	suite.mockStore.EXPECT().getSenderByID(mock.Anything, testSenderID).
+		Return(&common.NotificationSenderDTO{ID: testSenderID}, nil).Once()
+
+	result, err := suite.service.GetSenderUsages(context.Background(), testSenderID)
+
+	suite.Nil(err)
+	suite.Require().NotNil(result)
+	suite.Require().NotNil(result.TotalResults)
+	suite.Equal(1, *result.TotalResults)
+	suite.Require().Len(result.Usages, 1)
+	suite.Equal("flow-1", result.Usages[0].ID)
+}
+
+func (suite *NotificationSenderMgtServiceTestSuite) TestGetSenderUsages_EmptyID() {
+	result, err := suite.service.GetSenderUsages(context.Background(), "  ")
+	suite.Nil(result)
+	suite.Require().NotNil(err)
+	suite.Equal(ErrorInvalidSenderID.Code, err.Code)
+}
+
+func (suite *NotificationSenderMgtServiceTestSuite) TestGetSenderUsages_NotFound() {
+	suite.mockStore.EXPECT().getSenderByID(mock.Anything, testSenderID).Return(nil, nil).Once()
+
+	result, err := suite.service.GetSenderUsages(context.Background(), testSenderID)
+
+	suite.Nil(result)
+	suite.Require().NotNil(err)
+	suite.Equal(ErrorSenderNotFound.Code, err.Code)
+}
+
+func (suite *NotificationSenderMgtServiceTestSuite) TestGetSenderUsages_StoreError() {
+	suite.mockStore.EXPECT().getSenderByID(mock.Anything, testSenderID).
+		Return(nil, errors.New("database error")).Once()
+
+	result, err := suite.service.GetSenderUsages(context.Background(), testSenderID)
+
+	suite.Nil(result)
+	suite.Require().NotNil(err)
+	suite.Equal(tidcommon.InternalServerError.Code, err.Code)
+}
+
+// TestGetSenderUsages_RegistryUnset returns unknown dependencies rather than failing when the
+// registry was never wired in, since the endpoint is informational.
+func (suite *NotificationSenderMgtServiceTestSuite) TestGetSenderUsages_RegistryUnset() {
+	suite.service.dependencyRegistry = nil
+	suite.mockStore.EXPECT().getSenderByID(mock.Anything, testSenderID).
+		Return(&common.NotificationSenderDTO{ID: testSenderID}, nil).Once()
+
+	result, err := suite.service.GetSenderUsages(context.Background(), testSenderID)
+
+	suite.Nil(err)
+	suite.Require().NotNil(result)
+	suite.Nil(result.TotalResults)
+	suite.Empty(result.Usages)
+}
+
+func (suite *NotificationSenderMgtServiceTestSuite) TestGetSenderUsages_RegistryError() {
+	suite.service.dependencyRegistry = &stubDependencyRegistry{err: errors.New("registry error")}
+	suite.mockStore.EXPECT().getSenderByID(mock.Anything, testSenderID).
+		Return(&common.NotificationSenderDTO{ID: testSenderID}, nil).Once()
+
+	result, err := suite.service.GetSenderUsages(context.Background(), testSenderID)
+
+	suite.Nil(result)
+	suite.Require().NotNil(err)
+	suite.Equal(tidcommon.InternalServerError.Code, err.Code)
+}
+
 func (suite *NotificationSenderMgtServiceTestSuite) TestDeleteSender_StoreError() {
 	suite.mockStore.EXPECT().deleteSender(context.Background(), testSenderID).
 		Return(errors.New("database error")).Once()
@@ -784,7 +847,7 @@ func (suite *NotificationSenderMgtServiceTestSuite) getValidTwilioSender() commo
 		Name:        "Test Twilio Sender",
 		Description: "Test Description",
 		Type:        common.NotificationSenderTypeMessage,
-		Provider:    common.MessageProviderTypeTwilio,
+		Provider:    common.NotificationProviderTypeTwilio,
 		Properties: []cmodels.Property{
 			createTestProperty("account_sid", "AC00112233445566778899aabbccddeeff", true),
 			createTestProperty("auth_token", "test-auth-token", true),
@@ -799,7 +862,7 @@ func (suite *NotificationSenderMgtServiceTestSuite) getValidVonageSender() commo
 		Name:        "Test Vonage Sender",
 		Description: "Test Vonage Description",
 		Type:        common.NotificationSenderTypeMessage,
-		Provider:    common.MessageProviderTypeVonage,
+		Provider:    common.NotificationProviderTypeVonage,
 		Properties: []cmodels.Property{
 			createTestProperty("api_key", "test-api-key", true),
 			createTestProperty("api_secret", "test-api-secret", true),

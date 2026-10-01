@@ -1,26 +1,13 @@
-/*
- * Copyright (c) 2026, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2026 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 package session
 
 import (
 	"context"
 	"time"
+
+	"github.com/thunder-id/thunderid/internal/system/eventlistener"
 )
 
 // State represents the lifecycle state of a session.
@@ -35,6 +22,32 @@ const (
 	StateEnded State = "ENDED"
 )
 
+// TerminationReason names the path that ended a session.
+type TerminationReason string
+
+const (
+	// TerminationReasonSignOut is a sign-out of one session.
+	TerminationReasonSignOut TerminationReason = "sign_out"
+	// TerminationReasonSubjectRevocation is an administrative termination of all the subject's sessions.
+	TerminationReasonSubjectRevocation TerminationReason = "subject_revocation"
+)
+
+// TerminatedSession describes a session the service has ended. Participants is captured before the
+// rows are deleted, so it is the only remaining record of which applications shared the session.
+type TerminatedSession struct {
+	SessionID    string
+	SubjectID    string
+	Participants []Participant
+	Reason       TerminationReason
+}
+
+// TerminationListener is told about every terminated session after the terminating transaction
+// commits. The contract is the eventlistener package's.
+type TerminationListener = eventlistener.Listener[TerminatedSession]
+
+// TerminationHook registers termination listeners. Initialize hands it to the composition root.
+type TerminationHook = eventlistener.Hook[TerminatedSession]
+
 // Session is the lean, hot-path SSO session entity. It carries only operational fields plus
 // authenticated_at (used by the max_age policy check), so the resolve, SSO-check, and
 // activity-touch paths never load the durable session context.
@@ -42,7 +55,9 @@ const (
 // The write-once auth-event facts (completed steps + sanitized claim snapshot) live in the
 // sibling SessionContext (SESSION_AUTH_CONTEXT, 1:1 by session id), loaded only on the SSO path.
 type Session struct {
-	// SessionID is the internal primary key, never exposed to clients.
+	// SessionID is the primary key and the session's public identifier: every application in the
+	// session receives the same value. Unlike HandleID it is not a credential. It is a UUIDv7, so it
+	// carries the session's creation time, and changing what is published would need a migration.
 	SessionID string
 	// SubjectID is the authenticated subject (user) the session belongs to.
 	SubjectID string

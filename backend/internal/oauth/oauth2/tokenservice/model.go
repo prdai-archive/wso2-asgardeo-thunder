@@ -1,20 +1,5 @@
-/*
- * Copyright (c) 2025-2026, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2025-2026 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 // Package tokenservice provides centralized token generation and validation services for OAuth2.
 package tokenservice
@@ -40,6 +25,9 @@ const (
 type TokenConfig struct {
 	Issuer         string
 	ValidityPeriod int64
+	// SigningAlg is the client-configured JWS algorithm. Empty means the server's preferred
+	// signing key algorithm is used.
+	SigningAlg string
 }
 
 // AccessTokenBuildContext contains all the information needed to build an access token.
@@ -74,6 +62,13 @@ type AccessTokenBuildContext struct {
 	// TokenFamilyID, when set, is stamped as the `tfid` claim so the token can be revoked as part of
 	// its authorization grant's family. It is constant across refresh rotation.
 	TokenFamilyID string
+	// SubjectEntityID is the resource ID of the entity Subject refers to, and SubjectCategory its
+	// entity category. Grant handlers set them when an upstream layer already knows the answer (the
+	// flow assertion for authorization_code), which spares the builder an entity read. Left empty the
+	// builder resolves them itself, so a grant that does not set them still reports the subject.
+	// Neither is emitted as a token claim; both are carried for observability.
+	SubjectEntityID string
+	SubjectCategory string
 }
 
 // RefreshTokenBuildContext contains all the information needed to build a refresh token.
@@ -92,6 +87,13 @@ type RefreshTokenBuildContext struct {
 	// TokenFamilyID, when set, is stamped as the `tfid` claim on the refresh token. It is copied
 	// unchanged across rotation so every token of the grant shares one family id.
 	TokenFamilyID string
+	// SessionID, when set, is stamped as the `sid` claim on the refresh token and copied unchanged
+	// across rotation.
+	SessionID string
+	// ExpiresAt, when set, is the Unix expiry the rotated token inherits from the token it replaces,
+	// so a grant cannot outlive its original issuance window. Zero starts a fresh validity period,
+	// which is what first issuance does.
+	ExpiresAt int64
 }
 
 // IDJAGBuildContext contains all the information needed to build an ID-JAG (Identity Assertion
@@ -118,11 +120,15 @@ type IDTokenBuildContext struct {
 	ClaimsRequest  *oauth2model.ClaimsRequest
 	Nonce          string
 	CompletedACR   string
+	// SessionID, when set, is emitted as the `sid` claim naming the SSO session this authentication
+	// belongs to. Empty when no session backs the grant, in which case the claim is omitted.
+	SessionID string
 }
 
 // RefreshTokenClaims represents the validated claims from a refresh token.
 type RefreshTokenClaims struct {
 	Sub              string
+	ClientID         string
 	Audiences        []string
 	GrantType        string
 	Scopes           []string
@@ -141,6 +147,20 @@ type RefreshTokenClaims struct {
 	// tokens minted during rotation so the family stays intact, and used to revoke the whole family on
 	// reuse. Empty for pre-rollout tokens.
 	TokenFamilyID string
+	// SessionID is the sid carried on the refresh token, copied onto the tokens minted during rotation.
+	// Empty when the grant had no session or the token predates sid issuance.
+	SessionID string
+	Claims    map[string]interface{}
+}
+
+// MappedAuthorization is server-resolved authorization context for a subject token's issuing
+// connection, not claims from the token itself. Zero value when self-issued or unmapped.
+type MappedAuthorization struct {
+	// Targets are the resolved roles, groups, and permissions. Empty if unconfigured or unmatched.
+	Targets []providers.AuthorizationTarget
+	// Configured distinguishes "configured but unmatched" (grants nothing) from "no mapping at all"
+	// (falls back to the token's own scope claim) — both leave Targets empty.
+	Configured bool
 }
 
 // SubjectTokenClaims represents the validated claims from a subject token (for token exchange).
@@ -160,6 +180,9 @@ type SubjectTokenClaims struct {
 	// TokenFamilyID is the subject token's token family id (tfid), if any. Token exchange may inherit
 	// it onto the exchanged token so the two share a revocation family.
 	TokenFamilyID string
+	// Authorization is server-resolved context, not a claim from the token itself — see
+	// MappedAuthorization.
+	Authorization MappedAuthorization
 }
 
 // IDJAGAssertionClaims represents the validated claims from an ID-JAG assertion presented on the
@@ -171,9 +194,12 @@ type IDJAGAssertionClaims struct {
 	// Resources holds the RFC 8707 `resource` claim values carried by the assertion, when present.
 	// Empty when the assertion carries no resource claim.
 	Resources []string
-	// JTI is the assertion's unique identifier. It is required by the draft and validated for presence;
-	// one-time-use (replay) caching keyed on it is deferred to a future version.
+	// JTI is the assertion's unique identifier, required by the draft. Enforced as single-use via
+	// the JTI replay cache; a replayed assertion is rejected.
 	JTI string
+	// Authorization is server-resolved context, not a claim from the assertion itself — see
+	// MappedAuthorization.
+	Authorization MappedAuthorization
 }
 
 // AccessTokenClaims represents the validated claims from an access token.

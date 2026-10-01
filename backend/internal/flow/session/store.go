@@ -1,20 +1,5 @@
-/*
- * Copyright (c) 2026, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2026 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 package session
 
@@ -72,6 +57,26 @@ func (st *store) GetByExecutionID(ctx context.Context, flowExecutionID string) (
 	return st.getSingle(ctx, queryGetSessionByExecutionID, flowExecutionID)
 }
 
+// ListBySubject returns every session owned by the subject.
+func (st *store) ListBySubject(ctx context.Context, subjectID string) ([]Session, error) {
+	result := make([]Session, 0)
+	err := withRuntimePersistentDBClient(st.dbProvider, func(dbClient provider.DBClientInterface) error {
+		rows, err := dbClient.QueryContext(ctx, queryListSessionsBySubject, subjectID, st.deploymentID)
+		if err != nil {
+			return fmt.Errorf("failed to list sessions by subject: %w", err)
+		}
+		for _, row := range rows {
+			sess, buildErr := buildSessionFromRow(row)
+			if buildErr != nil {
+				return buildErr
+			}
+			result = append(result, *sess)
+		}
+		return nil
+	})
+	return result, err
+}
+
 // getSingle runs a single-key lookup query and maps the at-most-one row into a Session, returning
 // (nil, nil) when no row matches.
 func (st *store) getSingle(ctx context.Context, query model.DBQuery, key string) (*Session, error) {
@@ -118,6 +123,22 @@ func (st *store) Update(ctx context.Context, s *Session) error {
 			return errVersionConflict
 		}
 		s.Version++
+		return nil
+	})
+}
+
+// TouchAuthenticatedAt records that the subject authenticated again inside an existing session,
+// sliding the idle deadline along with it. Unlike Update it carries no version guard: the write
+// records an authentication that already happened, so a concurrent liveness slide must not cause it
+// to be dropped.
+func (st *store) TouchAuthenticatedAt(ctx context.Context, sessionID string, authenticatedAt,
+	idleExpiresAt time.Time) error {
+	return withRuntimePersistentDBClient(st.dbProvider, func(dbClient provider.DBClientInterface) error {
+		_, err := dbClient.ExecuteContext(ctx, queryTouchAuthenticatedAt,
+			authenticatedAt, authenticatedAt, nullableTime(idleExpiresAt), sessionID, st.deploymentID)
+		if err != nil {
+			return fmt.Errorf("failed to refresh session authentication time: %w", err)
+		}
 		return nil
 	})
 }
@@ -260,12 +281,84 @@ func (st *store) ListBySessionID(ctx context.Context, sessionID string) ([]Parti
 	return result, nil
 }
 
+// ListBySessionIDs returns the participants of all the given sessions, each session's participants
+// oldest first. Ids are queried in chunks to stay under the bind-parameter limit.
+func (st *store) ListBySessionIDs(ctx context.Context, sessionIDs []string) ([]Participant, error) {
+	if len(sessionIDs) == 0 {
+		return nil, nil
+	}
+	var result []Participant
+
+	err := withRuntimePersistentDBClient(st.dbProvider, func(dbClient provider.DBClientInterface) error {
+		for start := 0; start < len(sessionIDs); start += participantsBySessionIDsChunkSize {
+			end := min(start+participantsBySessionIDsChunkSize, len(sessionIDs))
+			chunk := sessionIDs[start:end]
+			args := make([]interface{}, 0, len(chunk)+1)
+			for _, id := range chunk {
+				args = append(args, id)
+			}
+			args = append(args, st.deploymentID)
+			results, queryErr := dbClient.QueryContext(ctx, buildListParticipantsBySessionIDsQuery(len(chunk)), args...)
+			if queryErr != nil {
+				return fmt.Errorf("failed to execute query: %w", queryErr)
+			}
+			for _, row := range results {
+				p, buildErr := buildParticipantFromRow(row)
+				if buildErr != nil {
+					return buildErr
+				}
+				result = append(result, p)
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
 // DeleteBySessionID removes all participants of a session.
 func (st *store) DeleteBySessionID(ctx context.Context, sessionID string) error {
 	return withRuntimePersistentDBClient(st.dbProvider, func(dbClient provider.DBClientInterface) error {
 		_, err := dbClient.ExecuteContext(ctx, queryDeleteParticipantsBySessionID, sessionID, st.deploymentID)
 		if err != nil {
 			return fmt.Errorf("failed to delete session participants: %w", err)
+		}
+		return nil
+	})
+}
+
+// ListByAppID returns every participation of the application, across sessions, oldest first.
+func (st *store) ListByAppID(ctx context.Context, appID string) ([]Participant, error) {
+	var result []Participant
+
+	err := withRuntimePersistentDBClient(st.dbProvider, func(dbClient provider.DBClientInterface) error {
+		results, queryErr := dbClient.QueryContext(ctx, queryListParticipantsByAppID, appID, st.deploymentID)
+		if queryErr != nil {
+			return fmt.Errorf("failed to execute query: %w", queryErr)
+		}
+		for _, row := range results {
+			p, buildErr := buildParticipantFromRow(row)
+			if buildErr != nil {
+				return buildErr
+			}
+			result = append(result, p)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+// DeleteParticipant removes one application's participation in one session.
+func (st *store) DeleteParticipant(ctx context.Context, sessionID, appID string) error {
+	return withRuntimePersistentDBClient(st.dbProvider, func(dbClient provider.DBClientInterface) error {
+		_, err := dbClient.ExecuteContext(ctx, queryDeleteParticipant, sessionID, appID, st.deploymentID)
+		if err != nil {
+			return fmt.Errorf("failed to delete session participant: %w", err)
 		}
 		return nil
 	})

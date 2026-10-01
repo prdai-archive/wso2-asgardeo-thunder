@@ -1,20 +1,5 @@
-/*
- * Copyright (c) 2026, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2026 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 package executor
 
@@ -179,9 +164,13 @@ func (e *otpExecutor) executeGenerate(ctx *providers.NodeContext,
 
 	execResp.RuntimeData[common.RuntimeKeyOTPSessionToken] = sessionToken
 	execResp.RuntimeData[common.RuntimeKeyOTPAttemptCount] = strconv.Itoa(attemptCount + 1)
+	// Published from the generated value rather than the configured otpLength property, since the
+	// property is clamped and may fall back to the server default.
+	execResp.AdditionalData[common.DataOTPLength] = strconv.Itoa(len(otpValue))
+	execResp.AdditionalData[common.DataOTPNumericOnly] = strconv.FormatBool(isNumericOTP(otpValue))
 	execResp.ForwardedData[common.ForwardedDataKeyTemplateData] = map[string]interface{}{
-		common.ForwardedDataKeyOTPCode:       otpValue,
-		common.ForwardedDataKeyExpiryMinutes: systemutils.SecondsToMinutes(expirySeconds),
+		common.ForwardedDataKeyOTPCode:    otpValue,
+		common.ForwardedDataKeyExpiryTime: systemutils.FormatExpiryDuration(expirySeconds),
 	}
 	execResp.Status = providers.ExecComplete
 
@@ -232,14 +221,14 @@ func (e *otpExecutor) resolveUserID(ctx *providers.NodeContext,
 	if providerErr != nil {
 		if providerErr.Code == entityprovider.ErrorCodeEntityNotFound {
 			execResp.Status = providers.ExecFailure
-			execResp.Error = &ErrUserNotFound
+			execResp.Error = errForEntityCategory(ErrEntityNotFound, categoryUnscoped)
 			return "", nil
 		}
 		return "", fmt.Errorf("failed to identify user: %s", providerErr.Error())
 	}
 	if identifiedUserID == nil || *identifiedUserID == "" {
 		execResp.Status = providers.ExecFailure
-		execResp.Error = &ErrUserNotFound
+		execResp.Error = errForEntityCategory(ErrEntityNotFound, categoryUnscoped)
 		return "", nil
 	}
 
@@ -299,7 +288,7 @@ func (e *otpExecutor) getAuthenticatedUser(ctx *providers.NodeContext,
 	}
 
 	credentials := map[string]interface{}{
-		"otp": map[string]interface{}{
+		authnprovidercm.CredentialTypeOTP: map[string]interface{}{
 			"sessionToken": sessionToken,
 			"otp":          providedOTP,
 		},
@@ -422,6 +411,16 @@ func (e *otpExecutor) resolveOTPProperties(ctx *providers.NodeContext) *notifcom
 		return nil
 	}
 	return &cfg
+}
+
+// isNumericOTP reports whether the OTP consists solely of ASCII digits.
+func isNumericOTP(otpValue string) bool {
+	for _, r := range otpValue {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 // getMaxOTPAttempts returns the maximum OTP generation attempts from NodeProperties,

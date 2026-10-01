@@ -1,24 +1,10 @@
-/*
- * Copyright (c) 2026, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2026 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 package providers
 
 import (
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -33,6 +19,16 @@ type ModelTestSuite struct {
 
 func TestModelSuite(t *testing.T) {
 	suite.Run(t, new(ModelTestSuite))
+}
+
+func (suite *ModelTestSuite) TestSubjectJSONFields() {
+	payload, err := json.Marshal(Subject{Category: "user", Type: "Customer", ID: "user-1"})
+	suite.Require().NoError(err)
+
+	var fields map[string]interface{}
+	suite.Require().NoError(json.Unmarshal(payload, &fields))
+	suite.Equal("user", fields["category"])
+	suite.Equal("Customer", fields["type"])
 }
 
 // AuthUser tests live in auth_user_test.go — the multi-provider AuthUser API
@@ -308,4 +304,139 @@ func (suite *ModelTestSuite) TestAttestationConfig_WithoutCredentials_PassesAppl
 	assert.Equal(suite.T(), "TEAM123", sanitized.Apple.TeamID)
 	assert.Equal(suite.T(), "com.example.app", sanitized.Apple.BundleID)
 	assert.Nil(suite.T(), sanitized.Android)
+}
+
+func (suite *ModelTestSuite) TestAttestationConfig_WithoutCredentials_PassesDevModeThrough() {
+	cfg := &AttestationConfig{DevMode: true}
+
+	sanitized := cfg.WithoutCredentials()
+
+	assert.True(suite.T(), sanitized.DevMode)
+}
+
+// ----- Application -----
+
+func (suite *ModelTestSuite) TestApplication_OAuthClientID() {
+	app := &Application{
+		InboundAuthConfig: []InboundAuthConfigWithSecret{
+			{
+				Type:        OAuthInboundAuthType,
+				OAuthConfig: &OAuthConfigWithSecret{ClientID: "client-1"},
+			},
+		},
+	}
+
+	assert.Equal(suite.T(), "client-1", app.OAuthClientID())
+}
+
+func (suite *ModelTestSuite) TestApplication_OAuthClientID_NoOAuthConfig() {
+	assert.Empty(suite.T(), (&Application{}).OAuthClientID())
+	assert.Empty(suite.T(), (*Application)(nil).OAuthClientID())
+	assert.Empty(suite.T(), (&Application{
+		InboundAuthConfig: []InboundAuthConfigWithSecret{{Type: OAuthInboundAuthType}},
+	}).OAuthClientID())
+}
+
+func (suite *ModelTestSuite) TestApplication_EntityCategoryIsNotSerialized() {
+	out, err := yaml.Marshal(&Application{ID: "app-1", EntityCategory: EntityCategoryAgent})
+
+	suite.Require().NoError(err)
+	assert.NotContains(suite.T(), string(out), "agent")
+}
+
+// ----- AuthorizationRuleMapping -----
+
+type AuthorizationRuleMappingModelTestSuite struct {
+	suite.Suite
+}
+
+func TestAuthorizationRuleMappingModelTestSuite(t *testing.T) {
+	suite.Run(t, new(AuthorizationRuleMappingModelTestSuite))
+}
+
+func (s *AuthorizationRuleMappingModelTestSuite) TestUnmarshalJSONAcceptsCurrentRulesShape() {
+	raw := `{
+		"claim": "level",
+		"valueType": "number",
+		"values": [
+			{"operator": "greater_than", "value": "5", "targets": [{"type": "role", "id": "role-1"}]}
+		]
+	}`
+
+	var mapping AuthorizationRuleMapping
+	s.Require().NoError(json.Unmarshal([]byte(raw), &mapping))
+
+	s.Equal(AuthorizationValueTypeNumber, mapping.ValueType)
+	s.Equal([]AuthorizationRule{
+		{Operator: AuthorizationOperatorGreaterThan, Value: "5", Targets: []AuthorizationTarget{
+			{Type: AuthorizationTargetRole, ID: "role-1"},
+		}},
+	}, mapping.Values)
+}
+
+func (s *AuthorizationRuleMappingModelTestSuite) TestUnmarshalJSONHandlesMissingAndNullValues() {
+	var withoutValues AuthorizationRuleMapping
+	s.Require().NoError(json.Unmarshal([]byte(`{"claim": "groups"}`), &withoutValues))
+	s.Empty(withoutValues.Values)
+
+	var nullValues AuthorizationRuleMapping
+	s.Require().NoError(json.Unmarshal([]byte(`{"claim": "groups", "values": null}`), &nullValues))
+	s.Empty(nullValues.Values)
+}
+
+func (s *AuthorizationRuleMappingModelTestSuite) TestUnmarshalJSONRejectsMalformedValues() {
+	var mapping AuthorizationRuleMapping
+	s.Error(json.Unmarshal([]byte(`{"claim": "groups", "values": "not-an-object-or-array"}`), &mapping))
+}
+
+func (s *AuthorizationRuleMappingModelTestSuite) TestEffectiveValueTypeDefaultsToString() {
+	s.Equal(AuthorizationValueTypeString, AuthorizationRuleMapping{}.EffectiveValueType())
+	s.Equal(AuthorizationValueTypeNumber,
+		AuthorizationRuleMapping{ValueType: AuthorizationValueTypeNumber}.EffectiveValueType())
+}
+
+func (s *AuthorizationRuleMappingModelTestSuite) TestAuthorizationOperatorIsValid() {
+	s.True(AuthorizationOperatorEquals.IsValid())
+	s.True(AuthorizationOperatorGreaterThanOrEqual.IsValid())
+	s.False(AuthorizationOperator("not-a-real-operator").IsValid())
+}
+
+func (s *AuthorizationRuleMappingModelTestSuite) TestAuthorizationOperatorIsOrdering() {
+	s.False(AuthorizationOperatorEquals.IsOrdering())
+	s.False(AuthorizationOperatorNotEquals.IsOrdering())
+	s.True(AuthorizationOperatorGreaterThan.IsOrdering())
+	s.True(AuthorizationOperatorLessThan.IsOrdering())
+	s.True(AuthorizationOperatorGreaterThanOrEqual.IsOrdering())
+	s.True(AuthorizationOperatorLessThanOrEqual.IsOrdering())
+}
+
+func (s *AuthorizationRuleMappingModelTestSuite) TestAuthorizationValueTypeIsValid() {
+	s.True(AuthorizationValueTypeString.IsValid())
+	s.True(AuthorizationValueTypeNumber.IsValid())
+	s.True(AuthorizationValueTypeBoolean.IsValid())
+	s.True(AuthorizationValueTypeArray.IsValid())
+	s.False(AuthorizationValueType("not-a-real-type").IsValid())
+}
+
+func (s *AuthorizationRuleMappingModelTestSuite) TestAuthorizationOperatorIsMembership() {
+	s.True(AuthorizationOperatorIncludes.IsMembership())
+	s.True(AuthorizationOperatorNotIncludes.IsMembership())
+	s.False(AuthorizationOperatorEquals.IsMembership())
+	s.False(AuthorizationOperatorNotEquals.IsMembership())
+	s.False(AuthorizationOperatorGreaterThan.IsMembership())
+}
+
+func (s *AuthorizationRuleMappingModelTestSuite) TestIsMultiValued() {
+	s.True(AuthorizationRuleMapping{ValueType: AuthorizationValueTypeArray}.IsMultiValued(),
+		"an array value type is always multi-valued")
+	s.True(AuthorizationRuleMapping{ValueType: AuthorizationValueTypeString, Delimiter: ","}.IsMultiValued(),
+		"a string with a delimiter is multi-valued")
+	s.False(AuthorizationRuleMapping{ValueType: AuthorizationValueTypeString}.IsMultiValued(),
+		"a string with no delimiter is a single value")
+	s.False(AuthorizationRuleMapping{}.IsMultiValued(),
+		"the default (unset) value type is string with no delimiter, a single value")
+	s.False(AuthorizationRuleMapping{ValueType: AuthorizationValueTypeNumber}.IsMultiValued(),
+		"a number is always a single value, delimiter is not applicable to it")
+	s.False(AuthorizationRuleMapping{ValueType: AuthorizationValueTypeBoolean}.IsMultiValued(),
+		"a boolean is always a single value, delimiter is not applicable to it")
 }

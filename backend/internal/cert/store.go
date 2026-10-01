@@ -1,20 +1,5 @@
-/*
- * Copyright (c) 2025, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2025 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 package cert
 
@@ -23,9 +8,9 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/thunder-id/thunderid/internal/system/config"
 	dbmodel "github.com/thunder-id/thunderid/internal/system/database/model"
 	dbprovider "github.com/thunder-id/thunderid/internal/system/database/provider"
+	"github.com/thunder-id/thunderid/internal/system/deployment"
 )
 
 // certificateStoreInterface defines the methods for certificate storage operations.
@@ -41,27 +26,31 @@ type certificateStoreInterface interface {
 
 // certificateStore implements the certificateStoreInterface for managing certificates.
 type certificateStore struct {
-	dbProvider   dbprovider.DBProviderInterface
-	deploymentID string
+	dbProvider dbprovider.DBProviderInterface
 }
 
 // NewCertificateStore creates a new instance of CertificateStore.
 func newCertificateStore() certificateStoreInterface {
 	return &certificateStore{
-		dbProvider:   dbprovider.GetDBProvider(),
-		deploymentID: config.GetServerRuntime().Config.Server.Identifier,
+		dbProvider: dbprovider.GetDBProvider(),
 	}
+}
+
+// scope returns the deployment id this request acts for, falling back to the configured
+// identifier for a context that never passed through the edge.
+func (s *certificateStore) scope(ctx context.Context) string {
+	return deployment.Resolve(ctx)
 }
 
 // GetCertificateByID retrieves a certificate by its ID.
 func (s *certificateStore) GetCertificateByID(ctx context.Context, id string) (*Certificate, error) {
-	return s.getCertificate(ctx, queryGetCertificateByID, id, s.deploymentID)
+	return s.getCertificate(ctx, queryGetCertificateByID, id, s.scope(ctx))
 }
 
 // GetCertificateByReference retrieves a certificate by its reference type and ID.
 func (s *certificateStore) GetCertificateByReference(ctx context.Context, refType CertificateReferenceType,
 	refID string) (*Certificate, error) {
-	return s.getCertificate(ctx, queryGetCertificateByReference, refType, refID, s.deploymentID)
+	return s.getCertificate(ctx, queryGetCertificateByReference, refType, refID, s.scope(ctx))
 }
 
 // getCertificate retrieves a certificate based on a query and its arguments.
@@ -136,7 +125,7 @@ func (s *certificateStore) CreateCertificate(ctx context.Context, cert *Certific
 	}
 
 	rows, err := dbClient.ExecuteContext(ctx, queryInsertCertificate, cert.ID, cert.RefType, cert.RefID, cert.Type,
-		cert.Value, s.deploymentID)
+		cert.Value, s.scope(ctx))
 	if err != nil {
 		return fmt.Errorf("failed to insert certificate: %w", err)
 	}
@@ -150,14 +139,14 @@ func (s *certificateStore) CreateCertificate(ctx context.Context, cert *Certific
 // UpdateCertificateByID updates a certificate by its ID.
 func (s *certificateStore) UpdateCertificateByID(ctx context.Context, existingCert, updatedCert *Certificate) error {
 	return s.updateCertificate(ctx, queryUpdateCertificateByID, existingCert.ID, updatedCert.Type, updatedCert.Value,
-		s.deploymentID)
+		s.scope(ctx))
 }
 
 // UpdateCertificateByReference updates a certificate by its reference type and ID.
 func (s *certificateStore) UpdateCertificateByReference(ctx context.Context,
 	existingCert, updatedCert *Certificate) error {
 	return s.updateCertificate(ctx, queryUpdateCertificateByReference, existingCert.RefType, existingCert.RefID,
-		updatedCert.Type, updatedCert.Value, s.deploymentID)
+		updatedCert.Type, updatedCert.Value, s.scope(ctx))
 }
 
 // updateCertificate updates a certificate based on a query and its arguments.
@@ -180,13 +169,13 @@ func (s *certificateStore) updateCertificate(ctx context.Context, query dbmodel.
 
 // DeleteCertificateByID deletes a certificate by its ID.
 func (s *certificateStore) DeleteCertificateByID(ctx context.Context, id string) error {
-	return s.deleteCertificate(ctx, queryDeleteCertificateByID, id, s.deploymentID)
+	return s.deleteCertificate(ctx, queryDeleteCertificateByID, id, s.scope(ctx))
 }
 
 // DeleteCertificateByReference deletes a certificate by its reference type and ID.
 func (s *certificateStore) DeleteCertificateByReference(ctx context.Context, refType CertificateReferenceType,
 	refID string) error {
-	return s.deleteCertificate(ctx, queryDeleteCertificateByReference, refType, refID, s.deploymentID)
+	return s.deleteCertificate(ctx, queryDeleteCertificateByReference, refType, refID, s.scope(ctx))
 }
 
 // deleteCertificate deletes a certificate based on a query and its arguments.

@@ -1,20 +1,5 @@
-/*
- * Copyright (c) 2025, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2025 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 package engine
 
@@ -44,7 +29,7 @@ func TestRBACEngineTestSuite(t *testing.T) {
 
 func (suite *RBACEngineTestSuite) SetupTest() {
 	suite.mockRoleService = rolemock.NewRoleServiceInterfaceMock(suite.T())
-	suite.engine = NewRBACEngine(suite.mockRoleService)
+	suite.engine = newRBACEngine(suite.mockRoleService)
 }
 
 func (suite *RBACEngineTestSuite) TestEvaluateAccessSuccess() {
@@ -55,7 +40,7 @@ func (suite *RBACEngineTestSuite) TestEvaluateAccessSuccess() {
 	}
 
 	suite.mockRoleService.On("GetAuthorizedPermissionsByResourceServer", mock.Anything, testUserID1,
-		[]string{"group1"}, "", []string{"document:read"}).
+		[]string{"group1"}, mock.Anything, "", []string{"document:read"}).
 		Return([]string{"document:read"}, nil)
 
 	result, err := suite.engine.EvaluateAccess(context.Background(), request)
@@ -73,7 +58,7 @@ func (suite *RBACEngineTestSuite) TestEvaluateAccessDenied() {
 	}
 
 	suite.mockRoleService.On("GetAuthorizedPermissionsByResourceServer", mock.Anything, testUserID1,
-		[]string{"group1"}, "", []string{"document:delete"}).
+		[]string{"group1"}, mock.Anything, "", []string{"document:delete"}).
 		Return([]string{}, nil)
 
 	result, err := suite.engine.EvaluateAccess(context.Background(), request)
@@ -100,7 +85,7 @@ func (suite *RBACEngineTestSuite) TestEvaluateAccessBatchPreservesOrder() {
 	}
 
 	suite.mockRoleService.On("GetAuthorizedPermissionsByResourceServer", mock.Anything, testUserID1,
-		[]string{"group1"}, "", []string{"document:read", "document:delete"}).
+		[]string{"group1"}, mock.Anything, "", []string{"document:read", "document:delete"}).
 		Return([]string{"document:read"}, nil)
 
 	result, err := suite.engine.EvaluateAccessBatch(context.Background(), request)
@@ -130,10 +115,10 @@ func (suite *RBACEngineTestSuite) TestEvaluateAccessBatchScopesByResourceServerI
 	}
 
 	suite.mockRoleService.On("GetAuthorizedPermissionsByResourceServer", mock.Anything, testUserID1,
-		[]string{"group1"}, "booking-api", []string{"read"}).
+		[]string{"group1"}, mock.Anything, "booking-api", []string{"read"}).
 		Return([]string{"read"}, nil)
 	suite.mockRoleService.On("GetAuthorizedPermissionsByResourceServer", mock.Anything, testUserID1,
-		[]string{"group1"}, "invoice-api", []string{"read"}).
+		[]string{"group1"}, mock.Anything, "invoice-api", []string{"read"}).
 		Return([]string{}, nil)
 
 	result, err := suite.engine.EvaluateAccessBatch(context.Background(), request)
@@ -154,7 +139,7 @@ func (suite *RBACEngineTestSuite) TestEvaluateAccessUsesActionNameAsPermission()
 	}
 
 	suite.mockRoleService.On("GetAuthorizedPermissionsByResourceServer", mock.Anything, testUserID1,
-		[]string(nil), "", []string{"document:read"}).
+		[]string(nil), mock.Anything, "", []string{"document:read"}).
 		Return([]string{"document:read"}, nil)
 
 	result, err := suite.engine.EvaluateAccess(context.Background(), request)
@@ -191,7 +176,7 @@ func (suite *RBACEngineTestSuite) TestEvaluateAccessRoleServiceError() {
 	}
 
 	suite.mockRoleService.On("GetAuthorizedPermissionsByResourceServer", mock.Anything, testUserID1,
-		[]string{"group1"}, "", []string{"document:read"}).
+		[]string{"group1"}, mock.Anything, "", []string{"document:read"}).
 		Return([]string(nil), roleServiceError)
 
 	result, err := suite.engine.EvaluateAccess(context.Background(), request)

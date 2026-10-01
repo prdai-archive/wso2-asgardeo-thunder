@@ -1,20 +1,5 @@
-/*
- * Copyright (c) 2025, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2025 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 // Package group provides group management functionality.
 package group
@@ -58,7 +43,14 @@ type GroupServiceInterface interface {
 	GetGroupMembers(ctx context.Context, groupID string, limit, offset int, includeDisplay bool) (
 		*MemberListResponse, *tidcommon.ServiceError)
 	ValidateGroupIDs(ctx context.Context, groupIDs []string) *tidcommon.ServiceError
+	// GetTransitiveAncestorGroups returns the IDs of every group containing the given group,
+	// directly or through nesting, excluding the group itself. It performs no authorization check
+	// of its own: the authorization layer calls it, so gating it would be circular.
+	GetTransitiveAncestorGroups(ctx context.Context, groupID string) ([]string, *tidcommon.ServiceError)
 	GetGroupsByIDs(ctx context.Context, groupIDs []string) (map[string]*Group, *tidcommon.ServiceError)
+	// GetGroupsByNames returns every group matching each name, keyed by name. A name is not
+	// guaranteed unique: the caller decides how to handle more than one match for a name.
+	GetGroupsByNames(ctx context.Context, names []string) (map[string][]*Group, *tidcommon.ServiceError)
 	AddGroupMembers(ctx context.Context, groupID string, members []Member) (*Group, *tidcommon.ServiceError)
 	RemoveGroupMembers(ctx context.Context, groupID string, members []Member) (*Group, *tidcommon.ServiceError)
 	AddMembersToGroups(ctx context.Context, members []Member,
@@ -861,6 +853,14 @@ func (gs *groupService) modifyGroupMembers(
 		return nil, svcErr
 	}
 
+	// Membership conveys every permission the group confers, including through its ancestors.
+	// Removal carries the same requirement.
+	if svcErr := gs.authzService.CanGrantMembership(
+		ctx, sysauthz.PrincipalTypeGroup, groupID,
+	); svcErr != nil {
+		return nil, svcErr
+	}
+
 	if svcErr := gs.validateEntityMembers(ctx, members, security.ActionUpdateGroup); svcErr != nil {
 		return nil, svcErr
 	}
@@ -901,6 +901,15 @@ func (gs *groupService) modifyGroupMembers(
 		); err != nil {
 			capturedSvcErr = err
 			return errors.New("rollback for unauthorized access")
+		}
+
+		// Re-evaluated inside the transaction, as the access check above is, since the group's
+		// assignments may change after the earlier check.
+		if svcErr := gs.authzService.CanGrantMembership(
+			txCtx, sysauthz.PrincipalTypeGroup, groupID,
+		); svcErr != nil {
+			capturedSvcErr = svcErr
+			return errors.New("rollback for disallowed grant")
 		}
 
 		if err := storeOp(txCtx, groupID, members); err != nil {
@@ -1187,6 +1196,46 @@ func (gs *groupService) GetGroupsByIDs(
 	return result, nil
 }
 
+// GetGroupsByNames retrieves groups by a list of names, keyed by name. A name may resolve to more
+// than one group across organization units; the caller decides how to handle that ambiguity.
+func (gs *groupService) GetGroupsByNames(
+	ctx context.Context, names []string,
+) (map[string][]*Group, *tidcommon.ServiceError) {
+	logger := log.GetLogger().With(log.String(log.LoggerKeyComponentName, loggerComponentName))
+
+	if len(names) == 0 {
+		return map[string][]*Group{}, nil
+	}
+
+	seen := make(map[string]struct{}, len(names))
+	uniqueNames := make([]string, 0, len(names))
+	for _, name := range names {
+		if _, ok := seen[name]; !ok {
+			seen[name] = struct{}{}
+			uniqueNames = append(uniqueNames, name)
+		}
+	}
+
+	groupDAOs, err := gs.groupStore.GetGroupsByNames(ctx, uniqueNames)
+	if err != nil {
+		logger.Error(ctx, "Failed to get groups by names", log.Error(err))
+		return nil, &tidcommon.InternalServerError
+	}
+
+	result := make(map[string][]*Group, len(groupDAOs))
+	for _, dao := range groupDAOs {
+		group := convertGroupDAOToGroup(GroupDAO{
+			ID:          dao.ID,
+			Name:        dao.Name,
+			Description: dao.Description,
+			OUID:        dao.OUID,
+		})
+		result[dao.Name] = append(result[dao.Name], &group)
+	}
+
+	return result, nil
+}
+
 // AddMembersToGroups adds members to multiple groups in a single transaction. All group IDs are
 // validated before the transaction begins; a single failure rolls back all assignments.
 func (gs *groupService) AddMembersToGroups(
@@ -1280,7 +1329,7 @@ func resolveGroupOUHandle(
 		return nil
 	}
 
-	ou, svcErr := ouService.GetOrganizationUnitByPath(ctx, grp.OUHandle)
+	ou, svcErr := ouService.GetOrganizationUnitByPath(security.WithRuntimeContext(ctx), grp.OUHandle)
 	if svcErr != nil {
 		return fmt.Errorf("organization unit with handle %q not found: %v", grp.OUHandle, svcErr)
 	}
@@ -1298,6 +1347,28 @@ func validatePaginationParams(limit, offset int) *tidcommon.ServiceError {
 		return &ErrorInvalidOffset
 	}
 	return nil
+}
+
+// GetTransitiveAncestorGroups returns the IDs of every group containing the given group, directly
+// or through nesting. A failure is surfaced as an error, never an empty list, since callers read
+// an empty ancestor set as "confers nothing".
+func (gs *groupService) GetTransitiveAncestorGroups(
+	ctx context.Context, groupID string,
+) ([]string, *tidcommon.ServiceError) {
+	logger := log.GetLogger().With(log.String(log.LoggerKeyComponentName, loggerComponentName))
+
+	if groupID == "" {
+		return nil, &ErrorMissingGroupID
+	}
+
+	ancestors, err := resolveTransitiveGroupAncestors(ctx, gs.groupStore, groupID)
+	if err != nil {
+		logger.Error(ctx, "Failed to resolve transitive ancestor groups",
+			log.String("groupID", groupID), log.Error(err))
+		return nil, &tidcommon.InternalServerError
+	}
+
+	return ancestors, nil
 }
 
 // checkGroupAccess performs an authorization check on the group resource against the current caller.

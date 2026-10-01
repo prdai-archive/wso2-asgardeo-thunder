@@ -1,20 +1,5 @@
-/*
- * Copyright (c) 2026, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2026 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 package group
 
@@ -381,6 +366,23 @@ func (c *compositeGroupStore) GetGroupsByIDs(ctx context.Context, groupIDs []str
 	return append(dbGroups, fileGroups...), nil
 }
 
+// GetGroupsByNames returns groups matching the given names from both stores. Unlike GetGroupsByIDs, a
+// name is not unique across organization units, so both stores are always queried in full rather than
+// stopping once a name is found in one of them.
+func (c *compositeGroupStore) GetGroupsByNames(ctx context.Context, names []string) ([]GroupBasicDAO, error) {
+	dbGroups, err := c.dbStore.GetGroupsByNames(ctx, names)
+	if err != nil {
+		return nil, err
+	}
+
+	fileGroups, err := c.fileStore.GetGroupsByNames(ctx, names)
+	if err != nil {
+		return nil, err
+	}
+
+	return mergeGroupBasicDAOs(dbGroups, fileGroups), nil
+}
+
 // IsGroupDeclarative checks if the group exists in the file-based store.
 func (c *compositeGroupStore) IsGroupDeclarative(ctx context.Context, id string) (bool, error) {
 	return c.fileStore.IsGroupDeclarative(ctx, id)
@@ -419,6 +421,42 @@ func (c *compositeGroupStore) GetTransitiveGroupsForEntity(
 		}
 	}
 	return result, nil
+}
+
+// GetTransitiveAncestorGroups resolves the ancestor chain of a single group, unlike
+// GetTransitiveGroupsForEntity resolving a chain that crosses between the two stores.
+func (c *compositeGroupStore) GetTransitiveAncestorGroups(
+	ctx context.Context, groupID string,
+) ([]string, error) {
+	return resolveTransitiveGroupAncestors(ctx, c, groupID)
+}
+
+// GetDirectGroupParents returns the deduplicated IDs of groups from both stores that directly
+// contain any of the given groups. Unioning at every level is what lets a caller resolve
+// mixed-store nesting, which GetTransitiveGroupsForEntity cannot do.
+func (c *compositeGroupStore) GetDirectGroupParents(
+	ctx context.Context, groupIDs []string,
+) ([]string, error) {
+	dbParents, err := c.dbStore.GetDirectGroupParents(ctx, groupIDs)
+	if err != nil {
+		return nil, err
+	}
+
+	fileParents, err := c.fileStore.GetDirectGroupParents(ctx, groupIDs)
+	if err != nil {
+		return nil, err
+	}
+
+	seen := make(map[string]bool, len(dbParents)+len(fileParents))
+	parents := make([]string, 0, len(dbParents)+len(fileParents))
+	for _, id := range append(dbParents, fileParents...) {
+		if seen[id] {
+			continue
+		}
+		seen[id] = true
+		parents = append(parents, id)
+	}
+	return parents, nil
 }
 
 // mergeMembers deduplicates and merges members from database and file stores.

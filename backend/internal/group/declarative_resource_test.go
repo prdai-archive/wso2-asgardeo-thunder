@@ -1,20 +1,5 @@
-/*
- * Copyright (c) 2026, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2026 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 package group
 
@@ -35,6 +20,9 @@ import (
 	declarativeresource "github.com/thunder-id/thunderid/internal/system/declarative_resource"
 	"github.com/thunder-id/thunderid/internal/system/declarative_resource/entity"
 	"github.com/thunder-id/thunderid/internal/system/log"
+	"github.com/thunder-id/thunderid/internal/system/security"
+	"github.com/thunder-id/thunderid/pkg/thunderidengine/providers"
+	"github.com/thunder-id/thunderid/tests/mocks/oumock"
 )
 
 // GroupExporterTestSuite contains tests for the groupExporter.
@@ -531,6 +519,29 @@ func (suite *GroupExporterTestSuite) TestValidateGroupWrapper_MissingOUID() {
 
 	assert.Error(suite.T(), err)
 	assert.Contains(suite.T(), err.Error(), "ouId or ouHandle is required")
+}
+
+// TestValidateGroupWrapper_OUHandleUsesRuntimeContext verifies the ouHandle lookup carries a
+// runtime context. Declarative resources load at server boot with no authenticated caller, and
+// GetOrganizationUnitByPath's authorization check denies unauthenticated, non-runtime callers;
+// a plain context here would make every ouHandle-based group fail to load with a misleading
+// "organization unit ... not found" error even though the OU exists. Regression test for that.
+func (suite *GroupExporterTestSuite) TestValidateGroupWrapper_OUHandleUsesRuntimeContext() {
+	ouSvc := oumock.NewOrganizationUnitServiceInterfaceMock(suite.T())
+	ouSvc.EXPECT().
+		GetOrganizationUnitByPath(mock.MatchedBy(security.IsRuntimeContext), "root/eng").
+		Return(providers.OrganizationUnit{ID: "ou-123"}, nil).Once()
+
+	grp := &groupDeclarativeResource{
+		ID:       "group1",
+		Name:     "Admins",
+		OUHandle: "root/eng",
+	}
+
+	err := validateGroupWrapper(grp, nil, nil, ouSvc)
+
+	assert.NoError(suite.T(), err)
+	assert.Equal(suite.T(), "ou-123", grp.OUID)
 }
 
 // Test validateGroupWrapper - duplicate ID in DB store

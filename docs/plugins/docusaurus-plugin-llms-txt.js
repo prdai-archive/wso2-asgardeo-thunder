@@ -1,20 +1,5 @@
-/**
- * Copyright (c) 2026, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied. See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2026 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 const fs = require('fs');
 const path = require('path');
@@ -204,14 +189,16 @@ module.exports = function pluginLlmsTxt(context, options = {}) {
         fs.writeFileSync(path.join(outDir, fileName), content);
         written++;
 
-        // Also write llms.txt inside the versioned docs path so
-        // /docs/next/llms.txt resolves alongside the docs it describes.
-        // Derive the docs route base from the first doc's permalink (e.g. "/docs/next/foo"
-        // → "docs") rather than hardcoding "docs", so custom routeBasePath configs work.
-        const firstPermalink = version.docs?.[0]?.permalink ?? '';
-        const docsRouteBase = firstPermalink.split('/').filter(Boolean)[0] || 'docs';
-        const versionUrlPath = version.versionName === 'current' ? 'next' : version.versionName;
-        const versionedLlmsPath = path.join(outDir, docsRouteBase, versionUrlPath, 'llms.txt');
+        // Also write llms.txt inside the version's own docs path so /docs/llms.txt
+        // (last version at the root) and /docs/next/llms.txt resolve alongside the docs
+        // they describe. Use the version's resolved base path (version.path, e.g. "/docs"
+        // or "/docs/next") so it follows lastVersion and custom routeBasePath instead of
+        // assuming the URL segment equals the version name.
+        const baseUrl = siteConfig.baseUrl || '/';
+        const versionBase = version.path.startsWith(baseUrl)
+          ? version.path.slice(baseUrl.length)
+          : version.path.replace(/^\//, '');
+        const versionedLlmsPath = path.join(outDir, versionBase, 'llms.txt');
         fs.mkdirSync(path.dirname(versionedLlmsPath), {recursive: true});
         fs.writeFileSync(versionedLlmsPath, content);
         written++;

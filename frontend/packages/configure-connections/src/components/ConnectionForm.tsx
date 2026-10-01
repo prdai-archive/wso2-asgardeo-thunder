@@ -1,20 +1,5 @@
-/**
- * Copyright (c) 2025, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied. See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2025 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 import {
   Box,
@@ -22,7 +7,10 @@ import {
   Divider,
   FormControl,
   FormControlLabel,
+  FormHelperText,
   FormLabel,
+  MenuItem,
+  Select,
   Stack,
   Switch,
   TextField,
@@ -30,6 +18,7 @@ import {
 } from '@wso2/oxygen-ui';
 import {type JSX, type ReactNode, useMemo, useState} from 'react';
 import {Trans, useTranslation} from 'react-i18next';
+import KeyValuePairsField from './KeyValuePairsField';
 import MaskedSecretField from './MaskedSecretField';
 import ReadOnlyCopyField from './ReadOnlyCopyField';
 import {fieldsForMode, type ConnectionFieldDef} from '../config/connectionFormFields';
@@ -163,6 +152,42 @@ export default function ConnectionForm({
               error={fieldError(field.name)}
               hint={field.hintKey ? t(field.hintKey) : undefined}
             />
+          );
+        } else if (field.kind === 'key-value') {
+          fieldContent = (
+            <KeyValuePairsField
+              id={`connection-field-${field.name}`}
+              label={label}
+              value={values[field.name] ?? ''}
+              onChange={(next) => setField(field.name, next)}
+              hint={field.hintKey ? renderHint(field.hintKey) : undefined}
+              namePlaceholder={field.placeholder}
+              addLabel={field.addLabelKey ? t(field.addLabelKey) : t('form.keyValue.add')}
+            />
+          );
+        } else if (field.kind === 'select') {
+          const error: string | undefined = fieldError(field.name);
+          fieldContent = (
+            <FormControl fullWidth required={isRequiredNow(field)} error={Boolean(error)}>
+              <FormLabel htmlFor={`connection-field-${field.name}`}>{label}</FormLabel>
+              <Select
+                id={`connection-field-${field.name}`}
+                value={values[field.name] ?? ''}
+                onChange={(e) => setField(field.name, e.target.value)}
+                data-testid={`connection-field-select-${field.name}`}
+              >
+                {(field.options ?? []).map((option) => (
+                  <MenuItem key={option.value} value={option.value}>
+                    {option.label}
+                  </MenuItem>
+                ))}
+              </Select>
+              {error ? (
+                <FormHelperText>{error}</FormHelperText>
+              ) : (
+                field.hintKey && <FormHelperText>{t(field.hintKey)}</FormHelperText>
+              )}
+            </FormControl>
           );
         } else if (field.kind === 'readonly-copy') {
           fieldContent = (

@@ -1,20 +1,5 @@
-/*
- * Copyright (c) 2025, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2025 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 package export
 
@@ -49,6 +34,22 @@ var (
 		ErrorDescription: tidcommon.I18nMessage{
 			Key:          "error.exportservice.no_resources_found_description",
 			DefaultValue: "No valid resources found for the provided identifiers",
+		},
+	}
+
+	// ErrorDuplicateTemplateVariable is returned when two resources in one export claim the same
+	// template variable. The export is refused rather than returned, because a bundle where two
+	// resources share one variable imports both with the same value.
+	ErrorDuplicateTemplateVariable = tidcommon.ServiceError{
+		Type: tidcommon.ClientErrorType,
+		Code: "EXP-1003",
+		Error: tidcommon.I18nMessage{
+			Key:          "error.exportservice.duplicate_template_variable",
+			DefaultValue: "Duplicate template variable",
+		},
+		ErrorDescription: tidcommon.I18nMessage{
+			Key:          "error.exportservice.duplicate_template_variable_description",
+			DefaultValue: "Two resources derive the same template variable, so both would import one value",
 		},
 	}
 )

@@ -1,20 +1,5 @@
-/*
- * Copyright (c) 2026, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied. See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2026 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 package importer
 
@@ -36,7 +21,6 @@ import (
 	serverconst "github.com/thunder-id/thunderid/internal/system/constants"
 	i18nmgt "github.com/thunder-id/thunderid/internal/system/i18n/mgt"
 	"github.com/thunder-id/thunderid/internal/system/log"
-	"github.com/thunder-id/thunderid/internal/user"
 	"github.com/thunder-id/thunderid/internal/vc/credential"
 	"github.com/thunder-id/thunderid/internal/vc/presentation"
 )
@@ -223,7 +207,11 @@ func (s *importService) importEntityType(
 
 	category := req.Category
 	if category == "" {
-		category = entitytype.TypeCategoryUser
+		if doc.ResourceType == resourceTypeAgentType {
+			category = entitytype.TypeCategoryAgent
+		} else {
+			category = entitytype.TypeCategoryUser
+		}
 	}
 	if !category.IsValid() {
 		return ImportItemOutcome{
@@ -703,7 +691,7 @@ func (s *importService) importUser(
 			Code: ErrorInvalidYAMLContent.Code, Message: fmt.Sprintf("failed to marshal user attributes: %v", err)}
 	}
 
-	userReq := &user.User{
+	userReq := &providers.User{
 		ID:         req.ID,
 		OUID:       req.OUID,
 		Type:       req.Type,
@@ -946,30 +934,49 @@ func (s *importService) importAgent(
 
 	normalizeAgentOAuthConfigForImport(ctx, &req)
 
-	createReq := &agentmodel.Agent{
-		ID:                 req.ID,
-		OUID:               req.OUID,
-		OUHandle:           req.OUHandle,
-		Type:               req.Type,
-		Name:               req.Name,
-		Description:        req.Description,
-		LogoURL:            req.LogoURL,
-		Owner:              req.Owner,
-		Attributes:         attributesJSON,
-		InboundAuthProfile: req.InboundAuthProfile,
-		InboundAuthConfig:  req.InboundAuthConfig,
+	createReq := &providers.Agent{
+		ID:          req.ID,
+		OUID:        req.OUID,
+		OUHandle:    req.OUHandle,
+		Type:        req.Type,
+		Name:        req.Name,
+		Description: req.Description,
+		LogoURL:     req.LogoURL,
+		Owner:       req.Owner,
+		Attributes:  attributesJSON,
+		InboundAuthProfile: providers.InboundAuthProfile{
+			AuthFlowID:                req.AuthFlowID,
+			AuthFlowHandle:            req.AuthFlowHandle,
+			RegistrationFlowID:        req.RegistrationFlowID,
+			RegistrationFlowHandle:    req.RegistrationFlowHandle,
+			IsRegistrationFlowEnabled: req.IsRegistrationFlowEnabled,
+			RecoveryFlowID:            req.RecoveryFlowID,
+			RecoveryFlowHandle:        req.RecoveryFlowHandle,
+			IsRecoveryFlowEnabled:     req.IsRecoveryFlowEnabled,
+			SignOutFlowID:             req.SignOutFlowID,
+			SignOutFlowHandle:         req.SignOutFlowHandle,
+			ThemeID:                   req.ThemeID,
+			LayoutID:                  req.LayoutID,
+			Assertion:                 req.Assertion,
+			LoginConsent:              req.LoginConsent,
+			AllowedUserTypes:          req.AllowedUserTypes,
+			AllowedAgentTypes:         req.AllowedAgentTypes,
+			PasskeyAllowedOrigins:     req.PasskeyAllowedOrigins,
+			Attestation:               req.Attestation,
+		},
+		InboundAuthConfig: req.InboundAuthConfig,
 	}
 	updateReq := &agentmodel.UpdateAgentRequest{
-		OUID:               req.OUID,
-		OUHandle:           req.OUHandle,
-		Type:               req.Type,
-		Name:               req.Name,
-		Description:        req.Description,
-		LogoURL:            req.LogoURL,
-		Owner:              req.Owner,
-		Attributes:         attributesJSON,
-		InboundAuthProfile: req.InboundAuthProfile,
-		InboundAuthConfig:  req.InboundAuthConfig,
+		OUID:                  req.OUID,
+		OUHandle:              req.OUHandle,
+		Type:                  req.Type,
+		Name:                  req.Name,
+		Description:           req.Description,
+		LogoURL:               req.LogoURL,
+		Owner:                 req.Owner,
+		Attributes:            attributesJSON,
+		InboundAuthProfileReq: req.InboundAuthProfileReq,
+		InboundAuthConfig:     req.InboundAuthConfig,
 	}
 
 	if dryRun {
@@ -1109,6 +1116,14 @@ func (s *importService) importPresentationDefinition(
 		}
 	}
 
+	resolvedOUID, svcErr := s.resolveImportOUHandle(
+		ctx, resourceTypePresentationDefinition, dto.ID, dto.Handle, dto.OUID, dto.OUHandle)
+	if svcErr != nil {
+		return serviceErrorOutcome(
+			resourceTypePresentationDefinition, dto.ID, dto.Handle, operationCreate, svcErr)
+	}
+	dto.OUID = resolvedOUID
+
 	if dryRun {
 		if options.IsUpsertEnabled() && dto.ID != "" {
 			_, svcErr := s.presentationDefinitionService.GetPresentationDefinition(ctx, dto.ID)
@@ -1163,6 +1178,13 @@ func (s *importService) importCredentialConfiguration(
 			Message:      fmt.Sprintf("failed to decode credential configuration document: %v", err),
 		}
 	}
+
+	resolvedOUID, svcErr := s.resolveImportOUHandle(
+		ctx, resourceTypeCredentialConfiguration, dto.ID, dto.Handle, dto.OUID, dto.OUHandle)
+	if svcErr != nil {
+		return serviceErrorOutcome(resourceTypeCredentialConfiguration, dto.ID, dto.Handle, operationCreate, svcErr)
+	}
+	dto.OUID = resolvedOUID
 
 	if dryRun {
 		if options.IsUpsertEnabled() && dto.ID != "" {

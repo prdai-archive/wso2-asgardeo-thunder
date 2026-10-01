@@ -1,20 +1,5 @@
-/*
- * Copyright (c) 2025, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2025 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 package idp
 
@@ -34,9 +19,6 @@ import (
 	sysutils "github.com/thunder-id/thunderid/internal/system/utils"
 	"github.com/thunder-id/thunderid/pkg/thunderidengine/providers"
 )
-
-// subClaim is the OIDC subject identifier claim, which is always preserved during attribute mapping.
-const subClaim = "sub"
 
 // GetPropertyValue returns the plain-text value for the named property from the slice,
 // or an empty string if the property is absent or its value cannot be retrieved.
@@ -88,7 +70,7 @@ func GetMappedUserType(idp *providers.IDPDTO, claims map[string]interface{}) str
 	resolution := idp.AttributeConfiguration.UserTypeResolution
 	externalAttribute := strings.TrimSpace(resolution.ExternalAttribute)
 	if externalAttribute != "" {
-		if value, ok := getNestedValue(claims, externalAttribute); ok {
+		if value, ok := sysutils.GetNestedValue(claims, externalAttribute); ok {
 			key := sysutils.ConvertInterfaceValueToString(value)
 			if len(resolution.ValueMapping) > 0 {
 				if userType, ok := resolution.ValueMapping[key]; ok {
@@ -120,8 +102,210 @@ func GetAttributeMappings(idp *providers.IDPDTO, claims map[string]interface{}) 
 	return nil
 }
 
-// ApplyAttributeMappings applies external→local attribute mappings. Unmapped attributes pass through;
-// mapped values take precedence on collision. Returns attrs unchanged when no mappings are configured.
+// appendToken trims raw and appends it to tokens, unless it is empty or whitespace-only.
+func appendToken(tokens []string, raw string) []string {
+	if token := strings.TrimSpace(raw); token != "" {
+		return append(tokens, token)
+	}
+	return tokens
+}
+
+// normalizeClaimValueTokens splits a claim value into the tokens a condition is evaluated against.
+// A scalar string with no delimiter is used whole and untrimmed, since it may carry meaningful whitespace.
+func normalizeClaimValueTokens(value interface{}, delimiter string) []string {
+	switch v := value.(type) {
+	case []interface{}:
+		var tokens []string
+		for _, item := range v {
+			tokens = appendToken(tokens, sysutils.ConvertInterfaceValueToString(item))
+		}
+		return tokens
+	case []string:
+		var tokens []string
+		for _, item := range v {
+			tokens = appendToken(tokens, item)
+		}
+		return tokens
+	case string:
+		if delimiter == "" {
+			if strings.TrimSpace(v) == "" {
+				return nil
+			}
+			return []string{v}
+		}
+		var tokens []string
+		for _, part := range strings.Split(v, delimiter) {
+			tokens = appendToken(tokens, part)
+		}
+		return tokens
+	default:
+		return appendToken(nil, sysutils.ConvertInterfaceValueToString(v))
+	}
+}
+
+// conditionMatches reports whether operator/value is satisfied by tokens. includes/not_includes test
+// whole-set membership; every other operator matches if any one token satisfies it.
+func conditionMatches(
+	valueType providers.AuthorizationValueType, operator providers.AuthorizationOperator, value string, tokens []string,
+) bool {
+	switch operator {
+	case providers.AuthorizationOperatorIncludes:
+		return slices.Contains(tokens, value)
+	case providers.AuthorizationOperatorNotIncludes:
+		return !slices.Contains(tokens, value)
+	}
+	for _, token := range tokens {
+		if evaluateScalarCondition(valueType, operator, value, token) {
+			return true
+		}
+	}
+	return false
+}
+
+// evaluateScalarCondition reports whether token satisfies operator against value, both parsed per
+// valueType. A token that fails to parse as the declared type never matches (fail-closed).
+func evaluateScalarCondition(
+	valueType providers.AuthorizationValueType, operator providers.AuthorizationOperator, value, token string,
+) bool {
+	switch valueType {
+	case providers.AuthorizationValueTypeNumber:
+		// Whitespace around a number is never significant, unlike in a string comparison, so both
+		// sides are trimmed before parsing.
+		tokenNum, tokenErr := strconv.ParseFloat(strings.TrimSpace(token), 64)
+		ruleNum, ruleErr := strconv.ParseFloat(strings.TrimSpace(value), 64)
+		if tokenErr != nil || ruleErr != nil {
+			return false
+		}
+		switch operator {
+		case providers.AuthorizationOperatorEquals:
+			return tokenNum == ruleNum
+		case providers.AuthorizationOperatorNotEquals:
+			return tokenNum != ruleNum
+		case providers.AuthorizationOperatorGreaterThan:
+			return tokenNum > ruleNum
+		case providers.AuthorizationOperatorLessThan:
+			return tokenNum < ruleNum
+		case providers.AuthorizationOperatorGreaterThanOrEqual:
+			return tokenNum >= ruleNum
+		case providers.AuthorizationOperatorLessThanOrEqual:
+			return tokenNum <= ruleNum
+		}
+		return false
+	case providers.AuthorizationValueTypeBoolean:
+		tokenBool, tokenErr := strconv.ParseBool(strings.TrimSpace(token))
+		ruleBool, ruleErr := strconv.ParseBool(strings.TrimSpace(value))
+		if tokenErr != nil || ruleErr != nil {
+			return false
+		}
+		switch operator {
+		case providers.AuthorizationOperatorEquals:
+			return tokenBool == ruleBool
+		case providers.AuthorizationOperatorNotEquals:
+			return tokenBool != ruleBool
+		}
+		return false
+	default: // AuthorizationValueTypeString
+		switch operator {
+		case providers.AuthorizationOperatorEquals:
+			return token == value
+		case providers.AuthorizationOperatorNotEquals:
+			return token != value
+		}
+		return false
+	}
+}
+
+// GetRuleAuthorizationTargets resolves the local roles, groups, and permissions the IDP's
+// AuthorizationRuleMapping grants for claims, deduplicated across every matching rule.
+func GetRuleAuthorizationTargets(
+	idp *providers.IDPDTO, claims map[string]interface{},
+) []providers.AuthorizationTarget {
+	if idp == nil || idp.AttributeConfiguration == nil || idp.AttributeConfiguration.AuthorizationMapping == nil {
+		return nil
+	}
+
+	var targets []providers.AuthorizationTarget
+	for _, mapping := range idp.AttributeConfiguration.AuthorizationMapping.Rules {
+		value, ok := sysutils.GetNestedValue(claims, mapping.Claim)
+		if !ok {
+			continue
+		}
+		tokens := normalizeClaimValueTokens(value, mapping.Delimiter)
+		valueType := mapping.EffectiveValueType()
+		for _, rule := range mapping.Values {
+			if conditionMatches(valueType, rule.Operator, rule.Value, tokens) {
+				targets = append(targets, rule.Targets...)
+			}
+		}
+	}
+	return dedupeAuthorizationTargets(targets)
+}
+
+// SplitAuthorizationTargets separates mapped targets by kind: roles/groups go to the RBAC engine as
+// subject state, permissions are direct grants with no role or group to resolve.
+func SplitAuthorizationTargets(
+	targets []providers.AuthorizationTarget,
+) (roleIDs, groupIDs []string, permissions []providers.AuthorizationTarget) {
+	for _, target := range targets {
+		switch target.Type {
+		case providers.AuthorizationTargetRole:
+			roleIDs = append(roleIDs, target.ID)
+		case providers.AuthorizationTargetGroup:
+			groupIDs = append(groupIDs, target.ID)
+		case providers.AuthorizationTargetPermission:
+			permissions = append(permissions, target)
+		}
+	}
+	return roleIDs, groupIDs, permissions
+}
+
+// UnionMappedPermissionTargets adds any mapped permission target for the given resource server and a
+// requested permission, granting it directly without the RBAC engine.
+func UnionMappedPermissionTargets(
+	authorizedPermissions, requestedPermissions []string,
+	mappedPermissions []providers.AuthorizationTarget,
+	resourceServerID string,
+) []string {
+	for _, target := range mappedPermissions {
+		if target.ResourceServerID != resourceServerID {
+			continue
+		}
+		if !slices.Contains(requestedPermissions, target.Permission) {
+			continue
+		}
+		if slices.Contains(authorizedPermissions, target.Permission) {
+			continue
+		}
+		authorizedPermissions = append(authorizedPermissions, target.Permission)
+	}
+	return authorizedPermissions
+}
+
+// dedupeAuthorizationTargets removes duplicate targets while preserving first-seen order.
+func dedupeAuthorizationTargets(targets []providers.AuthorizationTarget) []providers.AuthorizationTarget {
+	if len(targets) == 0 {
+		return targets
+	}
+	seen := make(map[providers.AuthorizationTarget]bool, len(targets))
+	result := make([]providers.AuthorizationTarget, 0, len(targets))
+	for _, target := range targets {
+		if seen[target] {
+			continue
+		}
+		seen[target] = true
+		result = append(result, target)
+	}
+	return result
+}
+
+// ApplyAttributeMappings applies external→local attribute mappings. Mappings copy rather than rename:
+// every incoming attribute is preserved and the mapped value is published under the local name as
+// well. Mapped values take precedence on collision. Returns attrs unchanged when no mappings are
+// configured.
+//
+// Copying matters because one external claim can legitimately feed two local attributes, and because
+// consuming the source silently drops it. Mapping email onto a required username, for example, would
+// otherwise leave the identity with no email at all.
 func ApplyAttributeMappings(
 	attrs map[string]interface{},
 	mappings []providers.AttributeMapping,
@@ -130,52 +314,17 @@ func ApplyAttributeMappings(
 		return attrs
 	}
 
-	mappedSources := make(map[string]bool, len(mappings))
-	for _, m := range mappings {
-		// sub is always preserved as-is; it must not be consumed by a mapping.
-		if m.ExternalAttribute == subClaim {
-			continue
-		}
-		mappedSources[m.ExternalAttribute] = true
-	}
-
-	result := make(map[string]interface{}, len(attrs))
+	result := make(map[string]interface{}, len(attrs)+len(mappings))
 	for key, value := range attrs {
-		if !mappedSources[key] {
-			result[key] = value
-		}
+		result[key] = value
 	}
 	for _, m := range mappings {
-		if value, ok := getNestedValue(attrs, m.ExternalAttribute); ok {
+		if value, ok := sysutils.GetNestedValue(attrs, m.ExternalAttribute); ok {
 			result[m.LocalAttribute] = value
 		}
 	}
 
 	return result
-}
-
-// getNestedValue resolves a value by exact key first, then by dot-notation path through nested maps.
-func getNestedValue(data map[string]interface{}, path string) (interface{}, bool) {
-	if value, ok := data[path]; ok {
-		return value, true
-	}
-	if !strings.Contains(path, ".") {
-		return nil, false
-	}
-
-	current := interface{}(data)
-	for _, segment := range strings.Split(path, ".") {
-		obj, ok := current.(map[string]interface{})
-		if !ok {
-			return nil, false
-		}
-		value, exists := obj[segment]
-		if !exists {
-			return nil, false
-		}
-		current = value
-	}
-	return current, true
 }
 
 // validateAttributeMappingShape validates the external→local mappings independently of any user type
@@ -397,7 +546,28 @@ func validateIDPProperties(ctx context.Context, idpType providers.IDPType, prope
 		}
 	}
 
+	// Seed the email scope for GitHub IDPs
+	if idpType == providers.IDPTypeGitHub {
+		if err := ensureDefaultGitHubScopes(ctx, filteredPropsMap, logger); err != nil {
+			return nil, err
+		}
+	}
+
 	return propertyMapToSlice(filteredPropsMap), nil
+}
+
+// readScopesValue reads the raw value of a scopes property. Shared by the per-provider scope defaults
+// so the failure is reported under a single i18n key rather than one per caller.
+func readScopesValue(scopesProp cmodels.Property) (string, *tidcommon.ServiceError) {
+	scopesValue, err := scopesProp.GetValue()
+	if err != nil {
+		return "", tidcommon.CustomServiceError(ErrorInvalidIDPProperty, tidcommon.I18nMessage{
+			Key:          "error.idpservice.scopes_value_get_failed_description",
+			DefaultValue: "failed to get scopes value: {{param(error)}}",
+			Params:       map[string]string{"error": err.Error()},
+		})
+	}
+	return scopesValue, nil
 }
 
 // ensureOpenIDScope ensures that the openid scope is present in the scopes property,
@@ -413,13 +583,9 @@ func ensureOpenIDScope(ctx context.Context, propertyMap map[string]cmodels.Prope
 		return nil
 	}
 
-	scopesValue, err := scopesProp.GetValue()
-	if err != nil {
-		return tidcommon.CustomServiceError(ErrorInvalidIDPProperty, tidcommon.I18nMessage{
-			Key:          "error.idpservice.scopes_value_get_failed_description",
-			DefaultValue: "failed to get scopes value: {{param(error)}}",
-			Params:       map[string]string{"error": err.Error()},
-		})
+	scopesValue, svcErr := readScopesValue(scopesProp)
+	if svcErr != nil {
+		return svcErr
 	}
 
 	scopes := sysutils.ParseStringArray(scopesValue, ",")
@@ -448,6 +614,64 @@ func ensureOpenIDScope(ctx context.Context, propertyMap map[string]cmodels.Prope
 	}
 
 	return nil
+}
+
+// ensureDefaultGitHubScopes seeds the GitHub email scope when no scopes are supplied, leaving explicitly
+// configured scopes untouched. Applied here rather than through the type's default property map,
+// because those values are rewritten as URLs by resolveEndpointDefaults.
+func ensureDefaultGitHubScopes(ctx context.Context, propertyMap map[string]cmodels.Property,
+	logger *log.Logger) *tidcommon.ServiceError {
+	scopesProp, exists := propertyMap[PropScopes]
+	if !exists {
+		return createAndAppendProperty(ctx, propertyMap, PropScopes, defaultGitHubScopes, false, logger)
+	}
+
+	scopesValue, svcErr := readScopesValue(scopesProp)
+	if svcErr != nil {
+		return svcErr
+	}
+
+	for _, scope := range sysutils.ParseStringArray(scopesValue, ",") {
+		if scope != "" {
+			return nil
+		}
+	}
+
+	return createAndAppendProperty(ctx, propertyMap, PropScopes, defaultGitHubScopes, false, logger)
+}
+
+// scopesGrantEmail reports whether the effective scopes let the connection read an email address.
+// Generic OAuth is absent by design as we cannot infer an arbitrary provider's scope semantics.
+func scopesGrantEmail(idpType providers.IDPType, scopes []string) bool {
+	switch idpType {
+	case providers.IDPTypeGoogle, providers.IDPTypeOIDC:
+		return slices.Contains(scopes, emailScope)
+	case providers.IDPTypeGitHub:
+		return slices.Contains(scopes, gitHubUserEmailScope) || slices.Contains(scopes, gitHubUserScope)
+	default:
+		return false
+	}
+}
+
+// defaultUsernameSourceAttribute returns the external claim used for the default username mapping,
+// or "" when the provider has none. Google and OIDC use email, while GitHub uses its login claim.
+func defaultUsernameSourceAttribute(idpType providers.IDPType) string {
+	switch idpType {
+	case providers.IDPTypeGoogle, providers.IDPTypeOIDC:
+		return emailClaim
+	case providers.IDPTypeGitHub:
+		return gitHubLoginClaim
+	default:
+		return ""
+	}
+}
+
+// ensureAttributeConfiguration returns the attribute configuration, creating it when absent.
+func ensureAttributeConfiguration(idp *providers.IDPDTO) *providers.AttributeConfiguration {
+	if idp.AttributeConfiguration == nil {
+		idp.AttributeConfiguration = &providers.AttributeConfiguration{}
+	}
+	return idp.AttributeConfiguration
 }
 
 // createAndAppendProperty creates a new property and appends it to the property map.

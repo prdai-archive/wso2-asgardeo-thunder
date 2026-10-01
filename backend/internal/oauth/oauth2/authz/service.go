@@ -1,20 +1,5 @@
-/*
- * Copyright (c) 2025-2026, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2025-2026 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 // Package authz implements the OAuth2 authorization functionality.
 package authz
@@ -26,14 +11,17 @@ import (
 	"maps"
 	"net/url"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
 	flowcm "github.com/thunder-id/thunderid/internal/flow/common"
 	"github.com/thunder-id/thunderid/internal/flow/flowexec"
+	flowsession "github.com/thunder-id/thunderid/internal/flow/session"
 	oauthconfig "github.com/thunder-id/thunderid/internal/oauth/config"
 	"github.com/thunder-id/thunderid/internal/oauth/oauth2/authz/requestvalidator"
 	oauth2const "github.com/thunder-id/thunderid/internal/oauth/oauth2/constants"
+	"github.com/thunder-id/thunderid/internal/oauth/oauth2/jti"
 	oauth2model "github.com/thunder-id/thunderid/internal/oauth/oauth2/model"
 	"github.com/thunder-id/thunderid/internal/oauth/oauth2/par"
 	"github.com/thunder-id/thunderid/internal/oauth/oauth2/resourceindicators"
@@ -45,6 +33,10 @@ import (
 	"github.com/thunder-id/thunderid/internal/system/utils"
 	"github.com/thunder-id/thunderid/pkg/thunderidengine/providers"
 )
+
+// runtimeDataTrue is the value the flow layer reads as a set boolean flag on RuntimeData, which
+// carries string values only.
+const runtimeDataTrue = "true"
 
 // AuthorizeServiceInterface defines the interface for authorization services.
 type AuthorizeServiceInterface interface {
@@ -68,7 +60,16 @@ type authorizeService struct {
 	flowExecService flowexec.FlowExecServiceInterface
 	transactioner   providers.Transactioner
 	criteriaRevoker revocation.CriteriaRevokerInterface
-	logger          *log.Logger
+	// jtiStore makes a redeemed assertion single-use. It shares a namespace with the token endpoint,
+	// so an assertion spent here cannot afterwards be exchanged there, and vice versa.
+	jtiStore jti.JTIStoreInterface
+	// ssoSession resolves an existing SSO session so prompt=none can be answered from it, and
+	// flowProvider supplies the client's authentication flow, whose id names the session's cookie
+	// and whose active version the session must match. Both are nil in deployments without a
+	// session store (the embedded engine), where prompt=none keeps answering login_required.
+	ssoSession   flowsession.Service
+	flowProvider providers.FlowProvider
+	logger       *log.Logger
 }
 
 // newAuthorizeService creates a new instance of authorizeService with injected dependencies.
@@ -82,7 +83,10 @@ func newAuthorizeService(
 	parService par.PARServiceInterface,
 	transactioner providers.Transactioner,
 	criteriaRevoker revocation.CriteriaRevokerInterface,
+	ssoSession flowsession.Service,
+	flowProvider providers.FlowProvider,
 	cfg oauthconfig.Config,
+	jtiStore jti.JTIStoreInterface,
 ) AuthorizeServiceInterface {
 	return &authorizeService{
 		cfg:             cfg,
@@ -96,8 +100,112 @@ func newAuthorizeService(
 		flowExecService: flowExecService,
 		transactioner:   transactioner,
 		criteriaRevoker: criteriaRevoker,
+		ssoSession:      ssoSession,
+		flowProvider:    flowProvider,
+		jtiStore:        jtiStore,
 		logger:          log.GetLogger().With(log.String(log.LoggerKeyComponentName, "AuthorizeService")),
 	}
+}
+
+// checkPromptNone decides whether a prompt=none request can be answered without interaction,
+// returning an empty error code when it can (including when prompt=none was not requested).
+//
+// Per OIDC Core 3.1.2.1 the request succeeds only when the End-User is already authenticated, so
+// all three conditions must hold: a live SSO session exists, it belongs to the subject named by
+// id_token_hint when one is supplied, and its authentication satisfies max_age. Any failure is
+// login_required — the specification's answer for "authentication is needed but cannot be asked
+// for".
+func (as *authorizeService) checkPromptNone(
+	ctx context.Context, oauthParams *oauth2model.OAuthParameters, app *providers.OAuthClient,
+) (string, string) {
+	if !slices.Contains(strings.Fields(oauthParams.Prompt), oauth2const.PromptNone) {
+		return "", ""
+	}
+
+	sess := as.resolveSSOSession(ctx, app)
+	if sess == nil {
+		return oauth2const.ErrorLoginRequired, "User authentication is required"
+	}
+
+	if hint := oauthParams.IDTokenHint; hint != "" {
+		subject, err := as.subjectFromIDTokenHint(ctx, hint)
+		if err != nil {
+			return oauth2const.ErrorInvalidRequest, "Invalid id_token_hint"
+		}
+		if subject != sess.SubjectID {
+			// A hint naming someone other than the signed-in subject cannot be satisfied silently.
+			return oauth2const.ErrorLoginRequired,
+				"The session does not belong to the subject named by id_token_hint"
+		}
+	}
+
+	if oauthParams.MaxAge != "" {
+		maxAge, err := strconv.ParseInt(oauthParams.MaxAge, 10, 64)
+		// A malformed max_age is no constraint, matching how the flow's assurance check reads it.
+		// max_age=0 admits no elapsed time, so no existing session can satisfy it and the request
+		// cannot be answered silently.
+		if err == nil && maxAge >= 0 &&
+			(maxAge == 0 || time.Now().UTC().Unix()-sess.AuthenticatedAt.Unix() > maxAge) {
+			return oauth2const.ErrorLoginRequired,
+				"The existing authentication is older than the requested max_age"
+		}
+	}
+
+	return "", ""
+}
+
+// subjectFromIDTokenHint verifies the hint was issued by this server and returns its subject. The
+// token's expiry is deliberately not enforced: the hint identifies who was authenticated, and OIDC
+// Core requires it to be accepted even once expired.
+func (as *authorizeService) subjectFromIDTokenHint(ctx context.Context, idTokenHint string) (string, error) {
+	if svcErr := as.jwtService.VerifyJWTSignature(ctx, idTokenHint); svcErr != nil {
+		return "", errors.New("id_token_hint signature is not valid")
+	}
+	payload, err := jwt.DecodeJWTPayload(idTokenHint)
+	if err != nil {
+		return "", errors.New("id_token_hint could not be decoded")
+	}
+	if iss, _ := payload[oauth2const.ClaimIss].(string); iss != as.cfg.JWT.Issuer {
+		return "", errors.New("id_token_hint was not issued by this server")
+	}
+	subject, _ := payload[oauth2const.ClaimSub].(string)
+	if subject == "" {
+		return "", errors.New("id_token_hint carries no subject")
+	}
+	return subject, nil
+}
+
+// resolveSSOSession returns the live SSO session backing this request's client, or nil when there
+// is none. The handle is carried on a per-flow cookie, so the client's authentication flow has to
+// be resolved before the right cookie can be selected.
+func (as *authorizeService) resolveSSOSession(
+	ctx context.Context, app *providers.OAuthClient,
+) *flowsession.Session {
+	if as.ssoSession == nil || as.flowProvider == nil {
+		return nil
+	}
+	inbound, ok := flowsession.InboundFrom(ctx)
+	if !ok {
+		return nil
+	}
+
+	client, svcErr := as.inboundClient.GetInboundClientByID(ctx, app.ID)
+	if svcErr != nil || client == nil || client.AuthFlowID == "" {
+		return nil
+	}
+	flow, flowErr := as.flowProvider.GetFlow(ctx, client.AuthFlowID)
+	if flowErr != nil || flow == nil {
+		return nil
+	}
+
+	handle := inbound.HandleFor(client.AuthFlowID)
+	sess, err := as.ssoSession.Resolve(ctx, handle, client.AuthFlowID, flow.ActiveVersion, time.Now().UTC())
+	if err != nil {
+		as.logger.Debug(ctx, "Failed to resolve the SSO session for the authorization request",
+			log.Error(err))
+		return nil
+	}
+	return sess
 }
 
 // GetAuthorizationCodeDetails retrieves and consumes the authorization code.
@@ -154,7 +262,7 @@ func (as *authorizeService) GetAuthorizationCodeDetails(
 // redemption to recover the tfid and drop the whole family. It is best-effort: a missing marker or a
 // failed revoke is logged and does not change the replay rejection.
 func (as *authorizeService) revokeTokenFamilyOnCodeReplay(ctx context.Context, code string) {
-	if as.criteriaRevoker == nil || !as.cfg.OAuth.Revocation.TokenFamily.OnCodeReplay {
+	if as.criteriaRevoker == nil || !as.cfg.OAuth.Revocation.TokenFamily.OnCodeReplayEnabled() {
 		return
 	}
 	tokenFamilyID, found, err := as.authCodeStore.ConsumedTokenFamily(ctx, code)
@@ -203,8 +311,15 @@ func (as *authorizeService) HandleInitialAuthorizationRequest(ctx context.Contex
 		}
 	}
 
-	// If request_uri is present, resolve the pushed authorization request.
+	// If request_uri is present, resolve the pushed authorization request. A request_uri that is
+	// not a PAR handle is a client-supplied request object by reference (RFC 9101), which is not
+	// supported: reject it rather than ignoring it, so the client learns its request was not
+	// honored (OIDC Core 6.1).
 	if requestURI != "" {
+		if !par.IsPARRequestURI(requestURI) {
+			return nil, as.newRequestObjectError(ctx, msg, app,
+				oauth2const.ErrorRequestURINotSupported, "The request_uri parameter is not supported")
+		}
 		return as.handlePARAuthorizationRequest(ctx, requestURI, clientID, app)
 	}
 
@@ -222,6 +337,35 @@ func (as *authorizeService) HandleInitialAuthorizationRequest(ctx context.Contex
 	}
 
 	return as.handleStandardAuthorizationRequest(ctx, msg, app, initiatorReq)
+}
+
+// newRequestObjectError builds the rejection for an unsupported request object. The error is
+// returned to the client's redirect_uri only when that redirect_uri validates against the
+// client's registration, since an unvalidated redirect_uri must not be used as a redirect
+// target; otherwise it is shown on the server error page.
+func (as *authorizeService) newRequestObjectError(
+	ctx context.Context, msg *OAuthMessage, app *providers.OAuthClient, code string, message string,
+) *AuthorizationError {
+	queryParams := url.Values(msg.RequestQueryParams)
+	redirectURI := queryParams.Get(oauth2const.RequestParamRedirectURI)
+
+	authErr := &AuthorizationError{
+		Code:    code,
+		Message: message,
+		State:   queryParams.Get(oauth2const.RequestParamState),
+	}
+	if err := app.ValidateRedirectURI(ctx, redirectURI); err != nil {
+		as.logger.Debug(ctx, "Validation failed for redirect URI", log.Error(err))
+		return authErr
+	}
+	// ValidateRedirectURI only accepts an omitted redirect_uri when the client has exactly one
+	// fully qualified URI registered; fall back to that so the rejection still reaches the client.
+	if redirectURI == "" {
+		redirectURI = app.RedirectURIs[0]
+	}
+	authErr.SendErrorToClient = true
+	authErr.ClientRedirectURI = redirectURI
+	return authErr
 }
 
 // handlePARAuthorizationRequest resolves a request_uri from a PAR and continues the authorization flow.
@@ -280,6 +424,9 @@ func (as *authorizeService) handleStandardAuthorizationRequest(
 	// Extract claims_locales parameter.
 	claimsLocales := queryParams.Get(oauth2const.RequestParamClaimsLocales)
 
+	// Extract ui_locales parameter.
+	uiLocales := queryParams.Get(oauth2const.RequestParamUILocales)
+
 	nonce := queryParams.Get(oauth2const.RequestParamNonce)
 	acrValues := queryParams.Get(oauth2const.RequestParamAcrValues)
 	maxAge := queryParams.Get(oauth2const.RequestParamMaxAge)
@@ -316,7 +463,6 @@ func (as *authorizeService) handleStandardAuthorizationRequest(
 	}
 
 	oidcScopes, nonOidcScopes := oauth2utils.SeparateOIDCAndNonOIDCScopes(scope, app.ScopeClaims)
-	oidcScopes = oauth2utils.FilterOIDCScopesByAllowedScopes(oidcScopes, app.Scopes)
 
 	// The single target resource server, downscoping, and audience binding are resolved in
 	// initiateFlowAndStoreRequest, the path shared by both standard and PAR-based requests.
@@ -335,11 +481,13 @@ func (as *authorizeService) handleStandardAuthorizationRequest(
 		Resources:           resources,
 		ClaimsRequest:       claimsRequest,
 		ClaimsLocales:       claimsLocales,
+		UILocales:           uiLocales,
 		Nonce:               nonce,
 		AcrValues:           acrValues,
 		MaxAge:              maxAge,
 		DPoPJkt:             dpopJkt,
 		Prompt:              prompt,
+		IDTokenHint:         queryParams.Get(oauth2const.RequestParamIDTokenHint),
 	}
 
 	// Set the redirect URI if not provided in the request. Invalid cases are already handled at this point.
@@ -365,6 +513,19 @@ func (as *authorizeService) initiateFlowAndStoreRequest(
 	ctx context.Context, oauthParams *oauth2model.OAuthParameters,
 	app *providers.OAuthClient, initiatorReq *providers.InitiatorRequest,
 ) (*AuthorizationInitResult, *AuthorizationError) {
+	// prompt=none forbids any user interaction, so it can only be honored by an existing session
+	// that also satisfies id_token_hint and max_age. This is checked here, where both the standard
+	// and PAR paths converge, and before the flow starts: the flow would otherwise prompt.
+	if errCode, errMsg := as.checkPromptNone(ctx, oauthParams, app); errCode != "" {
+		return nil, &AuthorizationError{
+			Code:              errCode,
+			Message:           errMsg,
+			SendErrorToClient: oauthParams.RedirectURI != "",
+			ClientRedirectURI: oauthParams.RedirectURI,
+			State:             oauthParams.State,
+		}
+	}
+
 	// Bind the request to a single target resource server before the flow starts. OIDC-only or
 	// scopeless requests stay unbound and their audience is the client_id. A permission-bearing
 	// request resolves an explicit resource or the configured default, rejecting with invalid_target
@@ -401,7 +562,7 @@ func (as *authorizeService) initiateFlowAndStoreRequest(
 
 	effectiveAcrValues := requestvalidator.ResolveACRValues(oauthParams.AcrValues, app.AcrValues)
 	essentialAttributes, optionalAttributes := getRequiredAttributes(
-		oauthParams.StandardScopes, oauthParams.ClaimsRequest, oauthParams.ResponseType, app)
+		oauthParams.StandardScopes, oauthParams.ClaimsRequest, app)
 
 	authRequestCtx := authRequestContext{
 		OAuthParameters: *oauthParams,
@@ -435,7 +596,20 @@ func (as *authorizeService) initiateFlowAndStoreRequest(
 		runtimeData[flowcm.RuntimeKeyRequestedAuthClasses] = effectiveAcrValues
 	}
 	if slices.Contains(strings.Fields(oauthParams.Prompt), oauth2const.PromptConsent) {
-		runtimeData[flowcm.RuntimeKeyForceConsentReprompt] = "true"
+		runtimeData[flowcm.RuntimeKeyForceConsentReprompt] = runtimeDataTrue
+	}
+	// prompt=login requires a fresh authentication regardless of any existing session (OIDC Core
+	// 3.1.2.1), so tell the SSO-Check node not to reuse one.
+	if slices.Contains(strings.Fields(oauthParams.Prompt), oauth2const.PromptLogin) {
+		runtimeData[flowcm.RuntimeKeyForceReauth] = runtimeDataTrue
+	}
+	// prompt=none reached this point only because checkPromptNone found a session that satisfies the
+	// request, so tell the SSO-Check node to honor that decision instead of re-evaluating max_age
+	// against its own clock. Both comparisons are strictly greater against a fresh time.Now(), so a
+	// session exactly on the boundary passes here and could fail there, prompting a request that
+	// forbids prompting.
+	if slices.Contains(strings.Fields(oauthParams.Prompt), oauth2const.PromptNone) {
+		runtimeData[flowcm.RuntimeKeySilentAuthOnly] = runtimeDataTrue
 	}
 	if oauthParams.MaxAge != "" {
 		runtimeData[flowcm.RuntimeKeyMaxAge] = oauthParams.MaxAge
@@ -465,6 +639,9 @@ func (as *authorizeService) initiateFlowAndStoreRequest(
 	queryParams[oauth2const.AuthID] = identifier
 	queryParams[oauth2const.AppID] = app.ID
 	queryParams[oauth2const.ExecutionID] = executionID
+	if oauthParams.UILocales != "" {
+		queryParams[oauth2const.RequestParamUILocales] = oauthParams.UILocales
+	}
 
 	// Add insecure warning if the redirect URI is not using TLS.
 	// TODO: May require another redirection to a warn consent page when it directly goes to a federated IDP.
@@ -486,10 +663,53 @@ func (as *authorizeService) initiateFlowAndStoreRequest(
 	return &AuthorizationInitResult{QueryParams: queryParams}, nil
 }
 
-// HandleAuthorizationCallback processes the callback assertion from the flow engine.
-// Returns the client redirect URI (with authorization code) on success, or a structured error.
+// HandleAuthorizationCallback processes the callback assertion from the flow engine. The assertion is
+// either an authentication assertion from a completed flow or a signed error assertion minted when the
+// flow terminated in failure. Returns the client redirect URI (with authorization code) on success, or a structured
+// error.
 func (as *authorizeService) HandleAuthorizationCallback(ctx context.Context, authID string, assertion string) (
 	string, *AuthorizationError) {
+	if assertion == "" {
+		return "", &AuthorizationError{
+			Code:    oauth2const.ErrorInvalidRequest,
+			Message: "Invalid authorization request",
+		}
+	}
+
+	// Verify before either branch runs. This keeps an unverified assertion from burning a live authID,
+	// and it means the branch below is selected by a claim that the signature covers.
+	if verifyErr := as.verifyAssertion(ctx, assertion); verifyErr != nil {
+		as.logger.Debug(ctx, "Assertion verification failed", log.Error(verifyErr))
+		return "", &AuthorizationError{
+			Code:    oauth2const.ErrorInvalidRequest,
+			Message: "Authorization request failed",
+		}
+	}
+
+	claims, authTime, decodeErr := decodeAttributesFromAssertion(assertion)
+	if decodeErr != nil {
+		// An assertion whose claims cannot be read cannot be shown to be bound to this request, so it is
+		// rejected without loading it. Loading consumes the request, and a caller holding a malformed
+		// assertion must not be able to destroy a live authID
+		as.logger.Debug(ctx, "Failed to decode the assertion", log.Error(decodeErr))
+		return "", &AuthorizationError{
+			Code:    oauth2const.ErrorInvalidRequest,
+			Message: "Authorization request failed",
+		}
+	}
+
+	if claims.flowErrorType != "" {
+		errClaims, _ := oauth2utils.DecodeFlowErrorAssertionClaims(assertion)
+		return "", as.handleFailedCallback(ctx, authID, errClaims)
+	}
+
+	return as.handleSuccessCallback(ctx, authID, claims, authTime)
+}
+
+// handleSuccessCallback mints an authorization code for a verified authentication assertion and
+// returns the client redirect URI carrying it.
+func (as *authorizeService) handleSuccessCallback(ctx context.Context, authID string,
+	claims assertionClaims, authTime time.Time) (string, *AuthorizationError) {
 	var redirectURI string
 	var authErr *AuthorizationError
 
@@ -512,54 +732,6 @@ func (as *authorizeService) HandleAuthorizationCallback(ctx context.Context, aut
 			return err
 		}
 
-		if assertion == "" {
-			authErr = &AuthorizationError{
-				Code:              oauth2const.ErrorInvalidRequest,
-				Message:           "Invalid authorization request",
-				SendErrorToClient: true,
-				ClientRedirectURI: authRequestCtx.OAuthParameters.RedirectURI,
-				State:             authRequestCtx.OAuthParameters.State,
-			}
-			return errors.New("assertion is empty")
-		}
-
-		// Verify the assertion.
-		if err := as.verifyAssertion(ctx, assertion); err != nil {
-			as.logger.Debug(ctx, "Assertion verification failed", log.Error(err))
-			authErr = &AuthorizationError{
-				Code:              oauth2const.ErrorInvalidRequest,
-				Message:           "Authorization request failed",
-				SendErrorToClient: true,
-				ClientRedirectURI: authRequestCtx.OAuthParameters.RedirectURI,
-				State:             authRequestCtx.OAuthParameters.State,
-			}
-			return err
-		}
-
-		// Decode user attributes from the assertion.
-		claims, authTime, err := decodeAttributesFromAssertion(assertion)
-		if err != nil {
-			if errors.Is(err, errAssertionClaimInvalid) {
-				as.logger.Debug(ctx, "Assertion contains a malformed claim", log.Error(err))
-				authErr = &AuthorizationError{
-					Code:              oauth2const.ErrorInvalidRequest,
-					Message:           "Assertion contains a malformed claim",
-					SendErrorToClient: true,
-					ClientRedirectURI: authRequestCtx.OAuthParameters.RedirectURI,
-					State:             authRequestCtx.OAuthParameters.State,
-				}
-				return err
-			}
-			authErr = &AuthorizationError{
-				Code:              oauth2const.ErrorServerError,
-				Message:           "Failed to process authorization request",
-				SendErrorToClient: true,
-				ClientRedirectURI: authRequestCtx.OAuthParameters.RedirectURI,
-				State:             authRequestCtx.OAuthParameters.State,
-			}
-			return err
-		}
-
 		// Bind the assertion to the specific authorization request
 		if claims.authorizationRequestID == "" || claims.authorizationRequestID != authID {
 			as.logger.Debug(ctx, "Assertion is not bound to the authorization request")
@@ -571,6 +743,21 @@ func (as *authorizeService) HandleAuthorizationCallback(ctx context.Context, aut
 				State:             authRequestCtx.OAuthParameters.State,
 			}
 			return errors.New("assertion not bound to authorization request")
+		}
+
+		// Spend the assertion. Recorded under the namespace the token endpoint also uses, so an
+		// assertion redeemed for a code here cannot afterwards be exchanged there. Done only once the
+		// assertion is known to belong to this request, so a misdirected one is not destroyed.
+		if consumeErr := as.consumeAssertion(ctx, claims); consumeErr != nil {
+			as.logger.Debug(ctx, "Assertion could not be consumed", log.Error(consumeErr))
+			authErr = &AuthorizationError{
+				Code:              oauth2const.ErrorAccessDenied,
+				Message:           "Assertion has already been used",
+				SendErrorToClient: true,
+				ClientRedirectURI: authRequestCtx.OAuthParameters.RedirectURI,
+				State:             authRequestCtx.OAuthParameters.State,
+			}
+			return consumeErr
 		}
 
 		if claims.userID == "" {
@@ -678,6 +865,51 @@ func (as *authorizeService) HandleAuthorizationCallback(ctx context.Context, aut
 	return redirectURI, nil
 }
 
+// handleFailedCallback constructs the OAuth error response for a verified error assertion. The
+// assertion is bound to this authorization request before the request context is loaded, since
+// loading consumes it and an assertion minted for another request must not burn a live authID.
+func (as *authorizeService) handleFailedCallback(
+	ctx context.Context, authID string, claims oauth2utils.FlowErrorAssertionClaims) *AuthorizationError {
+	if claims.AuthorizationRequestID != authID {
+		as.logger.Debug(ctx, "Error assertion is not bound to the authorization request")
+		return &AuthorizationError{
+			Code:    oauth2const.ErrorInvalidRequest,
+			Message: "Error assertion does not match the authorization request",
+		}
+	}
+
+	authRequestCtx, err := as.loadAuthRequestContext(ctx, authID)
+	if err != nil {
+		if errors.Is(err, errAuthRequestNotFound) {
+			return &AuthorizationError{
+				Code:    oauth2const.ErrorInvalidRequest,
+				Message: "Invalid authorization request",
+			}
+		}
+		as.logger.Error(ctx, "Failed to load authorization request context", log.Error(err))
+		return &AuthorizationError{
+			Code:    oauth2const.ErrorServerError,
+			Message: "Failed to process authorization request",
+		}
+	}
+
+	code, message := mapFlowErrorTypeToOAuthError(claims.ErrorType, claims.Description)
+	// Denials are always reported. Server errors are reported unless the deployment opts out, in
+	// which case the failure surfaces on the error page and the client is left to time out.
+	sendToClient := code != oauth2const.ErrorServerError || as.cfg.OAuth.SendServerErrorsToClientEnabled()
+	as.logger.Debug(ctx, "Propagating flow failure",
+		log.String("flowErrorType", claims.ErrorType),
+		log.String("flowErrorDescription", claims.Description),
+		log.Bool("sendToClient", sendToClient))
+	return &AuthorizationError{
+		Code:              code,
+		Message:           message,
+		SendErrorToClient: sendToClient,
+		ClientRedirectURI: authRequestCtx.OAuthParameters.RedirectURI,
+		State:             authRequestCtx.OAuthParameters.State,
+	}
+}
+
 // loadAuthRequestContext loads the authorization request context from the store using the auth ID.
 func (as *authorizeService) loadAuthRequestContext(ctx context.Context, authID string) (*authRequestContext, error) {
 	ok, authRequestCtx, err := as.authReqStore.GetRequest(ctx, authID)
@@ -695,6 +927,17 @@ func (as *authorizeService) loadAuthRequestContext(ctx context.Context, authID s
 		as.logger.Error(ctx, "Failed to clear authorization request context", log.Error(clearErr))
 	}
 	return &authRequestCtx, nil
+}
+
+// consumeAssertion records the assertion's jti so it can be redeemed only once. The namespace is
+// shared with the token endpoint, so an assertion spent for an authorization code here is no longer
+// exchangeable there.
+//
+// A store failure rejects the assertion rather than admitting it: an unavailable replay store must not
+// degrade into unlimited replay.
+func (as *authorizeService) consumeAssertion(ctx context.Context, claims assertionClaims) error {
+	return oauth2utils.ConsumeAuthAssertion(
+		ctx, as.jtiStore, claims.jti, claims.expiresAt, as.cfg.JWT.Leeway)
 }
 
 // verifyAssertion verifies the JWT assertion.
@@ -725,8 +968,36 @@ func decodeAttributesFromAssertion(assertion string) (assertionClaims, time.Time
 		claims.authorizedPermissions = v
 	}
 
+	if v, ok := payload[oauth2const.ClaimJTI].(string); ok {
+		claims.jti = v
+	}
+
+	if v, ok := payload[oauth2const.ClaimExp].(float64); ok {
+		claims.expiresAt = time.Unix(int64(v), 0)
+	}
+
 	if v, ok := payload[oauth2const.ClaimTokenFamilyID].(string); ok {
 		claims.tokenFamilyID = v
+	}
+
+	if v, ok := payload[oauth2const.ClaimSessionID].(string); ok {
+		claims.sessionID = v
+	}
+
+	if v, ok := payload[oauth2const.ClaimCorrelationID].(string); ok {
+		claims.correlationID = v
+	}
+
+	if v, ok := payload[oauth2const.ClaimSubjectID].(string); ok {
+		claims.subjectID = v
+	}
+
+	if v, ok := payload[oauth2const.ClaimSubjectType].(string); ok {
+		claims.subjectCategory = v
+	}
+
+	if v, ok := payload[flowcm.ClaimFlowErrorType].(string); ok {
+		claims.flowErrorType = v
 	}
 
 	if v, ok := payload[oauth2const.ClaimAuthorizationRequestID]; ok {
@@ -760,9 +1031,14 @@ func createAuthorizationCode(
 		return AuthorizationCode{}, errors.New("authenticated user not found")
 	}
 
+	// The code's own lifetime runs from now, not from authTime. On the SSO path authTime is the
+	// reused session's authentication, which can be hours old; measuring expiry from it would mint
+	// codes that are already expired and fail insertion outright.
+	now := time.Now()
+
 	// Use provided authTime, or fallback to current time if zero (iat claim was not available).
 	if authTime.IsZero() {
-		authTime = time.Now()
+		authTime = now
 	}
 
 	standardScopes := authRequestCtx.OAuthParameters.StandardScopes
@@ -771,7 +1047,7 @@ func createAuthorizationCode(
 	resources := authRequestCtx.OAuthParameters.Resources
 
 	validityPeriod := cfg.OAuth.AuthorizationCode.ValidityPeriod
-	expiryTime := authTime.Add(time.Duration(validityPeriod) * time.Second)
+	expiryTime := now.Add(time.Duration(validityPeriod) * time.Second)
 
 	codeID, err := utils.GenerateUUIDv7()
 	if err != nil {
@@ -803,7 +1079,8 @@ func createAuthorizationCode(
 		RedirectURIProvided: authRequestCtx.OAuthParameters.RedirectURIProvided,
 		AuthorizedUserID:    claims.userID,
 		AttributeCacheID:    claims.attributeCacheID,
-		TimeCreated:         authTime,
+		TimeCreated:         now,
+		AuthTime:            authTime,
 		ExpiryTime:          expiryTime,
 		Scopes:              utils.StringifyStringArray(allScopes, " "),
 		State:               AuthCodeStateActive,
@@ -816,12 +1093,16 @@ func createAuthorizationCode(
 		CompletedACR:        claims.completedACR,
 		DPoPJkt:             authRequestCtx.OAuthParameters.DPoPJkt,
 		TokenFamilyID:       tokenFamilyID,
+		CorrelationID:       claims.correlationID,
+		SubjectID:           claims.subjectID,
+		SubjectCategory:     claims.subjectCategory,
+		SessionID:           claims.sessionID,
 	}, nil
 }
 
 // getRequiredAttributes determines the essential and optional user attributes required based on OIDC scopes,
-// claims parameter, response type, and app configuration.
-func getRequiredAttributes(oidcScopes []string, claimsRequest *oauth2model.ClaimsRequest, responseType string,
+// claims parameter, and app configuration.
+func getRequiredAttributes(oidcScopes []string, claimsRequest *oauth2model.ClaimsRequest,
 	app *providers.OAuthClient) (essentialAttributes, optionalAttributes string) {
 	if app == nil {
 		return "", ""
@@ -837,7 +1118,7 @@ func getRequiredAttributes(oidcScopes []string, claimsRequest *oauth2model.Claim
 
 	// Process OIDC-related attributes only if openid scope is present
 	if slices.Contains(oidcScopes, oauth2const.ScopeOpenID) {
-		appendOIDCAttributes(oidcScopes, claimsRequest, responseType, app,
+		appendOIDCAttributes(oidcScopes, claimsRequest, app,
 			essentialAttributesMap, optionalAttributesMap)
 	}
 
@@ -868,7 +1149,7 @@ func appendAccessTokenAttributes(app *providers.OAuthClient, attributesMap map[s
 }
 
 // appendOIDCAttributes appends OIDC-related attributes from scopes and claims parameters.
-func appendOIDCAttributes(oidcScopes []string, claimsRequest *oauth2model.ClaimsRequest, responseType string,
+func appendOIDCAttributes(oidcScopes []string, claimsRequest *oauth2model.ClaimsRequest,
 	app *providers.OAuthClient, essentialAttributes, optionalAttributes map[string]bool) {
 	var idTokenAllowedSet map[string]bool
 	if app.Token != nil {
@@ -879,7 +1160,7 @@ func appendOIDCAttributes(oidcScopes []string, claimsRequest *oauth2model.Claims
 	appendAttributesFromClaimsParameter(claimsRequest, idTokenAllowedSet, userInfoAllowedSet,
 		essentialAttributes, optionalAttributes)
 
-	appendAttributesFromScopes(oidcScopes, responseType, app, idTokenAllowedSet, userInfoAllowedSet,
+	appendAttributesFromScopes(oidcScopes, app, idTokenAllowedSet, userInfoAllowedSet,
 		optionalAttributes)
 }
 
@@ -942,49 +1223,28 @@ func appendAttributesFromClaimsParameter(claimsRequest *oauth2model.ClaimsReques
 }
 
 // appendAttributesFromScopes appends user attributes based on OIDC scopes and app configuration.
-func appendAttributesFromScopes(oidcScopes []string, responseType string, app *providers.OAuthClient,
+func appendAttributesFromScopes(oidcScopes []string, app *providers.OAuthClient,
 	idTokenAllowedSet, userInfoAllowedSet map[string]bool, optionalAttributes map[string]bool) {
 	for _, scope := range oidcScopes {
-		scopeAttributes := resolveScopeAttributes(scope, app.ScopeClaims)
-		appendAttributesForScope(scopeAttributes, responseType,
+		appendAttributesForScope(oauth2utils.ResolveScopeClaims(scope, app.ScopeClaims),
 			idTokenAllowedSet, userInfoAllowedSet, optionalAttributes)
 	}
 }
 
-// resolveScopeAttributes resolves attributes for a scope, checking app-specific mappings first.
-func resolveScopeAttributes(scope string, scopeAttributesMapping map[string][]string) []string {
-	// Check app-specific scope attributes mapping first
-	if scopeAttributesMapping != nil {
-		if appAttributes, exists := scopeAttributesMapping[scope]; exists {
-			return appAttributes
-		}
-	}
-
-	// Fall back to standard OIDC scopes
-	if standardScope, exists := oauth2const.StandardOIDCScopes[scope]; exists {
-		return standardScope.Claims
-	}
-
-	return nil
-}
-
-// appendAttributesForScope appends attributes for a particular scope based on response type and
-// allowed attributes in app config.
+// appendAttributesForScope appends attributes for a particular scope, allow-listed for either the
+// ID token or the UserInfo endpoint.
 // When using scopes, all attributes are treated as optional since there is no way to determine
 // which attributes are essential vs optional.
-func appendAttributesForScope(scopeAttributes []string, responseType string,
+func appendAttributesForScope(scopeAttributes []string,
 	idTokenAllowedSet, userInfoAllowedSet, optionalAttributes map[string]bool) {
 	for _, attribute := range scopeAttributes {
-		if responseType == string(providers.ResponseTypeIDToken) {
-			// If response type does not issue an access token, add claim to id token
-			if idTokenAllowedSet != nil && idTokenAllowedSet[attribute] {
-				optionalAttributes[attribute] = true
-			}
-		} else {
-			// If response type issues an access token, add claim to userinfo
-			if userInfoAllowedSet != nil && userInfoAllowedSet[attribute] {
-				optionalAttributes[attribute] = true
-			}
+		// A scope claim may be surfaced from the UserInfo endpoint or, when allow-listed for the ID
+		// token, embedded in the ID token, so cache the attributes needed by either sink.
+		if idTokenAllowedSet != nil && idTokenAllowedSet[attribute] {
+			optionalAttributes[attribute] = true
+		}
+		if userInfoAllowedSet != nil && userInfoAllowedSet[attribute] {
+			optionalAttributes[attribute] = true
 		}
 	}
 }
@@ -1031,4 +1291,19 @@ func (as *authorizeService) resolveUserAttributesCacheTTL(app *providers.OAuthCl
 	}
 	authCodeTTL := as.cfg.OAuth.AuthorizationCode.ValidityPeriod
 	return maxTTL + authCodeTTL + oauth2const.AttributeCacheTTLBufferSeconds
+}
+
+func mapFlowErrorTypeToOAuthError(errorType, description string) (string, string) {
+	code := oauth2const.ErrorServerError
+	message := "Failed to process authorization request"
+	if errorType == flowcm.FlowErrorTypeEndUser {
+		code = oauth2const.ErrorAccessDenied
+		message = "Access denied"
+	}
+
+	if sanitized := oauth2utils.SanitizeErrorDescription(description); sanitized != "" {
+		message = sanitized
+	}
+
+	return code, message
 }

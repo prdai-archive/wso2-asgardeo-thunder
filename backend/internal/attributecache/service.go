@@ -1,20 +1,5 @@
-/*
- * Copyright (c) 2026, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2026 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 // Package attributecache provides attribute caching functionality.
 package attributecache
@@ -112,8 +97,8 @@ func (s *attributeCacheService) CreateAttributeCache(
 		return nil, &tidcommon.InternalServerError
 	}
 	if s.encryptionEnabled {
-		ciphertext, _, encErr := s.crypto.Encrypt(ctx, nil,
-			cryptolib.AlgorithmParams{Algorithm: cryptolib.AlgorithmAESGCM}, data)
+		ciphertext, _, encErr := s.crypto.Encrypt(ctx, nil, string(cryptolib.AlgorithmAESGCM),
+			nil, data)
 		if encErr != nil {
 			logger.Error(ctx, "Failed to encrypt attributes", log.Error(encErr))
 			return nil, &tidcommon.InternalServerError
@@ -153,8 +138,8 @@ func (s *attributeCacheService) GetAttributeCache(
 	}
 
 	if s.encryptionEnabled {
-		plaintext, decErr := s.crypto.Decrypt(ctx, nil,
-			cryptolib.AlgorithmParams{Algorithm: cryptolib.AlgorithmAESGCM}, data)
+		plaintext, decErr := s.crypto.Decrypt(ctx, nil, string(cryptolib.AlgorithmAESGCM),
+			nil, data)
 		if decErr != nil {
 			logger.Error(ctx, "Failed to decrypt attributes", log.Error(decErr), log.String("id", id))
 			return nil, &tidcommon.InternalServerError

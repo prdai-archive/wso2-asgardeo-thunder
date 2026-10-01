@@ -1,20 +1,5 @@
-/*
- * Copyright (c) 2025-2026, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2025-2026 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 package granthandlers
 
@@ -41,9 +26,9 @@ import (
 type tokenExchangeGrantHandler struct {
 	tokenBuilder    tokenservice.TokenBuilderInterface
 	tokenValidator  tokenservice.TokenValidatorInterface
+	resourceService providers.ResourceServerProvider
 	authzService    providers.AuthorizationProvider
 	actorProvider   providers.ActorProvider
-	resourceService providers.ResourceServerProvider
 	cfg             oauthconfig.Config
 }
 
@@ -51,17 +36,17 @@ type tokenExchangeGrantHandler struct {
 func newTokenExchangeGrantHandler(
 	tokenBuilder tokenservice.TokenBuilderInterface,
 	tokenValidator tokenservice.TokenValidatorInterface,
+	resourceService providers.ResourceServerProvider,
 	authzService providers.AuthorizationProvider,
 	actorProvider providers.ActorProvider,
-	resourceService providers.ResourceServerProvider,
 	cfg oauthconfig.Config,
 ) GrantHandlerInterface {
 	return &tokenExchangeGrantHandler{
 		tokenBuilder:    tokenBuilder,
 		tokenValidator:  tokenValidator,
+		resourceService: resourceService,
 		authzService:    authzService,
 		actorProvider:   actorProvider,
-		resourceService: resourceService,
 		cfg:             cfg,
 	}
 }
@@ -170,17 +155,30 @@ func (h *tokenExchangeGrantHandler) HandleGrant(ctx context.Context, tokenReques
 		return h.handleIDJAGGrant(ctx, tokenRequest, oauthApp)
 	}
 
+	// Enforce RFC 9068 on the subject token: one declared as an access token must carry the at+jwt typ
+	// header. This runs before ValidateSubjectToken because validating a subject auth assertion spends
+	// it, and a token rejected on its typ should not have been spent first.
+	if errResp := h.validateAccessTokenType(tokenRequest.SubjectToken,
+		tokenRequest.SubjectTokenType, "subject_token"); errResp != nil {
+		return nil, errResp
+	}
+
 	// Validate and extract subject token claims. ValidateSubjectToken enforces the RFC 7009 deny list
 	// for self-issued tokens; a revoked token is rejected as invalid_request like any other invalid
 	// subject_token, while an unavailable deny list fails closed with server_error.
 	subjectClaims, err := h.tokenValidator.ValidateSubjectToken(ctx, tokenRequest.SubjectToken, oauthApp)
-	if err != nil {
+	if err != nil { //nolint:dupl // Mirrors the actor_token classification below; only the wording differs.
 		logger.Debug(ctx, "Failed to validate subject token", log.Error(err))
 		switch {
 		case errors.Is(err, revocation.ErrEnforcementUnavailable):
 			return nil, &model.ErrorResponse{
 				Error:            constants.ErrorServerError,
 				ErrorDescription: "Token revocation status could not be verified",
+			}
+		case errors.Is(err, tokenservice.ErrAuthorizationMappingUnavailable):
+			return nil, &model.ErrorResponse{
+				Error:            constants.ErrorServerError,
+				ErrorDescription: "Authorization mapping could not be resolved",
 			}
 		case errors.Is(err, tokenservice.ErrTokenExpired):
 			return nil, &model.ErrorResponse{
@@ -198,19 +196,17 @@ func (h *tokenExchangeGrantHandler) HandleGrant(ctx context.Context, tokenReques
 				ErrorDescription: "The subject_token audience does not contain this server's issuer or the " +
 					"trusted token audience configured for its issuer",
 			}
+		case errors.Is(err, tokenservice.ErrAssertionReplayed):
+			return nil, &model.ErrorResponse{
+				Error:            constants.ErrorInvalidRequest,
+				ErrorDescription: "The subject_token has already been redeemed",
+			}
 		default:
 			return nil, &model.ErrorResponse{
 				Error:            constants.ErrorInvalidRequest,
 				ErrorDescription: "Invalid subject_token",
 			}
 		}
-	}
-
-	// Enforce RFC 9068: a token presented as subject_token_type=access_token must carry the at+jwt typ
-	// header.
-	if errResp := h.validateAccessTokenType(tokenRequest.SubjectToken,
-		tokenRequest.SubjectTokenType, "subject_token"); errResp != nil {
-		return nil, errResp
 	}
 
 	// Enforce subject_token DPoP binding. The proof's jkt is verified earlier in the
@@ -222,7 +218,7 @@ func (h *tokenExchangeGrantHandler) HandleGrant(ctx context.Context, tokenReques
 	// Validate and extract actor token claims if present
 	var actorClaims *tokenservice.SubjectTokenClaims
 	if tokenRequest.ActorToken != "" {
-		actorClaims, err = h.tokenValidator.ValidateSubjectToken(ctx, tokenRequest.ActorToken, oauthApp)
+		actorClaims, err = h.tokenValidator.ValidateActorToken(ctx, tokenRequest.ActorToken, oauthApp)
 		if err != nil {
 			logger.Debug(ctx, "Failed to validate actor token", log.Error(err))
 			// Attribute the actor_token rejection the same way as the subject_token above.
@@ -231,6 +227,11 @@ func (h *tokenExchangeGrantHandler) HandleGrant(ctx context.Context, tokenReques
 				return nil, &model.ErrorResponse{
 					Error:            constants.ErrorServerError,
 					ErrorDescription: "Token revocation status could not be verified",
+				}
+			case errors.Is(err, tokenservice.ErrAuthorizationMappingUnavailable):
+				return nil, &model.ErrorResponse{
+					Error:            constants.ErrorServerError,
+					ErrorDescription: "Authorization mapping could not be resolved",
 				}
 			case errors.Is(err, tokenservice.ErrTokenExpired):
 				return nil, &model.ErrorResponse{
@@ -263,17 +264,25 @@ func (h *tokenExchangeGrantHandler) HandleGrant(ctx context.Context, tokenReques
 		}
 	}
 
+	// With no actor_token, the acting party is the authenticated client itself. Agents (and
+	// applications that opt in) record that delegation as an RFC 8693 act claim, matching the
+	// authorization_code and CIBA paths, so a token an agent exchanges on a user's behalf stays
+	// attributable to the agent. An explicit actor_token identifies the actor and takes precedence.
+	if actorClaims == nil && oauthApp.ShouldAppendActorClaim() {
+		actorClaims = &tokenservice.SubjectTokenClaims{Sub: oauthApp.ID}
+	}
+
 	// Determine final scopes
-	finalScopes, errResp := h.getScopes(tokenRequest, subjectClaims.Scopes)
+	finalScopes, errResp := h.getScopes(
+		tokenRequest, subjectClaims.Scopes, subjectClaims.Authorization.Configured)
 	if errResp != nil {
 		return nil, errResp
 	}
 
-	// Retain OIDC scopes (governed by the app's OIDC scope configuration); only permission scopes
-	// are downscoped to the target resource server and filtered by the app's authorization.
+	// Retain OIDC scopes (governed by the app's scope-to-claims mapping); only permission scopes
+	// are downscoped to the target resource server.
 	oidcScopes, permissionScopes := oauth2utils.SeparateOIDCAndNonOIDCScopes(
 		tokenservice.JoinScopes(finalScopes), oauthApp.ScopeClaims)
-	oidcScopes = oauth2utils.FilterOIDCScopesByAllowedScopes(oidcScopes, oauthApp.Scopes)
 
 	// Bind the token to a single target resource server (RFC 8707 resource or configured default).
 	// The RFC 8693 audience parameter is not honored. A request that resolves no permission scopes
@@ -295,7 +304,10 @@ func (h *tokenExchangeGrantHandler) HandleGrant(ctx context.Context, tokenReques
 		if resErr != nil {
 			return nil, resErr
 		}
-		permissionScopes, errResp = h.filterScopesAuthorizedForApp(ctx, oauthApp, targetRS.ID, permissionScopes)
+
+		permissionScopes, errResp = tokenservice.ApplyMappedAuthorization(
+			ctx, h.authzService, h.actorProvider, subjectClaims.Authorization.Targets, targetRS.ID,
+			permissionScopes, subjectClaims.Authorization.Configured, logger)
 		if errResp != nil {
 			return nil, errResp
 		}
@@ -482,23 +494,34 @@ func (h *tokenExchangeGrantHandler) validateAccessTokenType(
 	return nil
 }
 
-// getScopes validates and determines the scopes for the new token.
+// getScopes validates and determines the scopes for the new token. When authorityIsMapping, the
+// subject token's own scope claim is skipped; requested scopes are only candidates for
+// ApplyMappedAuthorization to decide, with no fallback if the mapping resolves nothing.
 func (h *tokenExchangeGrantHandler) getScopes(
 	tokenRequest *model.TokenRequest,
 	subjectScopes []string,
+	authorityIsMapping bool,
 ) ([]string, *model.ErrorResponse) {
-	// If no scopes requested, return subject scopes
 	if tokenRequest.Scope == "" {
+		if authorityIsMapping {
+			// Nothing was requested to evaluate against the mapping, and the subject token's own
+			// scope claim is not an authority here, so there is nothing to grant.
+			return []string{}, nil
+		}
 		return subjectScopes, nil
 	}
 
 	requestedScopes := tokenservice.ParseScopes(tokenRequest.Scope)
-
 	if len(requestedScopes) == 0 {
 		return []string{}, nil
 	}
 
-	// If subject token has no scopes, reject requests asking for scopes
+	if authorityIsMapping {
+		return requestedScopes, nil
+	}
+
+	// If subject token has no scopes, reject requests asking for scopes: with no mapping configured,
+	// the subject token's own scope claim is the only possible authority.
 	if len(subjectScopes) == 0 {
 		return nil, &model.ErrorResponse{
 			Error: constants.ErrorInvalidScope,
@@ -521,56 +544,4 @@ func (h *tokenExchangeGrantHandler) getScopes(
 	}
 
 	return validRequestedScopes, nil
-}
-
-func (h *tokenExchangeGrantHandler) filterScopesAuthorizedForApp(
-	ctx context.Context,
-	oauthApp *providers.OAuthClient,
-	resourceServerID string,
-	scopes []string,
-) ([]string, *model.ErrorResponse) {
-	if len(scopes) == 0 {
-		return scopes, nil
-	}
-
-	logger := log.GetLogger().With(log.String(log.LoggerKeyComponentName, "TokenExchangeGrantHandler"))
-
-	if h.authzService == nil {
-		logger.Error(ctx, "Authorization provider is not configured for token exchange")
-		return nil, &model.ErrorResponse{
-			Error:            constants.ErrorServerError,
-			ErrorDescription: "Failed to generate token",
-		}
-	}
-
-	var groupIDs []string
-	if h.actorProvider != nil {
-		groups, groupErr := h.actorProvider.GetActorGroups(oauthApp.ID)
-		if groupErr != nil {
-			logger.Error(ctx, "Failed to resolve app group memberships",
-				log.String("appID", oauthApp.ID), log.String("error", groupErr.Error.DefaultValue))
-			return nil, &model.ErrorResponse{
-				Error:            constants.ErrorServerError,
-				ErrorDescription: "Failed to generate token",
-			}
-		}
-		for _, group := range groups {
-			if group.ID != "" && !slices.Contains(groupIDs, group.ID) {
-				groupIDs = append(groupIDs, group.ID)
-			}
-		}
-	}
-
-	authzResp, svcErr := h.authzService.EvaluateAccessBatch(ctx,
-		buildAccessEvaluationsRequest(oauthApp.ID, groupIDs, scopes, resourceServerID))
-	if svcErr != nil {
-		logger.Error(ctx, "Failed to get authorized permissions for app",
-			log.String("appID", oauthApp.ID), log.String("error", svcErr.Error.DefaultValue))
-		return nil, &model.ErrorResponse{
-			Error:            constants.ErrorServerError,
-			ErrorDescription: "Failed to generate token",
-		}
-	}
-
-	return filterAuthorizedScopes(scopes, authzResp.Evaluations), nil
 }

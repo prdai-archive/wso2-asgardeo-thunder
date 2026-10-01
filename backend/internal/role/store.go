@@ -1,20 +1,5 @@
-/*
- * Copyright (c) 2025, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2025 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 package role
 
@@ -22,9 +7,9 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/thunder-id/thunderid/internal/system/config"
 	serverconst "github.com/thunder-id/thunderid/internal/system/constants"
 	"github.com/thunder-id/thunderid/internal/system/database/provider"
+	"github.com/thunder-id/thunderid/internal/system/deployment"
 	"github.com/thunder-id/thunderid/internal/system/log"
 	"github.com/thunder-id/thunderid/pkg/thunderidengine/providers"
 )
@@ -41,6 +26,7 @@ type roleStoreInterface interface {
 	GetRoleListByOUID(ctx context.Context, ouID string, limit, offset int) ([]Role, error)
 	CreateRole(ctx context.Context, id string, role RoleCreationDetail) error
 	GetRole(ctx context.Context, id string) (RoleWithPermissions, error)
+	GetRolesByNames(ctx context.Context, names []string) ([]Role, error)
 	IsRoleExist(ctx context.Context, id string) (bool, error)
 	GetRoleAssignments(ctx context.Context, id string, limit, offset int) ([]RoleAssignment, error)
 	GetRoleAssignmentsByType(ctx context.Context, id string,
@@ -56,9 +42,18 @@ type roleStoreInterface interface {
 	CheckRoleNameExists(ctx context.Context, ouID, name string) (bool, error)
 	CheckRoleNameExistsExcludingID(ctx context.Context, ouID, name, excludeRoleID string) (bool, error)
 	GetAuthorizedPermissionsByResourceServer(
-		ctx context.Context, entityID string, groupIDs []string, resourceServerID string,
+		ctx context.Context, entityID string, groupIDs, roleIDs []string, resourceServerID string,
 		requestedPermissions []string) ([]string, error)
+	// GetAllPermissionsForAssignees returns every permission the entity and/or groups hold through
+	// their assigned roles, grouped by resource server. It takes no filters: it enumerates.
+	GetAllPermissionsForAssignees(
+		ctx context.Context, entityID string, groupIDs []string) ([]ResourcePermissions, error)
 	GetUserRoles(ctx context.Context, entityID string, groupIDs []string) ([]string, error)
+	// GetReferencedPermissions returns the distinct permissions referenced by any role, grouped by
+	// resource server. Used to detect permissions left dangling by a resource deletion.
+	GetReferencedPermissions(ctx context.Context) ([]ResourcePermissions, error)
+	// DeleteRolePermission removes the given permission from every role that holds it.
+	DeleteRolePermission(ctx context.Context, resourceServerID, permission string) (int64, error)
 	// GetEntityRoleIDs returns the set of role IDs assigned to the entity directly or via
 	// group membership. Unlike GetUserRoles this does not require the role to exist in the
 	// underlying store; it returns raw assignee->role bindings. Used by the composite store
@@ -70,8 +65,7 @@ type roleStoreInterface interface {
 
 // roleStore is the default implementation of roleStoreInterface.
 type roleStore struct {
-	dbProvider   provider.DBProviderInterface
-	deploymentID string
+	dbProvider provider.DBProviderInterface
 }
 
 // newRoleStore creates a new instance of roleStore.
@@ -86,9 +80,14 @@ func newRoleStore() (roleStoreInterface, providers.Transactioner, error) {
 		return nil, nil, err
 	}
 	return &roleStore{
-		dbProvider:   dbProvider,
-		deploymentID: config.GetServerRuntime().Config.Server.Identifier,
+		dbProvider: dbProvider,
 	}, transactioner, nil
+}
+
+// scope returns the deployment id this request acts for, falling back to the configured
+// identifier for a context that never passed through the edge.
+func (s *roleStore) scope(ctx context.Context) string {
+	return deployment.Resolve(ctx)
 }
 
 // GetRoleListCount retrieves the total count of roles.
@@ -98,7 +97,7 @@ func (s *roleStore) GetRoleListCount(ctx context.Context) (int, error) {
 		return 0, err
 	}
 
-	countResults, err := dbClient.QueryContext(ctx, queryGetRoleListCount, s.deploymentID)
+	countResults, err := dbClient.QueryContext(ctx, queryGetRoleListCount, s.scope(ctx))
 	if err != nil {
 		return 0, fmt.Errorf("failed to execute count query: %w", err)
 	}
@@ -113,7 +112,7 @@ func (s *roleStore) GetRoleList(ctx context.Context, limit, offset int) ([]Role,
 		return nil, err
 	}
 
-	results, err := dbClient.QueryContext(ctx, queryGetRoleList, limit, offset, s.deploymentID)
+	results, err := dbClient.QueryContext(ctx, queryGetRoleList, limit, offset, s.scope(ctx))
 	if err != nil {
 		return nil, fmt.Errorf("failed to execute role list query: %w", err)
 	}
@@ -137,7 +136,7 @@ func (s *roleStore) GetRoleListCountByOUID(ctx context.Context, ouID string) (in
 		return 0, err
 	}
 
-	countResults, err := dbClient.QueryContext(ctx, queryGetRoleListCountByOUID, ouID, s.deploymentID)
+	countResults, err := dbClient.QueryContext(ctx, queryGetRoleListCountByOUID, ouID, s.scope(ctx))
 	if err != nil {
 		return 0, fmt.Errorf("failed to execute count query: %w", err)
 	}
@@ -152,7 +151,7 @@ func (s *roleStore) GetRoleListByOUID(ctx context.Context, ouID string, limit, o
 		return nil, err
 	}
 
-	results, err := dbClient.QueryContext(ctx, queryGetRoleListByOUID, ouID, limit, offset, s.deploymentID)
+	results, err := dbClient.QueryContext(ctx, queryGetRoleListByOUID, ouID, limit, offset, s.scope(ctx))
 	if err != nil {
 		return nil, fmt.Errorf("failed to execute role list query: %w", err)
 	}
@@ -182,17 +181,17 @@ func (s *roleStore) CreateRole(ctx context.Context, id string, role RoleCreation
 		role.OUID,
 		role.Name,
 		role.Description,
-		s.deploymentID,
+		s.scope(ctx),
 	)
 	if err != nil {
 		return fmt.Errorf("failed to execute query: %w", err)
 	}
 
-	if err := addPermissionsToRole(ctx, dbClient, id, role.Permissions, s.deploymentID); err != nil {
+	if err := addPermissionsToRole(ctx, dbClient, id, role.Permissions, s.scope(ctx)); err != nil {
 		return err
 	}
 
-	if err := addAssignmentsToRole(ctx, dbClient, id, role.Assignments, s.deploymentID); err != nil {
+	if err := addAssignmentsToRole(ctx, dbClient, id, role.Assignments, s.scope(ctx)); err != nil {
 		return err
 	}
 
@@ -206,7 +205,7 @@ func (s *roleStore) GetRole(ctx context.Context, id string) (RoleWithPermissions
 		return RoleWithPermissions{}, err
 	}
 
-	results, err := dbClient.QueryContext(ctx, queryGetRoleByID, id, s.deploymentID)
+	results, err := dbClient.QueryContext(ctx, queryGetRoleByID, id, s.scope(ctx))
 	if err != nil {
 		return RoleWithPermissions{}, fmt.Errorf("failed to execute query: %w", err)
 	}
@@ -239,6 +238,39 @@ func (s *roleStore) GetRole(ctx context.Context, id string) (RoleWithPermissions
 	}, nil
 }
 
+// GetRolesByNames retrieves roles by a list of names, regardless of organization unit.
+func (s *roleStore) GetRolesByNames(ctx context.Context, names []string) ([]Role, error) {
+	if len(names) == 0 {
+		return []Role{}, nil
+	}
+
+	dbClient, err := s.getConfigDBClient()
+	if err != nil {
+		return nil, err
+	}
+
+	query, args, err := buildGetRolesByNamesQuery(names, s.scope(ctx))
+	if err != nil {
+		return nil, fmt.Errorf("failed to build get roles by names query: %w", err)
+	}
+
+	results, err := dbClient.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to execute query: %w", err)
+	}
+
+	roles := make([]Role, 0, len(results))
+	for _, row := range results {
+		role, err := buildRoleBasicInfoFromResultRow(row)
+		if err != nil {
+			return nil, fmt.Errorf("failed to build role from result row: %w", err)
+		}
+		roles = append(roles, role)
+	}
+
+	return roles, nil
+}
+
 // IsRoleExist checks if a role exists by its ID without fetching its details.
 func (s *roleStore) IsRoleExist(ctx context.Context, id string) (bool, error) {
 	dbClient, err := s.getConfigDBClient()
@@ -246,7 +278,7 @@ func (s *roleStore) IsRoleExist(ctx context.Context, id string) (bool, error) {
 		return false, err
 	}
 
-	results, err := dbClient.QueryContext(ctx, queryCheckRoleExists, id, s.deploymentID)
+	results, err := dbClient.QueryContext(ctx, queryCheckRoleExists, id, s.scope(ctx))
 	if err != nil {
 		return false, fmt.Errorf("failed to check role existence: %w", err)
 	}
@@ -261,7 +293,7 @@ func (s *roleStore) GetRoleAssignments(ctx context.Context, id string, limit, of
 		return nil, err
 	}
 
-	results, err := dbClient.QueryContext(ctx, queryGetRoleAssignments, id, limit, offset, s.deploymentID)
+	results, err := dbClient.QueryContext(ctx, queryGetRoleAssignments, id, limit, offset, s.scope(ctx))
 	if err != nil {
 		return nil, fmt.Errorf("failed to get role assignments: %w", err)
 	}
@@ -279,7 +311,7 @@ func (s *roleStore) GetRoleAssignmentsByType(
 	}
 
 	results, err := dbClient.QueryContext(
-		ctx, queryGetRoleAssignmentsByType, id, limit, offset, s.deploymentID, assigneeType)
+		ctx, queryGetRoleAssignmentsByType, id, limit, offset, s.scope(ctx), assigneeType)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get role assignments: %w", err)
 	}
@@ -315,7 +347,7 @@ func (s *roleStore) GetRoleAssignmentsCount(ctx context.Context, id string) (int
 		return 0, err
 	}
 
-	countResults, err := dbClient.QueryContext(ctx, queryGetRoleAssignmentsCount, id, s.deploymentID)
+	countResults, err := dbClient.QueryContext(ctx, queryGetRoleAssignmentsCount, id, s.scope(ctx))
 	if err != nil {
 		return 0, fmt.Errorf("failed to get role assignments count: %w", err)
 	}
@@ -331,7 +363,7 @@ func (s *roleStore) GetRoleAssignmentsCountByType(ctx context.Context, id string
 	}
 
 	countResults, err := dbClient.QueryContext(
-		ctx, queryGetRoleAssignmentsCountByType, id, s.deploymentID, assigneeType)
+		ctx, queryGetRoleAssignmentsCountByType, id, s.scope(ctx), assigneeType)
 	if err != nil {
 		return 0, fmt.Errorf("failed to get role assignments count: %w", err)
 	}
@@ -352,7 +384,7 @@ func (s *roleStore) UpdateRole(ctx context.Context, id string, role RoleUpdateDe
 		role.Name,
 		role.Description,
 		id,
-		s.deploymentID,
+		s.scope(ctx),
 	)
 	if err != nil {
 		return fmt.Errorf("failed to execute query: %w", err)
@@ -362,7 +394,7 @@ func (s *roleStore) UpdateRole(ctx context.Context, id string, role RoleUpdateDe
 		return ErrRoleNotFound
 	}
 
-	if err := updateRolePermissions(ctx, dbClient, id, role.Permissions, s.deploymentID); err != nil {
+	if err := updateRolePermissions(ctx, dbClient, id, role.Permissions, s.scope(ctx)); err != nil {
 		return err
 	}
 
@@ -378,7 +410,7 @@ func (s *roleStore) DeleteRole(ctx context.Context, id string) error {
 		return err
 	}
 
-	rowsAffected, err := dbClient.ExecuteContext(ctx, queryDeleteRole, id, s.deploymentID)
+	rowsAffected, err := dbClient.ExecuteContext(ctx, queryDeleteRole, id, s.scope(ctx))
 	if err != nil {
 		return fmt.Errorf("failed to execute query: %w", err)
 	}
@@ -397,7 +429,7 @@ func (s *roleStore) DeleteAssignmentsByRoleID(ctx context.Context, id string) er
 		return err
 	}
 
-	_, err = dbClient.ExecuteContext(ctx, queryDeleteAllRoleAssignments, id, s.deploymentID)
+	_, err = dbClient.ExecuteContext(ctx, queryDeleteAllRoleAssignments, id, s.scope(ctx))
 	if err != nil {
 		return fmt.Errorf("failed to delete assignments for role: %w", err)
 	}
@@ -414,9 +446,54 @@ func (s *roleStore) DeleteAssignmentsByAssignee(
 	}
 
 	rowsAffected, err := dbClient.ExecuteContext(
-		ctx, queryDeleteRoleAssignmentsByAssignee, assigneeType, assigneeID, s.deploymentID)
+		ctx, queryDeleteRoleAssignmentsByAssignee, assigneeType, assigneeID, s.scope(ctx))
 	if err != nil {
 		return 0, fmt.Errorf("failed to delete assignments for assignee: %w", err)
+	}
+	return rowsAffected, nil
+}
+
+// GetReferencedPermissions returns the distinct permissions referenced by any role, grouped by
+// resource server.
+func (s *roleStore) GetReferencedPermissions(ctx context.Context) ([]ResourcePermissions, error) {
+	dbClient, err := s.getConfigDBClient()
+	if err != nil {
+		return nil, err
+	}
+
+	results, err := dbClient.QueryContext(ctx, queryGetReferencedPermissions, s.scope(ctx))
+	if err != nil {
+		return nil, fmt.Errorf("failed to get referenced permissions: %w", err)
+	}
+
+	byResourceServer := make(map[string][]string)
+	for _, row := range results {
+		resourceServerID, ok := row["resource_server_id"].(string)
+		if !ok {
+			return nil, fmt.Errorf("failed to parse resource_server_id as string")
+		}
+		permission, ok := row["permission"].(string)
+		if !ok {
+			return nil, fmt.Errorf("failed to parse permission as string")
+		}
+		byResourceServer[resourceServerID] = append(byResourceServer[resourceServerID], permission)
+	}
+
+	return resourcePermissionsFromMap(byResourceServer), nil
+}
+
+// DeleteRolePermission removes the given permission from every role that holds it.
+func (s *roleStore) DeleteRolePermission(
+	ctx context.Context, resourceServerID, permission string) (int64, error) {
+	dbClient, err := s.getConfigDBClient()
+	if err != nil {
+		return 0, err
+	}
+
+	rowsAffected, err := dbClient.ExecuteContext(
+		ctx, queryDeleteRolePermissionByValue, resourceServerID, permission, s.scope(ctx))
+	if err != nil {
+		return 0, fmt.Errorf("failed to delete role permission: %w", err)
 	}
 	return rowsAffected, nil
 }
@@ -428,7 +505,7 @@ func (s *roleStore) AddAssignments(ctx context.Context, id string, assignments [
 		return err
 	}
 
-	return addAssignmentsToRole(ctx, dbClient, id, assignments, s.deploymentID)
+	return addAssignmentsToRole(ctx, dbClient, id, assignments, s.scope(ctx))
 }
 
 // RemoveAssignments removes assignments from a role.
@@ -440,7 +517,7 @@ func (s *roleStore) RemoveAssignments(ctx context.Context, id string, assignment
 
 	for _, assignment := range assignments {
 		_, err := dbClient.ExecuteContext(
-			ctx, queryDeleteRoleAssignmentsByIDs, id, assignment.Type, assignment.ID, s.deploymentID)
+			ctx, queryDeleteRoleAssignmentsByIDs, id, assignment.Type, assignment.ID, s.scope(ctx))
 		if err != nil {
 			return fmt.Errorf("failed to remove assignment from role: %w", err)
 		}
@@ -451,7 +528,7 @@ func (s *roleStore) RemoveAssignments(ctx context.Context, id string, assignment
 // getRolePermissions retrieves all permissions for a role.
 func (s *roleStore) getRolePermissions(
 	ctx context.Context, dbClient provider.DBClientInterface, id string) ([]ResourcePermissions, error) {
-	results, err := dbClient.QueryContext(ctx, queryGetRolePermissions, id, s.deploymentID)
+	results, err := dbClient.QueryContext(ctx, queryGetRolePermissions, id, s.scope(ctx))
 	if err != nil {
 		return nil, fmt.Errorf("failed to get role permissions: %w", err)
 	}
@@ -572,7 +649,7 @@ func (s *roleStore) CheckRoleNameExists(ctx context.Context, ouID, name string) 
 		return false, err
 	}
 
-	results, err := dbClient.QueryContext(ctx, queryCheckRoleNameExists, ouID, name, s.deploymentID)
+	results, err := dbClient.QueryContext(ctx, queryCheckRoleNameExists, ouID, name, s.scope(ctx))
 	if err != nil {
 		return false, fmt.Errorf("failed to check role name existence: %w", err)
 	}
@@ -590,7 +667,7 @@ func (s *roleStore) CheckRoleNameExistsExcludingID(
 	}
 
 	results, err := dbClient.QueryContext(
-		ctx, queryCheckRoleNameExistsExcludingID, ouID, name, excludeRoleID, s.deploymentID)
+		ctx, queryCheckRoleNameExistsExcludingID, ouID, name, excludeRoleID, s.scope(ctx))
 	if err != nil {
 		return false, fmt.Errorf("failed to check role name existence: %w", err)
 	}
@@ -600,10 +677,51 @@ func (s *roleStore) CheckRoleNameExistsExcludingID(
 
 // GetAuthorizedPermissionsByResourceServer retrieves the permissions that an entity is authorized for based on
 // their direct role assignments and group memberships, scoped to a resource server when provided.
+// GetAllPermissionsForAssignees returns every permission granted to the entity and/or groups by
+// their assigned database-backed roles, grouped by resource server.
+func (s *roleStore) GetAllPermissionsForAssignees(
+	ctx context.Context, entityID string, groupIDs []string,
+) ([]ResourcePermissions, error) {
+	if entityID == "" && len(groupIDs) == 0 {
+		return []ResourcePermissions{}, nil
+	}
+
+	dbClient, err := s.getConfigDBClient()
+	if err != nil {
+		return nil, err
+	}
+
+	if groupIDs == nil {
+		groupIDs = []string{}
+	}
+
+	query, args := buildAllPermissionsForAssigneesQuery(entityID, groupIDs, s.scope(ctx))
+
+	results, err := dbClient.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get all permissions for assignees: %w", err)
+	}
+
+	byResourceServer := make(map[string][]string)
+	for _, row := range results {
+		resourceServerID, ok := row["resource_server_id"].(string)
+		if !ok {
+			return nil, fmt.Errorf("failed to parse resource_server_id as string")
+		}
+		permission, ok := row["permission"].(string)
+		if !ok {
+			return nil, fmt.Errorf("failed to parse permission as string")
+		}
+		byResourceServer[resourceServerID] = append(byResourceServer[resourceServerID], permission)
+	}
+
+	return resourcePermissionsFromMap(byResourceServer), nil
+}
+
 func (s *roleStore) GetAuthorizedPermissionsByResourceServer(
 	ctx context.Context,
 	entityID string,
-	groupIDs []string,
+	groupIDs, roleIDs []string,
 	resourceServerID string,
 	requestedPermissions []string,
 ) ([]string, error) {
@@ -612,14 +730,17 @@ func (s *roleStore) GetAuthorizedPermissionsByResourceServer(
 		return nil, err
 	}
 
-	// Handle nil groupIDs slice
+	// Handle nil groupIDs/roleIDs slices
 	if groupIDs == nil {
 		groupIDs = []string{}
+	}
+	if roleIDs == nil {
+		roleIDs = []string{}
 	}
 
 	// Build dynamic query based on provided parameters
 	query, args := buildAuthorizedPermissionsQuery(
-		entityID, groupIDs, resourceServerID, requestedPermissions, s.deploymentID)
+		entityID, groupIDs, roleIDs, resourceServerID, requestedPermissions, s.scope(ctx))
 
 	results, err := dbClient.QueryContext(ctx, query, args...)
 	if err != nil {
@@ -649,7 +770,7 @@ func (s *roleStore) GetUserRoles(
 		groupIDs = []string{}
 	}
 
-	query, args := buildUserRolesQuery(entityID, groupIDs, s.deploymentID)
+	query, args := buildUserRolesQuery(entityID, groupIDs, s.scope(ctx))
 
 	results, err := dbClient.QueryContext(ctx, query, args...)
 	if err != nil {
@@ -687,7 +808,7 @@ func (s *roleStore) GetEntityRoleIDs(
 		return nil, err
 	}
 
-	query, args := buildEntityRoleIDsQuery(entityID, groupIDs, s.deploymentID)
+	query, args := buildEntityRoleIDsQuery(entityID, groupIDs, s.scope(ctx))
 
 	results, err := dbClient.QueryContext(ctx, query, args...)
 	if err != nil {

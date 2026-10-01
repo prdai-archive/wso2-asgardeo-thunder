@@ -1,20 +1,5 @@
-/**
- * Copyright (c) 2025, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied. See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2025 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 import {fireEvent, render, screen} from '@thunderid/test-utils';
 import {useEffect} from 'react';
@@ -22,9 +7,11 @@ import {beforeEach, describe, expect, it, vi} from 'vitest';
 import ConnectionConfigureWizardPage from '../ConnectionConfigureWizardPage';
 
 const mutateMock = vi.fn();
+const resetMock = vi.fn();
 const navigateMock = vi.fn();
 const showToastMock = vi.fn();
 const mockParams = {type: 'google'};
+const mutationState = {isPending: false, isError: false};
 
 vi.mock('react-router', async (importOriginal) => ({
   ...(await importOriginal<typeof import('react-router')>()),
@@ -36,7 +23,9 @@ vi.mock('@thunderid/contexts', async (importOriginal) => ({
   useConfig: () => ({getGateCallbackUrl: () => 'https://id.acme.io/gate/callback'}),
   useToast: () => ({showToast: showToastMock}),
 }));
-vi.mock('../../api/useCreateConnection', () => ({default: () => ({mutate: mutateMock, isPending: false})}));
+vi.mock('../../api/useCreateConnection', () => ({
+  default: () => ({mutate: mutateMock, reset: resetMock, ...mutationState}),
+}));
 
 vi.mock('../../components/ConnectionForm', () => ({
   default: function StubConnectionForm({onFieldChange}: {onFieldChange: (name: string, value: string) => void}) {
@@ -49,7 +38,13 @@ vi.mock('../../components/ConnectionForm', () => ({
       onFieldChange('senderId', '+15005550006');
       // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
-    return <div data-testid="stub-connection-form" />;
+    return (
+      <div data-testid="stub-connection-form">
+        <button type="button" data-testid="edit-client-id" onClick={() => onFieldChange('clientId', 'changed')}>
+          edit
+        </button>
+      </div>
+    );
   },
 }));
 
@@ -57,15 +52,16 @@ describe('ConnectionConfigureWizardPage', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockParams.type = 'google';
+    mutationState.isPending = false;
+    mutationState.isError = false;
   });
 
   it('shows a single configure step and creates with the fixed vendor name', () => {
     render(<ConnectionConfigureWizardPage />);
 
     // Single step: the credentials form is shown with a Create button (no attribute-mapping step).
-    expect(screen.getByTestId('connection-fullpage-content')).toBeInTheDocument();
     expect(screen.getByTestId('stub-connection-form')).toBeInTheDocument();
-    expect(screen.getByText('Configure your Google connection')).toBeInTheDocument();
+    expect(screen.getByText('Configure your Google Login connection')).toBeInTheDocument();
     fireEvent.click(screen.getByTestId('wizard-create'));
 
     expect(mutateMock).toHaveBeenCalledTimes(1);
@@ -77,7 +73,7 @@ describe('ConnectionConfigureWizardPage', () => {
       attributeConfiguration?: unknown;
     };
     expect(payload).toMatchObject({
-      name: 'Google',
+      name: 'Google Login',
       clientId: 'x',
       clientSecret: 's',
       redirectUri: 'https://id.acme.io/gate/callback',
@@ -105,15 +101,62 @@ describe('ConnectionConfigureWizardPage', () => {
     expect(navigateMock).toHaveBeenCalledWith('/connections/google/conn-1');
   });
 
-  it('shows a toast with the duplicate-name error on a 409 create conflict', () => {
+  it('shows a general inline error (no toast) on a 409 create conflict, since the name is not user-editable here', () => {
+    mutateMock.mockImplementationOnce((_payload, opts: {onError: (error: unknown) => void}) => {
+      opts.onError({response: {status: 409}});
+    });
     render(<ConnectionConfigureWizardPage />);
 
     fireEvent.click(screen.getByTestId('wizard-create'));
 
-    const {onError} = mutateMock.mock.calls[0][1] as {onError: (error: unknown) => void};
-    onError({response: {status: 409}});
+    expect(screen.getByText('Failed to create connection.')).toBeInTheDocument();
+    expect(showToastMock).not.toHaveBeenCalled();
+  });
 
-    expect(showToastMock).toHaveBeenCalledWith('A connection with this name already exists.', 'error');
+  it('shows a general inline error (no toast) for a non-conflict create failure', () => {
+    mutateMock.mockImplementationOnce((_payload, opts: {onError: (error: unknown) => void}) => {
+      opts.onError({response: {status: 500}});
+    });
+    render(<ConnectionConfigureWizardPage />);
+
+    fireEvent.click(screen.getByTestId('wizard-create'));
+
+    expect(screen.getByText('Failed to create connection.')).toBeInTheDocument();
+    expect(showToastMock).not.toHaveBeenCalled();
+  });
+
+  it('clears the general create error when a field is edited', () => {
+    mutateMock.mockImplementationOnce((_payload, opts: {onError: (error: unknown) => void}) => {
+      opts.onError({response: {status: 500}});
+    });
+    render(<ConnectionConfigureWizardPage />);
+
+    fireEvent.click(screen.getByTestId('wizard-create'));
+    expect(screen.getByText('Failed to create connection.')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId('edit-client-id'));
+
+    expect(screen.queryByText('Failed to create connection.')).not.toBeInTheDocument();
+  });
+
+  it('does not reset a still-pending mutation when a field is edited', () => {
+    mutationState.isPending = true;
+    mutationState.isError = false;
+    render(<ConnectionConfigureWizardPage />);
+
+    fireEvent.click(screen.getByTestId('edit-client-id'));
+
+    expect(resetMock).not.toHaveBeenCalled();
+  });
+
+  it('resets a failed (settled) mutation when a field is edited', () => {
+    mutationState.isPending = false;
+    mutationState.isError = true;
+    render(<ConnectionConfigureWizardPage />);
+
+    fireEvent.click(screen.getByTestId('edit-client-id'));
+
+    expect(resetMock).toHaveBeenCalled();
   });
 
   it('SMS vendor: single configure step creates without attribute mapping', () => {
@@ -127,7 +170,7 @@ describe('ConnectionConfigureWizardPage', () => {
     expect(mutateMock).toHaveBeenCalledTimes(1);
     const payload = mutateMock.mock.calls[0][0] as Record<string, unknown>;
     expect(payload).toMatchObject({
-      name: 'Twilio',
+      name: 'Twilio SMS',
       accountSid: 'AC00000000000000000000000000000000',
       senderId: '+15005550006',
     });

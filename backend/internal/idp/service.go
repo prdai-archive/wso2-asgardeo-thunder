@@ -1,20 +1,5 @@
-/*
- * Copyright (c) 2025, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2025 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 // Package idp provides the implementation for identity provider management operations.
 package idp
@@ -23,11 +8,16 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
+	"strconv"
 	"strings"
 
 	tidcommon "github.com/thunder-id/thunderid/pkg/thunderidengine/common"
 
 	"github.com/thunder-id/thunderid/internal/entitytype"
+	"github.com/thunder-id/thunderid/internal/group"
+	"github.com/thunder-id/thunderid/internal/role"
+	serverconst "github.com/thunder-id/thunderid/internal/system/constants"
 	declarativeresource "github.com/thunder-id/thunderid/internal/system/declarative_resource"
 	"github.com/thunder-id/thunderid/internal/system/log"
 	"github.com/thunder-id/thunderid/internal/system/resourcedependency"
@@ -51,24 +41,55 @@ type IDPServiceInterface interface {
 	DeleteIdentityProvider(ctx context.Context, idpID string) *tidcommon.ServiceError
 	GetIDPUsages(ctx context.Context, idpID string) (*resourcedependency.DependenciesResponse, *tidcommon.ServiceError)
 	SetDependencyRegistry(r resourcedependency.Registry)
+	ApplySchemaAwareDefaults(ctx context.Context, idp *providers.IDPDTO)
+	GetDirectAuthorizationTargets(
+		ctx context.Context, idp *providers.IDPDTO, claims map[string]interface{},
+	) ([]providers.AuthorizationTarget, *tidcommon.ServiceError)
 }
 
 // idpService is the default implementation of the IdPServiceInterface.
 type idpService struct {
 	idpStore           idpStoreInterface
 	entityTypeService  entitytype.EntityTypeServiceInterface
+	roleService        role.RoleServiceInterface
+	groupService       group.GroupServiceInterface
+	resourceService    providers.ResourceServerProvider
 	transactioner      providers.Transactioner
 	dependencyRegistry resourcedependency.Registry
 	logger             *log.Logger
 	uuidGenerator      func() (string, error)
 }
 
+// userTypeAttributes holds a user type's non-credential schema attributes.
+type userTypeAttributes struct {
+	name       string
+	attributes []entitytype.AttributeInfo
+}
+
+// isUnique reports whether the user type declares attr as unique.
+func (u userTypeAttributes) isUnique(attr string) bool {
+	return slices.ContainsFunc(u.attributes, func(a entitytype.AttributeInfo) bool {
+		return a.Attribute == attr && a.Unique
+	})
+}
+
+// isRequired reports whether the user type declares attr as required.
+func (u userTypeAttributes) isRequired(attr string) bool {
+	return slices.ContainsFunc(u.attributes, func(a entitytype.AttributeInfo) bool {
+		return a.Attribute == attr && a.Required
+	})
+}
+
 // newIDPService creates a new instance of IdPService.
 func newIDPService(idpStore idpStoreInterface, entityTypeService entitytype.EntityTypeServiceInterface,
-	transactioner providers.Transactioner) IDPServiceInterface {
+	roleService role.RoleServiceInterface, groupService group.GroupServiceInterface,
+	resourceService providers.ResourceServerProvider, transactioner providers.Transactioner) IDPServiceInterface {
 	return &idpService{
 		idpStore:          idpStore,
 		entityTypeService: entityTypeService,
+		roleService:       roleService,
+		groupService:      groupService,
+		resourceService:   resourceService,
 		transactioner:     transactioner,
 		logger:            log.GetLogger().With(log.String(log.LoggerKeyComponentName, "IdPService")),
 		uuidGenerator:     utils.GenerateUUIDv7,
@@ -86,6 +107,9 @@ func (is *idpService) CreateIdentityProvider(
 	if svcErr := validateIDP(ctx, idp, logger); svcErr != nil {
 		return nil, svcErr
 	}
+	// Seeded on create only: an update replaces the whole connection, so re-seeding there would
+	// silently restore a section the administrator removed.
+	is.ApplySchemaAwareDefaults(ctx, idp)
 	if svcErr := is.validateAttributeConfiguration(ctx, idp); svcErr != nil {
 		return nil, svcErr
 	}
@@ -234,6 +258,9 @@ func (is *idpService) UpdateIdentityProvider(
 	if svcErr := validateIDP(ctx, idp, logger); svcErr != nil {
 		return nil, svcErr
 	}
+	// Defaults are seeded on create only. An update replaces the whole connection, so an omitted
+	// account-linking or mapping section is indistinguishable from one the administrator deliberately
+	// removed; re-seeding here would silently undo that removal.
 	if svcErr := is.validateAttributeConfiguration(ctx, idp); svcErr != nil {
 		return nil, svcErr
 	}
@@ -336,6 +363,174 @@ func (is *idpService) DeleteIdentityProvider(ctx context.Context, idpID string) 
 	}
 
 	return nil
+}
+
+// ApplySchemaAwareDefaults seeds account-linking and username-mapping defaults derived from user-type
+// schemas. Explicit configuration wins, and schema lookup failures leave the connection unchanged
+// rather than blocking the operation. Entity-type reads are authorized against ctx and never elevated.
+func (is *idpService) ApplySchemaAwareDefaults(ctx context.Context, idp *providers.IDPDTO) {
+	if idp == nil || is.entityTypeService == nil {
+		return
+	}
+
+	attributeConfig := idp.AttributeConfiguration
+	needsAccountLinking := attributeConfig == nil || attributeConfig.AccountLinking == nil
+	needsAttributeMappings := attributeConfig == nil || len(attributeConfig.UserTypeAttributeMappings) == 0
+	if !needsAccountLinking && !needsAttributeMappings {
+		return
+	}
+
+	// Every user type is a candidate: the per-type criteria the seeding helpers apply (a unique email,
+	// a required username) decide what can actually be seeded. Self registration is deliberately not a
+	// filter, because attribute mappings are read on login as well as during provisioning, so a type
+	// that only ever receives manually created users still needs them.
+	candidateUserTypes := is.loadCandidateUserTypes(ctx)
+	if len(candidateUserTypes) == 0 {
+		is.logger.Debug(ctx, "No user type to seed connection defaults from")
+		return
+	}
+
+	// Linking is a flat attribute list with no user type attached, so it is seeded independently of
+	// whether the mapping target can be decided.
+	if needsAccountLinking {
+		is.seedEmailAccountLinking(ctx, idp, candidateUserTypes)
+	}
+	if needsAttributeMappings {
+		is.seedUserTypeDefaults(ctx, idp, candidateUserTypes)
+	}
+}
+
+// loadCandidateUserTypes returns every user type visible to the caller with its non-credential
+// attributes, or nil when any of it cannot be read. AttributeInfo carries both the required and the
+// unique flag, so one read per type answers everything the seeding helpers ask. A partial read yields
+// nothing rather than a subset, because seeding on an incomplete view of the deployment could pick a
+// linking attribute that another type allows duplicates of.
+func (is *idpService) loadCandidateUserTypes(ctx context.Context) []userTypeAttributes {
+	response, svcErr := is.entityTypeService.GetEntityTypeList(
+		ctx, entitytype.TypeCategoryUser, serverconst.MaxPageSize, 0, false)
+	if svcErr != nil || response == nil {
+		is.logger.Warn(ctx, "Could not list user types, skipping connection default seeding")
+		return nil
+	}
+
+	candidates := make([]userTypeAttributes, 0, len(response.Types))
+	for _, userType := range response.Types {
+		attributes, attrErr := is.entityTypeService.GetAttributes(
+			ctx, entitytype.TypeCategoryUser, userType.Name,
+			entitytype.AttributeFilter{AllowNonCredential: true})
+		if attrErr != nil {
+			is.logger.Warn(ctx, "Could not read user type attributes, skipping connection default seeding",
+				log.String("userType", userType.Name))
+			return nil
+		}
+		candidates = append(candidates, userTypeAttributes{name: userType.Name, attributes: attributes})
+	}
+	return candidates
+}
+
+// seedEmailAccountLinking configures email as the account-linking attribute when the connection's
+// scopes can yield one and email is unique on every candidate. Uniqueness on all of them matters
+// because the linking list carries no user type: the lookup must identify a single user whichever
+// type an identity provisions into.
+func (is *idpService) seedEmailAccountLinking(
+	ctx context.Context, idp *providers.IDPDTO, candidateUserTypes []userTypeAttributes,
+) {
+	scopes := utils.ParseStringArray(GetPropertyValue(idp.Properties, PropScopes), ",")
+	if !scopesGrantEmail(idp.Type, scopes) {
+		return
+	}
+
+	for _, userType := range candidateUserTypes {
+		if !userType.isUnique(defaultAccountLinkingAttribute) {
+			is.logger.Debug(ctx, "Email is not unique on a candidate user type, skipping linking default",
+				log.String("userType", userType.name))
+			return
+		}
+	}
+
+	ensureAttributeConfiguration(idp).AccountLinking = &providers.AccountLinking{
+		Attributes: []string{defaultAccountLinkingAttribute},
+	}
+}
+
+// seedUserTypeDefaults records which local user type an incoming identity resolves to, and maps a
+// provider claim onto the local username for every candidate that requires one. Without the mapping,
+// provisioning prompts for a username on every first federated sign-in, since no provider emits a
+// claim under that name. The default must name a type the mappings cover, because GetAttributeMappings
+// looks up the entry keyed to it; with nothing to map it names a type email can match instead.
+func (is *idpService) seedUserTypeDefaults(
+	ctx context.Context, idp *providers.IDPDTO, candidateUserTypes []userTypeAttributes,
+) {
+	sourceAttribute := defaultUsernameSourceAttribute(idp.Type)
+	if sourceAttribute == "" {
+		return
+	}
+
+	// Google and OIDC derive the username from the email claim, which a connection only receives when
+	// its scopes ask for one. Seeding the mapping regardless would leave an entry that resolves to
+	// nothing: provisioning would still prompt for a username while the connection looks configured.
+	if sourceAttribute == emailClaim {
+		scopes := utils.ParseStringArray(GetPropertyValue(idp.Properties, PropScopes), ",")
+		if !scopesGrantEmail(idp.Type, scopes) {
+			is.logger.Debug(ctx, "Scopes cannot yield an email, skipping username mapping default")
+			return
+		}
+	}
+
+	usernameRequiredUserTypes := make([]string, 0, len(candidateUserTypes))
+	for _, userType := range candidateUserTypes {
+		if userType.isRequired(localUsernameAttribute) {
+			usernameRequiredUserTypes = append(usernameRequiredUserTypes, userType.name)
+		}
+	}
+
+	if len(usernameRequiredUserTypes) == 0 {
+		emailMatchableUserType := firstUserTypeMatchableByEmail(candidateUserTypes)
+		if emailMatchableUserType == "" {
+			return
+		}
+		setDefaultUserType(ensureAttributeConfiguration(idp), emailMatchableUserType)
+		return
+	}
+
+	mappings := make([]providers.UserTypeAttributeMapping, 0, len(usernameRequiredUserTypes))
+	for _, userType := range usernameRequiredUserTypes {
+		mappings = append(mappings, providers.UserTypeAttributeMapping{
+			UserType: userType,
+			Attributes: []providers.AttributeMapping{
+				{ExternalAttribute: sourceAttribute, LocalAttribute: localUsernameAttribute},
+			},
+		})
+	}
+
+	attributeConfig := ensureAttributeConfiguration(idp)
+	// Candidates arrive ordered by name, so taking the first is stable across restarts. This only
+	// selects which mapping entry applies; the type provisioning targets is still decided by the flow.
+	setDefaultUserType(attributeConfig, usernameRequiredUserTypes[0])
+	attributeConfig.UserTypeAttributeMappings = mappings
+}
+
+// firstUserTypeMatchableByEmail returns the first candidate that email can identify a single user on,
+// or "" when none can. Candidates arrive ordered by name, so the choice is stable across restarts.
+func firstUserTypeMatchableByEmail(candidateUserTypes []userTypeAttributes) string {
+	for _, userType := range candidateUserTypes {
+		if userType.isUnique(defaultAccountLinkingAttribute) {
+			return userType.name
+		}
+	}
+	return ""
+}
+
+// setDefaultUserType records the resolution default, leaving a claim-driven resolution the
+// administrator already configured intact: replacing the whole value would drop their external
+// attribute and value mapping.
+func setDefaultUserType(attributeConfig *providers.AttributeConfiguration, userType string) {
+	if attributeConfig.UserTypeResolution == nil {
+		attributeConfig.UserTypeResolution = &providers.UserTypeResolution{}
+	}
+	if strings.TrimSpace(attributeConfig.UserTypeResolution.Default) == "" {
+		attributeConfig.UserTypeResolution.Default = userType
+	}
 }
 
 // SetDependencyRegistry injects the dependency registry. Called by servicemanager after the
@@ -446,6 +641,23 @@ func (is *idpService) validateAttributeConfiguration(
 		return svcErr
 	}
 
+	var ruleMappings []providers.AuthorizationRuleMapping
+	var directMappings []providers.AuthorizationDirectMapping
+	if profile.AuthorizationMapping != nil {
+		ruleMappings = profile.AuthorizationMapping.Rules
+		directMappings = profile.AuthorizationMapping.Direct
+	}
+
+	if svcErr := validateAuthorizationRuleMappings(ruleMappings); svcErr != nil {
+		return svcErr
+	}
+	if svcErr := is.validateAuthorizationRuleMappingTargetsExist(ctx, ruleMappings); svcErr != nil {
+		return svcErr
+	}
+	if svcErr := is.validateAuthorizationDirectMappings(ctx, directMappings); svcErr != nil {
+		return svcErr
+	}
+
 	seenUserTypes := make(map[string]bool, len(profile.UserTypeAttributeMappings))
 	for i := range profile.UserTypeAttributeMappings {
 		entry := profile.UserTypeAttributeMappings[i]
@@ -472,7 +684,7 @@ func (is *idpService) validateAttributeConfiguration(
 
 		// Local targets must be non-credential attributes defined in the user type's schema.
 		attributes, svcErr := is.entityTypeService.GetAttributes(
-			ctx, entitytype.TypeCategoryUser, entry.UserType, false, true, false)
+			ctx, entitytype.TypeCategoryUser, entry.UserType, entitytype.AttributeFilter{AllowNonCredential: true})
 		if svcErr != nil {
 			return tidcommon.CustomServiceError(ErrorInvalidAttributeConfiguration, tidcommon.I18nMessage{
 				Key: "error.idpservice.attribute_configuration_user_type_invalid_description",
@@ -539,7 +751,8 @@ func (is *idpService) validateUserTypeResolution(
 			})
 		}
 		if _, svcErr := is.entityTypeService.GetAttributes(
-			ctx, entitytype.TypeCategoryUser, trimmedUserType, false, true, false); svcErr != nil {
+			ctx, entitytype.TypeCategoryUser, trimmedUserType,
+			entitytype.AttributeFilter{AllowNonCredential: true}); svcErr != nil {
 			return tidcommon.CustomServiceError(ErrorInvalidAttributeConfiguration, tidcommon.I18nMessage{
 				Key: "error.idpservice.attribute_configuration_resolution_target_invalid_description",
 				DefaultValue: "user type resolution maps to invalid user type " +
@@ -547,6 +760,377 @@ func (is *idpService) validateUserTypeResolution(
 				Params: map[string]string{"userType": trimmedUserType},
 			})
 		}
+	}
+	return nil
+}
+
+// GetDirectAuthorizationTargets resolves the IDP's AuthorizationMapping.Direct entries for claims.
+// Each claim value is looked up by exact name (role, group) or validated permission string
+// (permission) against live data, with no organization unit restriction. A value that resolves to
+// more than one role or group, or to none, is skipped rather than granted.
+func (is *idpService) GetDirectAuthorizationTargets(
+	ctx context.Context, idp *providers.IDPDTO, claims map[string]interface{},
+) ([]providers.AuthorizationTarget, *tidcommon.ServiceError) {
+	if idp == nil || idp.AttributeConfiguration == nil || idp.AttributeConfiguration.AuthorizationMapping == nil {
+		return nil, nil
+	}
+	mappings := idp.AttributeConfiguration.AuthorizationMapping.Direct
+	if len(mappings) == 0 {
+		return nil, nil
+	}
+
+	var targets []providers.AuthorizationTarget
+	for _, mapping := range mappings {
+		value, ok := utils.GetNestedValue(claims, mapping.Claim)
+		if !ok {
+			continue
+		}
+		tokens := normalizeClaimValueTokens(value, mapping.Delimiter)
+		if len(tokens) == 0 {
+			continue
+		}
+
+		switch mapping.TargetType {
+		case providers.AuthorizationTargetRole:
+			found, svcErr := is.roleService.GetRolesByNames(ctx, tokens)
+			if svcErr != nil {
+				return nil, svcErr
+			}
+			for _, token := range tokens {
+				if matches := found[token]; len(matches) == 1 {
+					targets = append(targets, providers.AuthorizationTarget{
+						Type: providers.AuthorizationTargetRole, ID: matches[0].ID,
+					})
+				}
+			}
+		case providers.AuthorizationTargetGroup:
+			found, svcErr := is.groupService.GetGroupsByNames(ctx, tokens)
+			if svcErr != nil {
+				return nil, svcErr
+			}
+			for _, token := range tokens {
+				if matches := found[token]; len(matches) == 1 {
+					targets = append(targets, providers.AuthorizationTarget{
+						Type: providers.AuthorizationTargetGroup, ID: matches[0].ID,
+					})
+				}
+			}
+		case providers.AuthorizationTargetPermission:
+			invalid, svcErr := is.resourceService.ValidatePermissions(ctx, mapping.ResourceServerID, tokens)
+			if svcErr != nil {
+				return nil, svcErr
+			}
+			for _, token := range tokens {
+				if !slices.Contains(invalid, token) {
+					targets = append(targets, providers.AuthorizationTarget{
+						Type:             providers.AuthorizationTargetPermission,
+						ResourceServerID: mapping.ResourceServerID,
+						Permission:       token,
+					})
+				}
+			}
+		}
+	}
+
+	return dedupeAuthorizationTargets(targets), nil
+}
+
+// validateAuthorizationRuleMappingTargetsExist verifies every named role, group, and permission exists.
+// Structural shape is validated separately, by validateAuthorizationRuleMappings.
+func (is *idpService) validateAuthorizationRuleMappingTargetsExist(
+	ctx context.Context,
+	mappings []providers.AuthorizationRuleMapping,
+) *tidcommon.ServiceError {
+	roleIDs := make(map[string]bool)
+	groupIDs := make(map[string]bool)
+	permissionsByResourceServer := make(map[string][]string)
+	for _, mapping := range mappings {
+		for _, rule := range mapping.Values {
+			for _, target := range rule.Targets {
+				switch target.Type {
+				case providers.AuthorizationTargetRole:
+					roleIDs[target.ID] = true
+				case providers.AuthorizationTargetGroup:
+					groupIDs[target.ID] = true
+				case providers.AuthorizationTargetPermission:
+					permissionsByResourceServer[target.ResourceServerID] = append(
+						permissionsByResourceServer[target.ResourceServerID], target.Permission)
+				}
+			}
+		}
+	}
+
+	for roleID := range roleIDs {
+		if _, svcErr := is.roleService.GetRoleWithPermissions(ctx, roleID); svcErr != nil {
+			if svcErr.Type == tidcommon.ServerErrorType {
+				return svcErr
+			}
+			return tidcommon.CustomServiceError(ErrorInvalidAttributeConfiguration, tidcommon.I18nMessage{
+				Key: "error.idpservice.authorization_rule_mapping_role_not_found_description",
+				DefaultValue: "authorization rule mapping names a role that does not exist: " +
+					"'{{param(roleId)}}'",
+				Params: map[string]string{"roleId": roleID},
+			})
+		}
+	}
+
+	if len(groupIDs) > 0 {
+		ids := make([]string, 0, len(groupIDs))
+		for id := range groupIDs {
+			ids = append(ids, id)
+		}
+		found, svcErr := is.groupService.GetGroupsByIDs(ctx, ids)
+		if svcErr != nil {
+			return svcErr
+		}
+		for _, id := range ids {
+			if _, ok := found[id]; !ok {
+				return tidcommon.CustomServiceError(ErrorInvalidAttributeConfiguration, tidcommon.I18nMessage{
+					Key: "error.idpservice.authorization_rule_mapping_group_not_found_description",
+					DefaultValue: "authorization rule mapping names a group that does not exist: " +
+						"'{{param(groupId)}}'",
+					Params: map[string]string{"groupId": id},
+				})
+			}
+		}
+	}
+
+	for resourceServerID, permissions := range permissionsByResourceServer {
+		invalid, svcErr := is.resourceService.ValidatePermissions(ctx, resourceServerID, permissions)
+		if svcErr != nil {
+			return svcErr
+		}
+		if len(invalid) > 0 {
+			return tidcommon.CustomServiceError(ErrorInvalidAttributeConfiguration, tidcommon.I18nMessage{
+				Key: "error.idpservice.authorization_rule_mapping_permission_not_found_description",
+				DefaultValue: "authorization rule mapping names a permission that does not exist on " +
+					"resource server '{{param(resourceServerId)}}': '{{param(permission)}}'",
+				Params: map[string]string{"resourceServerId": resourceServerID, "permission": invalid[0]},
+			})
+		}
+	}
+
+	return nil
+}
+
+// validateAuthorizationRuleMappings validates structural shape, independently of whether the named
+// roles, groups, or permissions actually exist (see validateAuthorizationRuleMappingTargetsExist).
+func validateAuthorizationRuleMappings(mappings []providers.AuthorizationRuleMapping) *tidcommon.ServiceError {
+	for _, mapping := range mappings {
+		if strings.TrimSpace(mapping.Claim) == "" {
+			return tidcommon.CustomServiceError(ErrorInvalidAttributeConfiguration, tidcommon.I18nMessage{
+				Key:          "error.idpservice.authorization_rule_mapping_claim_required_description",
+				DefaultValue: "authorization rule mapping requires a claim",
+			})
+		}
+		if mapping.ValueType != "" && !mapping.ValueType.IsValid() {
+			return tidcommon.CustomServiceError(ErrorInvalidAttributeConfiguration, tidcommon.I18nMessage{
+				Key: "error.idpservice.authorization_rule_mapping_value_type_invalid_description",
+				DefaultValue: "authorization rule mapping for claim '{{param(claim)}}' has an unsupported " +
+					"value type '{{param(valueType)}}'",
+				Params: map[string]string{"claim": mapping.Claim, "valueType": string(mapping.ValueType)},
+			})
+		}
+		if mapping.Delimiter != "" && mapping.EffectiveValueType() != providers.AuthorizationValueTypeString {
+			return tidcommon.CustomServiceError(ErrorInvalidAttributeConfiguration, tidcommon.I18nMessage{
+				Key: "error.idpservice.authorization_rule_mapping_delimiter_requires_string_description",
+				DefaultValue: "authorization rule mapping for claim '{{param(claim)}}' has a delimiter, " +
+					"which is only meaningful for a string value type",
+				Params: map[string]string{"claim": mapping.Claim},
+			})
+		}
+		if len(mapping.Values) == 0 {
+			return tidcommon.CustomServiceError(ErrorInvalidAttributeConfiguration, tidcommon.I18nMessage{
+				Key: "error.idpservice.authorization_rule_mapping_values_required_description",
+				DefaultValue: "authorization rule mapping for claim '{{param(claim)}}' requires at least " +
+					"one value",
+				Params: map[string]string{"claim": mapping.Claim},
+			})
+		}
+		for _, rule := range mapping.Values {
+			if svcErr := validateAuthorizationRule(mapping, rule); svcErr != nil {
+				return svcErr
+			}
+		}
+	}
+	return nil
+}
+
+// validateAuthorizationRule validates a single rule: operator compatible with the mapping's shape
+// and value type, a parseable value, and at least one well-formed target.
+func validateAuthorizationRule(
+	mapping providers.AuthorizationRuleMapping, rule providers.AuthorizationRule,
+) *tidcommon.ServiceError {
+	claim := mapping.Claim
+	valueType := mapping.EffectiveValueType()
+
+	if !rule.Operator.IsValid() {
+		return tidcommon.CustomServiceError(ErrorInvalidAttributeConfiguration, tidcommon.I18nMessage{
+			Key: "error.idpservice.authorization_rule_mapping_operator_invalid_description",
+			DefaultValue: "authorization rule mapping for claim '{{param(claim)}}' has an unsupported " +
+				"operator '{{param(operator)}}'",
+			Params: map[string]string{"claim": claim, "operator": string(rule.Operator)},
+		})
+	}
+	if rule.Operator.IsMembership() && !mapping.IsMultiValued() {
+		return tidcommon.CustomServiceError(ErrorInvalidAttributeConfiguration, tidcommon.I18nMessage{
+			Key: "error.idpservice.authorization_rule_mapping_membership_requires_multi_valued_description",
+			DefaultValue: "authorization rule mapping for claim '{{param(claim)}}' uses operator " +
+				"'{{param(operator)}}', which requires an array value type or a string value type " +
+				"with a delimiter",
+			Params: map[string]string{"claim": claim, "operator": string(rule.Operator)},
+		})
+	}
+	if !rule.Operator.IsMembership() && mapping.IsMultiValued() {
+		return tidcommon.CustomServiceError(ErrorInvalidAttributeConfiguration, tidcommon.I18nMessage{
+			Key: "error.idpservice.authorization_rule_mapping_multi_valued_requires_membership_description",
+			DefaultValue: "authorization rule mapping for claim '{{param(claim)}}' declares multiple " +
+				"values, so its rules must use the includes or not_includes operator, not " +
+				"'{{param(operator)}}'",
+			Params: map[string]string{"claim": claim, "operator": string(rule.Operator)},
+		})
+	}
+	if rule.Operator.IsOrdering() && valueType != providers.AuthorizationValueTypeNumber {
+		return tidcommon.CustomServiceError(ErrorInvalidAttributeConfiguration, tidcommon.I18nMessage{
+			Key: "error.idpservice.authorization_rule_mapping_operator_requires_number_description",
+			DefaultValue: "authorization rule mapping for claim '{{param(claim)}}' uses operator " +
+				"'{{param(operator)}}', which requires a number value type",
+			Params: map[string]string{"claim": claim, "operator": string(rule.Operator)},
+		})
+	}
+	if strings.TrimSpace(rule.Value) == "" {
+		return tidcommon.CustomServiceError(ErrorInvalidAttributeConfiguration, tidcommon.I18nMessage{
+			Key: "error.idpservice.authorization_rule_mapping_empty_value_description",
+			DefaultValue: "authorization rule mapping for claim '{{param(claim)}}' must not contain an " +
+				"empty value",
+			Params: map[string]string{"claim": claim},
+		})
+	}
+	if valueType == providers.AuthorizationValueTypeNumber {
+		if _, err := strconv.ParseFloat(strings.TrimSpace(rule.Value), 64); err != nil {
+			return tidcommon.CustomServiceError(ErrorInvalidAttributeConfiguration, tidcommon.I18nMessage{
+				Key: "error.idpservice.authorization_rule_mapping_value_not_number_description",
+				DefaultValue: "authorization rule mapping for claim '{{param(claim)}}' has value " +
+					"'{{param(value)}}', which is not a number",
+				Params: map[string]string{"claim": claim, "value": rule.Value},
+			})
+		}
+	}
+	if valueType == providers.AuthorizationValueTypeBoolean {
+		if _, err := strconv.ParseBool(strings.TrimSpace(rule.Value)); err != nil {
+			return tidcommon.CustomServiceError(ErrorInvalidAttributeConfiguration, tidcommon.I18nMessage{
+				Key: "error.idpservice.authorization_rule_mapping_value_not_boolean_description",
+				DefaultValue: "authorization rule mapping for claim '{{param(claim)}}' has value " +
+					"'{{param(value)}}', which is not a boolean",
+				Params: map[string]string{"claim": claim, "value": rule.Value},
+			})
+		}
+	}
+	if len(rule.Targets) == 0 {
+		return tidcommon.CustomServiceError(ErrorInvalidAttributeConfiguration, tidcommon.I18nMessage{
+			Key: "error.idpservice.authorization_rule_mapping_no_targets_description",
+			DefaultValue: "authorization rule mapping value '{{param(value)}}' for claim " +
+				"'{{param(claim)}}' requires at least one target",
+			Params: map[string]string{"value": rule.Value, "claim": claim},
+		})
+	}
+	for _, target := range rule.Targets {
+		if svcErr := validateAuthorizationTarget(claim, rule.Value, target); svcErr != nil {
+			return svcErr
+		}
+	}
+	return nil
+}
+
+// validateAuthorizationDirectMappings validates each direct mapping's shape and, for a
+// permission target, that the named resource server exists. Unlike the rule-based mode, the roles,
+// groups, and permissions a mapping resolves to are not known until request time, so they cannot be
+// validated to exist here.
+func (is *idpService) validateAuthorizationDirectMappings(
+	ctx context.Context, mappings []providers.AuthorizationDirectMapping,
+) *tidcommon.ServiceError {
+	for _, mapping := range mappings {
+		if strings.TrimSpace(mapping.Claim) == "" {
+			return tidcommon.CustomServiceError(ErrorInvalidAttributeConfiguration, tidcommon.I18nMessage{
+				Key:          "error.idpservice.authorization_direct_mapping_claim_required_description",
+				DefaultValue: "authorization direct mapping requires a claim",
+			})
+		}
+		switch mapping.TargetType {
+		case providers.AuthorizationTargetRole, providers.AuthorizationTargetGroup:
+			if strings.TrimSpace(mapping.ResourceServerID) != "" {
+				return tidcommon.CustomServiceError(ErrorInvalidAttributeConfiguration, tidcommon.I18nMessage{
+					Key: "error.idpservice.authorization_direct_mapping_resource_server_not_allowed_description",
+					DefaultValue: "authorization direct mapping for claim '{{param(claim)}}' has a " +
+						"resource server, which is only meaningful for a permission target",
+					Params: map[string]string{"claim": mapping.Claim},
+				})
+			}
+		case providers.AuthorizationTargetPermission:
+			if strings.TrimSpace(mapping.ResourceServerID) == "" {
+				return tidcommon.CustomServiceError(ErrorInvalidAttributeConfiguration, tidcommon.I18nMessage{
+					Key: "error.idpservice.authorization_direct_mapping_resource_server_required_description",
+					DefaultValue: "authorization direct mapping for claim '{{param(claim)}}' requires " +
+						"a resource server for a permission target",
+					Params: map[string]string{"claim": mapping.Claim},
+				})
+			}
+			if _, svcErr := is.resourceService.GetResourceServer(ctx, mapping.ResourceServerID); svcErr != nil {
+				if svcErr.Type == tidcommon.ServerErrorType {
+					return svcErr
+				}
+				return tidcommon.CustomServiceError(ErrorInvalidAttributeConfiguration, tidcommon.I18nMessage{
+					Key: "error.idpservice.authorization_direct_mapping_resource_server_not_found_description",
+					DefaultValue: "authorization direct mapping for claim '{{param(claim)}}' names a " +
+						"resource server that does not exist: '{{param(resourceServerId)}}'",
+					Params: map[string]string{
+						"claim": mapping.Claim, "resourceServerId": mapping.ResourceServerID,
+					},
+				})
+			}
+		default:
+			return tidcommon.CustomServiceError(ErrorInvalidAttributeConfiguration, tidcommon.I18nMessage{
+				Key: "error.idpservice.authorization_direct_mapping_target_type_invalid_description",
+				DefaultValue: "authorization direct mapping for claim '{{param(claim)}}' has an " +
+					"unsupported target type '{{param(type)}}'",
+				Params: map[string]string{"claim": mapping.Claim, "type": string(mapping.TargetType)},
+			})
+		}
+	}
+	return nil
+}
+
+// validateAuthorizationTarget validates a single target's shape for its declared type.
+func validateAuthorizationTarget(
+	claim, value string, target providers.AuthorizationTarget,
+) *tidcommon.ServiceError {
+	switch target.Type {
+	case providers.AuthorizationTargetRole, providers.AuthorizationTargetGroup:
+		if strings.TrimSpace(target.ID) == "" {
+			return tidcommon.CustomServiceError(ErrorInvalidAttributeConfiguration, tidcommon.I18nMessage{
+				Key: "error.idpservice.authorization_rule_mapping_target_id_required_description",
+				DefaultValue: "authorization rule mapping value '{{param(value)}}' for claim " +
+					"'{{param(claim)}}' has a {{param(type)}} target with no id",
+				Params: map[string]string{"value": value, "claim": claim, "type": string(target.Type)},
+			})
+		}
+	case providers.AuthorizationTargetPermission:
+		if strings.TrimSpace(target.ResourceServerID) == "" || strings.TrimSpace(target.Permission) == "" {
+			return tidcommon.CustomServiceError(ErrorInvalidAttributeConfiguration, tidcommon.I18nMessage{
+				Key: "error.idpservice.authorization_rule_mapping_permission_target_incomplete_description",
+				DefaultValue: "authorization rule mapping value '{{param(value)}}' for claim " +
+					"'{{param(claim)}}' has a permission target that requires both a resource " +
+					"server and a permission",
+				Params: map[string]string{"value": value, "claim": claim},
+			})
+		}
+	default:
+		return tidcommon.CustomServiceError(ErrorInvalidAttributeConfiguration, tidcommon.I18nMessage{
+			Key: "error.idpservice.authorization_rule_mapping_target_type_invalid_description",
+			DefaultValue: "authorization rule mapping value '{{param(value)}}' for claim " +
+				"'{{param(claim)}}' has an unsupported target type '{{param(type)}}'",
+			Params: map[string]string{"value": value, "claim": claim, "type": string(target.Type)},
+		})
 	}
 	return nil
 }

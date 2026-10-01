@@ -1,20 +1,5 @@
-/*
- * Copyright (c) 2025, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2025 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 package role
 
@@ -29,6 +14,9 @@ import (
 
 	"github.com/thunder-id/thunderid/tests/mocks/database/modelmock"
 	"github.com/thunder-id/thunderid/tests/mocks/database/providermock"
+
+	"github.com/thunder-id/thunderid/internal/system/config"
+	engineconfig "github.com/thunder-id/thunderid/pkg/thunderidengine/config"
 )
 
 const testDeploymentID = "test-deployment-id"
@@ -65,12 +53,12 @@ func TestRoleStoreTestSuite(t *testing.T) {
 
 // SetupTest sets up the test suite.
 func (suite *RoleStoreTestSuite) SetupTest() {
+	loadRuntimeForScope()
 	suite.mockDBProvider = providermock.NewDBProviderInterfaceMock(suite.T())
 	suite.mockDBClient = providermock.NewDBClientInterfaceMock(suite.T())
 	suite.mockTx = modelmock.NewTxInterfaceMock(suite.T())
 	suite.store = &roleStore{
-		dbProvider:   suite.mockDBProvider,
-		deploymentID: testDeploymentID,
+		dbProvider: suite.mockDBProvider,
 	}
 }
 
@@ -126,8 +114,7 @@ func (suite *RoleStoreTestSuite) TestGetRoleListCount() {
 			suite.mockDBProvider = providermock.NewDBProviderInterfaceMock(suite.T())
 			suite.mockDBClient = providermock.NewDBClientInterfaceMock(suite.T())
 			suite.store = &roleStore{
-				dbProvider:   suite.mockDBProvider,
-				deploymentID: testDeploymentID,
+				dbProvider: suite.mockDBProvider,
 			}
 
 			tc.setupMocks()
@@ -226,8 +213,7 @@ func (suite *RoleStoreTestSuite) TestGetRoleList() {
 			suite.mockDBProvider = providermock.NewDBProviderInterfaceMock(suite.T())
 			suite.mockDBClient = providermock.NewDBClientInterfaceMock(suite.T())
 			suite.store = &roleStore{
-				dbProvider:   suite.mockDBProvider,
-				deploymentID: testDeploymentID,
+				dbProvider: suite.mockDBProvider,
 			}
 
 			tc.setupMocks()
@@ -305,8 +291,7 @@ func (suite *RoleStoreTestSuite) TestGetRoleListCountByOUID() {
 			suite.mockDBProvider = providermock.NewDBProviderInterfaceMock(suite.T())
 			suite.mockDBClient = providermock.NewDBClientInterfaceMock(suite.T())
 			suite.store = &roleStore{
-				dbProvider:   suite.mockDBProvider,
-				deploymentID: testDeploymentID,
+				dbProvider: suite.mockDBProvider,
 			}
 
 			tc.setupMocks()
@@ -405,8 +390,7 @@ func (suite *RoleStoreTestSuite) TestGetRoleListByOUID() {
 			suite.mockDBProvider = providermock.NewDBProviderInterfaceMock(suite.T())
 			suite.mockDBClient = providermock.NewDBClientInterfaceMock(suite.T())
 			suite.store = &roleStore{
-				dbProvider:   suite.mockDBProvider,
-				deploymentID: testDeploymentID,
+				dbProvider: suite.mockDBProvider,
 			}
 
 			tc.setupMocks()
@@ -583,8 +567,7 @@ func (suite *RoleStoreTestSuite) TestCreateRole() {
 			suite.mockDBClient = providermock.NewDBClientInterfaceMock(suite.T())
 			suite.mockTx = modelmock.NewTxInterfaceMock(suite.T())
 			suite.store = &roleStore{
-				dbProvider:   suite.mockDBProvider,
-				deploymentID: testDeploymentID,
+				dbProvider: suite.mockDBProvider,
 			}
 
 			tc.setupMocks()
@@ -792,8 +775,7 @@ func (suite *RoleStoreTestSuite) TestGetRole() {
 			suite.mockDBProvider = providermock.NewDBProviderInterfaceMock(suite.T())
 			suite.mockDBClient = providermock.NewDBClientInterfaceMock(suite.T())
 			suite.store = &roleStore{
-				dbProvider:   suite.mockDBProvider,
-				deploymentID: testDeploymentID,
+				dbProvider: suite.mockDBProvider,
 			}
 
 			tc.setupMocks()
@@ -887,8 +869,7 @@ func (suite *RoleStoreTestSuite) TestIsRoleExist() {
 			suite.mockDBProvider = providermock.NewDBProviderInterfaceMock(suite.T())
 			suite.mockDBClient = providermock.NewDBClientInterfaceMock(suite.T())
 			suite.store = &roleStore{
-				dbProvider:   suite.mockDBProvider,
-				deploymentID: testDeploymentID,
+				dbProvider: suite.mockDBProvider,
 			}
 
 			tc.setupMocks()
@@ -989,8 +970,7 @@ func (suite *RoleStoreTestSuite) TestDeleteRole() {
 			suite.mockDBProvider = providermock.NewDBProviderInterfaceMock(suite.T())
 			suite.mockDBClient = providermock.NewDBClientInterfaceMock(suite.T())
 			suite.store = &roleStore{
-				dbProvider:   suite.mockDBProvider,
-				deploymentID: testDeploymentID,
+				dbProvider: suite.mockDBProvider,
 			}
 
 			tc.setupMocks()
@@ -1152,8 +1132,7 @@ func (suite *RoleStoreTestSuite) TestUpdateRole() {
 			suite.mockDBClient = providermock.NewDBClientInterfaceMock(suite.T())
 			suite.mockTx = modelmock.NewTxInterfaceMock(suite.T())
 			suite.store = &roleStore{
-				dbProvider:   suite.mockDBProvider,
-				deploymentID: testDeploymentID,
+				dbProvider: suite.mockDBProvider,
 			}
 
 			tc.setupMocks()
@@ -1227,8 +1206,7 @@ func (suite *RoleStoreTestSuite) TestAddAssignments() {
 			suite.mockDBClient = providermock.NewDBClientInterfaceMock(suite.T())
 			suite.mockTx = modelmock.NewTxInterfaceMock(suite.T())
 			suite.store = &roleStore{
-				dbProvider:   suite.mockDBProvider,
-				deploymentID: testDeploymentID,
+				dbProvider: suite.mockDBProvider,
 			}
 
 			tc.setupMocks()
@@ -1302,8 +1280,7 @@ func (suite *RoleStoreTestSuite) TestRemoveAssignments() {
 			suite.mockDBClient = providermock.NewDBClientInterfaceMock(suite.T())
 			suite.mockTx = modelmock.NewTxInterfaceMock(suite.T())
 			suite.store = &roleStore{
-				dbProvider:   suite.mockDBProvider,
-				deploymentID: testDeploymentID,
+				dbProvider: suite.mockDBProvider,
 			}
 
 			tc.setupMocks()
@@ -1393,8 +1370,7 @@ func (suite *RoleStoreTestSuite) TestCheckRoleNameExists() {
 			suite.mockDBProvider = providermock.NewDBProviderInterfaceMock(suite.T())
 			suite.mockDBClient = providermock.NewDBClientInterfaceMock(suite.T())
 			suite.store = &roleStore{
-				dbProvider:   suite.mockDBProvider,
-				deploymentID: testDeploymentID,
+				dbProvider: suite.mockDBProvider,
 			}
 
 			tc.setupMocks()
@@ -1485,8 +1461,7 @@ func (suite *RoleStoreTestSuite) TestCheckRoleNameExistsExcludingID() {
 			suite.mockDBProvider = providermock.NewDBProviderInterfaceMock(suite.T())
 			suite.mockDBClient = providermock.NewDBClientInterfaceMock(suite.T())
 			suite.store = &roleStore{
-				dbProvider:   suite.mockDBProvider,
-				deploymentID: testDeploymentID,
+				dbProvider: suite.mockDBProvider,
 			}
 
 			tc.setupMocks()
@@ -1518,8 +1493,8 @@ func (suite *RoleStoreTestSuite) TestGetAuthorizedPermissions_Success() {
 				{"permission": "perm1"},
 			}, nil)
 
-	permissions, err := suite.store.GetAuthorizedPermissionsByResourceServer(context.Background(), userID, groupIDs, "",
-		requestedPermissions)
+	permissions, err := suite.store.GetAuthorizedPermissionsByResourceServer(
+		context.Background(), userID, groupIDs, nil, "", requestedPermissions)
 
 	suite.NoError(err)
 	suite.Len(permissions, 1)
@@ -1535,7 +1510,7 @@ func (suite *RoleStoreTestSuite) TestGetAuthorizedPermissions_NilGroupsHandled()
 		Return([]map[string]interface{}{{"permission": "perm1"}}, nil)
 
 	permissions, err := suite.store.GetAuthorizedPermissionsByResourceServer(
-		context.Background(), userID, nil, "", requestedPermissions)
+		context.Background(), userID, nil, nil, "", requestedPermissions)
 
 	suite.NoError(err)
 	suite.Len(permissions, 1)
@@ -1551,8 +1526,8 @@ func (suite *RoleStoreTestSuite) TestGetAuthorizedPermissions_QueryError() {
 	suite.mockDBClient.On("QueryContext", mock.Anything, mock.Anything, testDeploymentID, mock.Anything,
 		mock.Anything, mock.Anything, mock.Anything).Return(nil, queryError)
 
-	permissions, err := suite.store.GetAuthorizedPermissionsByResourceServer(context.Background(), userID, groupIDs, "",
-		requestedPermissions)
+	permissions, err := suite.store.GetAuthorizedPermissionsByResourceServer(
+		context.Background(), userID, groupIDs, nil, "", requestedPermissions)
 
 	suite.Error(err)
 	suite.Nil(permissions)
@@ -1567,8 +1542,8 @@ func (suite *RoleStoreTestSuite) TestGetAuthorizedPermissions_DBClientError() {
 	dbError := errors.New("db client error")
 	suite.mockDBProvider.On("GetConfigDBClient").Return(nil, dbError)
 
-	permissions, err := suite.store.GetAuthorizedPermissionsByResourceServer(context.Background(), userID, groupIDs, "",
-		requestedPermissions)
+	permissions, err := suite.store.GetAuthorizedPermissionsByResourceServer(
+		context.Background(), userID, groupIDs, nil, "", requestedPermissions)
 
 	suite.Error(err)
 	suite.Nil(permissions)
@@ -1857,7 +1832,7 @@ func (suite *RoleStoreTestSuite) TestGetAuthorizedPermissions_EmptyGroupIDs() {
 		Return([]map[string]interface{}{{"permission": "perm1"}}, nil)
 
 	permissions, err := suite.store.GetAuthorizedPermissionsByResourceServer(
-		context.Background(), userID, []string{}, "", requestedPermissions)
+		context.Background(), userID, []string{}, nil, "", requestedPermissions)
 
 	suite.NoError(err)
 	suite.Len(permissions, 1)
@@ -1872,7 +1847,7 @@ func (suite *RoleStoreTestSuite) TestGetAuthorizedPermissions_EmptyUserID() {
 		Return([]map[string]interface{}{{"permission": "perm1"}}, nil)
 
 	permissions, err := suite.store.GetAuthorizedPermissionsByResourceServer(
-		context.Background(), "", groupIDs, "", requestedPermissions)
+		context.Background(), "", groupIDs, nil, "", requestedPermissions)
 
 	suite.NoError(err)
 	suite.Len(permissions, 1)
@@ -1891,8 +1866,8 @@ func (suite *RoleStoreTestSuite) TestGetAuthorizedPermissions_MultipleGroups() {
 			{"permission": "perm2"},
 		}, nil)
 
-	permissions, err := suite.store.GetAuthorizedPermissionsByResourceServer(context.Background(), userID, groupIDs, "",
-		requestedPermissions)
+	permissions, err := suite.store.GetAuthorizedPermissionsByResourceServer(
+		context.Background(), userID, groupIDs, nil, "", requestedPermissions)
 
 	suite.NoError(err)
 	suite.Len(permissions, 2)
@@ -1907,7 +1882,7 @@ func (suite *RoleStoreTestSuite) TestGetAuthorizedPermissions_InvalidPermissionT
 		}, nil)
 
 	permissions, err := suite.store.GetAuthorizedPermissionsByResourceServer(
-		context.Background(), "user1", []string{"group1"}, "", []string{"perm1"})
+		context.Background(), "user1", []string{"group1"}, nil, "", []string{"perm1"})
 
 	suite.NoError(err)
 	suite.Len(permissions, 0) // Non-string permissions are skipped
@@ -2110,5 +2085,125 @@ func (suite *RoleStoreTestSuite) TestDeleteAssignmentsByAssignee() {
 
 		suite.Error(err)
 		suite.Equal(int64(0), deleted)
+	})
+}
+
+func (suite *RoleStoreTestSuite) TestGetReferencedPermissions() {
+	suite.Run("groups permissions by resource server", func() {
+		suite.mockDBProvider.On("GetConfigDBClient").Return(suite.mockDBClient, nil).Once()
+		suite.mockDBClient.On("QueryContext", mock.Anything, queryGetReferencedPermissions,
+			testDeploymentID).Return([]map[string]interface{}{
+			{"resource_server_id": "rs1", "permission": "read"},
+			{"resource_server_id": "rs1", "permission": "write"},
+			{"resource_server_id": "rs2", "permission": "list"},
+		}, nil).Once()
+
+		referenced, err := suite.store.GetReferencedPermissions(context.Background())
+
+		suite.NoError(err)
+		suite.Equal([]ResourcePermissions{
+			{ResourceServerID: "rs1", Permissions: []string{"read", "write"}},
+			{ResourceServerID: "rs2", Permissions: []string{"list"}},
+		}, referenced)
+	})
+
+	suite.Run("no rows returns empty", func() {
+		suite.mockDBProvider.On("GetConfigDBClient").Return(suite.mockDBClient, nil).Once()
+		suite.mockDBClient.On("QueryContext", mock.Anything, queryGetReferencedPermissions,
+			testDeploymentID).Return([]map[string]interface{}{}, nil).Once()
+
+		referenced, err := suite.store.GetReferencedPermissions(context.Background())
+
+		suite.NoError(err)
+		suite.Empty(referenced)
+	})
+
+	suite.Run("db client error is propagated", func() {
+		suite.mockDBProvider.On("GetConfigDBClient").Return(nil, errors.New("client error")).Once()
+
+		referenced, err := suite.store.GetReferencedPermissions(context.Background())
+
+		suite.Error(err)
+		suite.Nil(referenced)
+	})
+
+	suite.Run("query error is propagated", func() {
+		suite.mockDBProvider.On("GetConfigDBClient").Return(suite.mockDBClient, nil).Once()
+		suite.mockDBClient.On("QueryContext", mock.Anything, queryGetReferencedPermissions,
+			testDeploymentID).Return(nil, errors.New("db error")).Once()
+
+		referenced, err := suite.store.GetReferencedPermissions(context.Background())
+
+		suite.Error(err)
+		suite.Nil(referenced)
+	})
+
+	suite.Run("malformed resource server id errors", func() {
+		suite.mockDBProvider.On("GetConfigDBClient").Return(suite.mockDBClient, nil).Once()
+		suite.mockDBClient.On("QueryContext", mock.Anything, queryGetReferencedPermissions,
+			testDeploymentID).Return([]map[string]interface{}{
+			{"resource_server_id": 42, "permission": "read"},
+		}, nil).Once()
+
+		referenced, err := suite.store.GetReferencedPermissions(context.Background())
+
+		suite.Error(err)
+		suite.Nil(referenced)
+	})
+
+	suite.Run("malformed permission errors", func() {
+		suite.mockDBProvider.On("GetConfigDBClient").Return(suite.mockDBClient, nil).Once()
+		suite.mockDBClient.On("QueryContext", mock.Anything, queryGetReferencedPermissions,
+			testDeploymentID).Return([]map[string]interface{}{
+			{"resource_server_id": "rs1", "permission": 42},
+		}, nil).Once()
+
+		referenced, err := suite.store.GetReferencedPermissions(context.Background())
+
+		suite.Error(err)
+		suite.Nil(referenced)
+	})
+}
+
+func (suite *RoleStoreTestSuite) TestDeleteRolePermission() {
+	suite.Run("success returns rows affected", func() {
+		suite.mockDBProvider.On("GetConfigDBClient").Return(suite.mockDBClient, nil).Once()
+		suite.mockDBClient.On("ExecuteContext", mock.Anything, queryDeleteRolePermissionByValue,
+			"rs1", "read", testDeploymentID).Return(int64(3), nil).Once()
+
+		deleted, err := suite.store.DeleteRolePermission(context.Background(), "rs1", "read")
+
+		suite.NoError(err)
+		suite.Equal(int64(3), deleted)
+	})
+
+	suite.Run("db client error is propagated", func() {
+		suite.mockDBProvider.On("GetConfigDBClient").Return(nil, errors.New("client error")).Once()
+
+		deleted, err := suite.store.DeleteRolePermission(context.Background(), "rs1", "read")
+
+		suite.Error(err)
+		suite.Equal(int64(0), deleted)
+	})
+
+	suite.Run("db error is propagated", func() {
+		suite.mockDBProvider.On("GetConfigDBClient").Return(suite.mockDBClient, nil).Once()
+		suite.mockDBClient.On("ExecuteContext", mock.Anything, queryDeleteRolePermissionByValue,
+			"rs1", "read", testDeploymentID).Return(int64(0), errors.New("db error")).Once()
+
+		deleted, err := suite.store.DeleteRolePermission(context.Background(), "rs1", "read")
+
+		suite.Error(err)
+		suite.Equal(int64(0), deleted)
+	})
+}
+
+// loadRuntimeForScope loads a server runtime naming the deployment these tests assert on. The store
+// resolves its deployment from the runtime rather than holding one, and other suites in this package
+// reset the runtime, so it is loaded per test rather than once for the package.
+func loadRuntimeForScope() {
+	config.ResetServerRuntime()
+	_ = config.InitializeServerRuntime("", &config.Config{
+		Server: engineconfig.ServerConfig{Identifier: testDeploymentID},
 	})
 }

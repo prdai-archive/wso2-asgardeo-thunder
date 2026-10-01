@@ -1,77 +1,79 @@
-/**
- * Copyright (c) 2026, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied. See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2026 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 const fs = require('fs');
 const path = require('path');
 const {processMarkdownFile} = require('./mdxProcessor');
 
 /**
- * Generates a clean .md file for every .mdx doc page at build time,
- * mirroring the Docusaurus URL structure:
+ * Generates a clean .md file for every doc page of every docs version at
+ * build time, mirroring each doc's real Docusaurus permalink:
  *
- *   content/getting-started/foo.mdx
+ *   content/getting-started/foo.mdx (current, permalink /docs/next/getting-started/foo)
  *     → build/docs/next/getting-started/foo.md
  *     → served at /docs/next/getting-started/foo.md
  *
- * ThunderID only has one docs version ("current" → served under /docs/next/).
+ *   versioned_docs/version-v1.0.x/getting-started/foo.mdx (v1.0.x is the
+ *   lastVersion, so its permalink is the bare /docs/getting-started/foo)
+ *     → build/docs/getting-started/foo.md
+ *     → served at /docs/getting-started/foo.md
+ *
+ *   community/overview.mdx (permalink /community/overview)
+ *     → build/community/overview.md
+ *     → served at /community/overview.md
+ *
+ * Deriving the output path from `doc.permalink` (rather than re-deriving a
+ * slug from the source file path) keeps this in lockstep with
+ * docusaurus-plugin-llms-txt, including for index/category-root docs whose
+ * permalink has no trailing "/index" segment.
+ *
+ * The lastVersion's docs also get a copy written under their old
+ * /docs/<versionName>/... path (e.g. /docs/v1.0.x/getting-started/foo.md),
+ * matching the alias @docusaurus/plugin-client-redirects generates for the
+ * HTML pages, so links and tooling built against the pre-lastVersion-move
+ * .md URLs (see tools/cli/internal/product.DocsVersionURL) keep working.
  */
 module.exports = function pluginMarkdownExport(context) {
   const {siteDir, siteConfig} = context;
   const siteUrl = (siteConfig?.url || '').replace(/\/$/, '');
   const baseUrl = siteConfig?.baseUrl || '/';
 
-  // ThunderID keeps docs in content/ (not the Docusaurus default docs/)
-  const DOCS_SOURCE_DIR = path.join(siteDir, 'content');
-  // The "current" version is served under /docs/next/ in Docusaurus config
-  const VERSION_URL_PREFIX = 'next/';
+  let loadedVersions = null;
 
-  /** Recursively collect all .md/.mdx files, skipping hidden/special ones. */
-  function findMarkdownFiles(dir, baseDir = dir) {
-    const files = [];
-    if (!fs.existsSync(dir)) return files;
-
-    for (const entry of fs.readdirSync(dir, {withFileTypes: true})) {
-      const fullPath = path.join(dir, entry.name);
-      if (entry.isDirectory()) {
-        files.push(...findMarkdownFiles(fullPath, baseDir));
-      } else if (/\.(md|mdx)$/.test(entry.name) && !entry.name.startsWith('_')) {
-        const relativePath = path.relative(baseDir, fullPath);
-        const slug = relativePath.replace(/\.(md|mdx)$/, '').split(path.sep).join('/');
-        files.push({fullPath, slug});
-      }
-    }
-    return files;
+  function siteRelativePath(source) {
+    return source.startsWith('@site/') ? source.slice('@site/'.length) : source;
   }
 
-  async function exportAll(outDir) {
-    if (!fs.existsSync(DOCS_SOURCE_DIR)) {
-      console.warn(`[markdown-export] Source dir not found: ${DOCS_SOURCE_DIR}`);
-      return 0;
-    }
+  // `permalink` already includes baseUrl; strip it so the result is
+  // relative to `outDir`, which Docusaurus serves mounted at baseUrl.
+  function stripBaseUrl(permalink) {
+    return permalink.startsWith(baseUrl) ? permalink.slice(baseUrl.length - 1) : permalink;
+  }
 
-    const files = findMarkdownFiles(DOCS_SOURCE_DIR);
-    console.log(`[markdown-export] Processing ${files.length} docs`);
+  // For the lastVersion, also resolve the pre-move URL (e.g. "/docs/getting-started/foo"
+  // → "/docs/v1.0.x/getting-started/foo") so its .md files stay reachable at their old
+  // path. Returns null for every other version, since only the lastVersion's URL moved.
+  function legacyLastVersionAlias(relPermalink, version) {
+    if (!version.isLast || version.versionName === 'current') {
+      return null;
+    }
+    const [routeBase, ...rest] = relPermalink.split('/').filter(Boolean);
+    if (!routeBase) {
+      return null;
+    }
+    return '/' + [routeBase, version.versionName, ...rest].join('/');
+  }
+
+  async function exportVersion(outDir, version) {
     let written = 0;
 
-    for (const {fullPath, slug} of files) {
-      // Output path mirrors the Docusaurus URL
-      const outputPath = path.join(outDir, 'docs', VERSION_URL_PREFIX, slug + '.md');
-      const docUrlPath = (baseUrl + 'docs/' + VERSION_URL_PREFIX + slug).replace(/\/+/g, '/');
+    for (const doc of version.docs || []) {
+      const fullPath = path.join(siteDir, siteRelativePath(doc.source));
+      // Trim trailing slashes (e.g. the index doc's "/docs/next/") to match
+      // how docusaurus-plugin-llms-txt derives its .md links.
+      const relPermalink = stripBaseUrl(doc.permalink.replace(/\/+$/, ''));
+      const outputPath = path.join(outDir, relPermalink + '.md');
+      const docUrlPath = (baseUrl + relPermalink).replace(/\/+/g, '/');
 
       try {
         const source = fs.readFileSync(fullPath, 'utf-8');
@@ -83,6 +85,14 @@ module.exports = function pluginMarkdownExport(context) {
         fs.mkdirSync(path.dirname(outputPath), {recursive: true});
         fs.writeFileSync(outputPath, cleaned);
         written++;
+
+        const aliasPermalink = legacyLastVersionAlias(relPermalink, version);
+        if (aliasPermalink) {
+          const aliasOutputPath = path.join(outDir, aliasPermalink + '.md');
+          fs.mkdirSync(path.dirname(aliasOutputPath), {recursive: true});
+          fs.writeFileSync(aliasOutputPath, cleaned);
+          written++;
+        }
       } catch (err) {
         console.error(`[markdown-export] Error processing ${fullPath}: ${err.message}`);
       }
@@ -94,9 +104,32 @@ module.exports = function pluginMarkdownExport(context) {
   return {
     name: 'docusaurus-plugin-markdown-export',
 
+    async allContentLoaded({allContent}) {
+      const docsPlugin = allContent?.['docusaurus-plugin-content-docs'];
+      // Collect every docs plugin instance: the versioned "default" one and the
+      // unversioned "community" one, which has a single "current" version.
+      const versions = Object.values(docsPlugin ?? {}).flatMap((instance) => instance?.loadedVersions ?? []);
+      if (versions.length === 0) {
+        console.warn('[markdown-export] docs plugin content not found; skipping');
+        return;
+      }
+      loadedVersions = versions;
+    },
+
     async postBuild({outDir}) {
-      const written = await exportAll(outDir);
-      console.log(`[markdown-export] Wrote ${written} .md files to build/docs/${VERSION_URL_PREFIX}`);
+      if (!loadedVersions) {
+        console.warn('[markdown-export] no loaded versions; skipping');
+        return;
+      }
+
+      let written = 0;
+      for (const version of loadedVersions) {
+        written += await exportVersion(outDir, version);
+      }
+
+      console.log(
+        `[markdown-export] Wrote ${written} .md files across ${loadedVersions.length} version(s)`,
+      );
     },
   };
 };

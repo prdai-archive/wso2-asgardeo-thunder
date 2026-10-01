@@ -1,20 +1,5 @@
-/**
- * Copyright (c) 2025-2026, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied. See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2025-2026 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 import type {AccessTokenConfig, TokenConfig} from './token';
 
@@ -340,7 +325,7 @@ export interface OAuth2Token {
 }
 
 /**
- * OAuth2 Configuration
+ * OAuth 2 Configuration
  *
  * Complete OAuth2/OIDC configuration for an application's inbound authentication.
  * This includes client credentials, allowed OAuth2 flows, redirect URIs,
@@ -504,11 +489,22 @@ export interface OAuth2Config {
 }
 
 /**
- * Platform attestation configuration for an application. An application configures exactly one
- * platform: the `android` and `apple` variants are mutually exclusive, so `{}` and a config with
- * both set are both compile-time errors.
+ * Platform attestation configuration for an application. `android` and `apple` are mutually
+ * exclusive: configuring both is a compile-time error, matching the backend's rejection of a
+ * config with both set. `devMode` is independent of the platform fields, so it may be set on its
+ * own with neither platform configured.
  */
-export type AttestationConfig =
+export type AttestationConfig = {
+  /**
+   * When true, skips attestation verification for this application. Disabled by default; enable
+   * only for testing or trying out sample/development mobile clients.
+   */
+  devMode?: boolean;
+} & (
+  | {
+      android?: undefined;
+      apple?: undefined;
+    }
   | {
       /**
        * Google Play Integrity attestation configuration for Android clients.
@@ -522,7 +518,8 @@ export type AttestationConfig =
        * Apple App Attest attestation configuration for iOS clients.
        */
       apple: AppleAttestationConfig;
-    };
+    }
+);
 
 /**
  * Google Play Integrity attestation settings for an Android application.

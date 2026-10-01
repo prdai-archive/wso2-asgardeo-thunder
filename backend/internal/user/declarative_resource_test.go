@@ -1,20 +1,5 @@
-/*
- * Copyright (c) 2026, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2026 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 package user
 
@@ -186,7 +171,7 @@ func (suite *DeclarativeResourceTestSuite) TestUserExporter_GetResourceByID() {
 
 	attrs := json.RawMessage(`{"username":"alice"}`)
 	mockSvc.On("GetUser", context.Background(), "user-1", false).
-		Return(&User{ID: "user-1", Type: "person", OUID: "ou-1", Attributes: attrs}, nil)
+		Return(&providers.User{ID: "user-1", Type: "person", OUID: "ou-1", Attributes: attrs}, nil)
 
 	resource, name, err := exporter.GetResourceByID(context.Background(), "user-1")
 	suite.Nil(err)
@@ -194,7 +179,10 @@ func (suite *DeclarativeResourceTestSuite) TestUserExporter_GetResourceByID() {
 
 	userResource, ok := resource.(*userDeclarativeResource)
 	suite.True(ok)
-	suite.Empty(userResource.Credentials)
+	// The password carries a template variable derived from the username. Exporting no credential at
+	// all would leave the imported user unable to sign in, and the value cannot be exported because it
+	// is stored as a one-way hash, so the importing server fills the variable instead.
+	suite.Equal("{{.USER_ALICE_PASSWORD}}", userResource.Credentials["password"])
 }
 
 func (suite *DeclarativeResourceTestSuite) TestUserExporter_Metadata() {
@@ -211,13 +199,13 @@ func (suite *DeclarativeResourceTestSuite) TestUserExporter_GetAllResourceIDs() 
 	entityServiceMock := entitymock.NewEntityServiceInterfaceMock(suite.T())
 	exporter := newUserExporter(mockSvc, entityServiceMock)
 
-	users := []User{{ID: "user-1"}, {ID: "user-2"}}
+	users := []providers.User{{ID: "user-1"}, {ID: "user-2"}}
 	mockSvc.On("GetUserList", ctx, serverconst.MaxPageSize, 0, mock.Anything, false).
 		Return(&UserListResponse{Users: users}, nil)
 	entityServiceMock.On("IsEntityDeclarative", ctx, "user-1").Return(true, nil)
 	entityServiceMock.On("IsEntityDeclarative", ctx, "user-2").Return(false, nil)
 	mockSvc.On("GetUserList", ctx, serverconst.MaxPageSize, 2, mock.Anything, false).
-		Return(&UserListResponse{Users: []User{}}, nil)
+		Return(&UserListResponse{Users: []providers.User{}}, nil)
 
 	ids, err := exporter.GetAllResourceIDs(ctx)
 	suite.Nil(err)

@@ -1,20 +1,5 @@
-/*
- * Copyright (c) 2026, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2026 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 package inboundclient
 
@@ -23,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"slices"
 	"strings"
 
@@ -35,6 +21,7 @@ import (
 	thememgt "github.com/thunder-id/thunderid/internal/design/theme/mgt"
 	"github.com/thunder-id/thunderid/internal/entityprovider"
 	"github.com/thunder-id/thunderid/internal/entitytype"
+	entitytypemodel "github.com/thunder-id/thunderid/internal/entitytype/model"
 	flowmgt "github.com/thunder-id/thunderid/internal/flow/mgt"
 	inboundmodel "github.com/thunder-id/thunderid/internal/inboundclient/model"
 	oauth2const "github.com/thunder-id/thunderid/internal/oauth/oauth2/constants"
@@ -42,6 +29,7 @@ import (
 	"github.com/thunder-id/thunderid/internal/system/config"
 	serverconst "github.com/thunder-id/thunderid/internal/system/constants"
 	syshttp "github.com/thunder-id/thunderid/internal/system/http"
+	"github.com/thunder-id/thunderid/internal/system/jose/jwe"
 	"github.com/thunder-id/thunderid/internal/system/log"
 	"github.com/thunder-id/thunderid/internal/system/security"
 	sysutils "github.com/thunder-id/thunderid/internal/system/utils"
@@ -105,6 +93,8 @@ type inboundClientService struct {
 	layoutMgt      layoutmgt.LayoutMgtServiceInterface
 	flowMgt        flowmgt.FlowMgtServiceInterface
 	entityType     entitytype.EntityTypeServiceInterface
+	cryptoProvider providers.RuntimeCryptoProvider
+	jweService     jwe.JWEServiceInterface
 	logger         *log.Logger
 }
 
@@ -116,6 +106,8 @@ func newInboundClientService(store inboundClientStoreInterface, transactioner pr
 	layoutMgt layoutmgt.LayoutMgtServiceInterface,
 	flowMgt flowmgt.FlowMgtServiceInterface,
 	entityType entitytype.EntityTypeServiceInterface,
+	cryptoProvider providers.RuntimeCryptoProvider,
+	jweService jwe.JWEServiceInterface,
 ) InboundClientServiceInterface {
 	return &inboundClientService{
 		store:          store,
@@ -126,6 +118,8 @@ func newInboundClientService(store inboundClientStoreInterface, transactioner pr
 		layoutMgt:      layoutMgt,
 		flowMgt:        flowMgt,
 		entityType:     entityType,
+		cryptoProvider: cryptoProvider,
+		jweService:     jweService,
 		logger:         log.GetLogger().With(log.String(log.LoggerKeyComponentName, "InboundClientService")),
 	}
 }
@@ -148,15 +142,27 @@ func (s *inboundClientService) CreateInboundClient(ctx context.Context, client *
 	if fkErr := s.validateFKs(ctx, client); fkErr != nil {
 		return fkErr
 	}
-	if err := s.validateUserAttributesAgainstAllowedTypes(
-		ctx, client.AllowedUserTypes, client.Assertion, oauthProfile); err != nil {
+	validAttrs, attrErr := s.resolveValidUserAttributes(ctx, client.AllowedUserTypes)
+	if attrErr != nil {
+		return attrErr
+	}
+	if err := validateUserAttributes(validAttrs, client.Assertion, oauthProfile); err != nil {
 		return err
 	}
 	if oauthProfile != nil {
-		if vErr := validateOAuthProfile(oauthProfile, hasClientSecret); vErr != nil {
+		if vErr := validateOAuthProfile(
+			ctx, oauthProfile, hasClientSecret, s.cryptoProvider, s.jweService); vErr != nil {
 			return vErr
 		}
 	}
+	if err := s.validateSubjectAttributeMapping(
+		ctx, client.SubjectAttribute, client.AllowedUserTypes); err != nil {
+		return err
+	}
+	// Must run before applyInboundDefaults: UserInfo inherits the ID token list there.
+	seeded := seedScopeClaims(oauthProfile)
+	pruneScopeClaims(oauthProfile, scopeClaimPruneSet(seeded, client.AllowedUserTypes, validAttrs))
+	seedIDTokenUserAttributes(oauthProfile, validAttrs)
 	applyInboundDefaults(client, oauthProfile)
 	oauthClientID := s.resolveClientID(ctx, client.ID)
 	if err := validateOAuthCertificateClientID(oauthProfile, oauthClientID); err != nil {
@@ -233,9 +239,14 @@ func (s *inboundClientService) UpdateInboundClient(ctx context.Context, client *
 		return err
 	}
 	if oauthProfile != nil {
-		if vErr := validateOAuthProfile(oauthProfile, hasClientSecret); vErr != nil {
+		if vErr := validateOAuthProfile(
+			ctx, oauthProfile, hasClientSecret, s.cryptoProvider, s.jweService); vErr != nil {
 			return vErr
 		}
+	}
+	if err := s.validateSubjectAttributeMapping(
+		ctx, client.SubjectAttribute, client.AllowedUserTypes); err != nil {
+		return err
 	}
 	applyInboundDefaults(client, oauthProfile)
 	// Capture existing OAuth client_id before the caller updates entity system attributes.
@@ -289,9 +300,14 @@ func (s *inboundClientService) Validate(ctx context.Context, client *inboundmode
 		return err
 	}
 	if oauthProfile != nil {
-		if vErr := validateOAuthProfile(oauthProfile, hasClientSecret); vErr != nil {
+		if vErr := validateOAuthProfile(
+			ctx, oauthProfile, hasClientSecret, s.cryptoProvider, s.jweService); vErr != nil {
 			return vErr
 		}
+	}
+	if err := s.validateSubjectAttributeMapping(
+		ctx, client.SubjectAttribute, client.AllowedUserTypes); err != nil {
+		return err
 	}
 	return nil
 }
@@ -591,7 +607,21 @@ func BuildOAuthClient(
 // server-level default configured; registration/recovery/signout server defaults are intentionally
 // left empty to prevent CALL-node mismatches across independently configured flows).
 func (s *inboundClientService) resolveFlowDefaults(ctx context.Context, c *inboundmodel.InboundClient) error {
-	if s.flowMgt == nil || c == nil {
+	if c == nil {
+		return nil
+	}
+
+	// Drop registration/recovery bindings whose enable flag is false before any resolution so we
+	// never persist an ID that contradicts the toggle. This must run regardless of whether flowMgt
+	// is wired — persistence should still respect the caller's disabled intent.
+	if !c.IsRegistrationFlowEnabled {
+		c.RegistrationFlowID = ""
+	}
+	if !c.IsRecoveryFlowEnabled {
+		c.RecoveryFlowID = ""
+	}
+
+	if s.flowMgt == nil {
 		return nil
 	}
 
@@ -627,22 +657,27 @@ func (s *inboundClientService) resolveFlowDefaults(ctx context.Context, c *inbou
 	}
 	c.AuthFlowID = authID
 
-	regID, err := resolve(c.RegistrationFlowID, providers.FlowTypeRegistration)
-	if err != nil {
-		return err
+	// Try to resolve the registration and recovery flows if they are enabled.
+	// If the resolved ID is empty, disable the flow.
+	if c.IsRegistrationFlowEnabled {
+		regID, err := resolve(c.RegistrationFlowID, providers.FlowTypeRegistration)
+		if err != nil {
+			return err
+		}
+		c.RegistrationFlowID = regID
+		if c.RegistrationFlowID == "" {
+			c.IsRegistrationFlowEnabled = false
+		}
 	}
-	c.RegistrationFlowID = regID
-	if c.RegistrationFlowID == "" {
-		c.IsRegistrationFlowEnabled = false
-	}
-
-	recID, err := resolve(c.RecoveryFlowID, providers.FlowTypeRecovery)
-	if err != nil {
-		return err
-	}
-	c.RecoveryFlowID = recID
-	if c.RecoveryFlowID == "" {
-		c.IsRecoveryFlowEnabled = false
+	if c.IsRecoveryFlowEnabled {
+		recID, err := resolve(c.RecoveryFlowID, providers.FlowTypeRecovery)
+		if err != nil {
+			return err
+		}
+		c.RecoveryFlowID = recID
+		if c.RecoveryFlowID == "" {
+			c.IsRecoveryFlowEnabled = false
+		}
 	}
 
 	signOutID, err := resolve(c.SignOutFlowID, providers.FlowTypeSignOut)
@@ -777,7 +812,8 @@ func validateCertificateInput(refID, existingCertID string, in *inboundmodel.Cer
 }
 
 // validateOAuthProfile validates all fields of an OAuth profile data object.
-func validateOAuthProfile(p *providers.OAuthProfile, hasClientSecret bool) error {
+func validateOAuthProfile(ctx context.Context, p *providers.OAuthProfile, hasClientSecret bool,
+	cryptoProvider providers.RuntimeCryptoProvider, jweService jwe.JWEServiceInterface) error {
 	if p == nil {
 		return nil
 	}
@@ -795,10 +831,10 @@ func validateOAuthProfile(p *providers.OAuthProfile, hasClientSecret bool) error
 			return err
 		}
 	}
-	if err := validateUserInfoConfig(p); err != nil {
+	if err := validateUserInfoConfig(ctx, p, cryptoProvider, jweService); err != nil {
 		return err
 	}
-	if err := validateIDTokenConfig(p); err != nil {
+	if err := validateIDTokenConfig(ctx, p, cryptoProvider, jweService); err != nil {
 		return err
 	}
 	if err := validateAccessTokenConfig(p); err != nil {
@@ -822,15 +858,44 @@ func validateAccessTokenConfig(p *providers.OAuthProfile) error {
 	return nil
 }
 
+// configuredSigningAlgorithms returns the JWS algorithms the deployment's configured signing keys
+// support. This is narrower than the algorithms the crypto provider can compute, and matches what
+// discovery advertises, so a client cannot register an algorithm that has no key to sign with.
+func configuredSigningAlgorithms(
+	ctx context.Context, cryptoProvider providers.RuntimeCryptoProvider,
+) ([]string, error) {
+	keys, err := cryptoProvider.GetPublicKeys(ctx, providers.PublicKeyFilter{})
+	if err != nil {
+		log.GetLogger().Error(ctx, "Failed to retrieve public keys for signing algorithm validation",
+			log.Error(err))
+		return nil, fmt.Errorf("failed to retrieve signing keys: %w", err)
+	}
+
+	algs := make([]string, 0, len(keys))
+	for _, key := range keys {
+		if key.Algorithm != "" && !slices.Contains(algs, key.Algorithm) {
+			algs = append(algs, key.Algorithm)
+		}
+	}
+	return algs, nil
+}
+
 // validateUserInfoConfig validates the UserInfo signing and encryption configuration.
-func validateUserInfoConfig(p *providers.OAuthProfile) error {
+func validateUserInfoConfig(ctx context.Context, p *providers.OAuthProfile,
+	cryptoProvider providers.RuntimeCryptoProvider, jweService jwe.JWEServiceInterface) error {
 	if p.UserInfo == nil {
 		return nil
 	}
 	cfg := p.UserInfo
 
-	if cfg.SigningAlg != "" && !slices.Contains(inboundmodel.SupportedUserInfoSigningAlgs, cfg.SigningAlg) {
-		return ErrOAuthUserInfoUnsupportedSigningAlg
+	if cfg.SigningAlg != "" {
+		algs, err := configuredSigningAlgorithms(ctx, cryptoProvider)
+		if err != nil {
+			return err
+		}
+		if !slices.Contains(algs, cfg.SigningAlg) {
+			return ErrOAuthUserInfoUnsupportedSigningAlg
+		}
 	}
 
 	if cfg.EncryptionEnc != "" && cfg.EncryptionAlg == "" {
@@ -838,13 +903,13 @@ func validateUserInfoConfig(p *providers.OAuthProfile) error {
 	}
 
 	if cfg.EncryptionAlg != "" {
-		if !slices.Contains(inboundmodel.SupportedUserInfoEncryptionAlgs, cfg.EncryptionAlg) {
+		if !slices.Contains(jweService.SupportedKeyEncryptionAlgorithms(), cfg.EncryptionAlg) {
 			return ErrOAuthUserInfoUnsupportedEncryptionAlg
 		}
 		if cfg.EncryptionEnc == "" {
 			return ErrOAuthUserInfoEncryptionAlgRequiresEnc
 		}
-		if !slices.Contains(inboundmodel.SupportedUserInfoEncryptionEncs, cfg.EncryptionEnc) {
+		if !slices.Contains(jweService.SupportedContentEncryptionAlgorithms(), cfg.EncryptionEnc) {
 			return ErrOAuthUserInfoUnsupportedEncryptionEnc
 		}
 		hasCert := p.Certificate != nil && p.Certificate.Type != ""
@@ -885,11 +950,22 @@ func validateUserInfoConfig(p *providers.OAuthProfile) error {
 
 // validateIDTokenConfig validates the ID token configuration.
 // responseType is the authoritative field; empty defaults to JWT.
-func validateIDTokenConfig(p *providers.OAuthProfile) error {
+func validateIDTokenConfig(ctx context.Context, p *providers.OAuthProfile,
+	cryptoProvider providers.RuntimeCryptoProvider, jweService jwe.JWEServiceInterface) error {
 	if p.Token == nil || p.Token.IDToken == nil {
 		return nil
 	}
 	cfg := p.Token.IDToken
+
+	if cfg.SigningAlg != "" {
+		algs, err := configuredSigningAlgorithms(ctx, cryptoProvider)
+		if err != nil {
+			return err
+		}
+		if !slices.Contains(algs, cfg.SigningAlg) {
+			return ErrOAuthIDTokenUnsupportedSigningAlg
+		}
+	}
 
 	if cfg.ResponseType == "" {
 		cfg.ResponseType = providers.IDTokenResponseTypeJWT
@@ -904,10 +980,10 @@ func validateIDTokenConfig(p *providers.OAuthProfile) error {
 		if cfg.EncryptionAlg == "" || cfg.EncryptionEnc == "" {
 			return ErrOAuthIDTokenEncryptionAlgRequiresEnc
 		}
-		if !slices.Contains(inboundmodel.SupportedIDTokenEncryptionAlgs, cfg.EncryptionAlg) {
+		if !slices.Contains(jweService.SupportedKeyEncryptionAlgorithms(), cfg.EncryptionAlg) {
 			return ErrOAuthIDTokenUnsupportedEncryptionAlg
 		}
-		if !slices.Contains(inboundmodel.SupportedIDTokenEncryptionEncs, cfg.EncryptionEnc) {
+		if !slices.Contains(jweService.SupportedContentEncryptionAlgorithms(), cfg.EncryptionEnc) {
 			return ErrOAuthIDTokenUnsupportedEncryptionEnc
 		}
 		hasCert := p.Certificate != nil && p.Certificate.Type != ""
@@ -1166,6 +1242,9 @@ func (s *inboundClientService) validateFKs(ctx context.Context, c *inboundmodel.
 	if err := s.validateAllowedUserTypes(ctx, c.AllowedUserTypes); err != nil {
 		return err
 	}
+	if err := s.validateAllowedAgentTypes(ctx, c.AllowedAgentTypes); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -1257,23 +1336,44 @@ func (s *inboundClientService) validateLayoutID(ctx context.Context, layoutID st
 func (s *inboundClientService) validateAllowedUserTypes(
 	ctx context.Context, allowedUserTypes []string,
 ) error {
-	if len(allowedUserTypes) == 0 || s.entityType == nil {
+	return s.validateAllowedEntityTypes(ctx, entitytype.TypeCategoryUser, allowedUserTypes,
+		ErrFKInvalidUserType, ErrUserSchemaLookupFailed)
+}
+
+// validateAllowedAgentTypes validates that each allowed agent type corresponds to an existing agent type.
+func (s *inboundClientService) validateAllowedAgentTypes(
+	ctx context.Context, allowedAgentTypes []string,
+) error {
+	return s.validateAllowedEntityTypes(ctx, entitytype.TypeCategoryAgent, allowedAgentTypes,
+		ErrFKInvalidAgentType, ErrAgentSchemaLookupFailed)
+}
+
+// validateAllowedEntityTypes validates that each name in allowedTypes corresponds to an existing
+// entity type in the given category. invalidErr is returned for an unknown name; lookupErr is
+// returned when the entity type service itself fails, so the caller can tell a client validation
+// failure from a server fault.
+func (s *inboundClientService) validateAllowedEntityTypes(
+	ctx context.Context, category entitytype.TypeCategory, allowedTypes []string,
+	invalidErr, lookupErr error,
+) error {
+	if len(allowedTypes) == 0 || s.entityType == nil {
 		return nil
 	}
-	existingUserTypes := make(map[string]bool)
+	existingTypes := make(map[string]bool)
 	limit := serverconst.MaxPageSize
 	offset := 0
 	for {
 		// Runtime context: skip authorization checks when fetching entity types.
 		entityTypeList, svcErr := s.entityType.GetEntityTypeList(
-			security.WithRuntimeContext(ctx), entitytype.TypeCategoryUser, limit, offset, false)
+			security.WithRuntimeContext(ctx), category, limit, offset, false)
 		if svcErr != nil {
-			s.logger.Error(ctx, "Failed to retrieve user type list for validation",
+			s.logger.Error(ctx, "Failed to retrieve entity type list for validation",
+				log.String("category", string(category)),
 				log.String("error", svcErr.Error.DefaultValue), log.String("code", svcErr.Code))
-			return ErrUserSchemaLookupFailed
+			return lookupErr
 		}
 		for _, schema := range entityTypeList.Types {
-			existingUserTypes[schema.Name] = true
+			existingTypes[schema.Name] = true
 		}
 		if len(entityTypeList.Types) == 0 ||
 			offset+len(entityTypeList.Types) >= entityTypeList.TotalResults {
@@ -1281,9 +1381,49 @@ func (s *inboundClientService) validateAllowedUserTypes(
 		}
 		offset += limit
 	}
-	for _, userType := range allowedUserTypes {
-		if userType == "" || !existingUserTypes[userType] {
-			return ErrFKInvalidUserType
+	for _, entityTypeName := range allowedTypes {
+		if entityTypeName == "" || !existingTypes[entityTypeName] {
+			return invalidErr
+		}
+	}
+	return nil
+}
+
+// validateSubjectAttributeMapping validates that the subject attribute mapping is well-formed.
+// assumes that allowedUserTypes has been validated.
+func (s *inboundClientService) validateSubjectAttributeMapping(
+	ctx context.Context, subjectAttributeMapping map[string]string, allowedUserTypes []string,
+) error {
+	if len(subjectAttributeMapping) == 0 || s.entityType == nil {
+		return nil
+	}
+	for entityType, subjectAttribute := range subjectAttributeMapping {
+		if entityType == "" || subjectAttribute == "" {
+			return ErrFKInvalidSubjectAttributeMapping
+		}
+		if !slices.Contains(allowedUserTypes, entityType) {
+			return ErrFKInvalidSubjectAttributeMapping
+		}
+		// A subject attribute must be unique, required, non-credential, and string-typed: unique so it
+		// identifies a single user, required so every user of the type has it (a stable sub), and
+		// string so it can be emitted as the string sub claim.
+		attrs, svcErr := s.entityType.GetAttributes(
+			security.WithRuntimeContext(ctx), entitytype.TypeCategoryUser, entityType,
+			entitytype.AttributeFilter{
+				AllowNonCredential: true,
+				RequiredOnly:       true,
+				UniqueOnly:         true,
+				Type:               entitytypemodel.TypeString,
+			})
+		if svcErr != nil {
+			s.logger.Error(ctx, "Failed to retrieve attributes for subject mapping validation",
+				log.String("error", svcErr.Error.DefaultValue), log.String("code", svcErr.Code))
+			return ErrUniqueAttributeLookupFailed
+		}
+		if !slices.ContainsFunc(attrs, func(a entitytype.AttributeInfo) bool {
+			return a.Attribute == subjectAttribute
+		}) {
+			return ErrFKInvalidSubjectAttributeMapping
 		}
 	}
 	return nil
@@ -1299,21 +1439,29 @@ func (s *inboundClientService) validateUserAttributesAgainstAllowedTypes(
 	assertion *inboundmodel.AssertionConfig,
 	oauthProfile *providers.OAuthProfile,
 ) error {
-	if len(allowedEntityTypes) == 0 || s.entityType == nil {
+	// Skip the schema lookup entirely when there is nothing to validate.
+	if len(collectConfiguredUserAttributes(assertion, oauthProfile)) == 0 {
 		return nil
 	}
-
-	attrs := collectConfiguredUserAttributes(assertion, oauthProfile)
-	if len(attrs) == 0 {
-		return nil
-	}
-
 	validAttrs, err := s.resolveValidUserAttributes(ctx, allowedEntityTypes)
 	if err != nil {
 		return err
 	}
+	return validateUserAttributes(validAttrs, assertion, oauthProfile)
+}
 
-	for attr := range attrs {
+// validateUserAttributes checks the configured attribute lists against an already-resolved set of
+// valid attributes. A nil set means nothing to validate against, so anything is accepted.
+func validateUserAttributes(
+	validAttrs map[string]bool,
+	assertion *inboundmodel.AssertionConfig,
+	oauthProfile *providers.OAuthProfile,
+) error {
+	if validAttrs == nil {
+		return nil
+	}
+
+	for attr := range collectConfiguredUserAttributes(assertion, oauthProfile) {
 		if isComputedAttribute(attr) {
 			continue
 		}
@@ -1322,6 +1470,70 @@ func (s *inboundClientService) validateUserAttributesAgainstAllowedTypes(
 		}
 	}
 	return nil
+}
+
+// scopeClaimPruneSet returns the attribute set the mapping is pruned against. Defaults we seeded
+// for a client with no allowed user types are pruned against an empty set: the standard scopes are
+// kept, but none of their attributes are, since no schema declares them yet. A mapping the caller
+// supplied is never pruned this way, so it is still stored as sent.
+func scopeClaimPruneSet(seeded bool, allowedUserTypes []string, validAttrs map[string]bool) map[string]bool {
+	if seeded && len(allowedUserTypes) == 0 {
+		return map[string]bool{}
+	}
+	return validAttrs
+}
+
+// pruneScopeClaims drops attributes the allowed user types' schemas do not declare, keeping
+// computed ones. A scope emptied by the prune keeps its key, so it stays grantable with no claims.
+// A nil valid set leaves the mapping untouched.
+func pruneScopeClaims(oauthProfile *providers.OAuthProfile, validAttrs map[string]bool) {
+	if oauthProfile == nil || validAttrs == nil {
+		return
+	}
+	for scope, attrs := range oauthProfile.ScopeClaims {
+		kept := make([]string, 0, len(attrs))
+		for _, attr := range attrs {
+			if isComputedAttribute(attr) || validAttrs[attr] {
+				kept = append(kept, attr)
+			}
+		}
+		oauthProfile.ScopeClaims[scope] = kept
+	}
+}
+
+// seedIDTokenUserAttributes derives a new client's ID token attribute list from its scope-to-claims
+// mapping when the caller configured none. UserInfo inherits the list in applyInboundDefaults; the
+// access token and the assertion are not scope-driven and keep what was sent. Skipped without
+// allowed user types (nil validAttrs), since the mapping was then never pruned to a real schema.
+func seedIDTokenUserAttributes(oauthProfile *providers.OAuthProfile, validAttrs map[string]bool) {
+	if oauthProfile == nil || validAttrs == nil || len(oauthProfile.ScopeClaims) == 0 {
+		return
+	}
+	if oauthProfile.Token != nil && oauthProfile.Token.IDToken != nil &&
+		len(oauthProfile.Token.IDToken.UserAttributes) > 0 {
+		return
+	}
+
+	// The mapping is already seeded and pruned to the schema by this point.
+	derived := make(map[string]bool)
+	for _, attrs := range oauthProfile.ScopeClaims {
+		for _, attr := range attrs {
+			derived[attr] = true
+		}
+	}
+	if len(derived) == 0 {
+		return
+	}
+
+	attributes := slices.Collect(maps.Keys(derived))
+	slices.Sort(attributes)
+	if oauthProfile.Token == nil {
+		oauthProfile.Token = &providers.OAuthTokenConfig{}
+	}
+	if oauthProfile.Token.IDToken == nil {
+		oauthProfile.Token.IDToken = &providers.IDTokenConfig{}
+	}
+	oauthProfile.Token.IDToken.UserAttributes = attributes
 }
 
 // resolveValidUserAttributes returns the union of non-credential attribute names declared in the
@@ -1337,7 +1549,8 @@ func (s *inboundClientService) resolveValidUserAttributes(
 	validAttrs := make(map[string]bool)
 	for _, entityTypeName := range allowedEntityTypes {
 		attrInfos, svcErr := s.entityType.GetAttributes(
-			security.WithRuntimeContext(ctx), entitytype.TypeCategoryUser, entityTypeName, false, true, false)
+			security.WithRuntimeContext(ctx), entitytype.TypeCategoryUser, entityTypeName,
+			entitytype.AttributeFilter{AllowNonCredential: true})
 		if svcErr != nil {
 			if svcErr.Type == tidcommon.ServerErrorType {
 				return nil, ErrUserSchemaLookupFailed
@@ -1351,10 +1564,10 @@ func (s *inboundClientService) resolveValidUserAttributes(
 	return validAttrs, nil
 }
 
-// stripUndeclaredUserAttributes removes from the application's token allow-lists any user attribute
-// no longer declared in the schema of its allowed user types, keeping computed attributes. The lists
-// are left holding only attributes validateUserAttributesAgainstAllowedTypes accepts. No-op when
-// there are no allowed types or the entity-type service is unavailable (matches the validator's skip).
+// stripUndeclaredUserAttributes removes from the token allow-lists and the scope-to-claims mapping
+// any user attribute no longer declared in the allowed user types' schemas, keeping computed ones.
+// Both are pruned together so a scope can never expose an attribute the lists may not carry. No-op
+// when there are no allowed types or the entity-type service is unavailable.
 func (s *inboundClientService) stripUndeclaredUserAttributes(
 	ctx context.Context,
 	allowedEntityTypes []string,
@@ -1366,13 +1579,14 @@ func (s *inboundClientService) stripUndeclaredUserAttributes(
 	for _, list := range lists {
 		configured += len(*list)
 	}
-	if configured == 0 {
+	if configured == 0 && (oauthProfile == nil || len(oauthProfile.ScopeClaims) == 0) {
 		return nil
 	}
 	validAttrs, err := s.resolveValidUserAttributes(ctx, allowedEntityTypes)
 	if err != nil || validAttrs == nil {
 		return err
 	}
+	pruneScopeClaims(oauthProfile, validAttrs)
 
 	dropped := make(map[string]bool)
 	for _, list := range lists {
@@ -1475,8 +1689,19 @@ func applyInboundDefaults(c *inboundmodel.InboundClient, oauthProfile *providers
 		IDJAG:        resolveIDJAG(oauthProfile.Token),
 	}
 	oauthProfile.UserInfo = resolveUserInfo(oauthProfile.UserInfo, idToken)
-	// Persist the effective scope-to-claims mapping: standard OIDC defaults merged with any overrides.
-	oauthProfile.ScopeClaims = oauthutils.ResolveEffectiveScopeClaims(oauthProfile.ScopeClaims)
+}
+
+// seedScopeClaims gives a client the standard OIDC mapping when it is created without one; a
+// supplied mapping is stored exactly as sent. Create-only, so a scope removed later stays removed.
+// Declarative files are excluded by design: they are explicit configuration and get no defaults.
+// Reports whether the defaults were applied, so the caller can tell them apart from a mapping the
+// client supplied.
+func seedScopeClaims(oauthProfile *providers.OAuthProfile) bool {
+	if oauthProfile == nil || len(oauthProfile.ScopeClaims) > 0 {
+		return false
+	}
+	oauthProfile.ScopeClaims = oauthutils.DefaultScopeClaims()
+	return true
 }
 
 // getDefaultAssertionFromDeployment returns the assertion config from the deployment-level JWT settings.
@@ -1534,6 +1759,7 @@ func resolveOAuthTokens(in *providers.OAuthTokenConfig,
 			ValidityPeriod: in.IDToken.ValidityPeriod,
 			UserAttributes: in.IDToken.UserAttributes,
 			ResponseType:   in.IDToken.ResponseType,
+			SigningAlg:     in.IDToken.SigningAlg,
 			EncryptionAlg:  in.IDToken.EncryptionAlg,
 			EncryptionEnc:  in.IDToken.EncryptionEnc,
 		}
@@ -1725,20 +1951,14 @@ func (s *inboundClientService) walkReferencedFlows(
 
 			if expected == "" {
 				// The inbound client has no binding for this type. On the reconcile path (create/update),
-				// we auto-fill the reg/recovery/signout binding with the reachable target and force
-				// the enable flag to false. On the validate-only path (flow update revalidation)
-				// we simply accept — no mutation, no rejection.
+				// we auto-fill the sign-out binding with the reachable target so the FK graph stays
+				// complete. Registration and recovery are never auto-filled: if the caller left the
+				// flag disabled, we must not persist a binding that will surface later as a phantom
+				// configuration and clash with a future auth-flow change.
 				if !reconcile {
 					continue
 				}
-				switch t.FlowType {
-				case providers.FlowTypeRegistration:
-					c.RegistrationFlowID = t.FlowID
-					c.IsRegistrationFlowEnabled = false
-				case providers.FlowTypeRecovery:
-					c.RecoveryFlowID = t.FlowID
-					c.IsRecoveryFlowEnabled = false
-				case providers.FlowTypeSignOut:
+				if t.FlowType == providers.FlowTypeSignOut {
 					c.SignOutFlowID = t.FlowID
 				}
 				continue

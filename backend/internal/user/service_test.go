@@ -1,20 +1,5 @@
-/*
- * Copyright (c) 2025-2026, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2025-2026 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 package user
 
@@ -432,7 +417,7 @@ func TestUserService_CreateUser_CallsCreateEntity(t *testing.T) {
 		uuidGenerator:     utils.GenerateUUIDv7,
 	}
 
-	user := &User{
+	user := &providers.User{
 		Type:       testUserType,
 		OUID:       testOrgID,
 		Attributes: json.RawMessage(`{}`),
@@ -464,7 +449,7 @@ func TestUserService_CreateUser_UUIDGenerationError(t *testing.T) {
 		},
 	}
 
-	user := &User{Type: testUserType, OUID: testOrgID}
+	user := &providers.User{Type: testUserType, OUID: testOrgID}
 
 	created, svcErr := service.CreateUser(context.Background(), user)
 	require.Nil(t, created)
@@ -500,7 +485,7 @@ func TestUserService_CreateUser_PropagatesStoreError(t *testing.T) {
 		uuidGenerator:     utils.GenerateUUIDv7,
 	}
 
-	user := &User{
+	user := &providers.User{
 		Type:       testUserType,
 		OUID:       testOrgID,
 		Attributes: json.RawMessage(`{}`),
@@ -721,7 +706,8 @@ func TestUserService_UpdateUserAttributes_SchemaValidationFails(t *testing.T) {
 		Once()
 
 	schemaMock := entitytypemock.NewEntityTypeServiceInterfaceMock(t)
-	schemaMock.On("GetAttributes", mock.Anything, mock.Anything, testUserType, true, false, false).
+	schemaMock.On("GetAttributes", mock.Anything, mock.Anything, testUserType,
+		entitytype.AttributeFilter{AllowCredential: true}).
 		Return([]entitytype.AttributeInfo{{Attribute: "password"}}, (*tidcommon.ServiceError)(nil)).Once()
 
 	service := &userService{
@@ -750,7 +736,8 @@ func TestUserService_UpdateUserAttributes_Succeeds(t *testing.T) {
 		Once()
 
 	schemaMock := entitytypemock.NewEntityTypeServiceInterfaceMock(t)
-	schemaMock.On("GetAttributes", mock.Anything, mock.Anything, testUserType, true, false, false).
+	schemaMock.On("GetAttributes", mock.Anything, mock.Anything, testUserType,
+		entitytype.AttributeFilter{AllowCredential: true}).
 		Return([]entitytype.AttributeInfo{{Attribute: "password"}}, (*tidcommon.ServiceError)(nil)).Once()
 
 	service := &userService{
@@ -776,7 +763,8 @@ func TestUserService_UpdateUserAttributes_RejectsCredentialAttributes(t *testing
 			Attributes: json.RawMessage(`{"email":"old@example.com"}`)}, nil).Once()
 
 	schemaMock := entitytypemock.NewEntityTypeServiceInterfaceMock(t)
-	schemaMock.On("GetAttributes", mock.Anything, mock.Anything, testUserType, true, false, false).
+	schemaMock.On("GetAttributes", mock.Anything, mock.Anything, testUserType,
+		entitytype.AttributeFilter{AllowCredential: true}).
 		Return([]entitytype.AttributeInfo{{Attribute: "password"}}, (*tidcommon.ServiceError)(nil)).Once()
 
 	service := &userService{
@@ -892,7 +880,7 @@ func TestUserService_DeleteUser(t *testing.T) {
 
 func TestUserService_UpdateUser(t *testing.T) {
 	userID := svcTestUserID1
-	updatedUser := User{ID: userID, OUID: testOrgID, Type: testUserType,
+	updatedUser := providers.User{ID: userID, OUID: testOrgID, Type: testUserType,
 		Attributes: json.RawMessage(`{"updated":"true"}`)}
 
 	storeMock := entitymock.NewEntityServiceInterfaceMock(t)
@@ -921,7 +909,8 @@ func TestUserService_UpdateUser(t *testing.T) {
 	entityTypeMock.On("GetEntityTypeByName", mock.Anything, mock.Anything, testUserType).
 		Return(&entitytype.EntityType{OUID: testOrgID}, (*tidcommon.ServiceError)(nil)).
 		Once()
-	entityTypeMock.On("GetAttributes", mock.Anything, mock.Anything, testUserType, true, false, false).
+	entityTypeMock.On("GetAttributes", mock.Anything, mock.Anything, testUserType,
+		entitytype.AttributeFilter{AllowCredential: true}).
 		Return([]entitytype.AttributeInfo{}, (*tidcommon.ServiceError)(nil)).Once()
 
 	service := &userService{
@@ -940,7 +929,7 @@ func TestUserService_UpdateUser(t *testing.T) {
 func TestUserService_UpdateUser_RejectsCredentialAttributes(t *testing.T) {
 	userID := svcTestUserID1
 
-	updatedUser := User{
+	updatedUser := providers.User{
 		ID:         userID,
 		OUID:       testOrgID,
 		Type:       testUserType,
@@ -961,7 +950,8 @@ func TestUserService_UpdateUser_RejectsCredentialAttributes(t *testing.T) {
 		Return(true, (*tidcommon.ServiceError)(nil)).Once()
 	entityTypeMock.On("GetEntityTypeByName", mock.Anything, mock.Anything, testUserType).
 		Return(&entitytype.EntityType{OUID: testOrgID}, (*tidcommon.ServiceError)(nil)).Once()
-	entityTypeMock.On("GetAttributes", mock.Anything, mock.Anything, testUserType, true, false, false).
+	entityTypeMock.On("GetAttributes", mock.Anything, mock.Anything, testUserType,
+		entitytype.AttributeFilter{AllowCredential: true}).
 		Return([]entitytype.AttributeInfo{{Attribute: "password"}}, (*tidcommon.ServiceError)(nil)).Once()
 
 	service := &userService{
@@ -1005,7 +995,8 @@ func TestUserService_UpdateUser_ErrorPaths(t *testing.T) {
 				entityTypeMock.On("GetEntityTypeByName", mock.Anything, mock.Anything, testUserType).
 					Return(&entitytype.EntityType{OUID: testOrgID},
 						(*tidcommon.ServiceError)(nil)).Maybe()
-				entityTypeMock.On("GetAttributes", mock.Anything, mock.Anything, testUserType, true, false, false).
+				entityTypeMock.On("GetAttributes", mock.Anything, mock.Anything, testUserType,
+					entitytype.AttributeFilter{AllowCredential: true}).
 					Return([]entitytype.AttributeInfo{}, (*tidcommon.ServiceError)(nil)).Maybe()
 				storeMock.On("GetEntity", mock.Anything, userID).
 					Return(&providers.Entity{
@@ -1032,7 +1023,8 @@ func TestUserService_UpdateUser_ErrorPaths(t *testing.T) {
 				entityTypeMock.On("GetEntityTypeByName", mock.Anything, mock.Anything, testUserType).
 					Return(&entitytype.EntityType{OUID: testOrgID},
 						(*tidcommon.ServiceError)(nil)).Maybe()
-				entityTypeMock.On("GetAttributes", mock.Anything, mock.Anything, testUserType, true, false, false).
+				entityTypeMock.On("GetAttributes", mock.Anything, mock.Anything, testUserType,
+					entitytype.AttributeFilter{AllowCredential: true}).
 					Return([]entitytype.AttributeInfo{}, (*tidcommon.ServiceError)(nil)).Maybe()
 				storeMock.On("GetEntity", mock.Anything, userID).
 					Return(&providers.Entity{
@@ -1059,7 +1051,8 @@ func TestUserService_UpdateUser_ErrorPaths(t *testing.T) {
 				entityTypeMock.On("GetEntityTypeByName", mock.Anything, mock.Anything, testUserType).
 					Return(&entitytype.EntityType{OUID: testOrgID},
 						(*tidcommon.ServiceError)(nil)).Once()
-				entityTypeMock.On("GetAttributes", mock.Anything, mock.Anything, testUserType, true, false, false).
+				entityTypeMock.On("GetAttributes", mock.Anything, mock.Anything, testUserType,
+					entitytype.AttributeFilter{AllowCredential: true}).
 					Return([]entitytype.AttributeInfo{}, (*tidcommon.ServiceError)(nil)).Once()
 				storeMock.On("GetEntity", mock.Anything, userID).
 					Return(&providers.Entity{
@@ -1099,7 +1092,8 @@ func TestUserService_UpdateUser_ErrorPaths(t *testing.T) {
 				entityTypeMock.On("GetEntityTypeByName", mock.Anything, mock.Anything, testUserType).
 					Return(&entitytype.EntityType{OUID: testOrgID},
 						(*tidcommon.ServiceError)(nil)).Once()
-				entityTypeMock.On("GetAttributes", mock.Anything, mock.Anything, testUserType, true, false, false).
+				entityTypeMock.On("GetAttributes", mock.Anything, mock.Anything, testUserType,
+					entitytype.AttributeFilter{AllowCredential: true}).
 					Return(nil, &entitytype.ErrorEntityTypeNotFound).Once()
 			},
 			expectedError: &ErrorEntityTypeNotFound,
@@ -1124,7 +1118,8 @@ func TestUserService_UpdateUser_ErrorPaths(t *testing.T) {
 				entityTypeMock.On("GetEntityTypeByName", mock.Anything, mock.Anything, testUserType).
 					Return(&entitytype.EntityType{OUID: testOrgID},
 						(*tidcommon.ServiceError)(nil)).Once()
-				entityTypeMock.On("GetAttributes", mock.Anything, mock.Anything, testUserType, true, false, false).
+				entityTypeMock.On("GetAttributes", mock.Anything, mock.Anything, testUserType,
+					entitytype.AttributeFilter{AllowCredential: true}).
 					Return(nil, &tidcommon.ServiceError{
 						Code:             "USRS-9999",
 						ErrorDescription: tidcommon.I18nMessage{DefaultValue: "unexpected schema error"},
@@ -1152,7 +1147,8 @@ func TestUserService_UpdateUser_ErrorPaths(t *testing.T) {
 				entityTypeMock.On("GetEntityTypeByName", mock.Anything, mock.Anything, testUserType).
 					Return(&entitytype.EntityType{OUID: testOrgID},
 						(*tidcommon.ServiceError)(nil)).Once()
-				entityTypeMock.On("GetAttributes", mock.Anything, mock.Anything, testUserType, true, false, false).
+				entityTypeMock.On("GetAttributes", mock.Anything, mock.Anything, testUserType,
+					entitytype.AttributeFilter{AllowCredential: true}).
 					Return([]entitytype.AttributeInfo{{Attribute: "password"}},
 						(*tidcommon.ServiceError)(nil)).Once()
 			},
@@ -1171,7 +1167,8 @@ func TestUserService_UpdateUser_ErrorPaths(t *testing.T) {
 				entityTypeMock.On("GetEntityTypeByName", mock.Anything, mock.Anything, testUserType).
 					Return(&entitytype.EntityType{OUID: testOrgID},
 						(*tidcommon.ServiceError)(nil)).Once()
-				entityTypeMock.On("GetAttributes", mock.Anything, mock.Anything, testUserType, true, false, false).
+				entityTypeMock.On("GetAttributes", mock.Anything, mock.Anything, testUserType,
+					entitytype.AttributeFilter{AllowCredential: true}).
 					Return([]entitytype.AttributeInfo{{Attribute: "password"}},
 						(*tidcommon.ServiceError)(nil)).Once()
 				storeMock.On("GetEntity", mock.Anything, userID).
@@ -1219,7 +1216,7 @@ func TestUserService_UpdateUser_ErrorPaths(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			updatedUser := User{
+			updatedUser := providers.User{
 				ID:         userID,
 				OUID:       testOrgID,
 				Type:       testUserType,
@@ -1454,7 +1451,8 @@ func TestUserService_UpdateUser_AuthzBranches(t *testing.T) {
 				entityTypeMock.On("GetEntityTypeByName", mock.Anything, mock.Anything, testUserType).
 					Return(&entitytype.EntityType{OUID: existingOU},
 						(*tidcommon.ServiceError)(nil)).Maybe()
-				entityTypeMock.On("GetAttributes", mock.Anything, mock.Anything, testUserType, true, false, false).
+				entityTypeMock.On("GetAttributes", mock.Anything, mock.Anything, testUserType,
+					entitytype.AttributeFilter{AllowCredential: true}).
 					Return([]entitytype.AttributeInfo{}, (*tidcommon.ServiceError)(nil)).Maybe()
 				storeMock.On("UpdateEntity", mock.Anything, userID, mock.Anything).
 					Return(&providers.Entity{
@@ -1474,7 +1472,7 @@ func TestUserService_UpdateUser_AuthzBranches(t *testing.T) {
 				authzService:      authzMock,
 			}
 
-			updatedUser := User{
+			updatedUser := providers.User{
 				ID:         userID,
 				OUID:       tt.userOU,
 				Type:       testUserType,
@@ -1503,7 +1501,7 @@ func TestUserService_UpdateUser_RejectsCredentialInMixedAttributes(t *testing.T)
 	userID := svcTestUserID123
 	testOU := testOrgID
 
-	updatedUser := User{
+	updatedUser := providers.User{
 		ID:   userID,
 		Type: testUserType,
 		OUID: testOU,
@@ -1531,7 +1529,8 @@ func TestUserService_UpdateUser_RejectsCredentialInMixedAttributes(t *testing.T)
 			Name: testUserType,
 			OUID: testOU,
 		}, (*tidcommon.ServiceError)(nil)).Once()
-	entityTypeMock.On("GetAttributes", mock.Anything, mock.Anything, testUserType, true, false, false).
+	entityTypeMock.On("GetAttributes", mock.Anything, mock.Anything, testUserType,
+		entitytype.AttributeFilter{AllowCredential: true}).
 		Return([]entitytype.AttributeInfo{{Attribute: "password"}}, (*tidcommon.ServiceError)(nil)).Once()
 
 	// Create service
@@ -1757,13 +1756,13 @@ func TestUserService_CRUD_ErrorCases(t *testing.T) {
 	})
 
 	t.Run("CreateUser_MissingType", func(t *testing.T) {
-		_, err := service.CreateUser(ctx, &User{ID: "u1"})
+		_, err := service.CreateUser(ctx, &providers.User{ID: "u1"})
 		require.NotNil(t, err)
 		require.Equal(t, ErrorEntityTypeNotFound.Code, err.Code)
 	})
 
 	t.Run("UpdateUser_MissingID", func(t *testing.T) {
-		_, err := service.UpdateUser(ctx, "", &User{})
+		_, err := service.UpdateUser(ctx, "", &providers.User{})
 		require.NotNil(t, err)
 		require.Equal(t, ErrorMissingUserID.Code, err.Code)
 	})
@@ -1893,7 +1892,7 @@ func TestUserService_MoreErrorCases(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("UpdateUser_StoreError", func(t *testing.T) {
-		userIn := &User{Type: "customer", OUID: testOrgID}
+		userIn := &providers.User{Type: "customer", OUID: testOrgID}
 		storeMock.On("GetEntity", mock.Anything, "u1").
 			Return(&providers.Entity{
 				Category: providers.EntityCategoryUser, ID: "u1", OUID: testOrgID,
@@ -1902,7 +1901,8 @@ func TestUserService_MoreErrorCases(t *testing.T) {
 			Return((*providers.Entity)(nil), errors.New("db error")).Once()
 
 		// Mock all validation steps with broad matches to ensure they hit
-		entityTypeMock.On("GetAttributes", mock.Anything, mock.Anything, mock.Anything, true, false, false).
+		entityTypeMock.On("GetAttributes", mock.Anything, mock.Anything, mock.Anything,
+			entitytype.AttributeFilter{AllowCredential: true}).
 			Return([]entitytype.AttributeInfo{}, (*tidcommon.ServiceError)(nil)).Maybe()
 		ouServiceMock.On("IsOrganizationUnitExists", mock.Anything, mock.Anything).Return(true, nil).Maybe()
 		ouServiceMock.On("IsParent", mock.Anything, mock.Anything, mock.Anything).Return(true, nil).Maybe()
@@ -1986,7 +1986,7 @@ func TestUserService_CreateUser_EntityErrors(t *testing.T) {
 				uuidGenerator:     utils.GenerateUUIDv7,
 			}
 
-			user := &User{
+			user := &providers.User{
 				Type:       testUserType,
 				OUID:       testOrgID,
 				Attributes: json.RawMessage(`{}`),
@@ -2014,7 +2014,7 @@ func TestUserService_UpdateUser_NilSchemaService(t *testing.T) {
 		authzService:  newAllowAllAuthz(t),
 	}
 
-	user := &User{
+	user := &providers.User{
 		ID:         svcTestUserID1,
 		Type:       testUserType,
 		OUID:       testOrgID,
@@ -2051,7 +2051,7 @@ func TestUserService_UpdateUser_SchemaNotFound(t *testing.T) {
 		authzService:      newAllowAllAuthz(t),
 	}
 
-	user := &User{
+	user := &providers.User{
 		ID:         svcTestUserID1,
 		Type:       testUserType,
 		OUID:       testOrgID,
@@ -2338,7 +2338,7 @@ func TestUserService_CreateUser_AuthzChecks(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			svc := tc.setup(t)
-			user := &User{Type: testUserType, OUID: testOrgID}
+			user := &providers.User{Type: testUserType, OUID: testOrgID}
 			resp, err := svc.CreateUser(context.Background(), user)
 			require.Nil(t, resp)
 			require.NotNil(t, err)
@@ -2529,7 +2529,7 @@ func TestUserService_UpdateUser_PreFetchAndAuthzChecks(t *testing.T) {
 		Code:  "SVC-5000",
 		Error: tidcommon.I18nMessage{DefaultValue: "authz error"},
 	}
-	updatedUser := &User{Type: testUserType, OUID: testOrgID,
+	updatedUser := &providers.User{Type: testUserType, OUID: testOrgID,
 		Attributes: json.RawMessage(`{"email":"test@example.com"}`)}
 
 	tests := []struct {
@@ -2664,7 +2664,8 @@ func TestUserService_UpdateUserAttributes_PreFetchAndAuthzChecks(t *testing.T) {
 					}, nil).Once()
 
 				schemaMock := entitytypemock.NewEntityTypeServiceInterfaceMock(t)
-				schemaMock.On("GetAttributes", mock.Anything, mock.Anything, testUserType, true, false, false).
+				schemaMock.On("GetAttributes", mock.Anything, mock.Anything, testUserType,
+					entitytype.AttributeFilter{AllowCredential: true}).
 					Return([]entitytype.AttributeInfo{}, (*tidcommon.ServiceError)(nil)).Once()
 
 				authzMock := sysauthzmock.NewSystemAuthorizationServiceInterfaceMock(t)
@@ -2692,7 +2693,8 @@ func TestUserService_UpdateUserAttributes_PreFetchAndAuthzChecks(t *testing.T) {
 					}, nil).Once()
 
 				schemaMock := entitytypemock.NewEntityTypeServiceInterfaceMock(t)
-				schemaMock.On("GetAttributes", mock.Anything, mock.Anything, testUserType, true, false, false).
+				schemaMock.On("GetAttributes", mock.Anything, mock.Anything, testUserType,
+					entitytype.AttributeFilter{AllowCredential: true}).
 					Return([]entitytype.AttributeInfo{}, (*tidcommon.ServiceError)(nil)).Once()
 
 				authzMock := sysauthzmock.NewSystemAuthorizationServiceInterfaceMock(t)
@@ -2918,6 +2920,7 @@ func TestUserService_DeleteUser_BlockedByOwnedAgent(t *testing.T) {
 	err := service.DeleteUser(context.Background(), userID)
 	require.NotNil(t, err)
 	require.Equal(t, ErrorUserHasBlockingDependencies.Code, err.Code)
+	require.NotEmpty(t, err.ErrorDescription.Params["dependencies"])
 	storeMock.AssertNotCalled(t, "DeleteEntity", mock.Anything, mock.Anything)
 }
 
@@ -3012,7 +3015,7 @@ func TestUserService_DeleteUser_AbortedWhenCascadeFails(t *testing.T) {
 // when the user is declarative.
 func TestUpdateUser_DeclarativeResource(t *testing.T) {
 	userID := svcTestDeclarativeUserID1
-	updatedUser := User{
+	updatedUser := providers.User{
 		ID:         userID,
 		OUID:       "ou1",
 		Type:       "employee",
@@ -3042,7 +3045,7 @@ func TestUpdateUser_DeclarativeResource(t *testing.T) {
 // TestUpdateUser_DeclarativeCheckError tests that UpdateUser surfaces errors from IsUserDeclarative.
 func TestUpdateUser_DeclarativeCheckError(t *testing.T) {
 	userID := svcTestUserID1
-	updatedUser := User{
+	updatedUser := providers.User{
 		ID:         userID,
 		OUID:       "ou1",
 		Type:       "employee",
@@ -3074,7 +3077,7 @@ func TestUpdateUser_DeclarativeCheckError(t *testing.T) {
 // when IsUserDeclarative encounters ErrEntityNotFound.
 func TestUpdateUser_DeclarativeCheckUserNotFound(t *testing.T) {
 	userID := "non-existent-user"
-	updatedUser := User{
+	updatedUser := providers.User{
 		ID:         userID,
 		OUID:       "ou1",
 		Type:       "employee",
@@ -3118,7 +3121,8 @@ func TestUpdateUserAttributes_DeclarativeResource(t *testing.T) {
 	storeMock.On("IsEntityDeclarative", mock.Anything, userID).Return(true, nil).Once()
 
 	schemaMock := entitytypemock.NewEntityTypeServiceInterfaceMock(t)
-	schemaMock.On("GetAttributes", mock.Anything, mock.Anything, "employee", true, false, false).
+	schemaMock.On("GetAttributes", mock.Anything, mock.Anything, "employee",
+		entitytype.AttributeFilter{AllowCredential: true}).
 		Return([]entitytype.AttributeInfo{}, (*tidcommon.ServiceError)(nil)).Once()
 
 	service := &userService{
@@ -3150,7 +3154,8 @@ func TestUpdateUserAttributes_DeclarativeCheckError(t *testing.T) {
 	storeMock.On("IsEntityDeclarative", mock.Anything, userID).Return(false, storeErr).Once()
 
 	schemaMock := entitytypemock.NewEntityTypeServiceInterfaceMock(t)
-	schemaMock.On("GetAttributes", mock.Anything, mock.Anything, "employee", true, false, false).
+	schemaMock.On("GetAttributes", mock.Anything, mock.Anything, "employee",
+		entitytype.AttributeFilter{AllowCredential: true}).
 		Return([]entitytype.AttributeInfo{}, (*tidcommon.ServiceError)(nil)).Once()
 
 	service := &userService{
@@ -3281,7 +3286,7 @@ func TestPopulateUserDisplayNames_Success(t *testing.T) {
 		Return(map[string]string{"employee": "name"}, (*tidcommon.ServiceError)(nil)).Once()
 
 	service := &userService{entityTypeService: schemaMock}
-	users := []User{
+	users := []providers.User{
 		{ID: "user-1", Type: "employee", Attributes: json.RawMessage(`{"name":"Alice"}`)},
 		{ID: "user-2", Type: "employee", Attributes: json.RawMessage(`{"name":"Bob"}`)},
 	}
@@ -3298,7 +3303,7 @@ func TestPopulateUserDisplayNames_FallbackToID(t *testing.T) {
 
 	service := &userService{entityTypeService: schemaMock}
 
-	users := []User{
+	users := []providers.User{
 		{ID: "user-1", Type: "employee", Attributes: json.RawMessage(`{"name":"Alice"}`)},
 	}
 
@@ -3309,7 +3314,7 @@ func TestPopulateUserDisplayNames_FallbackToID(t *testing.T) {
 func TestPopulateUserDisplayNames_EmptyUsers(t *testing.T) {
 	service := &userService{}
 
-	var users []User
+	var users []providers.User
 	service.populateUserDisplayNames(context.Background(), users, nil)
 	// Should not panic.
 }
@@ -3317,7 +3322,7 @@ func TestPopulateUserDisplayNames_EmptyUsers(t *testing.T) {
 func TestPopulateUserDisplayNames_NilSchemaService(t *testing.T) {
 	service := &userService{entityTypeService: nil}
 
-	users := []User{
+	users := []providers.User{
 		{ID: "user-1", Type: "employee", Attributes: json.RawMessage(`{"name":"Alice"}`)},
 	}
 
@@ -3336,7 +3341,7 @@ func TestPopulateUserDisplayNames_SchemaServiceError(t *testing.T) {
 
 	service := &userService{entityTypeService: schemaMock}
 
-	users := []User{
+	users := []providers.User{
 		{ID: "user-1", Type: "employee", Attributes: json.RawMessage(`{"name":"Alice"}`)},
 	}
 
@@ -3365,7 +3370,7 @@ func TestPopulateUserDisplayNames_MultipleTypes(t *testing.T) {
 
 	service := &userService{entityTypeService: schemaMock}
 
-	users := []User{
+	users := []providers.User{
 		{ID: "user-1", Type: "employee", Attributes: json.RawMessage(`{"name":"Alice"}`)},
 		{ID: "user-2", Type: "customer", Attributes: json.RawMessage(`{"email":"bob@example.com"}`)},
 	}
@@ -3436,7 +3441,7 @@ func TestResolveUserOUHandle_OUHandleResolved(t *testing.T) {
 		Return(providers.OrganizationUnit{ID: "ou-resolved"}, (*tidcommon.ServiceError)(nil)).Once()
 
 	svc := &userService{ouService: ouServiceMock}
-	u := &User{OUHandle: "default"}
+	u := &providers.User{OUHandle: "default"}
 
 	svcErr := svc.ResolveUserOUHandle(context.Background(), u)
 
@@ -3448,7 +3453,7 @@ func TestResolveUserOUHandle_OUHandleResolved(t *testing.T) {
 // ou_id is set and ou_handle is empty.
 func TestResolveUserOUHandle_OUIDAlreadySet(t *testing.T) {
 	svc := &userService{}
-	u := &User{OUID: "ou-direct"}
+	u := &providers.User{OUID: "ou-direct"}
 
 	svcErr := svc.ResolveUserOUHandle(context.Background(), u)
 
@@ -3462,7 +3467,7 @@ func TestResolveUserOUHandle_BothProvided(t *testing.T) {
 	ouServiceMock := oumock.NewOrganizationUnitServiceInterfaceMock(t)
 
 	svc := &userService{ouService: ouServiceMock}
-	u := &User{ID: "u1", OUID: "ou-direct", OUHandle: "default"}
+	u := &providers.User{ID: "u1", OUID: "ou-direct", OUHandle: "default"}
 
 	svcErr := svc.ResolveUserOUHandle(context.Background(), u)
 
@@ -3479,7 +3484,7 @@ func TestResolveUserOUHandle_OUHandleNotFound(t *testing.T) {
 		Return(providers.OrganizationUnit{}, &oupkg.ErrorOrganizationUnitNotFound).Once()
 
 	svc := &userService{ouService: ouServiceMock}
-	u := &User{OUHandle: "missing"}
+	u := &providers.User{OUHandle: "missing"}
 
 	svcErr := svc.ResolveUserOUHandle(context.Background(), u)
 
@@ -3491,7 +3496,7 @@ func TestResolveUserOUHandle_OUHandleNotFound(t *testing.T) {
 // ou_id nor ou_handle is provided.
 func TestResolveUserOUHandle_NeitherProvided(t *testing.T) {
 	svc := &userService{}
-	u := &User{}
+	u := &providers.User{}
 
 	svcErr := svc.ResolveUserOUHandle(context.Background(), u)
 
@@ -3503,7 +3508,7 @@ func TestResolveUserOUHandle_NeitherProvided(t *testing.T) {
 // service is nil and ou_handle is supplied (no nil-pointer panic).
 func TestResolveUserOUHandle_NilOUService(t *testing.T) {
 	svc := &userService{ouService: nil}
-	u := &User{OUHandle: "default"}
+	u := &providers.User{OUHandle: "default"}
 
 	svcErr := svc.ResolveUserOUHandle(context.Background(), u)
 
@@ -3604,7 +3609,7 @@ func TestPopulateOUHandles_HandleResolutionError(t *testing.T) {
 		Return(map[string]string(nil), &tidcommon.InternalServerError).Once()
 
 	service := &userService{ouService: ouServiceMock}
-	users := []User{{ID: "user-1", OUID: testOrgID}}
+	users := []providers.User{{ID: "user-1", OUID: testOrgID}}
 
 	service.populateOUHandles(context.Background(), users, log.GetLogger())
 	require.Empty(t, users[0].OUHandle)

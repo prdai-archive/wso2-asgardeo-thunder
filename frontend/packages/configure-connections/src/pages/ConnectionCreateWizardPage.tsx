@@ -1,31 +1,16 @@
-/**
- * Copyright (c) 2025, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied. See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2025 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
-import {useConfig, useToast} from '@thunderid/contexts';
-import {AppBreadcrumbs, Box, Button, Paper, Stack, Typography} from '@wso2/oxygen-ui';
-import {ChevronLeft} from '@wso2/oxygen-ui-icons-react';
+import {FullScreenCreationWizardLayout} from '@thunderid/components';
+import {useConfig} from '@thunderid/contexts';
+import {getErrorMessage} from '@thunderid/utils';
+import {Alert, Box, Button, Paper, Stack, Typography} from '@wso2/oxygen-ui';
 import {type JSX, useMemo, useState} from 'react';
 import {useTranslation} from 'react-i18next';
 import {useNavigate} from 'react-router';
 import useCreateConnection from '../api/useCreateConnection';
 import ConnectionCreateHint from '../components/ConnectionCreateHint';
 import ConnectionForm from '../components/ConnectionForm';
-import ConnectionFullPageLayout from '../components/ConnectionFullPageLayout';
 import ConnectionNameStep from '../components/create-connection/ConnectionNameStep';
 import SelectConnectionType, {
   type SelectableConnectionType,
@@ -57,19 +42,19 @@ export default function ConnectionCreateWizardPage(): JSX.Element {
   const navigate = useNavigate();
   const routes = useConnectionRoutes();
   const {getGateCallbackUrl} = useConfig();
-  const {showToast} = useToast();
 
   const [step, setStep] = useState<Step>(Step.TYPE);
   const [selectedType, setSelectedType] = useState<SelectableConnectionType | null>(null);
   const [connectionName, setConnectionName] = useState('');
   const [editedValues, setEditedValues] = useState<ConnectionFormValues>({});
   const [nameError, setNameError] = useState<string | null>(null);
+  const [generalError, setGeneralError] = useState<string | null>(null);
 
   const isTrustedIdp: boolean = selectedType === 'trusted-idp';
 
-  // Defaults to OIDC before the user picks a type on the first step; the SMS placeholder is
-  // disabled and unselectable, and the trusted-idp pseudo-type renders via TrustedIssuerCreateForm
-  // instead, so this is only read when rendering the generic configure step.
+  // Defaults to OIDC before the user picks a type on the first step; the trusted-idp pseudo-type
+  // renders via TrustedIssuerCreateForm instead, so this is only read when rendering the generic
+  // configure step.
   const activeType: ConnectionType =
     selectedType && selectedType !== 'trusted-idp' ? selectedType : ConnectionTypes.OIDC;
   const createMutation = useCreateConnection(activeType);
@@ -78,6 +63,9 @@ export default function ConnectionCreateWizardPage(): JSX.Element {
   const createFields = useMemo(() => fieldsForMode(activeType, 'create'), [activeType]);
   const redirectUri = getGateCallbackUrl();
   const emptyValues = useMemo(() => emptyFormValues(fields, redirectUri), [fields, redirectUri]);
+
+  // Only federated login providers carry a redirect URI to register with the provider.
+  const usesRedirectUri: boolean = fields.some((field) => field.name === 'redirectUri');
 
   const trimmedName: string = connectionName.trim();
   const values: ConnectionFormValues = {...emptyValues, ...editedValues, name: trimmedName};
@@ -90,10 +78,18 @@ export default function ConnectionCreateWizardPage(): JSX.Element {
   const progress: number = ((ALL_STEPS.indexOf(step) + 1) / ALL_STEPS.length) * 100;
 
   const bounceToNameStep = (): void => {
-    const duplicateNameError = t('error.duplicateName', 'A connection with this name already exists.');
-    setNameError(duplicateNameError);
-    showToast(duplicateNameError, 'error');
+    setNameError(t('error.duplicateName', 'A connection with this name already exists.'));
     setStep(Step.NAME);
+  };
+
+  // A create failure is stale once the user edits any field. Only reset the mutation once it has
+  // actually failed: resetting while it's still pending would flip isPending back to false and
+  // re-enable the create button before the in-flight request settles.
+  const clearCreateError = (): void => {
+    setGeneralError(null);
+    if (createMutation.isError) {
+      createMutation.reset();
+    }
   };
 
   const handleCreate = (): void => {
@@ -101,12 +97,15 @@ export default function ConnectionCreateWizardPage(): JSX.Element {
       return;
     }
     setNameError(null);
+    setGeneralError(null);
     const payload = formValuesToRequest(values, fields, {mode: 'create', secretReplaced: true});
     createMutation.mutate(payload, {
       onSuccess: (created: ConnectionResponse) => void navigate(routes.connections.detail(activeType, created.id)),
       onError: (error: Error) => {
         if (isConflictError(error)) {
           bounceToNameStep();
+        } else {
+          setGeneralError(getErrorMessage(error, t, 'create.error', 'Failed to create connection.'));
         }
       },
     });
@@ -116,58 +115,77 @@ export default function ConnectionCreateWizardPage(): JSX.Element {
     {key: 'connections', label: t('listing.title'), onClick: close},
     {key: 'add', label: t('wizard.title'), onClick: () => setStep(Step.TYPE)},
     ...(step === Step.TYPE ? [{key: 'type', label: t('wizard.steps.type')}] : []),
-    ...(step === Step.NAME ? [{key: 'name', label: t('wizard.steps.name', 'Name')}] : []),
+    ...(step === Step.NAME ? [{key: 'name', label: t('wizard.steps.name', 'Details')}] : []),
     ...(step === Step.CONFIGURE ? [{key: 'configure', label: t('form.chrome.configure')}] : []),
   ];
 
+  const footer: JSX.Element | null = (() => {
+    if (step === Step.TYPE) {
+      return (
+        <Box sx={{display: 'flex', justifyContent: 'flex-end'}}>
+          <Button
+            variant="contained"
+            disabled={!selectedType}
+            onClick={() => setStep(Step.NAME)}
+            data-testid="wizard-continue"
+          >
+            {t('common:actions.continue', 'Continue')}
+          </Button>
+        </Box>
+      );
+    }
+    if (step === Step.NAME) {
+      return (
+        <Box sx={{display: 'flex', justifyContent: 'space-between', alignItems: 'center'}}>
+          <Button variant="outlined" onClick={() => setStep(Step.TYPE)} sx={{minWidth: 100}}>
+            {t('common:actions.back', 'Back')}
+          </Button>
+          <Button
+            variant="contained"
+            disabled={!trimmedName}
+            onClick={() => setStep(Step.CONFIGURE)}
+            data-testid="wizard-continue"
+          >
+            {t('common:actions.continue', 'Continue')}
+          </Button>
+        </Box>
+      );
+    }
+    // The trusted-idp step renders its own Back + submit footer (see TrustedIssuerCreateForm).
+    if (isTrustedIdp) {
+      return null;
+    }
+    return (
+      <Box sx={{display: 'flex', justifyContent: 'space-between', alignItems: 'center'}}>
+        <Button variant="outlined" onClick={() => setStep(Step.NAME)} sx={{minWidth: 100}}>
+          {t('common:actions.back', 'Back')}
+        </Button>
+        <Button
+          variant="contained"
+          disabled={!formValid || createMutation.isPending}
+          onClick={handleCreate}
+          data-testid="wizard-create"
+        >
+          {t('form.actions.create', 'Create connection')}
+        </Button>
+      </Box>
+    );
+  })();
+
   return (
-    <ConnectionFullPageLayout
-      label={t('wizard.title')}
-      onClose={close}
-      progress={progress}
-      breadcrumb={<AppBreadcrumbs items={crumbs} />}
-      fullWidthContent={step === Step.TYPE}
-    >
-      {step === Step.TYPE && (
-        <>
-          <SelectConnectionType selectedType={selectedType} onSelect={setSelectedType} />
-          <Box sx={{mt: 4, display: 'flex', justifyContent: 'flex-end'}}>
-            <Button
-              variant="contained"
-              disabled={!selectedType}
-              onClick={() => setStep(Step.NAME)}
-              data-testid="wizard-continue"
-            >
-              {t('common:actions.continue')}
-            </Button>
-          </Box>
-        </>
-      )}
+    <FullScreenCreationWizardLayout onClose={close} progress={progress} breadcrumbItems={crumbs} footer={footer}>
+      {step === Step.TYPE && <SelectConnectionType selectedType={selectedType} onSelect={setSelectedType} />}
 
       {step === Step.NAME && (
-        <Stack direction="column" spacing={3}>
-          <ConnectionNameStep
-            name={connectionName}
-            onNameChange={(name) => {
-              setConnectionName(name);
-              setNameError(null);
-            }}
-            nameError={nameError}
-          />
-          <Box sx={{display: 'flex', justifyContent: 'space-between', alignItems: 'center'}}>
-            <Button variant="outlined" startIcon={<ChevronLeft size={16} />} onClick={() => setStep(Step.TYPE)}>
-              {t('common:actions.back')}
-            </Button>
-            <Button
-              variant="contained"
-              disabled={!trimmedName}
-              onClick={() => setStep(Step.CONFIGURE)}
-              data-testid="wizard-continue"
-            >
-              {t('common:actions.continue')}
-            </Button>
-          </Box>
-        </Stack>
+        <ConnectionNameStep
+          name={connectionName}
+          onNameChange={(name) => {
+            setConnectionName(name);
+            setNameError(null);
+            setGeneralError(null);
+          }}
+          nameError={nameError}
+        />
       )}
 
       {step === Step.CONFIGURE && isTrustedIdp && (
@@ -189,13 +207,15 @@ export default function ConnectionCreateWizardPage(): JSX.Element {
             </Typography>
           </Stack>
 
-          <ConnectionCreateHint
-            instruction={t(
-              'wizard.configure.redirectHint',
-              'Register the redirect URI below with your identity provider as an allowed callback URL, then enter the credentials and endpoints it gives you.',
-            )}
-            redirectUri={redirectUri}
-          />
+          {usesRedirectUri && (
+            <ConnectionCreateHint
+              instruction={t(
+                'wizard.configure.redirectHint',
+                'Register the redirect URI below with your identity provider as an allowed callback URL, then enter the credentials and endpoints it gives you.',
+              )}
+              redirectUri={redirectUri}
+            />
+          )}
 
           <Paper variant="outlined" sx={{p: 3}}>
             <ConnectionForm
@@ -206,26 +226,21 @@ export default function ConnectionCreateWizardPage(): JSX.Element {
               hasStoredSecret={false}
               vendorDisplayName={meta.displayName}
               showNameField={false}
-              onFieldChange={(name, value) => setEditedValues((prev) => ({...prev, [name]: value}))}
+              onFieldChange={(name, value) => {
+                clearCreateError();
+                setEditedValues((prev) => ({...prev, [name]: value}));
+              }}
               onSecretReplacingChange={() => undefined}
             />
           </Paper>
 
-          <Box sx={{display: 'flex', justifyContent: 'space-between', alignItems: 'center'}}>
-            <Button variant="outlined" startIcon={<ChevronLeft size={16} />} onClick={() => setStep(Step.NAME)}>
-              {t('common:actions.back')}
-            </Button>
-            <Button
-              variant="contained"
-              disabled={!formValid || createMutation.isPending}
-              onClick={handleCreate}
-              data-testid="wizard-create"
-            >
-              {t('form.actions.create')}
-            </Button>
-          </Box>
+          {generalError && (
+            <Alert severity="error" onClose={clearCreateError}>
+              {generalError}
+            </Alert>
+          )}
         </Stack>
       )}
-    </ConnectionFullPageLayout>
+    </FullScreenCreationWizardLayout>
   );
 }

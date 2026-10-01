@@ -1,20 +1,5 @@
-/*
- * Copyright (c) 2026, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2026 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 package executor
 
@@ -92,6 +77,30 @@ func (suite *AuthAssertExecutorTestSuite) TestCheckAssurance_MaxAgeExceeded() {
 func (suite *AuthAssertExecutorTestSuite) TestCheckAssurance_MaxAgeFreshAuth() {
 	ctx := assuranceCtx(map[string]string{common.RuntimeKeyMaxAge: "60"})
 	assert.Nil(suite.T(), suite.executor.checkAssurance(ctx, suite.executor.logger))
+}
+
+// TestCheckAssurance_MaxAgeZeroFreshAuthSatisfied covers max_age=0 answered by an authentication
+// that just completed. The SSO-Check node and the authorize endpoint reject max_age=0 outright,
+// because both decide whether to reuse an existing authentication and zero admits none. This node
+// asks a different question — is the authentication being asserted fresh enough — and a
+// just-completed one is, so it must not be rejected. Otherwise max_age=0 would be unsatisfiable
+// even immediately after the re-authentication it triggered.
+func (suite *AuthAssertExecutorTestSuite) TestCheckAssurance_MaxAgeZeroFreshAuthSatisfied() {
+	ctx := assuranceCtx(map[string]string{common.RuntimeKeyMaxAge: "0"})
+	assert.Nil(suite.T(), suite.executor.checkAssurance(ctx, suite.executor.logger),
+		"a freshly completed authentication must satisfy max_age=0")
+}
+
+// TestCheckAssurance_MaxAgeZeroStaleSessionRejected is the counterpart: a reused session carrying
+// an older auth_time does not satisfy max_age=0, so the assertion is refused.
+func (suite *AuthAssertExecutorTestSuite) TestCheckAssurance_MaxAgeZeroStaleSessionRejected() {
+	ctx := assuranceCtx(map[string]string{
+		common.RuntimeKeyMaxAge:   "0",
+		common.RuntimeKeyAuthTime: strconv.FormatInt(time.Now().UTC().Unix()-60, 10),
+	})
+	svcErr := suite.executor.checkAssurance(ctx, suite.executor.logger)
+	assert.NotNil(suite.T(), svcErr)
+	assert.Equal(suite.T(), ErrInteractionRequired.Code, svcErr.Code)
 }
 
 func (suite *AuthAssertExecutorTestSuite) TestCheckAssurance_MaxAgeMalformedIgnored() {

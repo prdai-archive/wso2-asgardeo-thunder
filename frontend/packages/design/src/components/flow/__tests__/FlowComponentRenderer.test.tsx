@@ -1,20 +1,5 @@
-/**
- * Copyright (c) 2026, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied. See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2026 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 /* eslint-disable @typescript-eslint/no-unsafe-assignment */
 import {screen, cleanup, fireEvent} from '@testing-library/react';
@@ -483,5 +468,82 @@ describe('FlowComponentRenderer — STACK grid layout (items)', () => {
     const stack = document.getElementById('stack_login_ids')!;
     expect(stack.className).toContain('Flow--stack');
     expect(stack.className).toContain('custom-stack');
+  });
+});
+
+describe('FlowComponentRenderer — standalone RESEND routing', () => {
+  const resendComponent = {
+    id: 'action_resend',
+    type: 'RESEND',
+    category: 'ACTION',
+    eventType: 'SUBMIT',
+    label: 'Resend',
+  } as unknown as EmbeddedFlowComponent;
+
+  const renderResend = (onSubmit: (...args: unknown[]) => void = noop) =>
+    renderWithProviders(
+      <FlowComponentRenderer
+        component={resendComponent}
+        index={0}
+        values={{otp: '123456'}}
+        isLoading={false}
+        resolve={identity}
+        onInputChange={noop}
+        onSubmit={onSubmit}
+      />,
+    );
+
+  it('renders a RESEND component that sits outside a block', () => {
+    renderResend();
+
+    expect(screen.getByText('Resend')).toBeTruthy();
+  });
+
+  it('dispatches its own action when clicked', () => {
+    const onSubmit = vi.fn();
+    renderResend(onSubmit);
+
+    fireEvent.click(screen.getByText('Resend'));
+
+    expect(onSubmit).toHaveBeenCalledWith(resendComponent, {otp: '123456'});
+  });
+
+  it('renders a RESEND component nested in a stack', () => {
+    const stack = {
+      id: 'stack_actions',
+      type: 'STACK',
+      direction: 'col',
+      components: [resendComponent],
+    } as unknown as EmbeddedFlowComponent;
+
+    renderWithProviders(
+      <FlowComponentRenderer
+        component={stack}
+        index={0}
+        values={{}}
+        isLoading={false}
+        resolve={identity}
+        onInputChange={noop}
+        onSubmit={noop}
+      />,
+    );
+
+    expect(screen.getByText('Resend')).toBeTruthy();
+  });
+
+  it('disables the button while the flow is loading', () => {
+    renderWithProviders(
+      <FlowComponentRenderer
+        component={resendComponent}
+        index={0}
+        values={{}}
+        isLoading
+        resolve={identity}
+        onInputChange={noop}
+        onSubmit={noop}
+      />,
+    );
+
+    expect((document.getElementById('action_resend') as HTMLButtonElement).disabled).toBe(true);
   });
 });

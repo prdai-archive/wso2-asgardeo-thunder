@@ -1,19 +1,5 @@
--- ----------------------------------------------------------------------------
--- Copyright (c) 2026, WSO2 LLC. (https://www.wso2.com).
---
--- WSO2 LLC. licenses this file to you under the Apache License,
--- Version 2.0 (the "License"); you may not use this file except
--- in compliance with the License. You may obtain a copy of the License at
---
--- http://www.apache.org/licenses/LICENSE-2.0
---
--- Unless required by applicable law or agreed to in writing,
--- software distributed under the License is distributed on an
--- "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
--- KIND, either express or implied. See the License for the
--- specific language governing permissions and limitations
--- under the License.
--- ----------------------------------------------------------------------------
+-- Copyright 2026 The ThunderID Authors
+-- SPDX-License-Identifier: Apache-2.0
 
 -- Table to store revoked token JTIs (single-token revocation deny list).
 -- Part of the database.runtime_persistent classification: authoritative authorization
@@ -108,6 +94,10 @@ CREATE TABLE "SSO_SESSION_PARTICIPANT" (
     LAST_ACTIVE_AT TIMESTAMP NOT NULL,
     PRIMARY KEY (SESSION_ID, DEPLOYMENT_ID, APP_ID)
 );
+
+-- Index for participation lookups by application, used when an application is deleted and its
+-- participation must be detached from every session it joined.
+CREATE INDEX idx_sso_session_participant_app ON "SSO_SESSION_PARTICIPANT" (DEPLOYMENT_ID, APP_ID);
 
 -- Table to store consent records.
 CREATE TABLE "CONSENT" (

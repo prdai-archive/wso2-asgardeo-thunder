@@ -1,20 +1,5 @@
-/*
- * Copyright (c) 2026, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2026 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 package agent
 
@@ -87,9 +72,14 @@ type agentImportResponse struct {
 type AgentImportExportSuite struct {
 	suite.Suite
 	ouID               string
+	agentTypeSnapshot  *testutils.AgentTypeSnapshot
 	handleSuffix       string
 	authFlowID         string
 	registrationFlowID string
+
+	// An isolated auth flow referenced by handle, for the handle-only upsert test.
+	handleAuthFlowID     string
+	handleAuthFlowHandle string
 }
 
 func TestAgentImportExportSuite(t *testing.T) {
@@ -108,6 +98,12 @@ func (s *AgentImportExportSuite) SetupSuite() {
 	s.Require().NoError(err)
 	s.ouID = ouID
 
+	// The `default` agent type is a singleton shared with every other suite. Snapshot it before
+	// pointing it at this suite's OU, so teardown can put it back before that OU is deleted.
+	snapshot, err := testutils.SnapshotAgentType()
+	s.Require().NoError(err, "failed to snapshot the default agent type")
+	s.agentTypeSnapshot = snapshot
+
 	_, err = testutils.CreateAgentType(testutils.UserType{
 		Name: "default",
 		OUID: s.ouID,
@@ -124,10 +120,30 @@ func (s *AgentImportExportSuite) SetupSuite() {
 	regFlowID, err := testutils.GetFlowIDByHandle("default-flow", "REGISTRATION")
 	s.Require().NoError(err, "failed to get default registration flow ID")
 	s.registrationFlowID = regFlowID
+
+	s.handleAuthFlowHandle = "agent-ie-handle-flow-" + s.handleSuffix
+	handleFlowID, err := testutils.CreateIsolatedAuthFlow(s.handleAuthFlowHandle)
+	s.Require().NoError(err, "failed to create the isolated auth flow referenced by handle")
+	s.handleAuthFlowID = handleFlowID
 }
 
 func (s *AgentImportExportSuite) TearDownSuite() {
-	if s.ouID != "" {
+	if s.handleAuthFlowID != "" {
+		if err := testutils.DeleteFlow(s.handleAuthFlowID); err != nil {
+			s.T().Logf("teardown: failed to delete the isolated auth flow: %v", err)
+		}
+	}
+	// Restore the shared agent type before deleting the OU it points at, or the singleton is left
+	// referencing a deleted OU and a later suite's restore fails. A failed restore keeps the OU:
+	// leaking one is cheaper than every later suite inheriting a dangling reference.
+	agentTypeRestored := true
+	if s.agentTypeSnapshot != nil {
+		if err := testutils.RestoreAgentType(s.agentTypeSnapshot); err != nil {
+			s.T().Errorf("teardown: failed to restore the default agent type: %v", err)
+			agentTypeRestored = false
+		}
+	}
+	if s.ouID != "" && agentTypeRestored {
 		_ = testutils.DeleteOrganizationUnit(s.ouID)
 	}
 }
@@ -262,6 +278,13 @@ func (s *AgentImportExportSuite) TestExportImportRoundTrip_AgentWithConfidential
 	s.Require().NotNil(cfg)
 	s.Assert().Equal(clientID, cfg.ClientID)
 	s.Assert().Empty(cfg.ClientSecret, "GET response must not expose client secret")
+
+	// Creation selects sub_type, so the selection has to survive the export and the import as well.
+	s.Assert().Contains(yamlContent, "sub_type", "the exported selection must carry the claim")
+	s.Require().NotNil(cfg.Token)
+	s.Require().NotNil(cfg.Token.AccessToken)
+	s.Require().NotNil(cfg.Token.AccessToken.ClientConfig)
+	s.Assert().Contains(cfg.Token.AccessToken.ClientConfig.Attributes, "sub_type")
 }
 
 // TestImportAgent_UpsertUpdates verifies that importing the same YAML twice with
@@ -292,6 +315,42 @@ func (s *AgentImportExportSuite) TestImportAgent_UpsertUpdates() {
 	s.Require().Equal(1, importResp.Summary.Imported, "import results: %+v", importResp.Results)
 	s.Assert().Equal("update", importResp.Results[0].Operation)
 	s.Assert().Equal("success", importResp.Results[0].Status)
+}
+
+// TestImportAgent_UpsertWithAuthFlowHandleOnly covers the declarative re-import case: a document
+// that binds its auth flow by handle and carries no inboundAuthConfig. The handle must resolve on
+// the update path so the agent keeps its inbound client, instead of the document being read as
+// carrying no inbound fields at all. The agent starts on a different flow, so the assertion proves
+// the handle was resolved rather than the previous binding merely being left in place.
+func (s *AgentImportExportSuite) TestImportAgent_UpsertWithAuthFlowHandleOnly() {
+	agentName := "Agent Handle Only " + s.handleSuffix
+
+	createdID, err := s.createAgent(Agent{
+		OUID:       s.ouID,
+		Type:       "default",
+		Name:       agentName,
+		AuthFlowID: s.authFlowID,
+	})
+	s.Require().NoError(err)
+	defer func() { _ = s.deleteAgent(createdID) }()
+
+	yamlContent := fmt.Sprintf(
+		"resource_type: agent\nid: %s\nouId: %s\ntype: default\nname: %s\nauthFlowHandle: %s\n",
+		createdID, s.ouID, agentName, s.handleAuthFlowHandle)
+
+	importResp, err := s.importAgents(agentImportRequest{
+		Content: yamlContent,
+		Options: agentImportOptions{Upsert: true, ContinueOnError: false, Target: "runtime"},
+	})
+	s.Require().NoError(err)
+	s.Require().Equal(1, importResp.Summary.Imported, "import results: %+v", importResp.Results)
+	s.Require().Equal("update", importResp.Results[0].Operation)
+	s.Require().Equal("success", importResp.Results[0].Status)
+
+	updated, err := s.agentGet(createdID)
+	s.Require().NoError(err)
+	s.Assert().Equal(s.handleAuthFlowID, updated.AuthFlowID,
+		"authFlowHandle must resolve to its own flow ID on a handle-only upsert")
 }
 
 // TestExportImportRoundTrip_AgentWithAllFields creates an agent with every exportable

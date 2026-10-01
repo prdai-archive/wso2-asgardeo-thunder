@@ -1,20 +1,5 @@
-/*
- * Copyright (c) 2025, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2025 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 package export
 
@@ -30,6 +15,7 @@ import (
 
 	declarativeresource "github.com/thunder-id/thunderid/internal/system/declarative_resource"
 	"github.com/thunder-id/thunderid/internal/system/log"
+	"github.com/thunder-id/thunderid/internal/system/varname"
 )
 
 type templatingRules struct {
@@ -54,6 +40,10 @@ const (
 // Parameterizer handles the templating logic
 type parameterizer struct {
 	rules templatingRules
+	// resourceType qualifies the variable names emitted for the resource being parameterized. It is
+	// set per call on a copy rather than on the shared instance, so concurrent exports of different
+	// resource types cannot read each other's value.
+	resourceType string
 }
 
 // newParameterizer creates a new Parameterizer instance with the given templating rules
@@ -61,11 +51,22 @@ func newParameterizer(rules templatingRules) *parameterizer {
 	return &parameterizer{rules: rules}
 }
 
+// forResourceType returns a copy bound to the given resource type, leaving the shared instance
+// untouched.
+func (p *parameterizer) forResourceType(resourceType string) *parameterizer {
+	clone := *p
+	clone.resourceType = resourceType
+	return &clone
+}
+
 // ToParameterizedYAML converts an object directly to parameterized YAML.
 // It returns the template string and a map of variable names to their original values.
 func (p *parameterizer) ToParameterizedYAML(ctx context.Context, obj interface{},
 	resourceType string, resourceName string,
 	rules *declarativeresource.ResourceRules) (string, map[string]string, error) {
+	// Every variable name this call emits is qualified by the resource type.
+	p = p.forResourceType(resourceType)
+
 	// Convert imported type to local type for compatibility
 	var localRules *resourceRules
 	if rules != nil {
@@ -655,15 +656,13 @@ func (p *parameterizer) propertyToYAMLNode(propValue reflect.Value, resourceName
 // generatePropertyVarName generates a context-aware variable name for a property
 // e.g., "Export Test IDP" + "client_id" -> "EXPORT_TEST_IDP_CLIENT_ID"
 func (p *parameterizer) generatePropertyVarName(resourceName, propertyName string) string {
-	// Convert resource name: replace spaces with underscores and convert to snake_case
-	resourcePrefix := strings.ReplaceAll(resourceName, " ", "_")
-	resourcePrefix = p.toSnakeCase(resourcePrefix)
+	return varname.DeriveVariableName(p.resourceType, resourceName, propertyName)
+}
 
-	// Convert property name to snake_case
-	propName := p.toSnakeCase(propertyName)
-
-	// Combine them
-	return resourcePrefix + "_" + propName
+// VarPrefix returns the variable name prefix derived from a resource name, e.g. "My App" ->
+// "MY_APP". Callers use it to detect resource names that normalize to the same prefix.
+func (p *parameterizer) VarPrefix(resourceName string) string {
+	return p.sanitizeVarName(p.toSnakeCase(strings.ReplaceAll(resourceName, " ", "_")))
 }
 
 // handleInterfaceValue handles interface{} types by JSON-encoding them.
@@ -1160,16 +1159,39 @@ func (p *parameterizer) parameterizeNode(node *yaml.Node, rules *resourceRules, 
 func (p *parameterizer) pathToVariableName(appName, path string) string {
 	parts := strings.Split(path, ".")
 	lastPart := parts[len(parts)-1]
+	return varname.DeriveVariableName(p.resourceType, appName, lastPart)
+}
 
-	// Convert appName: replace spaces with underscores, convert camelCase to snake_case, then uppercase
-	appPrefix := strings.ReplaceAll(appName, " ", "_")
-	appPrefix = p.toSnakeCase(appPrefix)
+// sanitizeVarName replaces characters that are not valid in a Go template field name (for
+// example the hyphen in "MY-APP") with underscores, collapsing consecutive underscores, so that
+// the exported placeholders can be parsed again on import. A leading digit is also prefixed
+// with an underscore.
+// Trailing underscores are trimmed so that a prefix keyed by varNameAllocator matches the name
+// that ends up in the placeholder: "MY_APP" and "MY_APP_" are distinct prefixes but both would
+// render as MY_APP_CLIENT_ID once joined with a property name. A leading underscore is kept,
+// since that is the escape for a name starting with a digit.
+func (p *parameterizer) sanitizeVarName(name string) string {
+	var result strings.Builder
+	lastWasUnderscore := false
+	for _, r := range name {
+		switch {
+		case r >= 'A' && r <= 'Z', r >= 'a' && r <= 'z', r >= '0' && r <= '9':
+			result.WriteRune(r)
+			lastWasUnderscore = false
+		default:
+			if !lastWasUnderscore {
+				result.WriteRune('_')
+				lastWasUnderscore = true
+			}
+		}
+	}
 
-	// Convert field name from camelCase/PascalCase to snake_case
-	fieldName := p.toSnakeCase(lastPart)
+	sanitized := strings.TrimRight(result.String(), "_")
+	if sanitized != "" && sanitized[0] >= '0' && sanitized[0] <= '9' {
+		return "_" + sanitized
+	}
 
-	// Prepend app prefix to field name
-	return appPrefix + "_" + fieldName
+	return sanitized
 }
 
 // toSnakeCase converts camelCase/PascalCase to UPPER_SNAKE_CASE

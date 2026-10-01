@@ -242,6 +242,7 @@ nodes:
     executor:
       name: CredentialsAuthExecutor
     onSuccess: provisioning
+    onFailure: prompt_credentials
   - id: provisioning
     type: TASK_EXECUTION
     properties:
@@ -258,7 +259,7 @@ nodes:
           identifier: password
           type: PASSWORD_INPUT
           required: true
-    onSuccess: registration_complete
+    onSuccess: end
     onIncomplete: prompt_schema_attrs
   - id: prompt_schema_attrs
     type: PROMPT
@@ -284,42 +285,6 @@ nodes:
         action:
           ref: action_schema_attrs
           nextNode: provisioning
-  - id: registration_complete
-    type: PROMPT
-    meta:
-      components:
-        - align: center
-          type: TEXT
-          id: registration_complete_icon
-          label: "✅"
-          variant: HEADING_1
-        - align: center
-          type: TEXT
-          id: registration_complete_heading
-          label: Account Created
-          variant: HEADING_1
-        - align: center
-          type: TEXT
-          id: registration_complete_message
-          label: Your Wayfinder account is ready. Sign in to start exploring.
-          variant: HEADING_6
-        - type: STACK
-          id: registration_complete_link_stack
-          category: BLOCK
-          align: center
-          direction: row
-          justify: center
-          gap: 2
-          items: 1
-          resourceType: ELEMENT
-          components:
-            - type: RICH_TEXT
-              id: registration_complete_link
-              category: DISPLAY
-              resourceType: ELEMENT
-              label: '<h3 class="rich-text-heading-h3"><a href="{{meta(application.url)}}" target="_blank" rel="noopener noreferrer" class="rich-text-link"><span class="rich-text-pre-wrap">Go to Wayfinder</span></a></h3>'
-    message: Registration complete
-    next: end
   - id: call_authentication
     type: CALL
     flow:
@@ -508,6 +473,54 @@ nodes:
     flow:
       ref: 0193b0a1-1001-7000-8000-000000000010
     onSuccess: end
+  - id: end
+    type: END
+
+---
+resource_type: flow
+id: 0193b0a1-1001-7000-8000-000000000003
+name: Wayfinder Sign Out Flow
+handle: wayfinder-signout-flow
+flowType: SIGNOUT
+nodes:
+  - id: start
+    type: START
+    onSuccess: session_signout
+  - id: session_signout
+    type: TASK_EXECUTION
+    properties:
+      promptOnSignOut: false
+    executor:
+      name: SessionSignOutExecutor
+    onSuccess: end
+    onIncomplete: prompt_confirm
+  - id: prompt_confirm
+    type: PROMPT
+    meta:
+      components:
+        - align: center
+          type: TEXT
+          id: text_signout_title
+          label: Sign out?
+          variant: HEADING_1
+        - align: center
+          type: TEXT
+          id: text_signout_desc
+          label: You'll need to sign in again to continue.
+          variant: HEADING_6
+        - type: BLOCK
+          id: block_signout
+          components:
+            - type: ACTION
+              id: action_confirm
+              label: Sign out
+              variant: PRIMARY
+              eventType: SUBMIT
+    prompts:
+      - action:
+          ref: action_confirm
+          type: CONFIRM
+          nextNode: session_signout
   - id: end
     type: END
 
@@ -967,6 +980,7 @@ nodes:
     executor:
       name: CredentialsAuthExecutor
     onSuccess: provisioning
+    onFailure: prompt_credentials
   - id: provisioning
     type: TASK_EXECUTION
     properties:
@@ -1031,7 +1045,15 @@ flowType: AUTHENTICATION
 nodes:
   - id: start
     type: START
-    onSuccess: prompt_credentials
+    onSuccess: sso_check
+  - id: sso_check
+    type: TASK_EXECUTION
+    executor:
+      name: SSOCheckExecutor
+    properties:
+      checkpointRef: session
+    onSuccess: session
+    onFailure: prompt_credentials
   - id: prompt_credentials
     type: PROMPT
     meta:
@@ -1098,8 +1120,13 @@ nodes:
     type: TASK_EXECUTION
     executor:
       name: CredentialsAuthExecutor
-    onSuccess: authorization_check
+    onSuccess: session
     onIncomplete: prompt_credentials
+  - id: session
+    type: TASK_EXECUTION
+    executor:
+      name: SessionExecutor
+    onSuccess: authorization_check
   - id: authorization_check
     type: TASK_EXECUTION
     executor:
@@ -1119,7 +1146,7 @@ nodes:
     type: CALL
     flow:
       ref: 0193b0a1-1001-7000-8000-000000000001
-    onSuccess: end
+    onSuccess: authorization_check
   - id: end
     type: END
 
@@ -1135,6 +1162,7 @@ logoUrl: "emoji:✈️"
 authFlowHandle: wayfinder-app-auth-flow
 registrationFlowHandle: wayfinder-registration-flow
 recoveryFlowHandle: wayfinder-recovery-flow
+signOutFlowHandle: wayfinder-signout-flow
 isRegistrationFlowEnabled: true
 isRecoveryFlowEnabled: true
 assertion:
@@ -1362,8 +1390,6 @@ nodes:
           nextNode: consent_check
   - id: auth_assert
     type: TASK_EXECUTION
-    properties:
-      callbackType: "urn:openid:params:grant-type:ciba"
     executor:
       name: AuthAssertExecutor
     onSuccess: auth_success
@@ -1567,8 +1593,6 @@ nodes:
           nextNode: consent_check
   - id: auth_assert
     type: TASK_EXECUTION
-    properties:
-      callbackType: "urn:openid:params:grant-type:ciba"
     executor:
       name: AuthAssertExecutor
     onSuccess: auth_success
@@ -2002,3 +2026,11 @@ name: cors
 value:
   allowedOrigins:
     - "http://localhost:5173"
+
+---
+resource_type: server_config
+# Activates the Wayfinder staff onboarding flow.
+name: flow
+value:
+  userOnboardingFlow:
+    defaultHandle: wayfinder-onboarding-flow

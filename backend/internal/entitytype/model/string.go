@@ -1,20 +1,5 @@
-/*
- * Copyright (c) 2025, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2025 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 package model
 
@@ -33,11 +18,16 @@ type str struct {
 	credential  bool
 	displayName string
 	enum        map[string]struct{}
+	enumOrder   []string
 	pattern     *regexp.Regexp
 }
 
 func (p *str) isUnique() bool {
 	return p.unique
+}
+
+func (p *str) getType() string {
+	return TypeString
 }
 
 func (p *str) isRequired() bool {
@@ -54,6 +44,11 @@ func (p *str) isDisplayable() bool {
 
 func (p *str) getDisplayName() string {
 	return p.displayName
+}
+
+// getEnum returns the permitted values in the order the schema declared them.
+func (p *str) getEnum() []string {
+	return p.enumOrder
 }
 
 func (p *str) validateValue(ctx context.Context, value interface{}, path string, logger *log.Logger) (bool, error) {
@@ -153,12 +148,17 @@ func compileStringProperty(propMap map[string]json.RawMessage) (property, error)
 		}
 
 		prop.enum = make(map[string]struct{}, len(enumRaw))
+		prop.enumOrder = make([]string, 0, len(enumRaw))
 		for i, itemRaw := range enumRaw {
 			var value string
 			if err := json.Unmarshal(itemRaw, &value); err != nil {
 				return nil, fmt.Errorf("'enum' array item at index %d must be a string to match property type", i)
 			}
+			if _, seen := prop.enum[value]; seen {
+				continue
+			}
 			prop.enum[value] = struct{}{}
+			prop.enumOrder = append(prop.enumOrder, value)
 		}
 	}
 

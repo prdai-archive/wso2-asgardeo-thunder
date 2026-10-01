@@ -1,20 +1,5 @@
-/*
- * Copyright (c) 2025-2026, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2025-2026 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 // Package common defines common constants and models used across the flow components.
 package common
@@ -85,10 +70,18 @@ const (
 	DataStepTimeout = "stepTimeout"
 	// DataInviteLink is the key used for the invite link in the flow response additional data.
 	DataInviteLink = "inviteLink"
+	// DataCallbackType is the OAuth grant type surfaced on the terminal flow response's additional data.
+	DataCallbackType = "callbackType"
 	// DataEmailSent is the key used to indicate that an email was sent successfully in the flow response.
 	DataEmailSent = "emailSent"
 	// DataSMSSent is the key used to indicate that an SMS was sent successfully in the flow response.
 	DataSMSSent = "smsSent"
+	// DataAgentID is the key used for a provisioned agent's identifier in the flow response.
+	DataAgentID = "agentId"
+	// DataAgentClientID is the key used for a provisioned agent's OAuth client ID.
+	DataAgentClientID = "clientId"
+	// DataAgentClientSecret is the key used for a provisioned agent's generated OAuth client secret.
+	DataAgentClientSecret = "clientSecret"
 	// DataRootOUID is the key used to pass the root OU ID to the frontend for the OU tree picker.
 	DataRootOUID = "rootOuId"
 	// DataPromptMessage is the key used to pass a message to be displayed in the prompt node.
@@ -99,6 +92,28 @@ const (
 	DataOpenID4VPRequestURI = "openid4vpRequestUri"
 	// DataOpenID4VPWalletURI is the openid4vp:// authorization URI for the wallet.
 	DataOpenID4VPWalletURI = "openid4vpWalletUri"
+	// DataOTPLength is the character length of the OTP minted by the OTP executor in generate mode,
+	// surfaced so the client renders the matching number of input boxes.
+	DataOTPLength = "otpLength"
+	// DataOTPNumericOnly reports whether the OTP minted by the OTP executor in generate mode contains
+	// digits only, surfaced so the client restricts input to the characters the user has to type.
+	DataOTPNumericOnly = "otpNumericOnly"
+	// DataClientSecret carries a regenerated client secret back to the caller.
+	DataClientSecret = "clientSecret" // #nosec G101 -- response field name, not a secret
+)
+
+// Error assertion claims.
+const (
+	ClaimAuthorizationRequestID = "authorization_request_id"
+	ClaimFlowErrorType          = "flow_error_type"
+	ClaimFlowErrorDescription   = "flow_error_description"
+)
+
+// FlowErrorType defines the type of error that occurred during flow execution.
+const (
+	FlowErrorTypeServer  = "server_error"
+	FlowErrorTypeClient  = "client_error"
+	FlowErrorTypeEndUser = "end_user_error"
 )
 
 // DefaultHTTPTimeout defines the default timeout duration for HTTP requests.
@@ -134,6 +149,10 @@ const (
 	RuntimeKeyUserEligibleForProvisioning = "userEligibleForProvisioning"
 	// RuntimeKeyUserAmbiguous indicates the user exists in multiple OUs and requires disambiguation
 	RuntimeKeyUserAmbiguous = "userAmbiguous"
+	// RuntimeKeyRevocationPlan holds the trusted revocation plan an administrative flow's
+	// pre-processing node produces for the executors that follow. It travels on the engine context's
+	// cross-frame store, so it survives a CALL into another flow.
+	RuntimeKeyRevocationPlan = "revocationPlan"
 	// RuntimeKeyClientID holds the OAuth client ID for the current flow execution, if applicable.
 	RuntimeKeyClientID = "clientId"
 	// RuntimeKeyRequestedPermissions holds the space-separated permission scopes requested by the OAuth client.
@@ -163,6 +182,18 @@ const (
 	// RuntimeKeyForceConsentReprompt indicates that consent must be re-prompted for all required
 	// claims, set when the authorization request includes prompt=consent.
 	RuntimeKeyForceConsentReprompt = "force_consent_reprompt"
+	// RuntimeKeySilentAuthOnly indicates that the authorization request forbids any interaction with
+	// the subject, set when the request includes prompt=none. The authorize endpoint has already
+	// verified that the existing session satisfies the request, so the SSO-Check node must reuse it
+	// rather than re-deciding against a later clock: max_age is compared against a fresh time.Now()
+	// in both places, so a session sitting exactly on the boundary can pass there and fail here,
+	// which would prompt a request that forbids prompting.
+	RuntimeKeySilentAuthOnly = "silent_auth_only"
+
+	// RuntimeKeyForceReauth indicates that the subject must authenticate again in this execution
+	// even when a live SSO session exists, set when the authorization request includes
+	// prompt=login.
+	RuntimeKeyForceReauth = "force_reauth"
 	// RuntimeKeyStoredInviteToken holds the generated invite token stored during the invite send phase.
 	RuntimeKeyStoredInviteToken = "storedInviteToken"
 	// RuntimeKeyUserAttributesCacheTTLSeconds indicates the TTL of the user attributes cache.
@@ -215,6 +246,10 @@ const (
 	// RuntimeKeyAuthorizationRequestID holds the auth request identifier bound to the current flow
 	// execution (the OAuth authorize authId or the CIBA auth_req_id), if applicable.
 	RuntimeKeyAuthorizationRequestID = "authorizationRequestId"
+	// RuntimeKeyCallbackType holds the OAuth grant type of the initiating request, seeded by the OAuth
+	// initiator and surfaced onto the terminal flow response as DataCallbackType so the Gate/SDK routes
+	// to the correct callback handler. Absent for non-OAuth flows.
+	RuntimeKeyCallbackType = "callbackType"
 	// RuntimeKeySSOSessionPresent is the prefix of the per-checkpoint flag recording whether the
 	// SSO-Check node found a live session that already has this checkpoint's snapshot ("true") or not.
 	// It is scoped per checkpoint via SSOCheckpointKey; the paired Session node reads it to choose
@@ -233,6 +268,12 @@ const (
 	// to the transport layer for the per-flow cookie. Using the generic EngineData channel keeps SSO
 	// concepts out of the reusable engine contract.
 	RuntimeKeySSOSessionHandle = "ssoSessionHandle"
+	// RuntimeKeySSOSessionID carries the SSO session's id across nodes so the auth assertion can stamp
+	// it as the OIDC sid claim. It is the session id, not the handle: the handle is a bearer credential
+	// that would let any relying party resume the session, while the id confers nothing and no API
+	// accepts it. Like RuntimeKeyTokenFamilyID it is excluded from the session snapshot, because a
+	// value replayed from a snapshot could name a session other than the one now in force.
+	RuntimeKeySSOSessionID = "ssoSessionId"
 	// RuntimeKeySSOSessionCleared is the ExecutorResponse EngineData signal the session sign-out node
 	// raises once it has terminated the session, telling the transport layer to clear the per-flow
 	// cookie. Like RuntimeKeySSOSessionHandle it rides the engine-only EngineData channel, keeping SSO
@@ -248,10 +289,15 @@ const (
 	// requested without a valid id_token_hint. A sign-out flow's session sign-out node reads it to
 	// decide whether the End-User must confirm the logout before the session is terminated.
 	RuntimeKeyLogoutPromptRequired = "logoutPromptRequired"
-	// RuntimeKeyLogoutPromptShown is the session sign-out node's own guard, set when it routes to the
-	// confirmation prompt so that on re-run (after the user confirms) it terminates instead of
-	// prompting again.
-	RuntimeKeyLogoutPromptShown = "logoutPromptShown"
+	// RuntimeKeyMappedRoleIDs holds the space-separated role IDs a federated login's authorization
+	// mapping (rule-based or direct) resolved.
+	RuntimeKeyMappedRoleIDs = "mapped_role_ids"
+	// RuntimeKeyMappedGroupIDs holds the space-separated group IDs a federated login's authorization
+	// mapping (rule-based or direct) resolved.
+	RuntimeKeyMappedGroupIDs = "mapped_group_ids"
+	// RuntimeKeyMappedPermissions holds the JSON-encoded []providers.AuthorizationTarget permission
+	// targets a federated login's authorization mapping (rule-based or direct) resolved.
+	RuntimeKeyMappedPermissions = "mapped_permissions"
 )
 
 // SSOCheckpointKey scopes a per-checkpoint SSO control key (RuntimeKeySSOSessionPresent,
@@ -291,6 +337,12 @@ const (
 	ActionTypeSubmit ActionType = "SUBMIT"
 	// ActionTypeReject represents a reject/deny action
 	ActionTypeReject ActionType = "REJECT"
+	// ActionTypeConfirm marks a confirmation prompt's action edge. When the End-User confirms, the
+	// prompt node forwards this type to the next node (as the action type in ForwardedData), where the
+	// executor that routed to the prompt reads it to tell a confirmed re-run apart from the initial
+	// request, so no runtime flag has to be persisted. It is deliberately not tied to one use case:
+	// the session sign-out executor is its first consumer, not its only possible one.
+	ActionTypeConfirm ActionType = "CONFIRM"
 )
 
 // ForwardedData key constants define keys used in the ForwardedData map.
@@ -306,9 +358,9 @@ const (
 	// ForwardedDataKeyOTPCode is the key for the plaintext OTP value inside the
 	// ForwardedData[ForwardedDataKeyTemplateData] map forwarded by OTPExecutor to sender executors.
 	ForwardedDataKeyOTPCode = "otpCode"
-	// ForwardedDataKeyExpiryMinutes is the key for the OTP expiry duration (in minutes) inside the
+	// ForwardedDataKeyExpiryTime is the key for the human readable OTP expiry duration inside the
 	// ForwardedData[ForwardedDataKeyTemplateData] map forwarded by OTPExecutor to sender executors.
-	ForwardedDataKeyExpiryMinutes = "expiryMinutes"
+	ForwardedDataKeyExpiryTime = "expiryTime"
 	// ForwardedDataKeySSOSession holds the SSO session the SSO-Check node resolved, forwarded to the
 	// paired Session node so it restores the checkpoint without reading the same row again.
 	ForwardedDataKeySSOSession = "ssoSession"

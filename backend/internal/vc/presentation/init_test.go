@@ -1,24 +1,10 @@
-/*
- * Copyright (c) 2026, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2026 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 package presentation
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -100,4 +86,26 @@ func TestRegisterRoutesRegistersEndpoints(t *testing.T) {
 		mux.ServeHTTP(rec, req)
 		assert.Equal(t, http.StatusNoContent, rec.Code)
 	}
+}
+
+// TestDeclarativeModeRejectsCreate verifies the management API cannot create a definition
+// when the store is declarative-only. The write would otherwise land in the in-memory
+// declarative store and disappear on restart.
+func TestDeclarativeModeRejectsCreate(t *testing.T) {
+	setupDefinitionConfig(t, "declarative", false)
+
+	ouSvc := newOUServiceMock(t, map[string]bool{"ou-1": true},
+		map[string]string{"root": "ou-1"}, map[string]string{"ou-1": "root"})
+	store, _, _, err := initializeStore()
+	require.NoError(t, err)
+
+	svc := newPresentationDefinitionService(store, ouSvc)
+	_, svcErr := svc.CreatePresentationDefinition(context.Background(), &PresentationDefinitionDTO{
+		Handle: "decl-mode-create",
+		OUID:   "ou-1",
+		VCT:    "urn:example:vct",
+	})
+
+	require.NotNil(t, svcErr, "a create must be rejected in declarative-only mode")
+	assert.Equal(t, ErrorDefinitionDeclarativeModeCreateNotAllowed.Code, svcErr.Code)
 }

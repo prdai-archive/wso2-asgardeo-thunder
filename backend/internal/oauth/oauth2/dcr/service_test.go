@@ -1,20 +1,5 @@
-/*
- * Copyright (c) 2025, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2025 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 package dcr
 
@@ -61,6 +46,62 @@ func (s *DCRServiceTestSuite) SetupTest() {
 	s.mockAppService = applicationmock.NewApplicationServiceInterfaceMock(s.T())
 	s.mockOUService = oumock.NewOrganizationUnitServiceInterfaceMock(s.T())
 	s.service = newDCRService(s.mockAppService, s.mockOUService, nil, &MockTransactioner{})
+}
+
+// TestBuildIDTokenConfig verifies that the response type is derived from the algorithm fields, so
+// a client requesting only a signing algorithm still gets a stored config.
+func (s *DCRServiceTestSuite) TestBuildIDTokenConfig() {
+	testCases := []struct {
+		name         string
+		request      *DCRRegistrationRequest
+		expectNil    bool
+		responseType providers.IDTokenResponseType
+		signingAlg   string
+	}{
+		{
+			name:      "NoAlgFieldsYieldsNilConfig",
+			request:   &DCRRegistrationRequest{},
+			expectNil: true,
+		},
+		{
+			name:         "SigningOnlyYieldsJWT",
+			request:      &DCRRegistrationRequest{IDTokenSignedResponseAlg: "ES256"},
+			responseType: providers.IDTokenResponseTypeJWT,
+			signingAlg:   "ES256",
+		},
+		{
+			name:         "EncryptionOnlyYieldsJWE",
+			request:      &DCRRegistrationRequest{IDTokenEncryptedResponseAlg: "RSA-OAEP"},
+			responseType: providers.IDTokenResponseTypeJWE,
+		},
+		{
+			name:         "EncryptionEncAloneStillYieldsJWE",
+			request:      &DCRRegistrationRequest{IDTokenEncryptedResponseEnc: "A256GCM"},
+			responseType: providers.IDTokenResponseTypeJWE,
+		},
+		{
+			name: "SigningAndEncryptionYieldsNestedJWT",
+			request: &DCRRegistrationRequest{
+				IDTokenSignedResponseAlg:    "ES256",
+				IDTokenEncryptedResponseAlg: "RSA-OAEP",
+			},
+			responseType: providers.IDTokenResponseTypeNESTEDJWT,
+			signingAlg:   "ES256",
+		},
+	}
+
+	for _, tc := range testCases {
+		s.Run(tc.name, func() {
+			cfg := buildIDTokenConfig(tc.request)
+			if tc.expectNil {
+				s.Nil(cfg)
+				return
+			}
+			s.NotNil(cfg)
+			s.Equal(tc.responseType, cfg.ResponseType)
+			s.Equal(tc.signingAlg, cfg.SigningAlg)
+		})
+	}
 }
 
 // TestNewDCRService tests the service constructor

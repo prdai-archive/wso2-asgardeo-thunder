@@ -1,20 +1,5 @@
-/*
- * Copyright (c) 2025, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2025 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 package authn
 
@@ -36,6 +21,7 @@ import (
 	"github.com/thunder-id/thunderid/internal/authn/assert"
 	"github.com/thunder-id/thunderid/internal/authn/common"
 	"github.com/thunder-id/thunderid/internal/authn/passkey"
+	authnprovidercm "github.com/thunder-id/thunderid/internal/authnprovider/common"
 	authnprovidermgr "github.com/thunder-id/thunderid/internal/authnprovider/manager"
 	notifcommon "github.com/thunder-id/thunderid/internal/notification/common"
 	oauth2const "github.com/thunder-id/thunderid/internal/oauth/oauth2/constants"
@@ -284,6 +270,44 @@ func (suite *AuthenticationServiceTestSuite) TestAuthenticateWithCredentials() {
 			tc.validateAssertion(result)
 		})
 	}
+}
+
+// TestAuthenticateWithCredentialsRejectsReservedCredentialTypes asserts every reserved credential
+// type is rejected before the provider chain is reached. Iterating the exported slices covers any
+// type added to them later.
+func (suite *AuthenticationServiceTestSuite) TestAuthenticateWithCredentialsRejectsReservedCredentialTypes() {
+	identifiers := map[string]interface{}{
+		"username": "testuser",
+	}
+
+	reservedTypes := append([]string{},
+		append(authnprovidercm.InternalCredentialTypes, authnprovidercm.SystemCredentialTypes...)...)
+
+	for _, reserved := range reservedTypes {
+		suite.Run(reserved, func() {
+			result, err := suite.service.AuthenticateWithCredentials(context.Background(), identifiers,
+				map[string]interface{}{reserved: "attacker-supplied-value"}, false, "")
+
+			suite.Nil(result)
+			suite.NotNil(err)
+			suite.Equal(ErrorReservedCredentialType.Code, err.Code)
+			suite.Equal(tidcommon.ClientErrorType, err.Type)
+		})
+	}
+
+	suite.Run("alongside a valid password", func() {
+		result, err := suite.service.AuthenticateWithCredentials(context.Background(), identifiers,
+			map[string]interface{}{
+				"password": "testpass",
+				authnprovidercm.CredentialTypeProvisionedEntityID: testUserID,
+			}, false, "")
+
+		suite.Nil(result)
+		suite.NotNil(err)
+		suite.Equal(ErrorReservedCredentialType.Code, err.Code)
+	})
+
+	suite.mockAuthnProvider.AssertNotCalled(suite.T(), "AuthenticateUser")
 }
 
 func (suite *AuthenticationServiceTestSuite) TestAuthenticateWithCredentialsServiceError() {
@@ -1705,11 +1729,14 @@ func (suite *AuthenticationServiceTestSuite) TestStartPasskeyRegistration_Succes
 		SessionToken: testSessionTkn,
 	}
 
+	assertion := suite.createTestAssertion(testUserID)
+	suite.mockJWTService.On("VerifyJWT", mock.Anything, assertion, "", mock.Anything).Return(nil).Once()
 	suite.mockAuthnProvider.On("InitiateEnrollment", mock.Anything, passkey.CredentialType, mock.Anything,
 		mock.Anything).Return(expectedResponse, nil).Once()
 
 	result, err := suite.service.StartPasskeyRegistration(
-		context.Background(), testUserID, testRelyingPartyID, testRelyingPartyName, authSelection, attestation)
+		context.Background(), testUserID, testRelyingPartyID, testRelyingPartyName, authSelection, attestation,
+		assertion)
 
 	suite.Nil(err)
 	suite.NotNil(result)
@@ -1724,11 +1751,13 @@ func (suite *AuthenticationServiceTestSuite) TestStartPasskeyRegistration_Withou
 		SessionToken: testSessionTkn,
 	}
 
+	assertion := suite.createTestAssertion(testUserID)
+	suite.mockJWTService.On("VerifyJWT", mock.Anything, assertion, "", mock.Anything).Return(nil).Once()
 	suite.mockAuthnProvider.On("InitiateEnrollment", mock.Anything, passkey.CredentialType, mock.Anything,
 		mock.Anything).Return(expectedResponse, nil).Once()
 
 	result, err := suite.service.StartPasskeyRegistration(
-		context.Background(), testUserID, testRelyingPartyID, testRelyingPartyName, nil, attestation)
+		context.Background(), testUserID, testRelyingPartyID, testRelyingPartyName, nil, attestation, assertion)
 
 	suite.Nil(err)
 	suite.NotNil(result)
@@ -1745,11 +1774,13 @@ func (suite *AuthenticationServiceTestSuite) TestStartPasskeyRegistration_Servic
 		},
 	}
 
+	assertion := suite.createTestAssertion(testUserID)
+	suite.mockJWTService.On("VerifyJWT", mock.Anything, assertion, "", mock.Anything).Return(nil).Once()
 	suite.mockAuthnProvider.On("InitiateEnrollment", mock.Anything, passkey.CredentialType, mock.Anything,
 		mock.Anything).Return(nil, serviceError).Once()
 
 	result, err := suite.service.StartPasskeyRegistration(
-		context.Background(), testUserID, testRelyingPartyID, testRelyingPartyName, nil, "")
+		context.Background(), testUserID, testRelyingPartyID, testRelyingPartyName, nil, "", assertion)
 
 	suite.NotNil(err)
 	suite.Nil(result)
@@ -1759,16 +1790,90 @@ func (suite *AuthenticationServiceTestSuite) TestStartPasskeyRegistration_Servic
 }
 
 func (suite *AuthenticationServiceTestSuite) TestStartPasskeyRegistration_ServerError() {
+	assertion := suite.createTestAssertion(testUserID)
+	suite.mockJWTService.On("VerifyJWT", mock.Anything, assertion, "", mock.Anything).Return(nil).Once()
 	suite.mockAuthnProvider.On("InitiateEnrollment", mock.Anything, passkey.CredentialType, mock.Anything,
 		mock.Anything).Return(nil, &tidcommon.InternalServerError).Once()
 
 	result, err := suite.service.StartPasskeyRegistration(
-		context.Background(), testUserID, testRelyingPartyID, testRelyingPartyName, nil, "")
+		context.Background(), testUserID, testRelyingPartyID, testRelyingPartyName, nil, "", assertion)
 
 	suite.NotNil(err)
 	suite.Nil(result)
 	suite.Equal(tidcommon.InternalServerError.Code, err.Code)
 	suite.mockAuthnProvider.AssertExpectations(suite.T())
+}
+
+// TestStartPasskeyRegistration_MissingAssertion asserts enrollment is refused outright when the
+// caller supplies no proof of the target user, before any challenge is minted. Over HTTP this case
+// is caught earlier by the required-field validation on the DTO; this covers the service contract.
+func (suite *AuthenticationServiceTestSuite) TestStartPasskeyRegistration_MissingAssertion() {
+	result, err := suite.service.StartPasskeyRegistration(
+		context.Background(), testUserID, testRelyingPartyID, testRelyingPartyName, nil, "", "")
+
+	suite.NotNil(err)
+	suite.Nil(result)
+	suite.Equal(common.ErrorInvalidAssertion.Code, err.Code)
+	suite.mockAuthnProvider.AssertNotCalled(suite.T(), "InitiateEnrollment")
+}
+
+// TestStartPasskeyRegistration_BlankAssertion asserts whitespace is not accepted as proof.
+func (suite *AuthenticationServiceTestSuite) TestStartPasskeyRegistration_BlankAssertion() {
+	result, err := suite.service.StartPasskeyRegistration(
+		context.Background(), testUserID, testRelyingPartyID, testRelyingPartyName, nil, "", "   ")
+
+	suite.NotNil(err)
+	suite.Nil(result)
+	suite.Equal(common.ErrorInvalidAssertion.Code, err.Code)
+	suite.mockAuthnProvider.AssertNotCalled(suite.T(), "InitiateEnrollment")
+}
+
+// TestStartPasskeyRegistration_AssertionSubjectMismatch is the account takeover case: a valid
+// assertion for one user must not enroll a credential onto another user.
+func (suite *AuthenticationServiceTestSuite) TestStartPasskeyRegistration_AssertionSubjectMismatch() {
+	assertion := suite.createTestAssertion("attacker_user_id")
+	suite.mockJWTService.On("VerifyJWT", mock.Anything, assertion, "", mock.Anything).Return(nil).Once()
+
+	result, err := suite.service.StartPasskeyRegistration(
+		context.Background(), testUserID, testRelyingPartyID, testRelyingPartyName, nil, "", assertion)
+
+	suite.NotNil(err)
+	suite.Nil(result)
+	suite.Equal(common.ErrorAssertionSubjectMismatch.Code, err.Code)
+	suite.mockAuthnProvider.AssertNotCalled(suite.T(), "InitiateEnrollment")
+}
+
+// TestStartPasskeyRegistration_UnverifiableAssertion asserts a forged assertion is rejected.
+func (suite *AuthenticationServiceTestSuite) TestStartPasskeyRegistration_UnverifiableAssertion() {
+	suite.mockJWTService.On("VerifyJWT", mock.Anything, invalidAssertion, "", mock.Anything).
+		Return(&tidcommon.ServiceError{
+			Type:  tidcommon.ClientErrorType,
+			Code:  "JWT-1001",
+			Error: tidcommon.I18nMessage{Key: "error.test.invalid_jwt", DefaultValue: "Invalid JWT"},
+		}).Once()
+
+	result, err := suite.service.StartPasskeyRegistration(
+		context.Background(), testUserID, testRelyingPartyID, testRelyingPartyName, nil, "", invalidAssertion)
+
+	suite.NotNil(err)
+	suite.Nil(result)
+	suite.Equal(common.ErrorInvalidAssertion.Code, err.Code)
+	suite.mockAuthnProvider.AssertNotCalled(suite.T(), "InitiateEnrollment")
+}
+
+// TestStartPasskeyRegistration_AssertionWithoutAssurance asserts a JWT that is not an auth
+// assertion (no assurance claim) cannot stand in for one.
+func (suite *AuthenticationServiceTestSuite) TestStartPasskeyRegistration_AssertionWithoutAssurance() {
+	assertion := suite.createTestAssertionWithoutAssurance(testUserID)
+	suite.mockJWTService.On("VerifyJWT", mock.Anything, assertion, "", mock.Anything).Return(nil).Once()
+
+	result, err := suite.service.StartPasskeyRegistration(
+		context.Background(), testUserID, testRelyingPartyID, testRelyingPartyName, nil, "", assertion)
+
+	suite.NotNil(err)
+	suite.Nil(result)
+	suite.Equal(common.ErrorInvalidAssertion.Code, err.Code)
+	suite.mockAuthnProvider.AssertNotCalled(suite.T(), "InitiateEnrollment")
 }
 
 func (suite *AuthenticationServiceTestSuite) TestFinishPasskeyRegistration_Success() {

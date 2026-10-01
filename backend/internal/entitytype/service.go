@@ -1,20 +1,5 @@
-/*
- * Copyright (c) 2025, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2025 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 // Package entitytype handles the entity type management operations.
 package entitytype
@@ -43,9 +28,11 @@ const entityTypeLoggerComponentName = "EntityTypeService"
 // level so callers do not need to import the internal model package directly.
 type AttributeInfo = model.AttributeInfo
 
+// AttributeFilter is an alias for model.AttributeFilter, exported at the entitytype package
+// level so callers do not need to import the internal model package directly.
+type AttributeFilter = model.AttributeFilter
+
 // EntityTypeServiceInterface defines the interface for the entity type service.
-// All methods take a TypeCategory to scope the operation to a specific entity kind
-// (user or agent).
 type EntityTypeServiceInterface interface {
 	GetEntityTypeList(ctx context.Context, category TypeCategory, limit, offset int,
 		includeDisplay bool) (*EntityTypeListResponse, *tidcommon.ServiceError)
@@ -74,9 +61,11 @@ type EntityTypeServiceInterface interface {
 		exists func(map[string]interface{}) (bool, error),
 	) (bool, *tidcommon.ServiceError)
 	GetAttributes(
-		ctx context.Context, category TypeCategory, entityType string,
-		allowCredential, allowNonCredential, requiredOnly bool,
+		ctx context.Context, category TypeCategory, entityType string, filter AttributeFilter,
 	) ([]AttributeInfo, *tidcommon.ServiceError)
+	GetAttributesForEntityType(
+		ctx context.Context, entityType string, filter AttributeFilter,
+	) (map[TypeCategory][]AttributeInfo, *tidcommon.ServiceError)
 	GetUniqueAttributes(
 		ctx context.Context, category TypeCategory, entityType string,
 	) ([]string, *tidcommon.ServiceError)
@@ -603,12 +592,9 @@ func (us *entityTypeService) ValidateEntityUniqueness(
 	return true, nil
 }
 
-// GetAttributes returns schema properties filtered by the provided flags for the given entity type.
-// allowCredential includes credential properties; allowNonCredential includes non-credential properties.
-// When requiredOnly is true, only required properties are included.
+// GetAttributes returns schema properties matching the given filter for the given entity type.
 func (us *entityTypeService) GetAttributes(
-	ctx context.Context, category TypeCategory, entityType string,
-	allowCredential, allowNonCredential, requiredOnly bool,
+	ctx context.Context, category TypeCategory, entityType string, filter AttributeFilter,
 ) ([]AttributeInfo, *tidcommon.ServiceError) {
 	logger := log.GetLogger().With(log.String(log.LoggerKeyComponentName, entityTypeLoggerComponentName))
 
@@ -624,7 +610,28 @@ func (us *entityTypeService) GetAttributes(
 		return nil, logAndReturnServerError(ctx, logger, "Failed to load entity type for attribute infos", err)
 	}
 
-	return compiledSchema.GetAttributes(allowCredential, allowNonCredential, requiredOnly), nil
+	return compiledSchema.GetAttributes(filter), nil
+}
+
+// GetAttributesForEntityType returns matching attributes for every category containing an entity type.
+func (us *entityTypeService) GetAttributesForEntityType(
+	ctx context.Context, entityType string, filter AttributeFilter,
+) (map[TypeCategory][]AttributeInfo, *tidcommon.ServiceError) {
+	attributesByCategory := make(map[TypeCategory][]AttributeInfo)
+	for _, category := range []TypeCategory{TypeCategoryUser, TypeCategoryAgent} {
+		attributes, svcErr := us.GetAttributes(ctx, category, entityType, filter)
+		if svcErr == nil {
+			attributesByCategory[category] = attributes
+			continue
+		}
+		if svcErr.Code != ErrorEntityTypeNotFound.Code {
+			return nil, svcErr
+		}
+	}
+	if len(attributesByCategory) == 0 {
+		return nil, &ErrorEntityTypeNotFound
+	}
+	return attributesByCategory, nil
 }
 
 // GetUniqueAttributes returns the names of schema properties marked as unique for a given entity type.

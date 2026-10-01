@@ -1,20 +1,5 @@
-/*
- * Copyright (c) 2026, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2026 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 package par
 
@@ -36,6 +21,12 @@ import (
 
 // requestURIPrefix is the URN prefix used for PAR request URIs per RFC 9126.
 const requestURIPrefix = "urn:ietf:params:oauth:request_uri:"
+
+// IsPARRequestURI reports whether a request_uri is a PAR handle issued by this server, as
+// opposed to a client-supplied request object by reference (RFC 9101), which is not supported.
+func IsPARRequestURI(requestURI string) bool {
+	return strings.HasPrefix(requestURI, requestURIPrefix)
+}
 
 // sensitiveParParams is the deny-list of PAR body parameters that must not be persisted into
 // InitiatorRequest.QueryParams, since they carry client credentials and the PAR store is a
@@ -127,7 +118,6 @@ func (s *parService) HandlePushedAuthorizationRequest(
 
 	scope := params[oauth2const.RequestParamScope]
 	oidcScopes, nonOidcScopes := oauth2utils.SeparateOIDCAndNonOIDCScopes(scope, oauthApp.ScopeClaims)
-	oidcScopes = oauth2utils.FilterOIDCScopesByAllowedScopes(oidcScopes, oauthApp.Scopes)
 
 	// Validate up front that the request can bind to a resource server: an explicit resource must
 	// resolve, or (with no resource) either the request is OIDC-only or a default resource server is
@@ -158,10 +148,13 @@ func (s *parService) HandlePushedAuthorizationRequest(
 		Resources:           resources,
 		ClaimsRequest:       claimsRequest,
 		ClaimsLocales:       params[oauth2const.RequestParamClaimsLocales],
+		UILocales:           params[oauth2const.RequestParamUILocales],
 		Nonce:               params[oauth2const.RequestParamNonce],
 		AcrValues:           params[oauth2const.RequestParamAcrValues],
+		MaxAge:              params[oauth2const.RequestParamMaxAge],
 		DPoPJkt:             resolveDPoPJkt(params[oauth2const.RequestParamDPoPJkt], dpopHeaderJkt),
 		Prompt:              params[oauth2const.RequestParamPrompt],
+		IDTokenHint:         params[oauth2const.RequestParamIDTokenHint],
 	}
 
 	initiatorQueryParams := make(map[string][]string, len(params)+1)
@@ -211,7 +204,7 @@ func resolveDPoPJkt(paramJkt, headerJkt string) string {
 func (s *parService) ResolvePushedAuthorizationRequest(
 	ctx context.Context, requestURI string, clientID string,
 ) (*oauth2model.OAuthParameters, *providers.InitiatorRequest, error) {
-	if !strings.HasPrefix(requestURI, requestURIPrefix) {
+	if !IsPARRequestURI(requestURI) {
 		return nil, nil, errInvalidRequestURI
 	}
 	randomKey := strings.TrimPrefix(requestURI, requestURIPrefix)

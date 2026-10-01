@@ -1,0 +1,73 @@
+{
+  "id": "nuxt",
+  "type": "fullstack",
+  "displayName": "Nuxt",
+  "description": "Full-stack Vue framework with server-side rendering",
+  "quickstarts": [
+    {
+      "label": "Nuxt",
+      "docsUrl": "{{applications.templates.nuxt.docs}}"
+    }
+  ],
+  "playgrounds": [
+    {
+      "label": "Nuxt",
+      "environment": "stackblitz",
+      "url": "{{applications.templates.nuxt.playground}}"
+    }
+  ],
+  "devServer": {
+    "id": "nuxt",
+    "label": "Nuxt",
+    "url": "http://localhost:3000"
+  },
+  "creationFlow": {
+    "steps": ["ORGANIZATION_UNIT", "DETAILS", "SECURITY", "DESIGN", "CONFIGURE", "COMPLETE"],
+    "previewSteps": ["DETAILS", "SECURITY", "DESIGN"]
+  },
+  "defaults": {
+    "name": "Nuxt Application",
+    "signInApproach": "EMBEDDED",
+    "inboundAuthConfig": [
+      {
+        "type": "oauth2",
+        "config": {
+          "grantTypes": ["authorization_code", "refresh_token"],
+          "responseTypes": ["code"],
+          "redirectUris": ["http://localhost:3000/api/auth/callback"],
+          "pkceRequired": true,
+          "tokenEndpointAuthMethod": "client_secret_basic",
+          "publicClient": false
+        }
+      }
+    ],
+    "allowedUserTypes": []
+  },
+  "fieldConstraints": {
+    "oauth2": {
+      "publicClient": {
+        "readOnly": true,
+        "value": false
+      },
+      "pkceRequired": {
+        "readOnly": true,
+        "value": true
+      },
+      "tokenEndpointAuthMethod": {
+        "readOnly": false
+      }
+    }
+  },
+  "integrationGuides": {
+    "REDIRECT_BASED": {
+      "llm_prompt": {
+        "docsUrl": "{{applications.templates.nuxt.llmPrompt.redirectBased}}"
+      }
+    },
+    "EMBEDDED": {
+      "llm_prompt": {
+        "docsUrl": "{{applications.templates.nuxt.llmPrompt.embedded}}"
+      }
+    }
+  }
+}

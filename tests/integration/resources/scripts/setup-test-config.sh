@@ -6,7 +6,28 @@ cat > tests/integration/resources/deployment.yaml <<EOF
 server:
   hostname: localhost
   port: 8095
+  security:
+    # Exercised by tests/integration/managementapikey: a deployment pipeline authenticating to the
+    # import API without first obtaining OAuth client credentials. This is the SHA-256 digest of
+    # "integration-management-api-key"; the key itself is never configured here.
+    management_api_key_hash: "4955d93012fc5e2ee07b527f13ffe55de32900c410cc198f4d7a9971bb3a9a2d"
+    # Shortened from the 60s default so revocation-enforcement tests (which check a token
+    # immediately after revoking it) don't need a long sleep to observe the deny-list cache pick
+    # up the revocation. Introspection (RFC 7009 hot path) is unaffected — it reads the store
+    # directly rather than through this periodic cache.
+    token_revocation:
+      sync_interval_seconds: 2
+    mcp:
+      # Set explicitly to the identifier this harness already derives from the hostname/port above,
+      # so the configured-audience path runs without changing what MCP enforces. Keep in step with
+      # mcpResourceIdentifier in tests/integration/mcp/mcp_test.go.
+      audience: "https://localhost:8095/mcp"
 
+
+gateway:
+  # The default of one gateway would refuse the second registration in every uniqueness test before
+  # the rule under test was reached.
+  max_gateways: 5
 
 tls:
   cert_file: "config/certs/server.cert"
@@ -121,8 +142,17 @@ flow:
 server_config:
   store: composite
 
+authzen_pdp:
+  store: composite
+
+passkey:
+  allowed_origins:
+    - "https://localhost:8095"
+    - "http://localhost:8095"
+
 oauth:
   allow_wildcard_redirect_uri: true
+  send_server_errors_to_client: true
   auth_class:
     amrs:
       - PWD

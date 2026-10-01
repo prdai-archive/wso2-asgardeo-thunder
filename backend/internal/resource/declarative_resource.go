@@ -1,20 +1,5 @@
-/*
- * Copyright (c) 2026, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2026 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 package resource
 
@@ -106,14 +91,15 @@ func (e *resourceServerExporter) GetResourceByID(ctx context.Context, id string)
 
 	// Build providers.ResourceServer with nested structure
 	rs := &providers.ResourceServer{
-		ID:          server.ID,
-		Name:        server.Name,
-		Description: server.Description,
-		Identifier:  server.Identifier,
-		Type:        server.Type,
-		OUID:        server.OUID,
-		Delimiter:   server.Delimiter,
-		Resources:   []providers.Resource{},
+		ID:                  server.ID,
+		Name:                server.Name,
+		Description:         server.Description,
+		Identifier:          server.Identifier,
+		Type:                server.Type,
+		OUID:                server.OUID,
+		Delimiter:           server.Delimiter,
+		AuthorizationEngine: server.AuthorizationEngine,
+		Resources:           []providers.Resource{},
 	}
 
 	allResources, err := e.service.GetAllResourceList(ctx, id)
@@ -307,6 +293,19 @@ func parseToResourceServer(data []byte) (*providers.ResourceServer, error) {
 
 // ProcessResourceServer processes the resource server and computes permissions in-place.
 func ProcessResourceServer(rs *providers.ResourceServer) error {
+	if rs.AuthorizationEngine.Type == "" {
+		rs.AuthorizationEngine.Type = providers.AuthorizationEngineTypeRBAC
+	}
+	switch rs.AuthorizationEngine.Type {
+	case providers.AuthorizationEngineTypeRBAC:
+		rs.AuthorizationEngine.Properties = providers.AuthorizationEngineProperties{}
+	case providers.AuthorizationEngineTypeAuthZENPDP:
+		if err := validateAuthZENPDPConnectionID(&rs.AuthorizationEngine); err != nil {
+			return fmt.Errorf("resource server %q: %w", rs.ID, err)
+		}
+	default:
+		return fmt.Errorf("unsupported authorization engine type %q", rs.AuthorizationEngine.Type)
+	}
 	delimiter := rs.Delimiter
 	if delimiter == "" {
 		delimiter = ":" // Default delimiter

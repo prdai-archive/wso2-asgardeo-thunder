@@ -1,24 +1,12 @@
-/*
- * Copyright (c) 2026, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2026 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 package session
 
 import (
+	"fmt"
+	"strings"
+
 	"github.com/thunder-id/thunderid/internal/system/database/model"
 )
 
@@ -64,6 +52,19 @@ var (
 			`LAST_ACTIVE_AT = $3, IDLE_EXPIRES_AT = $4, ABSOLUTE_EXPIRES_AT = $5, STATE = $6, ` +
 			`VERSION = VERSION + 1, UPDATED_AT = CURRENT_TIMESTAMP ` +
 			`WHERE SESSION_ID = $7 AND DEPLOYMENT_ID = $8 AND VERSION = $9`,
+	}
+
+	// queryTouchAuthenticatedAt refreshes the session's authentication time after the subject
+	// authenticated again within an existing session (prompt=login, or a max_age the previous
+	// authentication no longer satisfied). It is separate from queryUpdateSession because that
+	// statement carries the optimistic-concurrency guard for liveness updates, whereas this one
+	// records a fact about an authentication that has already happened: losing a race with a
+	// concurrent slide must not discard it.
+	queryTouchAuthenticatedAt = model.DBQuery{
+		ID: "SSO-SESS-16",
+		Query: `UPDATE "SSO_SESSION" SET AUTHENTICATED_AT = $1, LAST_ACTIVE_AT = $2, ` +
+			`IDLE_EXPIRES_AT = $3, VERSION = VERSION + 1, UPDATED_AT = CURRENT_TIMESTAMP ` +
+			`WHERE SESSION_ID = $4 AND DEPLOYMENT_ID = $5 AND AUTHENTICATED_AT <= $1`,
 	}
 
 	// queryCreateSessionContext upserts a checkpoint's session context. Re-saving the same checkpoint
@@ -122,4 +123,47 @@ var (
 		ID:    "SSO-SESS-12",
 		Query: `DELETE FROM "SSO_SESSION" WHERE SESSION_ID = $1 AND DEPLOYMENT_ID = $2`,
 	}
+
+	// queryListSessionsBySubject returns all SSO sessions owned by a subject.
+	queryListSessionsBySubject = model.DBQuery{
+		ID: "SSO-SESS-13",
+		Query: `SELECT SESSION_ID, SUBJECT_ID, FLOW_ID, FLOW_VERSION, FLOW_EXECUTION_ID, HANDLE_ID, ` +
+			`AUTHENTICATED_AT, CREATED_AT, LAST_ACTIVE_AT, IDLE_EXPIRES_AT, ABSOLUTE_EXPIRES_AT, STATE, VERSION ` +
+			`FROM "SSO_SESSION" WHERE SUBJECT_ID = $1 AND DEPLOYMENT_ID = $2`,
+	}
+
+	// queryListParticipantsByAppID returns every session the application participates in, oldest first.
+	// Backed by idx_sso_session_participant_app, since the table's primary key leads with SESSION_ID.
+	queryListParticipantsByAppID = model.DBQuery{
+		ID: "SSO-SESS-14",
+		Query: `SELECT SESSION_ID, APP_ID, FIRST_JOINED_AT, LAST_ACTIVE_AT, TFID FROM "SSO_SESSION_PARTICIPANT" ` +
+			`WHERE APP_ID = $1 AND DEPLOYMENT_ID = $2 ORDER BY FIRST_JOINED_AT`,
+	}
+
+	// queryDeleteParticipant removes one application's participation in one session, leaving the
+	// session's other participants intact.
+	queryDeleteParticipant = model.DBQuery{
+		ID: "SSO-SESS-15",
+		Query: `DELETE FROM "SSO_SESSION_PARTICIPANT" ` +
+			`WHERE SESSION_ID = $1 AND APP_ID = $2 AND DEPLOYMENT_ID = $3`,
+	}
 )
+
+// participantsBySessionIDsChunkSize caps the session ids per query, keeping it under the
+// bind-parameter limit of either database.
+const participantsBySessionIDsChunkSize = 200
+
+// buildListParticipantsBySessionIDsQuery returns the participants of n sessions at once. Placeholders
+// are $1..$n for the ids and $n+1 for the deployment; both databases accept the $N form.
+func buildListParticipantsBySessionIDsQuery(n int) model.DBQuery {
+	placeholders := make([]string, n)
+	for i := range placeholders {
+		placeholders[i] = fmt.Sprintf("$%d", i+1)
+	}
+	return model.DBQuery{
+		ID: "SSO-SESS-17",
+		Query: `SELECT SESSION_ID, APP_ID, FIRST_JOINED_AT, LAST_ACTIVE_AT, TFID FROM "SSO_SESSION_PARTICIPANT" ` +
+			`WHERE SESSION_ID IN (` + strings.Join(placeholders, ", ") + `) AND DEPLOYMENT_ID = $` +
+			fmt.Sprint(n+1) + ` ORDER BY SESSION_ID, FIRST_JOINED_AT`,
+	}
+}

@@ -1,20 +1,5 @@
-/*
- * Copyright (c) 2026, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2026 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 package thememgt
 
@@ -206,6 +191,9 @@ func parseToTheme(data []byte) (*Theme, error) {
 // validateThemeWrapper wraps validateThemeForDeclarativeResource to match ResourceConfig.Validator signature.
 // It also checks for duplicates across database stores in composite mode.
 func validateThemeWrapper(dto interface{}, dbStore themeMgtStoreInterface) error {
+	// Declarative resources are validated as they are loaded, outside any request, so there
+	// is no context to carry a deployment id and the configured identifier applies.
+	ctx := context.Background()
 	theme, ok := dto.(*Theme)
 	if !ok {
 		return fmt.Errorf("invalid type: expected *Theme")
@@ -218,7 +206,7 @@ func validateThemeWrapper(dto interface{}, dbStore themeMgtStoreInterface) error
 
 	// In composite mode, check for duplicates in database store
 	if dbStore != nil {
-		exists, err := dbStore.IsThemeExist(theme.ID)
+		exists, err := dbStore.IsThemeExist(ctx, theme.ID)
 		if err != nil {
 			return fmt.Errorf("failed to check for duplicate theme ID '%s': %w", theme.ID, err)
 		}

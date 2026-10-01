@@ -1,26 +1,11 @@
-/**
- * Copyright (c) 2026, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied. See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2026 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 import Link from '@docusaurus/Link';
 import type {Content} from '@theme/BlogPostPage';
 import {Box, Typography, useTheme} from '@wso2/oxygen-ui';
 import {JSX} from 'react';
-import BlogAvatar from './BlogAvatar';
+import BlogAuthorGroup from './BlogAuthorGroup';
 import BlogThumbnail from './BlogThumbnail';
 import {formatMetaLine, getCategory, getHeroGradient, getHeroIcon, getThumbnail} from './helpers';
 import useIsDarkMode from '../../hooks/useIsDarkMode';
@@ -29,7 +14,6 @@ export default function BlogPostCard({content}: {content: Content}): JSX.Element
   const theme = useTheme();
   const isLight = !useIsDarkMode();
   const {metadata} = content;
-  const author = metadata.authors[0];
 
   return (
     <Box
@@ -70,21 +54,15 @@ export default function BlogPostCard({content}: {content: Content}): JSX.Element
         <Typography sx={{fontSize: '13.5px', lineHeight: 1.65, color: 'text.secondary', flex: 1, mb: 2}}>
           {metadata.description}
         </Typography>
-        {author && (
-          <Box sx={{display: 'flex', alignItems: 'center', gap: 1}}>
-            <BlogAvatar name={author.name ?? ''} imageURL={author.imageURL} size={30} />
-            <Box>
-              <Typography sx={{fontSize: '12px', fontWeight: 600, color: isLight ? 'rgba(0,0,0,0.78)' : 'rgba(255,255,255,0.78)'}}>
-                {author.name}
-              </Typography>
-              <Typography
-                sx={{fontFamily: 'monospace', fontSize: '10.5px', color: isLight ? 'rgba(0,0,0,0.4)' : 'rgba(255,255,255,0.4)'}}
-              >
-                {formatMetaLine(metadata.date, metadata.readingTime)}
-              </Typography>
-            </Box>
-          </Box>
-        )}
+        <BlogAuthorGroup
+          authors={metadata.authors}
+          avatarSize={30}
+          isLight={isLight}
+          nameFontSize="12px"
+          subtitleFontSize="10.5px"
+          subtitleFontFamily="monospace"
+          subtitle={formatMetaLine(metadata.date, metadata.readingTime)}
+        />
       </Box>
     </Box>
   );

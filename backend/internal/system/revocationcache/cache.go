@@ -1,20 +1,5 @@
-/*
- * Copyright (c) 2026, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2026 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 package revocationcache
 
@@ -31,6 +16,8 @@ type revokedCache struct {
 	mu       sync.RWMutex
 	tokens   map[string]time.Time
 	families map[string]time.Time
+	subjects map[string]revokedEntry
+	appKeys  map[string]revokedEntry
 }
 
 // newRevokedCache creates an empty cache. It holds nothing until the first snapshot is loaded.
@@ -38,6 +25,8 @@ func newRevokedCache() *revokedCache {
 	return &revokedCache{
 		tokens:   make(map[string]time.Time),
 		families: make(map[string]time.Time),
+		subjects: make(map[string]revokedEntry),
+		appKeys:  make(map[string]revokedEntry),
 	}
 }
 
@@ -46,10 +35,47 @@ func newRevokedCache() *revokedCache {
 func (c *revokedCache) replace(snapshot revokedSnapshot) {
 	tokens := indexByValue(snapshot.Tokens)
 	families := indexByValue(snapshot.Families)
+	subjects := indexEntriesByValue(snapshot.Subjects)
+	appKeys := indexEntriesByValue(snapshot.AppKeys)
 	c.mu.Lock()
 	c.tokens = tokens
 	c.families = families
+	c.subjects = subjects
+	c.appKeys = appKeys
 	c.mu.Unlock()
+}
+
+func (c *revokedCache) isSubjectRevoked(subject string, establishedAt time.Time) bool {
+	c.mu.RLock()
+	entry, ok := c.subjects[subject]
+	c.mu.RUnlock()
+	return matchesEntry(entry, ok, establishedAt)
+}
+
+// isAppKeyRevoked reports whether the OAuth client the token was issued to is revoked, honoring the
+// establishment cutoff so a token minted after a secret regeneration still passes.
+func (c *revokedCache) isAppKeyRevoked(appKey string, establishedAt time.Time) bool {
+	c.mu.RLock()
+	entry, ok := c.appKeys[appKey]
+	c.mu.RUnlock()
+	return matchesEntry(entry, ok, establishedAt)
+}
+
+// matchesEntry applies the shared terminal-versus-bounded decision. A terminal entry rejects on
+// membership alone; a bounded entry rejects only artifacts established at or before its cutoff. An
+// unknown establishment time is treated as revoked, keeping the decision fail-closed.
+func matchesEntry(entry revokedEntry, found bool, establishedAt time.Time) bool {
+	return found && time.Now().Before(entry.ExpiryTime) &&
+		(!entry.Boundary || establishedAt.IsZero() || !establishedAt.After(entry.RevokedAt))
+}
+
+// indexEntriesByValue builds a value-to-entry map while preserving criterion metadata.
+func indexEntriesByValue(entries []revokedEntry) map[string]revokedEntry {
+	indexed := make(map[string]revokedEntry, len(entries))
+	for _, entry := range entries {
+		indexed[entry.Value] = entry
+	}
+	return indexed
 }
 
 // isTokenRevoked reports whether jti is on the single-token deny list and has not yet expired.

@@ -1,20 +1,5 @@
-/*
- * Copyright (c) 2026, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2026 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 package flowmgt
 
@@ -88,6 +73,10 @@ func (h *FlowConfigHandler) Validate(incoming, _, _ any) error {
 		{cfg.UserOnboardingFlow, providers.FlowTypeUserOnboarding, "userOnboardingFlow"},
 		{cfg.RecoveryFlow, providers.FlowTypeRecovery, "recoveryFlow"},
 		{cfg.SignOutFlow, providers.FlowTypeSignOut, "signOutFlow"},
+		{cfg.UserDeletionFlow, providers.FlowTypeAdministration, "userDeletionFlow"},
+		{cfg.ApplicationDeletionFlow, providers.FlowTypeAdministration, "applicationDeletionFlow"},
+		{cfg.SecretRegenerationFlow, providers.FlowTypeAdministration, "secretRegenerationFlow"},
+		{cfg.AgentOnboardingFlow, providers.FlowTypeAdministration, "agentOnboardingFlow"},
 	}
 	ctx := context.Background()
 
@@ -118,6 +107,12 @@ func (h *FlowConfigHandler) Merge(readOnly, writable any) any {
 		UserOnboardingFlow: mergeFlowTypeConfig(ro.UserOnboardingFlow, wr.UserOnboardingFlow),
 		RecoveryFlow:       mergeFlowTypeConfig(ro.RecoveryFlow, wr.RecoveryFlow),
 		SignOutFlow:        mergeFlowTypeConfig(ro.SignOutFlow, wr.SignOutFlow),
+		UserDeletionFlow:   mergeFlowTypeConfig(ro.UserDeletionFlow, wr.UserDeletionFlow),
+		ApplicationDeletionFlow: mergeFlowTypeConfig(
+			ro.ApplicationDeletionFlow, wr.ApplicationDeletionFlow),
+		SecretRegenerationFlow: mergeFlowTypeConfig(
+			ro.SecretRegenerationFlow, wr.SecretRegenerationFlow),
+		AgentOnboardingFlow: mergeFlowTypeConfig(ro.AgentOnboardingFlow, wr.AgentOnboardingFlow),
 	}
 }
 

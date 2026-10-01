@@ -1,20 +1,5 @@
-/*
- * Copyright (c) 2025, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2025-2026 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 package executor
 
@@ -23,12 +8,82 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
+	"time"
 
 	authncm "github.com/thunder-id/thunderid/internal/authn/common"
+	entitytypemodel "github.com/thunder-id/thunderid/internal/entitytype/model"
 	"github.com/thunder-id/thunderid/internal/flow/common"
+	"github.com/thunder-id/thunderid/internal/idp"
+	"github.com/thunder-id/thunderid/internal/revocation"
+	"github.com/thunder-id/thunderid/internal/system/log"
 	systemutils "github.com/thunder-id/thunderid/internal/system/utils"
 	"github.com/thunder-id/thunderid/pkg/thunderidengine/providers"
 )
+
+// revocationPlan is the trusted intent a flow's pre-processing node produces and the executors that
+// follow act on. It is never built from request input, so the criteria, breadth and reason recorded
+// here are authoritative for the rest of the flow.
+type revocationPlan struct {
+	Criteria []revocation.Criterion `json:"criteria"`
+	Mode     revocation.Mode        `json:"mode"`
+	Cutoff   time.Time              `json:"cutoff,omitempty"`
+	Reason   revocation.Reason      `json:"reason"`
+	// TargetID is the resource the acting nodes operate on, when that is not the criterion value. An
+	// application revocation is keyed by the OAuth client id while the delete and the session detachment
+	// need the application id, so the two travel separately rather than one being re-derived.
+	TargetID string `json:"targetId,omitempty"`
+	// TTLSeconds is how long the deny-list row must live to outlast the artifacts the criteria match.
+	// Zero leaves the revocation service on its configured default.
+	TTLSeconds int64 `json:"ttlSeconds,omitempty"`
+	// NothingToRevoke records that the preparatory node established there is no artifact to revoke, which
+	// is how an empty criteria list is distinguished from a missing one. Only a node that verified the
+	// absence sets it; without it an empty list stays an error, so a plan can never be silently skipped.
+	NothingToRevoke bool `json:"nothingToRevoke,omitempty"`
+}
+
+// encodeRevocationPlan serializes the plan for carriage on the engine context's cross-frame store.
+func encodeRevocationPlan(plan revocationPlan) (string, error) {
+	encoded, err := json.Marshal(plan)
+	if err != nil {
+		return "", fmt.Errorf("failed to encode revocation plan: %w", err)
+	}
+	return string(encoded), nil
+}
+
+// decodeRevocationPlan reads the plan an earlier node published. A missing plan, or one with no criteria
+// that does not declare NothingToRevoke, is an error rather than a no-op.
+func decodeRevocationPlan(data map[string]string) (revocationPlan, error) {
+	encoded := data[common.RuntimeKeyRevocationPlan]
+	if encoded == "" {
+		return revocationPlan{}, errors.New("trusted revocation plan is missing")
+	}
+	var plan revocationPlan
+	if err := json.Unmarshal([]byte(encoded), &plan); err != nil {
+		return revocationPlan{}, fmt.Errorf("failed to decode trusted revocation plan: %w", err)
+	}
+	if len(plan.Criteria) == 0 && !plan.NothingToRevoke {
+		return revocationPlan{}, errors.New("trusted revocation plan has no criteria")
+	}
+	return plan, nil
+}
+
+// applicationTargetFromPlan returns the application the trusted plan acts on. The reason check makes a
+// mispaired graph fail cleanly, since flow validation does not stop one action's preparatory node being
+// wired to another's acting node.
+func applicationTargetFromPlan(data map[string]string, want revocation.Reason) (string, error) {
+	plan, err := decodeRevocationPlan(data)
+	if err != nil {
+		return "", err
+	}
+	if plan.Reason != want {
+		return "", fmt.Errorf("trusted revocation plan was produced for %q, not %q", plan.Reason, want)
+	}
+	if plan.TargetID == "" {
+		return "", errors.New("trusted revocation plan has no target application")
+	}
+	return plan.TargetID, nil
+}
 
 // getAuthnServiceName returns the authn service name for an executor.
 // Returns empty string if executor doesn't map to an authn service.
@@ -84,6 +139,50 @@ func findInputByType(inputs []providers.Input, inputType string) (providers.Inpu
 	return providers.Input{}, false
 }
 
+// inputTypeForSchemaType maps an entity type schema attribute type to the flow input type used to
+// prompt for it. Types without a dedicated input type are prompted as text.
+func inputTypeForSchemaType(schemaType string) string {
+	switch schemaType {
+	case entitytypemodel.TypeBoolean:
+		return providers.InputTypeBoolean
+	case entitytypemodel.TypeNumber:
+		return providers.InputTypeNumber
+	default:
+		return providers.InputTypeText
+	}
+}
+
+// schemaTypeForInputType maps a flow input type back to the schema type its collected value should
+// be converted to, for callers whose inputs come from the flow definition rather than from a schema.
+// An empty result means the value needs no conversion.
+func schemaTypeForInputType(inputType string) string {
+	switch inputType {
+	case providers.InputTypeBoolean:
+		return entitytypemodel.TypeBoolean
+	case providers.InputTypeNumber:
+		return entitytypemodel.TypeNumber
+	default:
+		return ""
+	}
+}
+
+// convertToSchemaType converts a collected input value, which the engine always carries as a string,
+// to the type declared by its schema attribute. Values that fail to parse are returned unchanged so
+// that schema validation reports them instead of a zero value being silently substituted.
+func convertToSchemaType(value string, schemaType string) interface{} {
+	switch schemaType {
+	case entitytypemodel.TypeBoolean:
+		if parsed, err := strconv.ParseBool(value); err == nil {
+			return parsed
+		}
+	case entitytypemodel.TypeNumber:
+		if parsed, err := strconv.ParseFloat(value, 64); err == nil {
+			return parsed
+		}
+	}
+	return value
+}
+
 // isAuthenticationWithoutLocalUserAllowed returns the value of the AllowAuthenticationWithoutLocalUser
 // node property, defaulting to false if absent or not a bool.
 // This is used to determine if authentication flow can proceed without a local user account.
@@ -137,6 +236,76 @@ func setFederatedEntityState(ctx context.Context, execResp *providers.ExecutorRe
 	if svcErr == nil && entityRef != nil {
 		execResp.RuntimeData[common.RuntimeKeyEntityState] = entityStateExists
 	}
+}
+
+// reservedAuthorizationRuntimeKeys must never be overwritten by an external claim of the same name.
+var reservedAuthorizationRuntimeKeys = map[string]bool{
+	common.RuntimeKeyMappedRoleIDs:     true,
+	common.RuntimeKeyMappedGroupIDs:    true,
+	common.RuntimeKeyMappedPermissions: true,
+}
+
+// copyFederatedAttributesToRuntimeData copies federatedAttributes into execResp.RuntimeData, skipping
+// reservedAuthorizationRuntimeKeys.
+func copyFederatedAttributesToRuntimeData(
+	execResp *providers.ExecutorResponse, federatedAttributes map[string]interface{},
+) {
+	if len(federatedAttributes) == 0 {
+		return
+	}
+	if execResp.RuntimeData == nil {
+		execResp.RuntimeData = make(map[string]string)
+	}
+	for key, value := range federatedAttributes {
+		if reservedAuthorizationRuntimeKeys[key] {
+			continue
+		}
+		execResp.RuntimeData[key] = systemutils.ConvertInterfaceValueToString(value)
+	}
+}
+
+// resolveAndSetMappedAuthorizationTargets resolves the IDP's AuthorizationRuleMapping (explicit value
+// rules) and AuthorizationDirectMapping (direct name-based lookup) against federatedAttributes,
+// unions their targets, and stores the result as runtime data for later executors. Logs and continues
+// without the affected targets when the IDP or direct targets can't be resolved, rather than failing
+// the federated login over what is best-effort enrichment of its runtime state.
+func resolveAndSetMappedAuthorizationTargets(
+	ctx context.Context, execResp *providers.ExecutorResponse,
+	idpService idp.IDPServiceInterface, idpID string, federatedAttributes map[string]interface{},
+	logger *log.Logger,
+) {
+	idpDTO, svcErr := idpService.GetIdentityProvider(ctx, idpID)
+	if svcErr != nil {
+		logger.Warn(ctx, "Failed to resolve IDP for authorization mapping, skipping",
+			log.String("idpId", idpID), log.String("error", svcErr.Error.DefaultValue))
+		return
+	}
+	targets := idp.GetRuleAuthorizationTargets(idpDTO, federatedAttributes)
+	directTargets, svcErr := idpService.GetDirectAuthorizationTargets(ctx, idpDTO, federatedAttributes)
+	if svcErr != nil {
+		logger.Warn(ctx, "Failed to resolve direct authorization targets, continuing with rule-based targets only",
+			log.String("idpId", idpID), log.String("error", svcErr.Error.DefaultValue))
+	} else {
+		targets = append(targets, directTargets...)
+	}
+	setMappedAuthorizationTargets(execResp, targets)
+}
+
+// setMappedAuthorizationTargets splits resolved authorization mapping targets (rule-based or direct)
+// by kind and stores them as runtime data for later executors. Always writes all three keys, even when
+// empty.
+func setMappedAuthorizationTargets(execResp *providers.ExecutorResponse, targets []providers.AuthorizationTarget) {
+	if execResp.RuntimeData == nil {
+		execResp.RuntimeData = make(map[string]string)
+	}
+	roleIDs, groupIDs, permissions := idp.SplitAuthorizationTargets(targets)
+	execResp.RuntimeData[common.RuntimeKeyMappedRoleIDs] = systemutils.StringifyStringArray(roleIDs, " ")
+	execResp.RuntimeData[common.RuntimeKeyMappedGroupIDs] = systemutils.StringifyStringArray(groupIDs, " ")
+	encoded, err := json.Marshal(permissions)
+	if err != nil {
+		encoded = []byte("[]")
+	}
+	execResp.RuntimeData[common.RuntimeKeyMappedPermissions] = string(encoded)
 }
 
 // isAllowAuthenticationWithoutLocalUserRuntimeFlagSet checks if the runtime flag for allowing authentication without

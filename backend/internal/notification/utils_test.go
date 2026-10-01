@@ -1,20 +1,5 @@
-/*
- * Copyright (c) 2025, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2025 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 package notification
 
@@ -57,7 +42,7 @@ func (suite *UtilsTestSuite) TestValidateNotificationSender_EmptyName() {
 	sender := common.NotificationSenderDTO{
 		Name:     "",
 		Type:     common.NotificationSenderTypeMessage,
-		Provider: common.MessageProviderTypeTwilio,
+		Provider: common.NotificationProviderTypeTwilio,
 	}
 
 	err := validateNotificationSender(sender)
@@ -70,7 +55,7 @@ func (suite *UtilsTestSuite) TestValidateNotificationSender_InvalidType() {
 	sender := common.NotificationSenderDTO{
 		Name:     "Test Sender",
 		Type:     "INVALID_TYPE",
-		Provider: common.MessageProviderTypeTwilio,
+		Provider: common.NotificationProviderTypeTwilio,
 	}
 
 	err := validateNotificationSender(sender)
@@ -109,7 +94,7 @@ func (suite *UtilsTestSuite) TestValidateMessageNotificationSender_Twilio() {
 	sender := common.NotificationSenderDTO{
 		Name:     "Test Twilio",
 		Type:     common.NotificationSenderTypeMessage,
-		Provider: common.MessageProviderTypeTwilio,
+		Provider: common.NotificationProviderTypeTwilio,
 		Properties: []cmodels.Property{
 			createTestProperty("account_sid", "AC00112233445566778899aabbccddeeff", true),
 			createTestProperty("auth_token", "test-token", true),
@@ -126,7 +111,7 @@ func (suite *UtilsTestSuite) TestValidateMessageNotificationSender_Vonage() {
 	sender := common.NotificationSenderDTO{
 		Name:     "Test Vonage",
 		Type:     common.NotificationSenderTypeMessage,
-		Provider: common.MessageProviderTypeVonage,
+		Provider: common.NotificationProviderTypeVonage,
 		Properties: []cmodels.Property{
 			createTestProperty("api_key", "test-key", true),
 			createTestProperty("api_secret", "test-secret", true),
@@ -143,7 +128,7 @@ func (suite *UtilsTestSuite) TestValidateMessageNotificationSender_Custom() {
 	sender := common.NotificationSenderDTO{
 		Name:     "Test Custom",
 		Type:     common.NotificationSenderTypeMessage,
-		Provider: common.MessageProviderTypeCustom,
+		Provider: common.NotificationProviderTypeCustom,
 		Properties: []cmodels.Property{
 			createTestProperty("url", "https://api.example.com/sms", false),
 			createTestProperty("http_method", "POST", false),
@@ -372,7 +357,7 @@ func (suite *UtilsTestSuite) TestValidateMessageNotificationSender_EmptyProperti
 	sender := common.NotificationSenderDTO{
 		Name:       "Test Twilio Empty Props",
 		Type:       common.NotificationSenderTypeMessage,
-		Provider:   common.MessageProviderTypeTwilio,
+		Provider:   common.NotificationProviderTypeTwilio,
 		Properties: []cmodels.Property{},
 	}
 
@@ -387,7 +372,7 @@ func (suite *UtilsTestSuite) TestValidateNotificationSender() {
 	sender := common.NotificationSenderDTO{
 		Name:     "Test Sender",
 		Type:     common.NotificationSenderTypeMessage,
-		Provider: common.MessageProviderTypeTwilio,
+		Provider: common.NotificationProviderTypeTwilio,
 		Properties: []cmodels.Property{
 			createTestProperty("account_sid", "AC00112233445566778899aabbccddeeff", true),
 			createTestProperty("auth_token", "test-token", true),
@@ -433,7 +418,7 @@ func (suite *UtilsTestSuite) TestValidateMessageNotificationSender_InvalidSuppor
 	sender := common.NotificationSenderDTO{
 		Name:     "Test Sender Invalid Channel",
 		Type:     common.NotificationSenderTypeMessage,
-		Provider: common.MessageProviderTypeTwilio,
+		Provider: common.NotificationProviderTypeTwilio,
 		Properties: []cmodels.Property{
 			createTestProperty("account_sid", "AC00112233445566778899aabbccddeeff", true),
 			createTestProperty("auth_token", "test-token", true),
@@ -461,7 +446,7 @@ func (suite *UtilsTestSuite) TestValidateMessageNotificationSender_SupportedChan
 	sender := common.NotificationSenderDTO{
 		Name:       "Test Sender Read Error",
 		Type:       common.NotificationSenderTypeMessage,
-		Provider:   common.MessageProviderTypeTwilio,
+		Provider:   common.NotificationProviderTypeTwilio,
 		Properties: properties,
 	}
 

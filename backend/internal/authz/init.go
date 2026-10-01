@@ -1,31 +1,34 @@
-/*
- * Copyright (c) 2025, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2025 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 package authz
 
 import (
 	"github.com/thunder-id/thunderid/internal/authz/engine"
+	"github.com/thunder-id/thunderid/internal/connection/authzenpdp"
+	"github.com/thunder-id/thunderid/internal/entity"
+	"github.com/thunder-id/thunderid/internal/resource"
 	"github.com/thunder-id/thunderid/internal/role"
+	httpservice "github.com/thunder-id/thunderid/internal/system/http"
 	"github.com/thunder-id/thunderid/pkg/thunderidengine/providers"
 )
 
-// Initialize creates and initializes the authorization service with the RBAC engine.
-func Initialize(roleService role.RoleServiceInterface) providers.AuthorizationProvider {
-	rbacEngine := engine.NewRBACEngine(roleService)
-	return newAuthorizationService(rbacEngine)
+// Initialize creates and initializes the authorization service.
+func Initialize(
+	roleService role.RoleServiceInterface,
+	resourceService resource.ResourceServiceInterface,
+	entityService entity.EntityServiceInterface,
+	authZENPDPService authzenpdp.AuthZENPDPServiceInterface,
+) providers.AuthorizationProvider {
+	rbacEngine, authZENPDPEngine := engine.Initialize(
+		roleService,
+		authZENPDPService,
+		httpservice.NewHTTPClientWithTimeout(0),
+	)
+	return newAuthorizationService(
+		rbacEngine,
+		resourceService,
+		entityService,
+		authZENPDPEngine,
+	)
 }

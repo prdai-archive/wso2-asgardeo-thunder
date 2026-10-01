@@ -1,20 +1,5 @@
-/*
- * Copyright (c) 2025, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2025 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 package tokenservice
 
@@ -438,6 +423,28 @@ func (suite *UtilsTestSuite) TestFetchUserAttributes_EmptyAllowedClaims() {
 	assert.NotNil(suite.T(), attrs)
 	// No attributes should be present when allowedClaims is empty
 	assert.Empty(suite.T(), attrs)
+
+	mockAttrCacheService.AssertExpectations(suite.T())
+}
+
+func (suite *UtilsTestSuite) TestFetchUserAttributes_RawJWTIncludedRegardlessOfAllowedClaims() {
+	mockAttrCacheService := attributecachemock.NewAttributeCacheServiceInterfaceMock(suite.T())
+
+	// Mock GetAttributeCache to return a cache holding only the opaque JWT pseudo-claim
+	mockAttrCacheService.On("GetAttributeCache", mock.Anything, "cache-key-123").
+		Return(&attributecache.AttributeCache{
+			ID: "cache-key-123",
+			Attributes: map[string]interface{}{
+				providers.RawJWTAttributeKey: "header.payload.signature",
+			},
+		}, nil)
+
+	// Empty allowedClaims — _jwt is not a configured claim, so it must still come through
+	attrs, err := FetchUserAttributes(context.Background(), mockAttrCacheService,
+		[]string{}, "cache-key-123")
+
+	assert.NoError(suite.T(), err)
+	assert.Equal(suite.T(), "header.payload.signature", attrs[providers.RawJWTAttributeKey])
 
 	mockAttrCacheService.AssertExpectations(suite.T())
 }
@@ -958,6 +965,22 @@ func (suite *UtilsTestSuite) TestBuildClientAttributes_AgentOwnAttributes_SkipsR
 	assert.NoError(suite.T(), err)
 	assert.Equal(suite.T(), "anthropic", claims["modelProvider"])
 	assert.NotContains(suite.T(), claims, "scope")
+}
+
+// sub_type is reserved, so an agent cannot surface a schema attribute of that name.
+func (suite *UtilsTestSuite) TestBuildClientAttributes_AgentOwnAttributes_SkipsSubType() {
+	actors := actorprovidermock.NewActorProviderMock(suite.T())
+	actors.On("GetActor", testBCCAppID).Return(&providers.Entity{
+		ID:         testBCCAppID,
+		Attributes: []byte(`{"sub_type":"app","modelProvider":"anthropic"}`),
+	}, (*tidcommon.ServiceError)(nil))
+
+	app := newOAuthAppForOwnAttributes([]string{"sub_type", "modelProvider"})
+	claims, err := BuildClientAttributes(context.Background(), app, nil, actors)
+
+	assert.NoError(suite.T(), err)
+	assert.Equal(suite.T(), "anthropic", claims["modelProvider"])
+	assert.NotContains(suite.T(), claims, "sub_type")
 }
 
 func (suite *UtilsTestSuite) TestBuildClientAttributes_AgentSystemAttributes_HappyPath() {

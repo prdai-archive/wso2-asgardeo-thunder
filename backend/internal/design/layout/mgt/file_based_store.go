@@ -1,24 +1,10 @@
-/*
- * Copyright (c) 2026, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2026 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 package layoutmgt
 
 import (
+	"context"
 	"errors"
 
 	declarativeresource "github.com/thunder-id/thunderid/internal/system/declarative_resource"
@@ -31,6 +17,8 @@ type layoutFileBasedStore struct {
 
 // Create implements declarativeresource.Storer interface for resource loader
 func (f *layoutFileBasedStore) Create(id string, data interface{}) error {
+	// The declarative loader has no request behind it, so the configured identifier applies.
+	ctx := context.Background()
 	layout, ok := data.(*Layout)
 	if !ok {
 		declarativeresource.LogTypeAssertionError("layout", id)
@@ -42,11 +30,11 @@ func (f *layoutFileBasedStore) Create(id string, data interface{}) error {
 		Description: layout.Description,
 		Layout:      layout.Layout,
 	}
-	return f.CreateLayout(id, createReq)
+	return f.CreateLayout(ctx, id, createReq)
 }
 
 // CreateLayout implements layoutMgtStoreInterface.
-func (f *layoutFileBasedStore) CreateLayout(id string, layout CreateLayoutRequest) error {
+func (f *layoutFileBasedStore) CreateLayout(ctx context.Context, id string, layout CreateLayoutRequest) error {
 	layoutData := &Layout{
 		ID:          id,
 		Handle:      layout.Handle,
@@ -60,12 +48,12 @@ func (f *layoutFileBasedStore) CreateLayout(id string, layout CreateLayoutReques
 }
 
 // DeleteLayout implements layoutMgtStoreInterface.
-func (f *layoutFileBasedStore) DeleteLayout(id string) error {
+func (f *layoutFileBasedStore) DeleteLayout(ctx context.Context, id string) error {
 	return errors.New("deleteLayout is not supported in file-based store")
 }
 
 // GetLayout implements layoutMgtStoreInterface.
-func (f *layoutFileBasedStore) GetLayout(id string) (Layout, error) {
+func (f *layoutFileBasedStore) GetLayout(ctx context.Context, id string) (Layout, error) {
 	data, err := f.GenericFileBasedStore.Get(id)
 	if err != nil {
 		return Layout{}, errLayoutNotFound
@@ -79,7 +67,7 @@ func (f *layoutFileBasedStore) GetLayout(id string) (Layout, error) {
 }
 
 // GetLayoutList implements layoutMgtStoreInterface.
-func (f *layoutFileBasedStore) GetLayoutList(limit, offset int) ([]Layout, error) {
+func (f *layoutFileBasedStore) GetLayoutList(ctx context.Context, limit, offset int) ([]Layout, error) {
 	// Validate input parameters to prevent panics
 	if offset < 0 {
 		offset = 0
@@ -114,7 +102,7 @@ func (f *layoutFileBasedStore) GetLayoutList(limit, offset int) ([]Layout, error
 }
 
 // GetLayoutListCount implements layoutMgtStoreInterface.
-func (f *layoutFileBasedStore) GetLayoutListCount() (int, error) {
+func (f *layoutFileBasedStore) GetLayoutListCount(ctx context.Context) (int, error) {
 	count, err := f.GenericFileBasedStore.Count()
 	if err != nil {
 		return 0, err
@@ -123,8 +111,8 @@ func (f *layoutFileBasedStore) GetLayoutListCount() (int, error) {
 }
 
 // IsLayoutExist implements layoutMgtStoreInterface.
-func (f *layoutFileBasedStore) IsLayoutExist(id string) (bool, error) {
-	_, err := f.GetLayout(id)
+func (f *layoutFileBasedStore) IsLayoutExist(ctx context.Context, id string) (bool, error) {
+	_, err := f.GetLayout(ctx, id)
 	if err != nil {
 		return false, nil
 	}
@@ -132,17 +120,18 @@ func (f *layoutFileBasedStore) IsLayoutExist(id string) (bool, error) {
 }
 
 // UpdateLayout implements layoutMgtStoreInterface.
-func (f *layoutFileBasedStore) UpdateLayout(id string, layout UpdateLayoutRequest) error {
+func (f *layoutFileBasedStore) UpdateLayout(ctx context.Context, id string, layout UpdateLayoutRequest) error {
 	return errors.New("updateLayout is not supported in file-based store")
 }
 
 // IsLayoutDeclarative checks if a layout is immutable (in file-based store, all layouts are immutable).
-func (f *layoutFileBasedStore) IsLayoutDeclarative(id string) bool {
+func (f *layoutFileBasedStore) IsLayoutDeclarative(ctx context.Context, id string) bool {
 	return true
 }
 
 // IsLayoutHandleConflict checks if a layout handle already exists (excluding a specific ID).
-func (f *layoutFileBasedStore) IsLayoutHandleConflict(handle string, excludeID string) (bool, error) {
+func (f *layoutFileBasedStore) IsLayoutHandleConflict(ctx context.Context, handle string, excludeID string) (bool,
+	error) {
 	list, err := f.GenericFileBasedStore.List()
 	if err != nil {
 		return false, err

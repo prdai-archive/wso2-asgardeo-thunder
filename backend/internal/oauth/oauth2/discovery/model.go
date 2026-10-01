@@ -1,20 +1,5 @@
-/*
- * Copyright (c) 2025, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2025 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 package discovery
 
@@ -35,9 +20,11 @@ type OAuth2AuthorizationServerMetadata struct {
 	ResponseTypesSupported                     []string `json:"response_types_supported"`
 	GrantTypesSupported                        []string `json:"grant_types_supported"`
 	TokenEndpointAuthMethodsSupported          []string `json:"token_endpoint_auth_methods_supported"`
+	TokenEndpointAuthSigningAlgValuesSupported []string `json:"token_endpoint_auth_signing_alg_values_supported,omitempty"` //nolint:lll
 	CodeChallengeMethodsSupported              []string `json:"code_challenge_methods_supported,omitempty"`
 	AuthorizationResponseIssParameterSupported bool     `json:"authorization_response_iss_parameter_supported"`
 	DPoPSigningAlgValuesSupported              []string `json:"dpop_signing_alg_values_supported,omitempty"`
+	AuthorizationGrantProfilesSupported        []string `json:"authorization_grant_profiles_supported,omitempty"`
 }
 
 // OIDCProviderMetadata represents OpenID Connect Provider Metadata (OIDC Discovery 1.0)
@@ -54,6 +41,8 @@ type OIDCProviderMetadata struct {
 	IDTokenEncryptionEncValuesSupported  []string `json:"id_token_encryption_enc_values_supported,omitempty"`
 	ClaimsSupported                      []string `json:"claims_supported"`
 	ClaimsParameterSupported             bool     `json:"claims_parameter_supported"`
+	RequestParameterSupported            bool     `json:"request_parameter_supported"`
+	RequestURIParameterSupported         bool     `json:"request_uri_parameter_supported"`
 	EndSessionEndpoint                   string   `json:"end_session_endpoint,omitempty"`
 	AcrValuesSupported                   []string `json:"acr_values_supported,omitempty"`
 }

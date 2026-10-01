@@ -1,20 +1,5 @@
-/*
- * Copyright (c) 2025, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2025 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 package idp
 
@@ -30,6 +15,8 @@ import (
 	"github.com/thunder-id/thunderid/pkg/thunderidengine/providers"
 
 	"github.com/thunder-id/thunderid/tests/mocks/database/providermock"
+
+	engineconfig "github.com/thunder-id/thunderid/pkg/thunderidengine/config"
 )
 
 const testDeploymentID = "test-deployment-id"
@@ -47,6 +34,7 @@ func TestIDPStoreTestSuite(t *testing.T) {
 
 func (s *IDPStoreTestSuite) SetupTest() {
 	testConfig := &config.Config{
+		Server: engineconfig.ServerConfig{Identifier: testDeploymentID},
 		Database: config.DatabaseConfig{
 			Config: config.DataSource{
 				Type:   "sqlite",
@@ -58,14 +46,16 @@ func (s *IDPStoreTestSuite) SetupTest() {
 			},
 		},
 	}
+	// The store resolves its deployment from the runtime rather than holding one, and other suites in
+	// this package reset the runtime, so load it per test.
+	config.ResetServerRuntime()
 	_ = config.InitializeServerRuntime("test", testConfig)
 
 	s.mockDBProvider = &providermock.DBProviderInterfaceMock{}
 	s.mockDBClient = &providermock.DBClientInterfaceMock{}
 
 	s.store = &idpStore{
-		dbProvider:   s.mockDBProvider,
-		deploymentID: testDeploymentID,
+		dbProvider: s.mockDBProvider,
 	}
 }
 

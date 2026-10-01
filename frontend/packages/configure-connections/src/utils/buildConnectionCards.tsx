@@ -1,20 +1,5 @@
-/**
- * Copyright (c) 2025, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied. See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2025 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 import {ResourceAvatar} from '@thunderid/components';
 import ConnectionConstants from '../constants/connection-constants';
@@ -52,7 +37,7 @@ function isTrustedIdpInstance(instance: ConnectionInstance): boolean {
  * - custom vendors with no instances → no card (creation goes through the custom-connection
  *   wizard entry point).
  * - coming-soon vendors → one static, non-interactive card.
- * - instances whose type has no vendor meta (e.g. custom SMS gateway senders) are not rendered.
+ * - instances whose type has no vendor meta are not rendered.
  *
  * Pure function — no i18n, no hooks — so it is trivially unit-testable. The card carries a
  * `descriptionKey`; the rendering component resolves it.
@@ -69,7 +54,14 @@ export default function buildConnectionCards(
       backendType: ConnectionTypes.OIDC,
       displayName: instance.name,
       descriptionKey: TRUSTED_IDP_DESCRIPTION_KEY,
-      logo: <ResourceAvatar variant="rounded" size={44} fallback={ConnectionConstants.DEFAULT_TRUSTED_IDP_AVATAR} />,
+      logo: (
+        <ResourceAvatar
+          transparent
+          variant="rounded"
+          size={48}
+          fallback={ConnectionConstants.DEFAULT_TRUSTED_IDP_AVATAR}
+        />
+      ),
       categories: ['trusted-idp', 'custom'],
       status: 'configured',
       comingSoon: false,

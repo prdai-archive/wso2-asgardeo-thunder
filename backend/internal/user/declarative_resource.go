@@ -1,20 +1,5 @@
-/*
- * Copyright (c) 2026, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2026 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 package user
 
@@ -25,6 +10,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/thunder-id/thunderid/internal/system/varname"
 	tidcommon "github.com/thunder-id/thunderid/pkg/thunderidengine/common"
 	"github.com/thunder-id/thunderid/pkg/thunderidengine/providers"
 
@@ -131,17 +117,35 @@ func (e *userExporter) GetResourceByID(
 		attributesMap = make(map[string]interface{})
 	}
 
-	// Create export structure with credentials as placeholders
-	// The parameterizer will replace actual credential values with template variables
+	// Export credentials as placeholders rather than values. A stored credential is a one-way hash, so
+	// the value cannot be exported, and an empty map would leave the imported user with no credential at
+	// all and no way to sign in. Naming the credential here makes the parameterizer emit a template
+	// variable for it, which the importing server fills from its own secret provider or environment
+	// before hashing.
 	exportUser := &userDeclarativeResource{
 		ID:          user.ID,
 		Type:        user.Type,
 		OUID:        user.OUID,
 		Attributes:  attributesMap,
-		Credentials: make(map[string]interface{}), // Empty credentials - will be filled with placeholders
+		Credentials: exportableCredentials(username),
 	}
 
 	return exportUser, username, nil
+}
+
+// exportableCredentials describes the credentials an exported user carries.
+//
+// The placeholder is written here because the parameterizer only walks a slice of properties and
+// credentials are a map, so it would export any value here verbatim. Only the password is carried:
+// device bound kinds such as a passkey mean nothing on another deployment. The value never leaves,
+// since it is stored as a one-way hash and the importing server fills the placeholder itself.
+func exportableCredentials(username string) map[string]interface{} {
+	if username == "" {
+		return map[string]interface{}{}
+	}
+	return map[string]interface{}{
+		"password": fmt.Sprintf("{{.%s}}", varname.DeriveVariableName(resourceTypeUser, username, "password")),
+	}
 }
 
 // ValidateResource validates a user resource.
@@ -272,19 +276,19 @@ type userDeclarativeResource struct {
 
 // parseToUser parses YAML data into a User and its Credentials. The ou_handle from YAML is
 // populated onto User.OUHandle so callers can resolve it to an ou_id via the user service.
-func parseToUser(data []byte) (User, Credentials, error) {
+func parseToUser(data []byte) (providers.User, Credentials, error) {
 	var userRes userDeclarativeResource
 	if err := yaml.Unmarshal(data, &userRes); err != nil {
-		return User{}, nil, err
+		return providers.User{}, nil, err
 	}
 
 	// Convert attributes map to JSON
 	attributesJSON, err := json.Marshal(userRes.Attributes)
 	if err != nil {
-		return User{}, nil, fmt.Errorf("failed to marshal attributes: %w", err)
+		return providers.User{}, nil, fmt.Errorf("failed to marshal attributes: %w", err)
 	}
 
-	user := User{
+	user := providers.User{
 		ID:         userRes.ID,
 		Type:       userRes.Type,
 		OUID:       userRes.OUID,
@@ -295,7 +299,7 @@ func parseToUser(data []byte) (User, Credentials, error) {
 	// Parse and hash credentials
 	credentials, err := parseCredentials(userRes.Credentials)
 	if err != nil {
-		return User{}, nil, fmt.Errorf("failed to parse credentials: %w", err)
+		return providers.User{}, nil, fmt.Errorf("failed to parse credentials: %w", err)
 	}
 
 	return user, credentials, nil
@@ -453,6 +457,8 @@ func parseCredentialObject(
 	}
 
 	iterations, _ := paramsMap["iterations"].(int)
+	parallelism, _ := paramsMap["parallelism"].(int)
+	memory, _ := paramsMap["memory"].(int)
 	keySize, _ := paramsMap["keySize"].(int)
 	salt, _ := paramsMap["salt"].(string)
 
@@ -460,9 +466,11 @@ func parseCredentialObject(
 		StorageType: storageType,
 		StorageAlgo: cryptolib.CredAlgorithm(storageAlgo),
 		StorageAlgoParams: cryptolib.CredParameters{
-			Iterations: iterations,
-			KeySize:    keySize,
-			Salt:       salt,
+			Iterations:  iterations,
+			Parallelism: parallelism,
+			Memory:      memory,
+			KeySize:     keySize,
+			Salt:        salt,
 		},
 		Value: value,
 	}, nil

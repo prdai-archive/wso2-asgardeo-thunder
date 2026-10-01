@@ -1,20 +1,5 @@
-/*
- * Copyright (c) 2026, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2026 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 // Package requestvalidator provides shared validation for OAuth2 authorization
 // request parameters used by both the authorize and PAR endpoints.
@@ -34,7 +19,7 @@ import (
 // ValidateAuthorizationRequestParams validates the common authorization request parameters
 // shared by both the standard authorize endpoint and the PAR endpoint.
 //
-// This validates: prompt, grant_type, response_type, PKCE, nonce, and dpop_jkt.
+// This validates: request, prompt, grant_type, response_type, PKCE, nonce, and dpop_jkt.
 // Callers are responsible for validating client_id and redirect_uri before calling this
 // function, since those validations have endpoint-specific error handling semantics
 // (e.g., the authorize endpoint must not redirect errors when the redirect_uri is invalid).
@@ -52,6 +37,13 @@ func ValidateAuthorizationRequestParams(
 	params := url.Values(rawParams)
 	responseType := params.Get(constants.RequestParamResponseType)
 	responseMode := params.Get(constants.RequestParamResponseMode)
+
+	// ThunderID does not implement JAR (RFC 9101). A request object must be rejected rather than
+	// ignored: honoring only the query string would silently drop security parameters the client
+	// placed inside the object, notably state and nonce (OIDC Core 6.1).
+	if params.Get(constants.RequestParamRequest) != "" {
+		return constants.ErrorRequestNotSupported, "The request parameter is not supported"
+	}
 
 	// Validate the prompt parameter if present.
 	if params.Has(constants.RequestParamPrompt) {
@@ -135,9 +127,10 @@ func ValidatePromptParameter(prompt string) (string, string) {
 				"prompt value 'none' must not be combined with other values"
 		}
 
-		// The server does not support server-side sessions as of now.
-		return constants.ErrorLoginRequired,
-			"User authentication is required"
+		// Whether "none" can be honored depends on an existing SSO session, which this shared
+		// parameter validation cannot see. The authorize endpoint decides it against the resolved
+		// session; the PAR endpoint only stores the request, so the decision waits for the
+		// authorization request that later resolves the request_uri.
 	}
 
 	// The server does not support account selection prompts as of now.

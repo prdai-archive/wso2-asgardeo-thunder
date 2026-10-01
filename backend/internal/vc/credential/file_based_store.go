@@ -1,20 +1,5 @@
-/*
- * Copyright (c) 2026, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2026 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 package credential
 
@@ -35,9 +20,9 @@ func newCredentialFileBasedStore() *credentialFileBasedStore {
 	return &credentialFileBasedStore{GenericFileBasedStore: genericStore}
 }
 
-// Create stores a credential configuration in the file-based store. In declarative
-// and composite modes the loader writes resources through this method (resources
-// loaded from YAML are immutable; management writes route to the database store).
+// Create stores a credential configuration in the file-based store. Declarative resources
+// are loaded through credentialStorer; the management API cannot reach this method because
+// the service refuses creates while the store is in declarative-only mode.
 func (f *credentialFileBasedStore) CreateCredentialConfiguration(
 	_ context.Context, dto CredentialConfigurationDTO,
 ) error {
@@ -75,7 +60,9 @@ func (f *credentialFileBasedStore) GetCredentialConfigurationByID(
 		declarativeresource.LogTypeAssertionError("credential configuration", id)
 		return nil, ErrConfigurationDataCorrupted
 	}
-	return dto, nil
+	// Hand out a copy so a caller cannot mutate the shared declarative entry.
+	stored := *dto
+	return &stored, nil
 }
 
 // GetByHandle retrieves a credential configuration by handle from the file-based store.
@@ -88,7 +75,8 @@ func (f *credentialFileBasedStore) GetCredentialConfigurationByHandle(
 	if err != nil {
 		return nil, ErrNotFound
 	}
-	return data.(*CredentialConfigurationDTO), nil
+	stored := *data.(*CredentialConfigurationDTO)
+	return &stored, nil
 }
 
 // ListSummaries retrieves minimal listing data from the file-based store.

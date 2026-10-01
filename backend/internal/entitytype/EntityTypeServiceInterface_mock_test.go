@@ -181,8 +181,8 @@ func (_c *EntityTypeServiceInterfaceMock_DeleteEntityType_Call) RunAndReturn(run
 }
 
 // GetAttributes provides a mock function for the type EntityTypeServiceInterfaceMock
-func (_mock *EntityTypeServiceInterfaceMock) GetAttributes(ctx context.Context, category TypeCategory, entityType string, allowCredential bool, allowNonCredential bool, requiredOnly bool) ([]AttributeInfo, *common.ServiceError) {
-	ret := _mock.Called(ctx, category, entityType, allowCredential, allowNonCredential, requiredOnly)
+func (_mock *EntityTypeServiceInterfaceMock) GetAttributes(ctx context.Context, category TypeCategory, entityType string, filter AttributeFilter) ([]AttributeInfo, *common.ServiceError) {
+	ret := _mock.Called(ctx, category, entityType, filter)
 
 	if len(ret) == 0 {
 		panic("no return value specified for GetAttributes")
@@ -190,18 +190,18 @@ func (_mock *EntityTypeServiceInterfaceMock) GetAttributes(ctx context.Context, 
 
 	var r0 []AttributeInfo
 	var r1 *common.ServiceError
-	if returnFunc, ok := ret.Get(0).(func(context.Context, TypeCategory, string, bool, bool, bool) ([]AttributeInfo, *common.ServiceError)); ok {
-		return returnFunc(ctx, category, entityType, allowCredential, allowNonCredential, requiredOnly)
+	if returnFunc, ok := ret.Get(0).(func(context.Context, TypeCategory, string, AttributeFilter) ([]AttributeInfo, *common.ServiceError)); ok {
+		return returnFunc(ctx, category, entityType, filter)
 	}
-	if returnFunc, ok := ret.Get(0).(func(context.Context, TypeCategory, string, bool, bool, bool) []AttributeInfo); ok {
-		r0 = returnFunc(ctx, category, entityType, allowCredential, allowNonCredential, requiredOnly)
+	if returnFunc, ok := ret.Get(0).(func(context.Context, TypeCategory, string, AttributeFilter) []AttributeInfo); ok {
+		r0 = returnFunc(ctx, category, entityType, filter)
 	} else {
 		if ret.Get(0) != nil {
 			r0 = ret.Get(0).([]AttributeInfo)
 		}
 	}
-	if returnFunc, ok := ret.Get(1).(func(context.Context, TypeCategory, string, bool, bool, bool) *common.ServiceError); ok {
-		r1 = returnFunc(ctx, category, entityType, allowCredential, allowNonCredential, requiredOnly)
+	if returnFunc, ok := ret.Get(1).(func(context.Context, TypeCategory, string, AttributeFilter) *common.ServiceError); ok {
+		r1 = returnFunc(ctx, category, entityType, filter)
 	} else {
 		if ret.Get(1) != nil {
 			r1 = ret.Get(1).(*common.ServiceError)
@@ -219,14 +219,12 @@ type EntityTypeServiceInterfaceMock_GetAttributes_Call struct {
 //   - ctx context.Context
 //   - category TypeCategory
 //   - entityType string
-//   - allowCredential bool
-//   - allowNonCredential bool
-//   - requiredOnly bool
-func (_e *EntityTypeServiceInterfaceMock_Expecter) GetAttributes(ctx interface{}, category interface{}, entityType interface{}, allowCredential interface{}, allowNonCredential interface{}, requiredOnly interface{}) *EntityTypeServiceInterfaceMock_GetAttributes_Call {
-	return &EntityTypeServiceInterfaceMock_GetAttributes_Call{Call: _e.mock.On("GetAttributes", ctx, category, entityType, allowCredential, allowNonCredential, requiredOnly)}
+//   - filter AttributeFilter
+func (_e *EntityTypeServiceInterfaceMock_Expecter) GetAttributes(ctx interface{}, category interface{}, entityType interface{}, filter interface{}) *EntityTypeServiceInterfaceMock_GetAttributes_Call {
+	return &EntityTypeServiceInterfaceMock_GetAttributes_Call{Call: _e.mock.On("GetAttributes", ctx, category, entityType, filter)}
 }
 
-func (_c *EntityTypeServiceInterfaceMock_GetAttributes_Call) Run(run func(ctx context.Context, category TypeCategory, entityType string, allowCredential bool, allowNonCredential bool, requiredOnly bool)) *EntityTypeServiceInterfaceMock_GetAttributes_Call {
+func (_c *EntityTypeServiceInterfaceMock_GetAttributes_Call) Run(run func(ctx context.Context, category TypeCategory, entityType string, filter AttributeFilter)) *EntityTypeServiceInterfaceMock_GetAttributes_Call {
 	_c.Call.Run(func(args mock.Arguments) {
 		var arg0 context.Context
 		if args[0] != nil {
@@ -240,25 +238,15 @@ func (_c *EntityTypeServiceInterfaceMock_GetAttributes_Call) Run(run func(ctx co
 		if args[2] != nil {
 			arg2 = args[2].(string)
 		}
-		var arg3 bool
+		var arg3 AttributeFilter
 		if args[3] != nil {
-			arg3 = args[3].(bool)
-		}
-		var arg4 bool
-		if args[4] != nil {
-			arg4 = args[4].(bool)
-		}
-		var arg5 bool
-		if args[5] != nil {
-			arg5 = args[5].(bool)
+			arg3 = args[3].(AttributeFilter)
 		}
 		run(
 			arg0,
 			arg1,
 			arg2,
 			arg3,
-			arg4,
-			arg5,
 		)
 	})
 	return _c
@@ -269,7 +257,83 @@ func (_c *EntityTypeServiceInterfaceMock_GetAttributes_Call) Return(vs []Attribu
 	return _c
 }
 
-func (_c *EntityTypeServiceInterfaceMock_GetAttributes_Call) RunAndReturn(run func(ctx context.Context, category TypeCategory, entityType string, allowCredential bool, allowNonCredential bool, requiredOnly bool) ([]AttributeInfo, *common.ServiceError)) *EntityTypeServiceInterfaceMock_GetAttributes_Call {
+func (_c *EntityTypeServiceInterfaceMock_GetAttributes_Call) RunAndReturn(run func(ctx context.Context, category TypeCategory, entityType string, filter AttributeFilter) ([]AttributeInfo, *common.ServiceError)) *EntityTypeServiceInterfaceMock_GetAttributes_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// GetAttributesForEntityType provides a mock function for the type EntityTypeServiceInterfaceMock
+func (_mock *EntityTypeServiceInterfaceMock) GetAttributesForEntityType(ctx context.Context, entityType string, filter AttributeFilter) (map[TypeCategory][]AttributeInfo, *common.ServiceError) {
+	ret := _mock.Called(ctx, entityType, filter)
+
+	if len(ret) == 0 {
+		panic("no return value specified for GetAttributesForEntityType")
+	}
+
+	var r0 map[TypeCategory][]AttributeInfo
+	var r1 *common.ServiceError
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string, AttributeFilter) (map[TypeCategory][]AttributeInfo, *common.ServiceError)); ok {
+		return returnFunc(ctx, entityType, filter)
+	}
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string, AttributeFilter) map[TypeCategory][]AttributeInfo); ok {
+		r0 = returnFunc(ctx, entityType, filter)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(map[TypeCategory][]AttributeInfo)
+		}
+	}
+	if returnFunc, ok := ret.Get(1).(func(context.Context, string, AttributeFilter) *common.ServiceError); ok {
+		r1 = returnFunc(ctx, entityType, filter)
+	} else {
+		if ret.Get(1) != nil {
+			r1 = ret.Get(1).(*common.ServiceError)
+		}
+	}
+	return r0, r1
+}
+
+// EntityTypeServiceInterfaceMock_GetAttributesForEntityType_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'GetAttributesForEntityType'
+type EntityTypeServiceInterfaceMock_GetAttributesForEntityType_Call struct {
+	*mock.Call
+}
+
+// GetAttributesForEntityType is a helper method to define mock.On call
+//   - ctx context.Context
+//   - entityType string
+//   - filter AttributeFilter
+func (_e *EntityTypeServiceInterfaceMock_Expecter) GetAttributesForEntityType(ctx interface{}, entityType interface{}, filter interface{}) *EntityTypeServiceInterfaceMock_GetAttributesForEntityType_Call {
+	return &EntityTypeServiceInterfaceMock_GetAttributesForEntityType_Call{Call: _e.mock.On("GetAttributesForEntityType", ctx, entityType, filter)}
+}
+
+func (_c *EntityTypeServiceInterfaceMock_GetAttributesForEntityType_Call) Run(run func(ctx context.Context, entityType string, filter AttributeFilter)) *EntityTypeServiceInterfaceMock_GetAttributesForEntityType_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		var arg0 context.Context
+		if args[0] != nil {
+			arg0 = args[0].(context.Context)
+		}
+		var arg1 string
+		if args[1] != nil {
+			arg1 = args[1].(string)
+		}
+		var arg2 AttributeFilter
+		if args[2] != nil {
+			arg2 = args[2].(AttributeFilter)
+		}
+		run(
+			arg0,
+			arg1,
+			arg2,
+		)
+	})
+	return _c
+}
+
+func (_c *EntityTypeServiceInterfaceMock_GetAttributesForEntityType_Call) Return(typeCategoryToVs map[TypeCategory][]AttributeInfo, serviceError *common.ServiceError) *EntityTypeServiceInterfaceMock_GetAttributesForEntityType_Call {
+	_c.Call.Return(typeCategoryToVs, serviceError)
+	return _c
+}
+
+func (_c *EntityTypeServiceInterfaceMock_GetAttributesForEntityType_Call) RunAndReturn(run func(ctx context.Context, entityType string, filter AttributeFilter) (map[TypeCategory][]AttributeInfo, *common.ServiceError)) *EntityTypeServiceInterfaceMock_GetAttributesForEntityType_Call {
 	_c.Call.Return(run)
 	return _c
 }

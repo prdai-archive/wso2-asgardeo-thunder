@@ -1,27 +1,14 @@
-/*
- * Copyright (c) 2025, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2025 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 package export
 
 import (
 	"context"
+	"fmt"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -42,20 +29,23 @@ const (
 	formatYAML = "yaml"
 	formatJSON = "json"
 
-	resourceTypeApplication    = "application"
-	resourceTypeConnection     = "connection"
-	resourceTypeUserType       = "user_type"
-	resourceTypeOU             = "organization_unit"
-	resourceTypeUser           = "user"
-	resourceTypeGroup          = "group"
-	resourceTypeResourceServer = "resource_server"
-	resourceTypeRole           = "role"
-	resourceTypeFlow           = "flow"
-	resourceTypeTranslation    = "translation"
-	resourceTypeLayout         = "layout"
-	resourceTypeTheme          = "theme"
-	resourceTypeAgent          = "agent"
-	resourceTypeServerConfig   = "server_config"
+	resourceTypeApplication             = "application"
+	resourceTypeConnection              = "connection"
+	resourceTypeUserType                = "user_type"
+	resourceTypeAgentType               = "agent_type"
+	resourceTypeOU                      = "organization_unit"
+	resourceTypeUser                    = "user"
+	resourceTypeGroup                   = "group"
+	resourceTypeResourceServer          = "resource_server"
+	resourceTypeRole                    = "role"
+	resourceTypeFlow                    = "flow"
+	resourceTypeTranslation             = "translation"
+	resourceTypeLayout                  = "layout"
+	resourceTypeTheme                   = "theme"
+	resourceTypeAgent                   = "agent"
+	resourceTypeServerConfig            = "server_config"
+	resourceTypeCredentialConfiguration = "credential_configuration" //nolint:gosec
+	resourceTypePresentationDefinition  = "presentation_definition"
 )
 
 // parameterizerInterface defines the interface for template parameterization.
@@ -63,6 +53,34 @@ type parameterizerInterface interface {
 	ToParameterizedYAML(ctx context.Context, obj interface{},
 		resourceType string, resourceName string,
 		rules *declarativeresource.ResourceRules) (string, map[string]string, error)
+	VarPrefix(resourceName string) string
+}
+
+// varNameAllocator hands out a unique template variable prefix per exported resource. Resource
+// names that normalize to the same prefix (for example "My-App", "My App" and "My_App", or an
+// application and a connection sharing a name) would otherwise share .env entries and silently
+// overwrite each other's values.
+type varNameAllocator struct {
+	parameterizer parameterizerInterface
+	taken         map[string]struct{}
+}
+
+func newVarNameAllocator(param parameterizerInterface) *varNameAllocator {
+	return &varNameAllocator{parameterizer: param, taken: make(map[string]struct{})}
+}
+
+// nameFor claims a variable prefix for the given resource name and returns the name to use for
+// variable naming, numerically suffixed when the prefix is already claimed by another resource.
+func (a *varNameAllocator) nameFor(resourceName string) string {
+	candidate := resourceName
+	for i := 2; ; i++ {
+		prefix := a.parameterizer.VarPrefix(candidate)
+		if _, claimed := a.taken[prefix]; !claimed {
+			a.taken[prefix] = struct{}{}
+			return candidate
+		}
+		candidate = resourceName + "_" + strconv.Itoa(i)
+	}
 }
 
 // ExportServiceInterface defines the interface for the export service.
@@ -118,23 +136,27 @@ func (es *exportService) ExportResources(
 	var exportErrors []declarativeresource.ExportError
 	allVariables := make(map[string]string)
 	resourceCounts := make(map[string]int)
+	varNames := newVarNameAllocator(es.parameterizer)
 
 	// Map resource types to their IDs from the request
 	resourceMap := map[string][]string{
-		resourceTypeApplication:    request.Applications,
-		resourceTypeConnection:     request.Connections,
-		resourceTypeUserType:       request.UserTypes,
-		resourceTypeOU:             request.OrganizationUnits,
-		resourceTypeUser:           request.Users,
-		resourceTypeGroup:          request.Groups,
-		resourceTypeResourceServer: request.ResourceServers,
-		resourceTypeRole:           request.Roles,
-		resourceTypeFlow:           request.Flows,
-		resourceTypeTranslation:    request.Translations,
-		resourceTypeLayout:         request.Layouts,
-		resourceTypeTheme:          request.Themes,
-		resourceTypeAgent:          request.Agents,
-		resourceTypeServerConfig:   request.ServerConfigs,
+		resourceTypeApplication:             request.Applications,
+		resourceTypeConnection:              request.Connections,
+		resourceTypeUserType:                request.UserTypes,
+		resourceTypeAgentType:               request.AgentTypes,
+		resourceTypeOU:                      request.OrganizationUnits,
+		resourceTypeUser:                    request.Users,
+		resourceTypeGroup:                   request.Groups,
+		resourceTypeResourceServer:          request.ResourceServers,
+		resourceTypeRole:                    request.Roles,
+		resourceTypeFlow:                    request.Flows,
+		resourceTypeTranslation:             request.Translations,
+		resourceTypeLayout:                  request.Layouts,
+		resourceTypeTheme:                   request.Themes,
+		resourceTypeAgent:                   request.Agents,
+		resourceTypeServerConfig:            request.ServerConfigs,
+		resourceTypeCredentialConfiguration: request.CredentialConfigurations,
+		resourceTypePresentationDefinition:  request.PresentationDefinitions,
 	}
 
 	// Export resources using the registry
@@ -143,6 +165,11 @@ func (es *exportService) ExportResources(
 		resourceTypes = append(resourceTypes, k)
 	}
 	sort.Strings(resourceTypes)
+
+	// Which resource claimed each template variable, across the whole export. A name is claimed once:
+	// two resources sharing one would import with each other's value, and the later one would also
+	// overwrite the earlier value collected for the environment file.
+	variableOwners := make(map[string]string)
 
 	for _, resourceType := range resourceTypes {
 		resourceIDs := resourceMap[resourceType]
@@ -157,7 +184,16 @@ func (es *exportService) ExportResources(
 			continue
 		}
 
-		files, vars, errors := es.exportResourcesWithExporter(ctx, exporter, resourceIDs, options)
+		files, vars, errors, duplicate := es.exportResourcesWithExporter(ctx, exporter, resourceIDs, options,
+			varNames, variableOwners)
+		if duplicate != nil {
+			return nil, tidcommon.CustomServiceError(ErrorDuplicateTemplateVariable, tidcommon.I18nMessage{
+				Key: "error.exportservice.duplicate_template_variable_description",
+				DefaultValue: fmt.Sprintf(
+					"%s and %s derive the same template variable, so both would import the same value",
+					duplicate.previous, duplicate.owner),
+			})
+		}
 		exportFiles = append(exportFiles, files...)
 		for k, v := range vars {
 			allVariables[k] = v
@@ -252,7 +288,9 @@ func (es *exportService) exportResourcesWithExporter(
 	exporter declarativeresource.ResourceExporter,
 	resourceIDs []string,
 	options *ExportOptions,
-) ([]ExportFile, map[string]string, []declarativeresource.ExportError) {
+	varNames *varNameAllocator,
+	variableOwners map[string]string,
+) ([]ExportFile, map[string]string, []declarativeresource.ExportError, *duplicateVariable) {
 	logger := log.GetLogger().With(log.String("component", "ExportService"))
 	resourceType := exporter.GetResourceType()
 	exportFiles := make([]ExportFile, 0, len(resourceIDs))
@@ -265,7 +303,7 @@ func (es *exportService) exportResourcesWithExporter(
 		if err != nil {
 			logger.Warn(ctx, "Failed to get all resources",
 				log.String("resourceType", resourceType), log.Any("error", err))
-			return []ExportFile{}, variableValues, []declarativeresource.ExportError{}
+			return []ExportFile{}, variableValues, []declarativeresource.ExportError{}, nil
 		}
 		resourceIDList = ids
 	} else {
@@ -307,7 +345,7 @@ func (es *exportService) exportResourcesWithExporter(
 		}
 
 		templateContent, vars, err := es.generateTemplateFromStruct(ctx,
-			resource, exporter.GetParameterizerType(), validatedName, exporter)
+			resource, exporter.GetParameterizerType(), varNames.nameFor(validatedName), exporter)
 		if err != nil {
 			logger.Warn(ctx, "Failed to generate template from struct",
 				log.String("resourceType", resourceType),
@@ -321,6 +359,13 @@ func (es *exportService) exportResourcesWithExporter(
 			})
 			continue
 		}
+		owner := resourceType + "/" + resourceID
+		if clash, previous := claimedElsewhere(templateContent, variableOwners, owner); clash != "" {
+			return exportFiles, variableValues, exportErrors,
+				&duplicateVariable{owner: owner, previous: previous, name: clash}
+		}
+		claimVariables(templateContent, variableOwners, owner)
+
 		for k, v := range vars {
 			variableValues[k] = v
 		}
@@ -341,7 +386,7 @@ func (es *exportService) exportResourcesWithExporter(
 		exportFiles = append(exportFiles, exportFile)
 	}
 
-	return exportFiles, variableValues, exportErrors
+	return exportFiles, variableValues, exportErrors, nil
 }
 
 func (es *exportService) generateTemplateFromStruct(ctx context.Context, data interface{},
@@ -431,4 +476,52 @@ func (es *exportService) generateFolderPath(resourceType string, options *Export
 	}
 
 	return ""
+}
+
+// claimedElsewhere reports the first template variable in content that another resource already
+// claimed, along with that resource. It returns empty strings when nothing is claimed twice.
+func claimedElsewhere(content string, owners map[string]string, resourceID string) (string, string) {
+	for _, name := range templateVariableNames(content) {
+		if previous, taken := owners[name]; taken && previous != resourceID {
+			return name, previous
+		}
+	}
+	return "", ""
+}
+
+// claimVariables records this resource as the owner of every variable its template names.
+func claimVariables(content string, owners map[string]string, resourceID string) {
+	for _, name := range templateVariableNames(content) {
+		owners[name] = resourceID
+	}
+}
+
+// claimedVariablePattern matches the template actions an exporter may write into a resource.
+//
+// It is deliberately broader than templateVariablePattern, whose matching the environment file
+// depends on: a spaced or trimmed action still claims its name here rather than slipping past.
+var claimedVariablePattern = regexp.MustCompile(`\{\{-?\s*(?:range\s+)?\.([A-Za-z_][A-Za-z0-9_]*)\s*-?\}\}`)
+
+// templateVariableNames returns the distinct variables a template names, in the order they appear.
+func templateVariableNames(content string) []string {
+	seen := make(map[string]bool)
+	var names []string
+	for _, match := range claimedVariablePattern.FindAllStringSubmatch(content, -1) {
+		for _, name := range match[1:] {
+			if name != "" && !seen[name] {
+				seen[name] = true
+				names = append(names, name)
+			}
+		}
+	}
+	return names
+}
+
+// duplicateVariable names two resources that derive one template variable, and the variable itself.
+// The name is carried for the log and deliberately not returned to the caller, because it is derived
+// from the resource name, which for a user is their username.
+type duplicateVariable struct {
+	owner    string
+	previous string
+	name     string
 }

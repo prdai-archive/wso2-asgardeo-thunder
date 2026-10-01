@@ -1,24 +1,12 @@
-/*
- * Copyright (c) 2025, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2025 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 package utils
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+)
 
 // DeepCopyMapOfStrings creates a deep copy of a map with strings.
 func DeepCopyMapOfStrings(src map[string]string) map[string]string {
@@ -117,6 +105,30 @@ func MergeInterfaceMaps(dst, src map[string]interface{}) map[string]interface{} 
 	return dst
 }
 
+// GetNestedValue resolves a value by exact key first, then by dot-notation path through nested maps.
+func GetNestedValue(data map[string]interface{}, path string) (interface{}, bool) {
+	if value, ok := data[path]; ok {
+		return value, true
+	}
+	if !strings.Contains(path, ".") {
+		return nil, false
+	}
+
+	current := interface{}(data)
+	for _, segment := range strings.Split(path, ".") {
+		obj, ok := current.(map[string]interface{})
+		if !ok {
+			return nil, false
+		}
+		value, exists := obj[segment]
+		if !exists {
+			return nil, false
+		}
+		current = value
+	}
+	return current, true
+}
+
 // UniqueStrings returns a slice containing only unique values from the input slice.
 // The order of elements is not guaranteed.
 func UniqueStrings(input []string) []string {
@@ -151,4 +163,27 @@ func UniqueNonEmptyStrings(input []string) []string {
 	}
 
 	return result
+}
+
+// MergeUniqueStrings returns the union of a and b with duplicates removed, preserving a's order
+// followed by any new values from b.
+func MergeUniqueStrings(a, b []string) []string {
+	if len(b) == 0 {
+		return a
+	}
+	seen := make(map[string]bool, len(a)+len(b))
+	merged := make([]string, 0, len(a)+len(b))
+	for _, v := range a {
+		if !seen[v] {
+			seen[v] = true
+			merged = append(merged, v)
+		}
+	}
+	for _, v := range b {
+		if !seen[v] {
+			seen[v] = true
+			merged = append(merged, v)
+		}
+	}
+	return merged
 }

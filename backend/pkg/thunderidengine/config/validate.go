@@ -1,20 +1,5 @@
-/*
- * Copyright (c) 2026, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2026 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 // Package config validates the Thunder ID engine configuration.
 package config
@@ -37,14 +22,48 @@ func (c *SecurityConfig) Validate() error {
 	if err := c.TokenRevocation.Validate(); err != nil {
 		return err
 	}
+	if err := c.REST.Validate(); err != nil {
+		return err
+	}
+	if err := c.MCP.Validate(); err != nil {
+		return err
+	}
 	return c.TrustedIssuer.Validate()
+}
+
+// Validate checks the REST API gate configuration; an absent audience leaves it unchecked.
+func (c *RESTConfig) Validate() error {
+	return validateOptionalAudience("server.security.rest.audience", c.Audience,
+		"omit it to leave the audience unchecked")
+}
+
+// Validate checks the MCP configuration; an absent audience falls back to the derived identifier.
+func (c *MCPConfig) Validate() error {
+	return validateOptionalAudience("server.security.mcp.audience", c.Audience,
+		"omit it to use the server's own MCP resource identifier")
+}
+
+// validateOptionalAudience normalises and checks a configured audience; absent is always valid.
+// Surrounding whitespace is trimmed rather than rejected, since it is never meaningful in an
+// identifier. Only an empty value is an error, and only because it is the one that fails open: it
+// leaves the gate unenforced. A merely malformed audience needs no check here, because it fails
+// closed — no token can carry it, so every request is rejected until it is corrected.
+func validateOptionalAudience(field string, audience *string, omitHint string) error {
+	if audience == nil {
+		return nil
+	}
+	*audience = strings.TrimSpace(*audience)
+	if *audience == "" {
+		return fmt.Errorf("%s must not be empty; %s", field, omitHint)
+	}
+	return nil
 }
 
 // Validate checks the token-revocation configuration. It runs only when the feature is enabled: an
 // unsupported source is rejected, a negative sync interval is rejected, and a non-positive interval
 // otherwise falls back to the default.
 func (c *TokenRevocationConfig) Validate() error {
-	if !c.Enabled {
+	if !c.IsEnabled() {
 		return nil
 	}
 	if c.SyncIntervalSeconds < 0 {

@@ -1,20 +1,5 @@
-/**
- * Copyright (c) 2026, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied. See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2026 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 // API Hooks
 export {default as useGetApplication} from './api/useGetApplication';
@@ -53,3 +38,39 @@ export type {AccessTokenConfig, AccessTokenSubConfig, AssertionConfig, TokenConf
 
 // Constants
 export {default as ApplicationQueryKeys} from './constants/application-query-keys';
+
+// Pages
+export {default as ApplicationCreatePage} from './pages/ApplicationCreatePage';
+export {default as ApplicationEditPage} from './pages/ApplicationEditPage';
+export {default as ApplicationsListPage} from './pages/ApplicationsListPage';
+export {default as ApplicationTemplateSelectPage} from './pages/ApplicationTemplateSelectPage';
+
+// Contexts
+export {default as ApplicationCreateProvider} from './contexts/ApplicationCreate/ApplicationCreateProvider';
+
+// Routes
+export {default as useApplicationRoutes, defaultApplicationRoutePaths} from './hooks/useApplicationRoutes';
+export type {ApplicationRoutePaths} from './hooks/useApplicationRoutes';
+
+// Components shared with other configure-* packages
+export {default as CopyableField} from './components/common/CopyableField';
+export type {CopyableFieldProps} from './components/common/CopyableField';
+export {default as SettingsLockNotice} from './components/common/SettingsLockNotice';
+export {default as TokenAudienceSelector} from './components/common/TokenAudienceSelector';
+export type {TokenAudienceOption} from './components/common/TokenAudienceSelector';
+export {default as AuthenticationFlowSection} from './components/edit-application/flows-settings/AuthenticationFlowSection';
+export {default as RegistrationFlowSection} from './components/edit-application/flows-settings/RegistrationFlowSection';
+export {default as ClientAccessTokenSection} from './components/edit-application/token-settings/ClientAccessTokenSection';
+export {default as EditTokenSettings} from './components/edit-application/token-settings/EditTokenSettings';
+
+// Constants and utilities shared with other configure-* packages
+export {default as CertificateTypes} from './constants/certificate-types';
+export {default as TokenConstants} from './constants/token-constants';
+export {getGrantTypeLabel} from './utils/getGrantTypeLabel';
+export {applyGrantTypesChange, applyTokenEndpointAuthMethodChange, deriveOAuth2Flags} from './utils/oauth2Rules';
+export type {OAuth2Flags} from './utils/oauth2Rules';
+
+// Application templates
+export {default as TechnologyBasedApplicationTemplateMetadata} from './config/TechnologyBasedApplicationTemplateMetadata';
+export {TechnologyApplicationTemplate} from './models/application-templates';
+export type {ApplicationTemplateMetadata} from './models/application-templates';

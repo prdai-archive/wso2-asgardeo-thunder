@@ -1,20 +1,5 @@
-/*
- * Copyright (c) 2026, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2026 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 package par
 
@@ -392,6 +377,20 @@ func (ts *PARTestSuite) TestPAREndpointValidation() {
 			},
 			ExpectedError: "invalid_request",
 		},
+		{
+			// This test reflects current behavior; account selection prompts are not implemented yet.
+			Name: "Prompt Select Account Not Supported",
+			Params: map[string]string{
+				"response_type":         "code",
+				"redirect_uri":          redirectURI,
+				"scope":                 "openid",
+				"state":                 "test",
+				"prompt":                "select_account",
+				"code_challenge":        testutils.GenerateCodeChallenge("test-verifier-that-is-at-least-43-characters-long-enough"),
+				"code_challenge_method": "S256",
+			},
+			ExpectedError: "account_selection_required",
+		},
 	}
 
 	for _, tc := range testCases {
@@ -404,6 +403,29 @@ func (ts *PARTestSuite) TestPAREndpointValidation() {
 			ts.Equal(tc.ExpectedError, result.Error.Error)
 		})
 	}
+}
+
+// TestPAREndpointAcceptsPromptNone verifies that pushing prompt=none is stored rather than
+// refused. PAR carries no cookies, so it cannot see whether a session exists; deciding here would
+// refuse every silent authorization a PAR client could make. The decision belongs to the
+// authorization request that later resolves the request_uri, which can read the session.
+func (ts *PARTestSuite) TestPAREndpointAcceptsPromptNone() {
+	result, err := testutils.SubmitPARRequest(clientID, clientSecret, map[string]string{
+		"response_type":         "code",
+		"redirect_uri":          redirectURI,
+		"scope":                 "openid",
+		"state":                 "test",
+		"prompt":                "none",
+		"code_challenge":        testutils.GenerateCodeChallenge("test-verifier-that-is-at-least-43-characters-long-enough"),
+		"code_challenge_method": "S256",
+	})
+	ts.Require().NoError(err)
+
+	ts.Equal(http.StatusCreated, result.StatusCode,
+		"prompt=none must be stored, since PAR cannot see the session that decides it")
+	ts.Nil(result.Error, "storing the request is not an error")
+	ts.Require().NotNil(result.PAR, "a stored request must return a request_uri")
+	ts.NotEmpty(result.PAR.RequestURI, "the pushed request should be retrievable by its uri")
 }
 
 // TestPARAuthorizationFlowWithPKCE tests the full PAR + authorization code flow with PKCE.
@@ -495,16 +517,19 @@ func (ts *PARTestSuite) TestPARRequestURISingleUse() {
 // TestPARInvalidRequestURI tests that an invalid request_uri is rejected by the authorize endpoint.
 func (ts *PARTestSuite) TestPARInvalidRequestURI() {
 	testCases := []struct {
-		Name       string
-		RequestURI string
+		Name          string
+		RequestURI    string
+		ExpectedError string
 	}{
 		{
-			Name:       "Completely Invalid URI",
-			RequestURI: "not-a-valid-uri",
+			Name:          "Completely Invalid URI",
+			RequestURI:    "not-a-valid-uri",
+			ExpectedError: "request_uri_not_supported",
 		},
 		{
-			Name:       "Valid Prefix But Non-existent",
-			RequestURI: "urn:ietf:params:oauth:request_uri:nonexistent-request-123",
+			Name:          "Valid Prefix But Non-existent",
+			RequestURI:    "urn:ietf:params:oauth:request_uri:nonexistent-request-123",
+			ExpectedError: "invalid_request",
 		},
 	}
 
@@ -516,8 +541,8 @@ func (ts *PARTestSuite) TestPARInvalidRequestURI() {
 
 			ts.Equal(http.StatusFound, resp.StatusCode, "Should redirect with error")
 			location := resp.Header.Get("Location")
-			err = testutils.ValidateOAuth2ErrorRedirect(location, "invalid_request", "")
-			ts.NoError(err, "Should produce an invalid_request error")
+			err = testutils.ValidateOAuth2ErrorRedirect(location, tc.ExpectedError, "")
+			ts.NoError(err, "Should produce a %s error", tc.ExpectedError)
 		})
 	}
 }

@@ -1,0 +1,64 @@
+{
+  "id": "node",
+  "type": "fullstack",
+  "displayName": "Node.js",
+  "description": "Backend service built with Node.js",
+  "quickstarts": [
+    {
+      "label": "Node.js",
+      "docsUrl": "{{applications.templates.node.docs}}"
+    }
+  ],
+  "playgrounds": [
+    {
+      "label": "Node.js",
+      "environment": "stackblitz",
+      "url": "{{applications.templates.node.playground}}"
+    }
+  ],
+  "creationFlow": {
+    "steps": ["ORGANIZATION_UNIT", "DETAILS", "COMPLETE"],
+    "previewSteps": []
+  },
+  "defaults": {
+    "name": "Node.js Application",
+    "inboundAuthConfig": [
+      {
+        "type": "oauth2",
+        "config": {
+          "grantTypes": ["authorization_code", "refresh_token"],
+          "responseTypes": ["code"],
+          "redirectUris": ["http://localhost:3000/callback"],
+          "pkceRequired": false,
+          "tokenEndpointAuthMethod": "client_secret_basic",
+          "publicClient": false
+        }
+      }
+    ],
+    "allowedUserTypes": []
+  },
+  "fieldConstraints": {
+    "oauth2": {
+      "publicClient": {
+        "readOnly": true,
+        "value": false
+      },
+      "tokenEndpointAuthMethod": {
+        "readOnly": true,
+        "value": "client_secret_basic"
+      }
+    }
+  },
+  "integrationGuides": {
+    "REDIRECT_BASED": {
+      "llm_prompt": {
+        "docsUrl": "{{applications.templates.node.llmPrompt.redirectBased}}"
+      }
+    },
+    "EMBEDDED": {
+      "llm_prompt": {
+        "docsUrl": "{{applications.templates.node.llmPrompt.embedded}}"
+      }
+    }
+  }
+}

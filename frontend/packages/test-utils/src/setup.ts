@@ -1,49 +1,28 @@
-/**
- * Copyright (c) 2025, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied. See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2025 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 import '@testing-library/jest-dom/vitest';
 import {cleanup} from '@testing-library/react';
 import enUS from '@thunderid/i18n/locales/en-US';
 import i18n from 'i18next';
-import {initReactI18next} from 'react-i18next';
 import {afterEach, beforeAll, vi} from 'vitest';
 
 // Initialize i18n for tests
+// `react-i18next` is imported lazily so a test file's `vi.mock('react-i18next')` still takes effect in
+// browser mode, where a module already evaluated by this setup file can't be swapped for its mock.
 beforeAll(async () => {
-  await i18n.use(initReactI18next).init({
+  const reactI18next = await import('react-i18next');
+  // A test file's react-i18next mock may leave out or stub the plugin, in which case there's nothing to bind.
+  const plugin: Partial<typeof reactI18next.initReactI18next> | undefined =
+    'initReactI18next' in reactI18next ? reactI18next.initReactI18next : undefined;
+  if (plugin?.type) {
+    i18n.use(reactI18next.initReactI18next);
+  }
+
+  await i18n.init({
     resources: {
       'en-US': {
-        common: enUS.common,
-        navigation: enUS.navigation,
-        users: enUS.users,
-        userTypes: enUS.userTypes,
-        connections: enUS.connections,
-        applications: enUS.applications,
-        groups: enUS.groups,
-        organizationUnits: enUS.organizationUnits,
-        auth: enUS.auth,
-        mfa: enUS.mfa,
-        social: enUS.social,
-        consent: enUS.consent,
-        errors: enUS.errors,
-        signin: enUS.signin,
-        signup: enUS.signup,
-        validations: enUS.validations,
+        ...enUS,
       },
     },
     lng: 'en-US',

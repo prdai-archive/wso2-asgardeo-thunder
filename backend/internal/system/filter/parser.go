@@ -1,20 +1,5 @@
-/*
- * Copyright (c) 2025, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2025 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 // Package filter parses SCIM-style filter expressions.
 package filter
@@ -30,11 +15,11 @@ import (
 )
 
 // filterPattern matches a complete single expression (with end anchor) for validation.
-var filterPattern = regexp.MustCompile(`^(\w+(?:\.\w+)*)\s+(eq|gt|lt)\s+(?:"([^"]*)"|(\S+))$`)
+var filterPattern = regexp.MustCompile(`^(\w+(?:\.\w+)*)\s+(eq|gt|lt|sw)\s+(?:"([^"]*)"|(\S+))$`)
 
 // singleExprPrefix matches one expression from the start of the string without an end anchor,
 // used during iterative multi-expression parsing.
-var singleExprPrefix = regexp.MustCompile(`^(\w+(?:\.\w+)*)\s+(eq|gt|lt)\s+(?:"([^"]*)"|(\S+))`)
+var singleExprPrefix = regexp.MustCompile(`^(\w+(?:\.\w+)*)\s+(eq|gt|lt|sw)\s+(?:"([^"]*)"|(\S+))`)
 
 // connectorPrefix matches a leading AND or OR connector (case-insensitive) surrounded by whitespace.
 var connectorPrefix = regexp.MustCompile(`(?i)^\s+(AND|OR)\s+`)
@@ -100,8 +85,8 @@ func ParseFilterGroup(filterStr string) (*tidcommon.FilterGroup, error) {
 
 // ParseFilterExpression parses a single filter expression string of the form:
 //
-//	attribute (eq|gt|lt) "value"
-//	attribute (eq|gt|lt) value
+//	attribute (eq|gt|lt|sw) "value"
+//	attribute (eq|gt|lt|sw) value
 func ParseFilterExpression(filterStr string) (*tidcommon.FilterExpression, error) {
 	matches := filterPattern.FindStringSubmatch(filterStr)
 	if len(matches) == 0 {

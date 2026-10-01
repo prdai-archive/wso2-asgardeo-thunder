@@ -1,20 +1,5 @@
-/*
- * Copyright (c) 2025, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2025 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 package authn
 
@@ -88,13 +73,15 @@ type PasskeyAuthenticatorSelectionDTO struct {
 	UserVerification        string `json:"userVerification,omitempty"`
 }
 
-// PasskeyRegisterStartRequestDTO is the request to start passkey registration.
+// PasskeyRegisterStartRequestDTO is the request to start passkey registration. Assertion carries
+// the proof that the caller holds UserID; both are required, and the two must agree.
 type PasskeyRegisterStartRequestDTO struct {
-	UserID                 string                            `json:"userId"`
-	RelyingPartyID         string                            `json:"relyingPartyId"`
+	UserID                 string                            `json:"userId"         native:"required"`
+	RelyingPartyID         string                            `json:"relyingPartyId" native:"required"`
 	RelyingPartyName       string                            `json:"relyingPartyName"`
 	AuthenticatorSelection *PasskeyAuthenticatorSelectionDTO `json:"authenticatorSelection,omitempty"`
 	Attestation            string                            `json:"attestation,omitempty"`
+	Assertion              string                            `json:"assertion"      native:"required"`
 }
 
 // PasskeyPublicKeyCredentialDTO represents a WebAuthn public key credential.

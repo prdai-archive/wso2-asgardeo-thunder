@@ -1,20 +1,5 @@
-/*
- * Copyright (c) 2026, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2026 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 package revocation
 
@@ -57,10 +42,6 @@ func (suite *InitTestSuite) SetupTest() {
 
 	suite.mockJWTService = jwtmock.NewJWTServiceInterfaceMock(suite.T())
 	suite.mockDiscoveryService = discoverymock.NewDiscoveryServiceInterfaceMock(suite.T())
-	suite.mockDiscoveryService.On("GetOAuth2AuthorizationServerMetadata", mock.Anything).
-		Return(&discovery.OAuth2AuthorizationServerMetadata{
-			RevocationEndpoint: "https://localhost:8090/oauth2/revoke",
-		})
 }
 
 func (suite *InitTestSuite) TearDownTest() {
@@ -68,10 +49,8 @@ func (suite *InitTestSuite) TearDownTest() {
 }
 
 func (suite *InitTestSuite) TestInitialize() {
-	mux := http.NewServeMux()
-
 	enforcementService, revocationService := Initialize(
-		mux, suite.mockJWTService, nil, nil, suite.mockDiscoveryService, nil, time.Hour, true)
+		suite.mockJWTService, nil, time.Hour, true)
 
 	assert.NotNil(suite.T(), enforcementService)
 	assert.Implements(suite.T(), (*EnforcementServiceInterface)(nil), enforcementService)
@@ -82,9 +61,14 @@ func (suite *InitTestSuite) TestInitialize() {
 }
 
 func (suite *InitTestSuite) TestInitialize_RegistersRoutes() {
+	suite.mockDiscoveryService.On("GetOAuth2AuthorizationServerMetadata", mock.Anything).
+		Return(&discovery.OAuth2AuthorizationServerMetadata{
+			RevocationEndpoint: "https://localhost:8090/oauth2/revoke",
+		})
 	mux := http.NewServeMux()
+	_, revocationService := Initialize(suite.mockJWTService, nil, time.Hour, true)
 
-	Initialize(mux, suite.mockJWTService, nil, nil, suite.mockDiscoveryService, nil, time.Hour, true)
+	RegisterRoutes(mux, suite.mockJWTService, nil, nil, suite.mockDiscoveryService, revocationService, nil, 0)
 
 	// The pattern includes the method because of CORS middleware wrapping.
 	_, pattern := mux.Handler(&http.Request{Method: "POST", URL: &url.URL{Path: "/oauth2/revoke"}})

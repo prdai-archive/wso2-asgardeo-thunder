@@ -1,20 +1,5 @@
-/*
- * Copyright (c) 2025, WSO2 LLC. (https://www.wso2.com).
- *
- * WSO2 LLC. licenses this file to you under the Apache License,
- * Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing,
- * software distributed under the License is distributed on an
- * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- * KIND, either express or implied.  See the License for the
- * specific language governing permissions and limitations
- * under the License.
- */
+// Copyright 2025 The ThunderID Authors
+// SPDX-License-Identifier: Apache-2.0
 
 package notification
 
@@ -38,6 +23,8 @@ import (
 	"github.com/thunder-id/thunderid/internal/system/log"
 	"github.com/thunder-id/thunderid/tests/mocks/jose/jwtmock"
 )
+
+func boolPtr(b bool) *bool { return &b }
 
 // buildTestJWT builds a minimal JWT whose payload encodes the given otpSessionData.
 // The header and signature are synthetic; VerifyJWT is mocked so no real crypto is needed.
@@ -74,7 +61,7 @@ func (suite *OTPServiceTestSuite) SetupSuite() {
 		Notification: config.NotificationConfig{
 			OTP: config.OTPConfig{
 				Length:                6,
-				UseNumericOnly:        true,
+				UseNumericOnly:        boolPtr(true),
 				ValidityPeriodSeconds: 120,
 			},
 		},
@@ -88,7 +75,7 @@ func (suite *OTPServiceTestSuite) SetupSuite() {
 func (suite *OTPServiceTestSuite) SetupTest() {
 	config.GetServerRuntime().Config.Notification.OTP = config.OTPConfig{
 		Length:                6,
-		UseNumericOnly:        true,
+		UseNumericOnly:        boolPtr(true),
 		ValidityPeriodSeconds: 120,
 	}
 	suite.mockJWTService = jwtmock.NewJWTServiceInterfaceMock(suite.T())
@@ -350,7 +337,7 @@ func (suite *OTPServiceTestSuite) TestResolveOTPConfig_NilOverride() {
 	cfg := suite.service.resolveOTPConfig(nil)
 
 	suite.Equal(6, cfg.Length)
-	suite.True(cfg.UseNumericOnly)
+	suite.True(cfg.UsesNumericOnly())
 	suite.Equal(120, cfg.ValidityPeriodSeconds)
 }
 
@@ -400,5 +387,5 @@ func (suite *OTPServiceTestSuite) TestResolveOTPConfig_UseNumericOnly() {
 	numericOnly := false
 	cfg := suite.service.resolveOTPConfig(&common.OTPConfig{UseNumericOnly: &numericOnly})
 
-	suite.False(cfg.UseNumericOnly)
+	suite.False(cfg.UsesNumericOnly())
 }
