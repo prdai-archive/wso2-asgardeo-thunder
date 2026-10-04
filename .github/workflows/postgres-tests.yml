@@ -91,6 +91,7 @@ jobs:
           name: product-distribution
           path: target/dist/*.zip
           if-no-files-found: error
+          retention-days: 3
 
   download-distribution:
     name: 📥 Download Distribution
